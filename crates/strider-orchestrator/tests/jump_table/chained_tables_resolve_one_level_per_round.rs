@@ -17,7 +17,7 @@ use strider_ir_test_utils::MockRom;
 
 use strider_ir::IRWalker;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::opt::{EditFunction, OptCtx, PostOptimizer};
+use strider_orchestrator::opt::{EditFunction, OptCtx, Optimizer};
 
 use crate::common;
 
@@ -62,7 +62,7 @@ fn chain(levels: u64) -> (Vec<u8>, Vec<u8>) {
 #[derive(Clone)]
 struct CountWideRuns(Arc<AtomicUsize>);
 
-impl PostOptimizer for CountWideRuns {
+impl Optimizer for CountWideRuns {
     fn apply(&self, edit: &mut EditFunction<'_>, _ctx: &OptCtx<'_>) -> anyhow::Result<()> {
         let sites = edit
             .function()
@@ -87,7 +87,8 @@ fn a_chain_of_tables_seats_one_level_per_round() {
     );
     let wide_runs = Arc::new(AtomicUsize::new(0));
     let mut pipeline = strider_orchestrator::opt::default_pipeline();
-    pipeline.add_post_pass(CountWideRuns(Arc::clone(&wide_runs)));
+    // A pass is held `&'static`; one counter per test leaks one box.
+    pipeline.add_post_pass(Box::leak(Box::new(CountWideRuns(Arc::clone(&wide_runs)))));
     let result = strider
         .analyze(
             BASE,

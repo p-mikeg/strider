@@ -1,29 +1,3 @@
-/// Drives the pipeline's decision to run another fixed-point iteration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OptimizationResult {
-    NoChange,
-    /// At least one node was changed, added, or removed.
-    Changed,
-}
-
-impl OptimizationResult {
-    #[inline]
-    #[must_use]
-    pub fn changed(self) -> bool {
-        matches!(self, OptimizationResult::Changed)
-    }
-
-    /// Maps the boolean return of [`EditFunction::replace_value`](crate::EditFunction::replace_value).
-    #[must_use]
-    pub fn from_changed(changed: bool) -> Self {
-        if changed {
-            OptimizationResult::Changed
-        } else {
-            OptimizationResult::NoChange
-        }
-    }
-}
-
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
 /// call. It carries no claim: a pass reads the function's
 /// ([`strider_ir::Function::assume`] adds them).
@@ -41,39 +15,40 @@ impl<'mem> OptCtx<'mem> {
     }
 }
 
-/// A single IR optimization pass. Returns
-/// [`OptimizationResult::Changed`] when it modified anything, which makes
-/// the pipeline run another iteration.
+/// A single IR optimization pass. A run that moves a use or kills a node
+/// ([`EditFunction::generation`](crate::EditFunction::generation)) makes the
+/// pipeline run another iteration.
 ///
 /// ```
-/// # use strider_opt::{OptCtx, OptimizationResult, Optimizer};
+/// # use strider_opt::{OptCtx, Optimizer};
 /// # use strider_opt::EditFunction;
-/// #[derive(Clone)]
 /// struct MyPass;
 /// impl Optimizer for MyPass {
 ///     fn apply(
 ///         &self,
 ///         _edit: &mut EditFunction<'_>,
 ///         _ctx: &OptCtx<'_>,
-///     ) -> anyhow::Result<OptimizationResult> {
+///     ) -> anyhow::Result<()> {
 ///         // ... pass body operating on `_edit` ...
-///         Ok(OptimizationResult::NoChange)
+///         Ok(())
 ///     }
 /// }
 /// ```
 ///
-pub trait Optimizer: OptimizerClone {
+pub trait Optimizer: Sync {
     /// `edit` wraps a built function, so its entry is a valid `NodeId`.
     ///
     /// # Errors
     ///
     /// Returns the first error the pass hits, typically an IR validation
     /// failure or a pattern-rewrite error.
-    fn apply(
-        &self,
-        edit: &mut crate::EditFunction<'_>,
-        ctx: &OptCtx<'_>,
-    ) -> crate::Result<OptimizationResult>;
+    fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &OptCtx<'_>) -> crate::Result<()>;
+
+    /// Whether the pass runs only once on a converged graph, which
+    /// [`OptimizerPipeline::add`] refuses.
+    fn is_post_pass(&self) -> bool {
+        false
+    }
 
     /// The concrete struct's short name.
     fn name(&self) -> &'static str {
@@ -85,7 +60,8 @@ pub trait Optimizer: OptimizerClone {
 }
 
 /// Runs one pass through a throwaway `EditFunction`: drops the memory
-/// analysis, culls dead nodes before and drains after.
+/// analysis, culls dead nodes before and drains after. `true` when the pass
+/// changed the graph.
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
 ///
@@ -101,8 +77,8 @@ pub fn run_one(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
     octx: &OptCtx<'_>,
-) -> crate::Result<OptimizationResult> {
-    let result = run_one_unvalidated(pass, function, octx)?;
+) -> crate::Result<bool> {
+    let changed = run_one_unvalidated(pass, function, octx)?;
     if let Err(errors) = strider_ir::validate::validate(function) {
         panic!(
             "{} left invalid IR: {}",
@@ -110,7 +86,7 @@ pub fn run_one(
             errors.report(function)
         );
     }
-    Ok(result)
+    Ok(changed)
 }
 
 /// [`run_one`] without the validation, for a fixture malformed on purpose and
@@ -124,35 +100,29 @@ pub fn run_one_unvalidated(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
     octx: &OptCtx<'_>,
-) -> crate::Result<OptimizationResult> {
+) -> crate::Result<bool> {
     // As `run` starts: a memo an edit since the last run can have outdated is
     // dropped.
     function.invalidate_analyses();
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
-    let result = apply_checked(pass, &mut edit, octx)?;
+    let changed = apply_counted(pass, &mut edit, octx)?;
     edit.clean();
-    if result.changed() {
+    if changed {
         edit.function().invalidate_analyses();
     }
-    Ok(result)
+    Ok(changed)
 }
 
-/// [`Optimizer::apply`], asserting in a debug build that a pass reporting
-/// `NoChange` did not edit: the fixed point would exit on it.
-fn apply_checked(
+/// [`Optimizer::apply`], `true` when it moved a use or killed a node.
+fn apply_counted(
     pass: &dyn Optimizer,
     edit: &mut crate::EditFunction<'_>,
     ctx: &OptCtx<'_>,
-) -> crate::Result<OptimizationResult> {
+) -> crate::Result<bool> {
     let generation = edit.generation();
-    let result = pass.apply(edit, ctx)?;
-    debug_assert!(
-        result.changed() || edit.generation() == generation,
-        "{} reported NoChange after moving a use or killing a node",
-        pass.name()
-    );
-    Ok(result)
+    pass.apply(edit, ctx)?;
+    Ok(edit.generation() != generation)
 }
 
 /// Post-pass sibling of [`run_one`]: the memory classes survive a pass that
@@ -160,10 +130,10 @@ fn apply_checked(
 ///
 /// # Errors
 ///
-/// Returns the first error from [`PostOptimizer::apply`].
+/// Returns the first error from [`Optimizer::apply`].
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_post(
-    pass: &dyn PostOptimizer,
+    pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
     octx: &OptCtx<'_>,
 ) -> crate::Result<()> {
@@ -177,7 +147,7 @@ pub fn run_post(
 /// verdict goes after every pass, since an edit through `function_mut` is
 /// not counted.
 fn apply_post(
-    pass: &dyn PostOptimizer,
+    pass: &dyn Optimizer,
     edit: &mut crate::EditFunction<'_>,
     ctx: &OptCtx<'_>,
 ) -> crate::Result<()> {
@@ -192,126 +162,60 @@ fn apply_post(
     Ok(())
 }
 
-/// Defines an object-safe clone shim trait `$shim` for `dyn $obj`, plus its
-/// blanket impl for every `$obj + Clone + 'static`.
-macro_rules! clone_box_shim {
-    ($(#[$attr:meta])* $shim:ident for dyn $obj:ident) => {
-        $(#[$attr])*
-        pub trait $shim {
-            /// `Send` so a pipeline can be handed to another thread: the
-            /// Python binding wraps one in a class that must be, and holding
-            /// it back would keep the GIL held across a whole `analyze`.
-            fn clone_box(&self) -> Box<dyn $obj + Send>;
-        }
-
-        impl<T: $obj + Clone + Send + 'static> $shim for T {
-            fn clone_box(&self) -> Box<dyn $obj + Send> {
-                Box::new(self.clone())
-            }
-        }
-    };
-}
-
-clone_box_shim! {
-    /// Object-safe clone shim for [`Optimizer`].
-    OptimizerClone for dyn Optimizer
-}
-
-/// A pass that runs ONCE on the converged graph.
-///
-/// Assumes the optimizer has converged: may rely on any canonical shape the
-/// in-loop passes settle on (e.g. `Add(_, Neg(_))` for subtraction) rather
-/// than re-normalising.  The memory classes survive a post-pass that changes
-/// nothing; one that changes the graph drops them.
-pub trait PostOptimizer: PostOptimizerClone {
-    /// `edit` wraps the converged function.
-    ///
-    /// # Errors
-    ///
-    /// Returns the first error the pass hits.
-    fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &OptCtx<'_>) -> crate::Result<()>;
-
-    /// The concrete struct's short name.
-    fn name(&self) -> &'static str {
-        std::any::type_name::<Self>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("UnknownPass")
-    }
-}
-
-clone_box_shim! {
-    /// Object-safe clone shim for [`PostOptimizer`].
-    PostOptimizerClone for dyn PostOptimizer
-}
+/// The iterations [`OptimizerPipeline::run`] allows before it reports no
+/// convergence.
+const MAX_ITERS: u32 = 1024;
 
 /// An ordered pass list run in a shared fixed-point loop: every pass is
 /// called once per iteration in registration order, repeating until no pass
-/// reports a change.  A pass whose last run changed nothing is skipped until
-/// some edit changes the live graph, so a pass must be a function of the graph,
-/// its options, the function's claims and the ROM; the claims cannot change
-/// during a run.
+/// moves a use or kills a node.  A pass whose last run changed nothing is
+/// skipped until some edit changes the live graph, so a pass must be a
+/// function of the graph, its options, the function's claims and the ROM;
+/// the claims cannot change during a run.
+///
+/// Passes are held `&'static`: a unit-struct pass is rvalue-promoted at
+/// `add(&Pass)`, so a pipeline copies by reference and crosses threads.
+#[derive(Clone, Default)]
 pub struct OptimizerPipeline {
-    passes: Vec<Box<dyn Optimizer + Send>>,
-    post_passes: Vec<Box<dyn PostOptimizer + Send>>,
-}
-
-impl Default for OptimizerPipeline {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Each pass cloned through its `clone_box`, so a clone runs the same passes
-/// in the same order.
-impl Clone for OptimizerPipeline {
-    fn clone(&self) -> Self {
-        Self {
-            passes: self.passes.iter().map(|pass| pass.clone_box()).collect(),
-            post_passes: self
-                .post_passes
-                .iter()
-                .map(|pass| pass.clone_box())
-                .collect(),
-        }
-    }
+    passes: Vec<&'static dyn Optimizer>,
+    post_passes: Vec<&'static dyn Optimizer>,
 }
 
 impl OptimizerPipeline {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            passes: Vec::new(),
-            post_passes: Vec::new(),
-        }
+        Self::default()
     }
 
-    pub fn add<O: Optimizer + Send + 'static>(&mut self, opt: O) {
-        self.add_boxed(Box::new(opt));
-    }
-
-    /// [`Self::add`] for a pass already boxed.
-    pub fn add_boxed(&mut self, pass: Box<dyn Optimizer + Send>) {
+    /// # Panics
+    ///
+    /// Panics on a post-pass; [`Self::add_post_pass`] takes it.
+    pub fn add(&mut self, pass: &'static dyn Optimizer) {
+        assert!(
+            !pass.is_post_pass(),
+            "{} is a post-pass: add it with add_post_pass",
+            pass.name()
+        );
         self.passes.push(pass);
     }
 
-    pub fn add_post_pass<O: PostOptimizer + Send + 'static>(&mut self, opt: O) {
-        self.add_post_boxed(Box::new(opt));
-    }
-
-    /// [`Self::add_post_pass`] for a pass already boxed.
-    pub fn add_post_boxed(&mut self, pass: Box<dyn PostOptimizer + Send>) {
+    /// A pass that runs ONCE on the converged graph, so it may rely on any
+    /// canonical shape the fixed-point passes settle on (e.g. `Add(_, Neg(_))`
+    /// for subtraction) rather than re-normalising. The memory classes
+    /// survive a post-pass that changes nothing; one that changes the graph
+    /// drops them.
+    pub fn add_post_pass(&mut self, pass: &'static dyn Optimizer) {
         self.post_passes.push(pass);
     }
 
     /// The fixed-point passes in registration order.
     #[must_use]
-    pub fn passes(&self) -> &[Box<dyn Optimizer + Send>] {
+    pub fn passes(&self) -> &[&'static dyn Optimizer] {
         &self.passes
     }
 
     #[must_use]
-    pub fn post_passes(&self) -> &[Box<dyn PostOptimizer + Send>] {
+    pub fn post_passes(&self) -> &[&'static dyn Optimizer] {
         &self.post_passes
     }
 
@@ -326,36 +230,34 @@ impl OptimizerPipeline {
     /// pass error skips the final validation step and wins, leaving `function`
     /// mutated up to the failing rewrite.
     ///
-    /// Exhausting the iteration cap also leaves `function` mutated, but drained
-    /// and validated: the caller keeps the graph, so it is handed back in the
-    /// shape every other exit hands it back in, and a validation failure there
-    /// is reported ahead of the non-convergence.  The post-passes do not run.
+    /// Exhausting the iteration cap also leaves `function` mutated, and
+    /// validated: a validation failure there is reported ahead of the
+    /// non-convergence.  The post-passes do not run.
+    ///
+    /// Every exit hands the graph back drained, with every live access's
+    /// memory class stamped afresh.
     ///
     /// Every pass reads [`strider_ir::Function::assumptions`]; a caller adds
     /// claims with [`strider_ir::Function::assume`] before the run.
     pub fn run(&self, function: &mut strider_ir::Function, ctx: &OptCtx<'_>) -> crate::Result<()> {
-        const MAX_ITERS: u32 = 1024;
         // A memo left by an earlier run or an edit since is dropped: a rewrite
         // can move the address it names.
         function.invalidate_analyses();
         // Scoped so the borrow of `function` ends before validation.
-        let converged = {
+        let outcome = {
             let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
-            let converged = self.fixed_point(&mut edit, ctx, MAX_ITERS)?;
-            // The caller keeps a capped graph, so drain it; the post-passes
-            // read a converged one and are skipped.
+            let outcome = self.converge(&mut edit, ctx);
             edit.clean();
-            if converged {
-                for opt in &self.post_passes {
-                    apply_post(opt.as_ref(), &mut edit, ctx)?;
-                }
-                // What `pattern`'s region filters read; every changing pass
-                // above drained it.
-                crate::mem_analysis::stamp_all(&mut edit);
+            // A failing pass can have moved an address after a stamp.
+            if outcome.is_err() {
+                edit.function().invalidate_analyses();
             }
-            converged
+            // What `pattern`'s region filters read.
+            crate::mem_analysis::stamp_all(&mut edit);
+            outcome
         };
+        let converged = outcome?;
         strider_ir::validate::validate(function).map_err(|e| e.report(function))?;
         anyhow::ensure!(
             converged,
@@ -364,25 +266,40 @@ impl OptimizerPipeline {
         Ok(())
     }
 
+    /// The fixed-point loop, then the post-passes on a graph it converged.
+    fn converge(
+        &self,
+        edit: &mut crate::EditFunction<'_>,
+        ctx: &OptCtx<'_>,
+    ) -> crate::Result<bool> {
+        let converged = self.fixed_point(edit, ctx)?;
+        if converged {
+            edit.clean();
+            for opt in &self.post_passes {
+                apply_post(*opt, edit, ctx)?;
+            }
+        }
+        Ok(converged)
+    }
+
     /// Runs the passes until an iteration changes nothing (`true`) or
-    /// `max_iters` iterations have each changed something (`false`).
+    /// [`MAX_ITERS`] iterations have each changed something (`false`).
     fn fixed_point(
         &self,
         edit: &mut crate::EditFunction<'_>,
         ctx: &OptCtx<'_>,
-        max_iters: u32,
     ) -> crate::Result<bool> {
         // Per pass, `edits()` after its last run when that run changed nothing.
         let mut settled: Vec<Option<u64>> = vec![None; self.passes.len()];
-        for _ in 0..max_iters {
+        for _ in 0..MAX_ITERS {
             let mut changed = false;
             for (opt, settled) in self.passes.iter().zip(&mut settled) {
                 if *settled == Some(edit.edits()) {
                     continue;
                 }
-                let result = apply_checked(opt.as_ref(), edit, ctx)?;
-                *settled = (!result.changed()).then(|| edit.edits());
-                if result.changed() {
+                let pass_changed = apply_counted(*opt, edit, ctx)?;
+                *settled = (!pass_changed).then(|| edit.edits());
+                if pass_changed {
                     changed = true;
                     // Drain so the next pass sees a culled graph, and drop the
                     // memos a rewrite can invalidate.
@@ -404,46 +321,44 @@ mod tests {
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
-    use strider_ir_test_utils::{IrBuilderEx, stack_args_at};
+    use strider_ir_test_utils::{IrBuilderEx, IrWalkerEx, stack_args_at};
 
     /// Single-region function returning `IntConst(k)`.
     fn one_const_fn(k: u64) -> strider_ir::Function {
-        let mut b = strider_ir_test_utils::empty_builder().unwrap();
-        let region = b.create_region_all().unwrap();
-        b.set_entry_region_all(region).unwrap();
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(k, ValueType::int(64)).unwrap();
-        b.build_return(Some(v), &[]).unwrap();
-        b.set_lift_addr(None);
-        b.build().unwrap()
+        crate::test_support::make_fn(|b| b.build_int_const(k, ValueType::int(64))).unwrap()
     }
 
     /// `Add(1, 2)` returned: ConstantFold folds it.
     fn folding_fn() -> strider_ir::Function {
-        let mut b = strider_ir_test_utils::empty_builder().unwrap();
-        let region = b.create_region_all().unwrap();
-        b.set_entry_region_all(region).unwrap();
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
-        let two = b.build_int_const(2u64, ValueType::int(64)).unwrap();
-        let sum = b
-            .build_int_binary_operation(one, two, strider_ir::IntBinaryOp::Add, ValueType::int(64))
-            .unwrap();
-        b.build_return(Some(sum), &[]).unwrap();
-        b.set_lift_addr(None);
-        b.build().unwrap()
+        crate::test_support::make_fn(|b| {
+            let one = b.build_int_const(1u64, ValueType::int(64))?;
+            b.build_const_binop(2u64, one, strider_ir::IntBinaryOp::Add, ValueType::int(64))
+        })
+        .unwrap()
     }
 
-    /// A boxed pass reports its own name, and a clone runs the same passes in
-    /// the same order: the copy every Python-driven analysis runs. Mutation:
-    /// make `add_boxed` drop its pass.
+    /// The fixed-point loop refuses a post-pass. Mutation: drop the check.
     #[test]
-    fn a_cloned_pipeline_of_boxed_passes_runs_as_the_original() -> crate::Result<()> {
+    #[should_panic(expected = "FunctionArgDetect is a post-pass")]
+    fn add_refuses_a_post_pass() {
+        super::OptimizerPipeline::new().add(&crate::FunctionArgDetect);
+    }
+
+    /// Mutation: leave `CallStackArgCollect` a fixed-point pass.
+    #[test]
+    #[should_panic(expected = "CallStackArgCollect is a post-pass")]
+    fn add_refuses_the_call_argument_collector() {
+        super::OptimizerPipeline::new().add(&crate::CallStackArgCollect);
+    }
+
+    /// A pass reports its own name, and a clone runs the same passes in the
+    /// same order: the copy every Python-driven analysis runs. Mutation: make
+    /// `add` drop its pass.
+    #[test]
+    fn a_cloned_pipeline_runs_as_the_original() -> crate::Result<()> {
         let mut pipeline = super::OptimizerPipeline::new();
-        pipeline.add_boxed(Box::new(crate::ConstantFold::new()));
-        pipeline.add_post_boxed(Box::new(crate::CallStackArgCollect));
+        pipeline.add(&crate::ConstantFold);
+        pipeline.add_post_pass(&crate::CallStackArgCollect);
         let names = |p: &super::OptimizerPipeline| {
             (
                 p.passes().iter().map(|p| p.name()).collect::<Vec<_>>(),
@@ -487,26 +402,43 @@ mod tests {
         Ok(())
     }
 
-    /// A non-monotone pass that always claims a change must hit the
+    /// Redirects the returned constant `k` to `k + 1`: a change every run.
+    fn bump_returned_const(edit: &mut crate::EditFunction<'_>) -> crate::Result<()> {
+        let ret = edit
+            .live_of_kind(|k| matches!(k, strider_ir::node::NodeKind::Return))
+            .next()
+            .expect("the fixture returns");
+        // Return inputs are [ctrl, mem, value, ...].
+        let value = edit.node_inputs(ret)[2];
+        let k = edit
+            .int_const_u128(value)
+            .expect("the fixture returns a constant");
+        let next = edit.build_int_const(k + 1, ValueType::int(64))?;
+        assert!(edit.replace_value(value, next), "the return reads it");
+        Ok(())
+    }
+
+    /// A non-monotone pass that changes the graph every run must hit the
     /// iteration cap instead of spinning forever.
     #[test]
     fn fixed_point_limit_exceeded() {
-        use super::{OptimizationResult, Optimizer, OptimizerPipeline};
+        use super::{Optimizer, OptimizerPipeline};
         #[derive(Clone)]
         struct AlwaysChanged;
         impl Optimizer for AlwaysChanged {
             fn apply(
                 &self,
-                _edit: &mut crate::EditFunction<'_>,
+                edit: &mut crate::EditFunction<'_>,
                 _ctx: &OptCtx<'_>,
-            ) -> crate::Result<OptimizationResult> {
-                Ok(OptimizationResult::Changed)
+            ) -> crate::Result<()> {
+                bump_returned_const(edit)?;
+                Ok(())
             }
         }
 
         let mut function = one_const_fn(0);
         let mut pipeline = OptimizerPipeline::new();
-        pipeline.add(AlwaysChanged);
+        pipeline.add(&AlwaysChanged);
         let err = pipeline
             .run(&mut function, &OptCtx::new(None))
             .expect_err("pipeline must bail out on a non-monotone pass");
@@ -521,7 +453,7 @@ mod tests {
     /// and reports its failure ahead of the non-convergence.
     #[test]
     fn fixed_point_limit_still_validates() {
-        use super::{OptimizationResult, Optimizer, OptimizerPipeline};
+        use super::{Optimizer, OptimizerPipeline};
         use strider_ir::node::NodeKind;
         /// Never converges, and leaves a reachable node with no
         /// asm-fingerprint, which `validate` refuses.
@@ -532,7 +464,7 @@ mod tests {
                 &self,
                 edit: &mut crate::EditFunction<'_>,
                 _ctx: &OptCtx<'_>,
-            ) -> crate::Result<OptimizationResult> {
+            ) -> crate::Result<()> {
                 let ret = edit
                     .live_of_kind(|k| matches!(k, NodeKind::Return))
                     .next()
@@ -540,17 +472,19 @@ mod tests {
                 // Return inputs are [ctrl, mem, value]; a fourth is this
                 // pass's own, added once.
                 if edit.node_inputs(ret).len() == 3 {
-                    // `build_int_const` carries no contributor stamp.
-                    let value = edit.build_int_const(7u64, ValueType::int(64))?;
+                    // `build_int_const` carries no contributor stamp, and the
+                    // bumped constant never reaches this one.
+                    let value = edit.build_int_const(0xDEAD_BEEFu64, ValueType::int(64))?;
                     edit.add_node_input(ret, value);
                 }
-                Ok(OptimizationResult::Changed)
+                bump_returned_const(edit)?;
+                Ok(())
             }
         }
 
         let mut function = one_const_fn(0);
         let mut pipeline = OptimizerPipeline::new();
-        pipeline.add(AlwaysChangedUnattributed);
+        pipeline.add(&AlwaysChangedUnattributed);
         let err = pipeline
             .run(&mut function, &OptCtx::new(None))
             .expect_err("the pass never converges");
@@ -564,7 +498,7 @@ mod tests {
     /// drops the memos an edit since the last run can have outdated.
     #[test]
     fn run_one_resets_the_memory_analysis() -> crate::Result<()> {
-        use super::{OptimizationResult, Optimizer};
+        use super::Optimizer;
         #[derive(Clone)]
         struct NoOp;
         impl Optimizer for NoOp {
@@ -572,13 +506,13 @@ mod tests {
                 &self,
                 _edit: &mut crate::EditFunction<'_>,
                 _ctx: &OptCtx<'_>,
-            ) -> crate::Result<OptimizationResult> {
-                Ok(OptimizationResult::NoChange)
+            ) -> crate::Result<()> {
+                Ok(())
             }
         }
 
         let mut function = one_const_fn(5);
-        let returned = crate::test_support::return_value(function.graph())?;
+        let returned = function.returned();
         function.set_stack_slot(returned, returned, 16);
         assert!(
             function.memory_decomp(returned).1.is_some(),
@@ -596,7 +530,7 @@ mod tests {
     #[test]
     fn run_resets_the_memory_analysis() -> crate::Result<()> {
         let mut function = one_const_fn(5);
-        let returned = crate::test_support::return_value(function.graph())?;
+        let returned = function.returned();
         function.set_stack_slot(returned, returned, 16);
         super::OptimizerPipeline::new().run(&mut function, &OptCtx::new(None))?;
         assert!(
@@ -619,7 +553,7 @@ mod tests {
         };
         function.assume(&claims);
         let mut folding = super::OptimizerPipeline::new();
-        folding.add(crate::ConstantFold::new());
+        folding.add(&crate::ConstantFold);
         folding.run(&mut function, &OptCtx::new(None))?;
         let pass = CountsRuns(std::sync::Arc::default());
         super::run_one_unvalidated(&pass, &mut function, &OptCtx::new(None))?;
@@ -644,18 +578,18 @@ mod tests {
                 &self,
                 edit: &mut crate::EditFunction<'_>,
                 _ctx: &OptCtx<'_>,
-            ) -> crate::Result<super::OptimizationResult> {
+            ) -> crate::Result<()> {
                 let old = crate::test_support::return_value(edit.function().graph())?;
                 edit.function().set_stack_slot(old, old, 16);
                 let value = edit.build_int_const(9u64, ValueType::int(64))?;
                 edit.absorb_fingerprint(value, old);
                 edit.replace_value(old, value);
-                Ok(super::OptimizationResult::Changed)
+                Ok(())
             }
         }
 
         let mut function = one_const_fn(5);
-        let returned = crate::test_support::return_value(function.graph())?;
+        let returned = function.returned();
         crate::pipeline::run_one(&StampsThenRewrites, &mut function, &OptCtx::new(None))?;
         assert!(function.memory_decomp(returned).1.is_none());
         Ok(())
@@ -666,7 +600,7 @@ mod tests {
     fn run_post_keeps_the_memos() -> crate::Result<()> {
         #[derive(Clone)]
         struct NoOpPost;
-        impl super::PostOptimizer for NoOpPost {
+        impl super::Optimizer for NoOpPost {
             fn apply(
                 &self,
                 _edit: &mut crate::EditFunction<'_>,
@@ -677,7 +611,7 @@ mod tests {
         }
 
         let mut function = one_const_fn(5);
-        let returned = crate::test_support::return_value(function.graph())?;
+        let returned = function.returned();
         function.set_stack_slot(returned, returned, 16);
         super::run_post(&NoOpPost, &mut function, &OptCtx::new(None))?;
         assert!(function.memory_decomp(returned).1.is_some());
@@ -691,7 +625,7 @@ mod tests {
         /// Returns `Add(1, 2)`'s first operand instead, through the raw graph.
         #[derive(Clone)]
         struct RewiresThroughFunctionMut;
-        impl super::PostOptimizer for RewiresThroughFunctionMut {
+        impl super::Optimizer for RewiresThroughFunctionMut {
             fn apply(
                 &self,
                 edit: &mut crate::EditFunction<'_>,
@@ -722,7 +656,7 @@ mod tests {
     #[derive(Clone)]
     struct Stamps;
 
-    impl super::PostOptimizer for Stamps {
+    impl super::Optimizer for Stamps {
         fn apply(
             &self,
             edit: &mut crate::EditFunction<'_>,
@@ -738,59 +672,167 @@ mod tests {
     #[derive(Clone)]
     struct MovesStoreDown;
 
-    impl super::PostOptimizer for MovesStoreDown {
+    impl super::Optimizer for MovesStoreDown {
         fn apply(
             &self,
             edit: &mut crate::EditFunction<'_>,
             _ctx: &OptCtx<'_>,
         ) -> crate::Result<()> {
-            let store = edit
-                .live_of_kind(|k| matches!(k, strider_ir::node::NodeKind::Store(_)))
-                .next()
-                .expect("the fixture stores");
-            let addr = edit.access_address(store).expect("a store has an address");
-            let add = edit.producer(addr);
-            let old = edit.nth_input(add, 1).expect("an Add has two operands");
-            let c = edit.int_const_u128(old).expect("the addend is constant");
-            let moved = edit.build_int_const(c.wrapping_sub(4) as u64, ValueType::int(32))?;
-            edit.absorb_fingerprint(moved, old);
-            let slot = edit.node_input_id_at(add, 1)?;
-            edit.update_input(slot, moved);
-            Ok(())
+            move_store_down(edit)
         }
+    }
+
+    fn move_store_down(edit: &mut crate::EditFunction<'_>) -> crate::Result<()> {
+        let store = edit
+            .live_of_kind(|k| matches!(k, strider_ir::node::NodeKind::Store(_)))
+            .next()
+            .expect("the fixture stores");
+        let addr = edit.access_address(store).expect("a store has an address");
+        let add = edit.producer(addr);
+        let old = edit.nth_input(add, 1).expect("an Add has two operands");
+        let c = edit.int_const_u128(old).expect("the addend is constant");
+        let moved = edit.build_int_const(c.wrapping_sub(4) as u64, ValueType::int(32))?;
+        edit.absorb_fingerprint(moved, old);
+        let slot = edit.node_input_id_at(add, 1)?;
+        edit.update_input(slot, moved);
+        Ok(())
+    }
+
+    /// Stamps the memory classes, moves the store, then fails.
+    #[derive(Clone)]
+    struct StampsMovesThenFails;
+
+    impl super::Optimizer for StampsMovesThenFails {
+        fn apply(
+            &self,
+            edit: &mut crate::EditFunction<'_>,
+            _ctx: &OptCtx<'_>,
+        ) -> crate::Result<()> {
+            crate::mem_analysis::stamp_all(edit);
+            move_store_down(edit)?;
+            anyhow::bail!("failed after the move")
+        }
+    }
+
+    /// `store sp - 4 = 0x42; return`, its entry phis collapsed so the address
+    /// reads the entry SP.
+    fn sp_store_fn() -> crate::Result<strider_ir::Function> {
+        let mut function = raw_sp_store_fn()?;
+        super::run_one(&crate::PhiCollapse, &mut function, &OptCtx::new(None))?;
+        Ok(function)
+    }
+
+    fn raw_sp_store_fn() -> crate::Result<strider_ir::Function> {
+        strider_ir_test_utils::make_sp_fn(strider_ir_test_utils::stack_vn_x86(), |b, sp_v| {
+            let minus_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::int(32))?;
+            let addr = b.build_int_binary_operation(
+                sp_v,
+                minus_four,
+                strider_ir::IntBinaryOp::Add,
+                ValueType::int(32),
+            )?;
+            let data = b.build_int_const(0x42u64, ValueType::int(32))?;
+            b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+            b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+            b.build_return(None, &[])?;
+            Ok(())
+        })
+    }
+
+    /// The stack offset the class of `function`'s store names.
+    fn store_offset(function: &strider_ir::Function) -> Option<i128> {
+        let store = function
+            .walk()
+            .find(|&n| matches!(function.node_kind(n), strider_ir::node::NodeKind::Store(_)))
+            .expect("the store survives");
+        function.stack_offset(store).map(|(_, k)| k)
     }
 
     /// A post-pass that rewires an address's producers leaves no stale
     /// class: the stamp after the post-passes reads the moved slot.
     #[test]
     fn a_post_pass_rewiring_an_address_restamps_its_class() -> crate::Result<()> {
-        let mut function =
-            strider_ir_test_utils::make_sp_fn(strider_ir_test_utils::stack_vn_x86(), |b, sp_v| {
-                let minus_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::int(32))?;
-                let addr = b.build_int_binary_operation(
-                    sp_v,
-                    minus_four,
-                    strider_ir::IntBinaryOp::Add,
-                    ValueType::int(32),
-                )?;
-                let data = b.build_int_const(0x42u64, ValueType::int(32))?;
-                b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-                b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-                b.build_return(None, &[])?;
-                Ok(())
-            })?;
-
+        let mut function = raw_sp_store_fn()?;
         let mut p = super::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add_post_pass(Stamps);
-        p.add_post_pass(MovesStoreDown);
+        p.add(&crate::PhiCollapse);
+        p.add_post_pass(&Stamps);
+        p.add_post_pass(&MovesStoreDown);
         p.run(&mut function, &OptCtx::new(None))?;
+        assert_eq!(store_offset(&function), Some(-8));
+        Ok(())
+    }
 
-        let store = function
-            .walk()
-            .find(|&n| matches!(function.node_kind(n), strider_ir::node::NodeKind::Store(_)))
-            .expect("the store survives");
-        assert_eq!(function.stack_offset(store).map(|(_, k)| k), Some(-8));
+    /// A pass failing after it moved an address, in the loop or after it,
+    /// leaves the class of the moved slot, not the one it stamped before.
+    /// Mutation: return the error before the restamp.
+    #[test]
+    fn a_failing_pass_leaves_no_stale_class() -> crate::Result<()> {
+        for post in [false, true] {
+            let mut function = sp_store_fn()?;
+            let mut p = super::OptimizerPipeline::new();
+            if post {
+                p.add_post_pass(&StampsMovesThenFails);
+            } else {
+                p.add(&StampsMovesThenFails);
+            }
+            let err = p.run(&mut function, &OptCtx::new(None)).unwrap_err();
+            assert!(err.to_string().contains("after the move"), "{err}");
+            assert_eq!(store_offset(&function), Some(-8), "post-pass: {post}");
+        }
+        Ok(())
+    }
+
+    /// A capped run hands back its graph with every access classed, as a
+    /// converged one does.
+    #[test]
+    fn a_capped_run_classes_every_access() -> crate::Result<()> {
+        /// Moves the store down a slot every run.
+        #[derive(Clone)]
+        struct KeepsMoving;
+        impl super::Optimizer for KeepsMoving {
+            fn apply(
+                &self,
+                edit: &mut crate::EditFunction<'_>,
+                _ctx: &OptCtx<'_>,
+            ) -> crate::Result<()> {
+                move_store_down(edit)
+            }
+        }
+        let mut function = sp_store_fn()?;
+        let mut p = super::OptimizerPipeline::new();
+        p.add(&KeepsMoving);
+        let err = p.run(&mut function, &OptCtx::new(None)).unwrap_err();
+        assert!(err.to_string().contains("did not converge"), "{err}");
+        let moved = -4 - 4 * i128::from(super::MAX_ITERS);
+        assert_eq!(store_offset(&function), Some(moved));
+        Ok(())
+    }
+
+    /// A rule failing after an earlier one moved an address still hands the
+    /// function back with the moved slot's class. Mutation: return the
+    /// error before the refresh.
+    #[test]
+    fn a_failing_rule_leaves_no_stale_class() -> crate::Result<()> {
+        use strider_ir::node::{NodeId, NodeKind, ValueId};
+        let mut function = sp_store_fn()?;
+        let mut edit = crate::EditFunction::new(&mut function);
+        edit.cull_dead();
+        crate::mem_analysis::stamp_all(&mut edit);
+        let rule =
+            |edit: &mut crate::EditFunction<'_>, node: NodeId| -> crate::Result<Option<ValueId>> {
+                match edit.node_kind(node) {
+                    NodeKind::Store(_) => {
+                        move_store_down(edit)?;
+                        Ok(None)
+                    }
+                    NodeKind::InitialVar(_) => anyhow::bail!("failed after the move"),
+                    _ => Ok(None),
+                }
+            };
+        let err = crate::apply_rules_count(&mut edit, &[rule]).unwrap_err();
+        assert!(err.to_string().contains("after the move"), "{err}");
+        drop(edit);
+        assert_eq!(store_offset(&function), Some(-8));
         Ok(())
     }
 
@@ -807,10 +849,10 @@ mod tests {
             &self,
             edit: &mut crate::EditFunction<'_>,
             _ctx: &OptCtx<'_>,
-        ) -> crate::Result<super::OptimizationResult> {
+        ) -> crate::Result<()> {
             let run = self.runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if run >= self.edits {
-                return Ok(super::OptimizationResult::NoChange);
+                return Ok(());
             }
             let ret = edit
                 .live_of_kind(|k| matches!(k, strider_ir::node::NodeKind::Return))
@@ -820,7 +862,7 @@ mod tests {
             let old = edit.node_inputs(ret)[strider_ir::node::NodeKind::Return.input_head_len()];
             edit.absorb_fingerprint(value, old);
             edit.replace_value(old, value);
-            Ok(super::OptimizationResult::Changed)
+            Ok(())
         }
     }
 
@@ -833,9 +875,9 @@ mod tests {
             &self,
             _edit: &mut crate::EditFunction<'_>,
             _ctx: &OptCtx<'_>,
-        ) -> crate::Result<super::OptimizationResult> {
+        ) -> crate::Result<()> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Ok(super::OptimizationResult::NoChange)
+            Ok(())
         }
     }
 
@@ -849,47 +891,46 @@ mod tests {
         let rewrites = Arc::new(AtomicUsize::new(0));
         let counted = Arc::new(AtomicUsize::new(0));
         let mut pipeline = super::OptimizerPipeline::new();
-        pipeline.add(RewritesReturn {
+        // A pass is held `&'static`; each counter leaks one box.
+        pipeline.add(Box::leak(Box::new(RewritesReturn {
             edits: 3,
             runs: Arc::clone(&rewrites),
-        });
-        pipeline.add(CountsRuns(Arc::clone(&counted)));
+        })));
+        pipeline.add(Box::leak(Box::new(CountsRuns(Arc::clone(&counted)))));
         pipeline.run(&mut one_const_fn(1), &OptCtx::new(None))?;
         assert_eq!(rewrites.load(Ordering::Relaxed), 4);
         assert_eq!(counted.load(Ordering::Relaxed), 3);
         Ok(())
     }
 
-    /// An edit reported as no change would let the fixed point exit early.
-    #[cfg(debug_assertions)]
+    /// A pass reports nothing: the loop reruns exactly while it edits.
+    /// Mutation: have the loop see no change.
     #[test]
-    #[should_panic(expected = "reported NoChange after moving a use")]
-    fn a_pass_hiding_an_edit_trips_the_debug_check() {
-        use super::{OptimizationResult, Optimizer, OptimizerPipeline};
-        use strider_ir::node::NodeKind;
+    fn the_loop_reruns_while_a_pass_edits() -> crate::Result<()> {
+        use super::{Optimizer, OptimizerPipeline};
         #[derive(Clone)]
-        struct HidesAnEdit;
-        impl Optimizer for HidesAnEdit {
+        struct BumpsBelowThree;
+        impl Optimizer for BumpsBelowThree {
             fn apply(
                 &self,
                 edit: &mut crate::EditFunction<'_>,
                 _ctx: &OptCtx<'_>,
-            ) -> crate::Result<OptimizationResult> {
-                let ret = edit
-                    .live_of_kind(|k| matches!(k, NodeKind::Return))
-                    .next()
-                    .expect("the fixture returns");
-                let value = edit.build_int_const(9u64, ValueType::int(64))?;
-                let slot = edit.node_input_id_at(ret, 2)?;
-                edit.update_input(slot, value);
-                Ok(OptimizationResult::NoChange)
+            ) -> crate::Result<()> {
+                let returned = crate::test_support::return_value(edit.function().graph())?;
+                if edit.int_const_u128(returned) < Some(3) {
+                    bump_returned_const(edit)?;
+                }
+                Ok(())
             }
         }
 
-        let mut function = one_const_fn(1);
+        let mut function = one_const_fn(0);
         let mut pipeline = OptimizerPipeline::new();
-        pipeline.add(HidesAnEdit);
-        let _ = pipeline.run(&mut function, &OptCtx::new(None));
+        pipeline.add(&BumpsBelowThree);
+        pipeline.run(&mut function, &OptCtx::new(None))?;
+        let returned = function.returned();
+        assert_eq!(function.int_const_u128(returned), Some(3));
+        Ok(())
     }
 
     /// A pipeline carrying a post-pass must still produce a graph that
@@ -910,14 +951,12 @@ mod tests {
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;
         b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(None, &[])?;
-        b.set_lift_addr(None);
         let mut function = b.build()?;
 
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold::new());
-        p.add_post_pass(CallStackArgCollect);
+        p.add(&ConstantFold);
+        p.add_post_pass(&CallStackArgCollect);
         p.run(&mut function, &OptCtx::new(None))?;
         Ok(())
     }
@@ -957,19 +996,18 @@ mod tests {
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
         let mut function = b.build()?;
 
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold::new());
-        p.add(KnownBits);
-        p.add(PhiCollapse);
-        p.add(RegionCollapse);
-        p.add(DeadBranchElimination);
-        p.add(LoadForward);
+        p.add(&ConstantFold);
+        p.add(&KnownBits);
+        p.add(&PhiCollapse);
+        p.add(&RegionCollapse);
+        p.add(&DeadBranchElimination);
+        p.add(&LoadForward);
         p.run(&mut function, &OptCtx::new(None))?;
 
-        let val = crate::test_support::return_value(function.graph())?;
+        let val = function.returned();
         let kind = *function.kind_of_value(val);
         assert!(
             matches!(kind, NodeKind::IntConst(_)) && function.int_const_u128(val) == Some(0x42),
@@ -1005,22 +1043,7 @@ mod tests {
 
     #[test]
     fn optimizer_name_is_the_concrete_struct_name() {
-        let p: Box<dyn Optimizer + Send> = Box::new(crate::opt::constant_fold::ConstantFold);
+        let p: &dyn Optimizer = &crate::opt::constant_fold::ConstantFold;
         assert_eq!(p.name(), "ConstantFold");
-    }
-}
-
-#[cfg(test)]
-mod clone_shim_tests {
-    /// `clone_box` is reachable by NAME, not only through the blanket impl: a
-    /// consumer holding a pass out of `OptimizerPipeline::passes` has to be
-    /// able to clone it, and the shim traits live in this private module.
-    #[test]
-    fn a_pass_out_of_passes_can_be_cloned_by_name() {
-        use crate::{Optimizer, OptimizerClone};
-        let pipeline = crate::default_pipeline();
-        let first: &(dyn Optimizer + Send) = &**pipeline.passes().first().expect("a pass");
-        let cloned: Box<dyn Optimizer + Send> = OptimizerClone::clone_box(first);
-        assert_eq!(cloned.name(), first.name());
     }
 }

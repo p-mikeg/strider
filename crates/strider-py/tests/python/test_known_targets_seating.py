@@ -109,14 +109,11 @@ def test_an_empty_seed_leaves_the_classifier_free_to_resolve():
         assert cfg.region_at(arm) is not None
 
 
-def test_a_seed_that_displaces_the_classifier_is_reported_unverified():
-    """A seed the classifier never confirmed is not `unresolved` (the caller
-    asserted the answer), but nothing checked it, so it is reported.
-
-    Seeding x64 `main`'s dispatch with only itself changes the CFG the
-    classifier reads: the selector stops deriving and the site converges
-    holding just the seed.
-    """
+def test_a_seed_that_folds_the_selector_keeps_the_derived_arms():
+    """Seeding x64 `main`'s dispatch with only itself folds its selector to a
+    constant; seating that constant re-forms the loop, so the table derives
+    again and the site holds the seed beside every derived arm. A site the
+    classifier also answered is not an unverified seed."""
     dispatch = 0x401042
     result = strider.lift.load_elf(str(fixture_path("x64", "switch"))).analyze(
         "main",
@@ -125,6 +122,23 @@ def test_a_seed_that_displaces_the_classifier_is_reported_unverified():
         ),
     )
     assert result.unresolved == []
+    assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == []
+    derived = (0x401050, 0x401070, 0x401078, 0x401090, 0x401098, 0x4010A0, 0x4010A8, 0x4010AD)
+    for arm in derived:
+        assert result.cfg.region_at(arm) is not None, f"no region at derived arm {arm:#x}"
+
+
+def test_a_seed_with_resolution_off_is_reported_unverified():
+    """With resolution off nothing derives the site, so the seed is its only
+    answer and nothing checked it."""
+    dispatch = 0x401042
+    result = strider.lift.load_elf(str(fixture_path("x64", "switch"))).analyze(
+        "main",
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(known_targets={dispatch: [dispatch]}),
+            resolve_indirect_branches=False,
+        ),
+    )
     assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == [dispatch]
 
 

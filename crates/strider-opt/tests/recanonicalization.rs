@@ -35,7 +35,6 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
         .build_int_binary_operation(add1, add2, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(add3), &[]).unwrap();
-    b.set_lift_addr(None);
     let mut fg = b.build().unwrap();
 
     let add1_node = fg.producer(add1);
@@ -101,7 +100,6 @@ fn clean_does_not_merge_when_output_type_differs() {
         .build_int_binary_operation(w32, w16, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
-    b.set_lift_addr(None);
     let mut fg = b.build().unwrap();
 
     let t32_node = fg.producer(t32);
@@ -148,7 +146,6 @@ fn default_pipeline_runs_its_passes_in_the_documented_order() {
             "PhiCollapse",
             "RegionCollapse",
             "DeadBranchElimination",
-            "CfgDetach",
             "LoadForward",
         ]
     );

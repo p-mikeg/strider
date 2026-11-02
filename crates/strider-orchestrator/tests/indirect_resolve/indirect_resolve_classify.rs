@@ -20,7 +20,7 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
 
 /// The verdicts below were pinned under the default claims; the fixtures are
 /// optimized at the floor, so a copy claims them first.
-fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
+fn classify_target_bare(view: &strider_ir::Function) -> Option<ResolvedTargets> {
     let mut view = view.clone();
     view.assume(&strider_orchestrator::opt::AssumptionOptions::default());
     classify_target(&view, sole_branch(&view), None)
@@ -37,7 +37,7 @@ use crate::common::indirect_resolve_helpers::{
 #[test]
 fn initial_var_lr_to_link_register() {
     let (function, _target, _lr_vn) = build_bx_lr_scenario();
-    let result = classify_target_bare(&function).expect("classify");
+    let result = classify_target_bare(&function);
     assert_eq!(result, Some(ResolvedTargets::LinkRegister));
 }
 
@@ -47,7 +47,7 @@ fn initial_var_lr_to_link_register() {
 #[test]
 fn initial_var_non_lr_returns_none() {
     let (function, _target) = build_initial_var_target_scenario_x86_64();
-    let result = classify_target_bare(&function).expect("classify");
+    let result = classify_target_bare(&function);
     assert_eq!(result, None);
 }
 
@@ -62,7 +62,7 @@ fn initial_var_non_lr_returns_none() {
 #[test]
 fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
     let (function, _target, _lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
-    let result = classify_target_bare(&function).expect("classify");
+    let result = classify_target_bare(&function);
     assert_eq!(
         result,
         Some(ResolvedTargets::LinkRegister),
@@ -84,7 +84,7 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;
     let (function, _target, _lr_vn) = build_push_target_pop_pc_scenario(target);
-    let result = classify_target_bare(&function).expect("classify");
+    let result = classify_target_bare(&function);
     assert_eq!(
         result,
         Some(ResolvedTargets::Single(target.into())),
@@ -110,7 +110,7 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 fn stack_array_two_targets_resolves_to_multiple() {
     let targets = [0x401190u64, 0x401180u64];
     let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
-    let result = classify_target_bare(&function).expect("classify");
+    let result = classify_target_bare(&function);
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(
@@ -127,7 +127,7 @@ fn stack_array_two_targets_resolves_to_multiple() {
 fn stack_array_four_targets_resolves_to_multiple() {
     let targets = [0x401_0a0u64, 0x401_0b0, 0x401_0c0, 0x401_0d0];
     let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
-    let result = classify_target_bare(&function).expect("classify");
+    let result = classify_target_bare(&function);
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(
@@ -146,8 +146,8 @@ fn stack_array_four_targets_resolves_to_multiple() {
 #[test]
 fn classify_target_is_idempotent_on_unchanged_graph() {
     let (function, _target) = build_int_const_target_scenario_via_stack(0x0000_0123);
-    let first = classify_target_bare(&function).expect("classify #1");
-    let second = classify_target_bare(&function).expect("classify #2");
+    let first = classify_target_bare(&function);
+    let second = classify_target_bare(&function);
     assert_eq!(
         first, second,
         "two consecutive classify_target calls on an unchanged graph must agree",
@@ -226,7 +226,7 @@ fn build_lr_clobbered_by_call_scenario()
 #[test]
 fn bx_lr_after_call_does_not_classify_as_link_register() {
     let (function, _target, _lr_vn) = build_lr_clobbered_by_call_scenario();
-    let result = classify_target_bare(&function).expect("classify");
+    let result = classify_target_bare(&function);
     assert_ne!(
         result,
         Some(ResolvedTargets::LinkRegister),

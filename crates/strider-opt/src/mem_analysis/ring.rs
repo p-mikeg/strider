@@ -48,31 +48,12 @@ pub(super) fn wrapped_ranges(ty: Option<ValueType>, start: i128, end: i128) -> [
     [(start, top), (-top, end - modulus)]
 }
 
-/// How far apart two offsets reduced at `bits` (below 128) may lie and still
-/// compare in integer order, for accesses of up to `span` bytes: half the
-/// modulus less the span.  A span past the half-modulus leaves no comparable
-/// distance, so the bound floors at zero.  Not [`ring_overlap`]'s modular
-/// distance: [`super::alias::offsets_comparable`] says why, and which classes
-/// take the ring instead.
-pub(super) fn comparable_distance(bits: u32, span: i128) -> u128 {
-    (1i128 << (bits - 1))
-        .saturating_sub(span)
-        .max(0)
-        .unsigned_abs()
-}
-
 /// `v` sign-extended from bit `bits`, i.e. reduced into the signed range of
 /// that width.  `bits` is below 128; at 128 the value already is its own
 /// reduction.
 fn sign_extend(bits: u32, v: i128) -> i128 {
     let shift = 128 - bits;
     (((v as u128) << shift) as i128) >> shift
-}
-
-/// Whether `[a, a + a_len)` and `[b, b + b_len)` share a byte mod `mask + 1`.
-fn masked_overlap(mask: u128, a: i128, a_len: i128, b: i128, b_len: i128) -> bool {
-    let ahead = |from: i128, to: i128| (to.wrapping_sub(from) as u128) & mask;
-    ahead(a, b) < a_len.max(0) as u128 || ahead(b, a) < b_len.max(0) as u128
 }
 
 /// Whether `[a, a + a_len)` and `[b, b + b_len)` share a byte mod 2^w, `w` the
@@ -100,7 +81,8 @@ pub(crate) fn ring_overlap(
 /// [`ring_overlap`] at an address width given as bits (at most 128), which is
 /// what the alias verdict and the store index carry.
 pub(super) fn ring_overlap_at(bits: u32, a: i128, a_len: i128, b: i128, b_len: i128) -> bool {
-    masked_overlap(mask_below(bits), a, a_len, b, b_len)
+    let ahead = |from: i128, to: i128| (to.wrapping_sub(from) as u128) & mask_below(bits);
+    ahead(a, b) < a_len.max(0) as u128 || ahead(b, a) < b_len.max(0) as u128
 }
 
 /// The inclusive window `[lo, hi]` as the ranges of reduced offsets it covers,

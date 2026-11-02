@@ -90,20 +90,23 @@ fn frame_address_escapes(function: &Function) -> bool {
     function.frame_address_in_call_register() || any_exposed(function, |_| true)
 }
 
-/// Whether a stack address that may point at or above `area_start` bytes past
-/// the entry SP (the incoming-argument memory) escapes; see the module doc.
-pub(crate) fn incoming_area_escapes(function: &Function, area_start: i128) -> bool {
+/// Whether a callee may hold a pointer into the incoming arguments' memory,
+/// register homes included: a stack address that may point at or above the
+/// convention's incoming-argument start past the entry SP escapes.  See the
+/// module doc.
+pub(crate) fn incoming_area_escapes(function: &Function) -> bool {
+    let Some(area_start) = function.default_cc().incoming_args_start() else {
+        return false;
+    };
     if function
         .call_register_frame_reach()
         .is_some_and(|reach| reach >= area_start)
     {
         return true;
     }
-    let entry_sp = function
-        .initial_sp()
-        .and_then(|node| function.node_outputs(node).first().copied());
     any_exposed(function, |v| {
-        !decompose(function, v).is_some_and(|e| Some(e.base) == entry_sp && e.offset < area_start)
+        !decompose(function, v)
+            .is_some_and(|e| function.is_entry_sp(e.base) && e.offset < area_start)
     })
 }
 
@@ -170,102 +173,111 @@ fn use_is_address_only(function: &Function, node: NodeId, kind: NodeKind, idx: u
 mod tests {
     use super::frame_address_escapes;
     use strider_ir::node::{ValueId, ValueType};
-    use strider_ir::{IRBuilderExt, IntBinaryOp};
+    use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86 as sp};
 
     use super::super::collapse_phis;
 
-    /// `Add(sp_v, off)` as an `I32` frame address.
-    fn frame_off(
-        b: &mut strider_ir::FunctionBuilder,
-        sp_v: ValueId,
-        off: i64,
-    ) -> crate::Result<ValueId> {
-        let k = b.build_int_const(off as u64, ValueType::int(32))?;
-        b.build_int_binary_operation(sp_v, k, IntBinaryOp::Add, ValueType::int(32))
-    }
+    type Body = fn(&mut FunctionBuilder, ValueId) -> crate::Result<()>;
 
-    fn new_builder() -> crate::Result<strider_ir::FunctionBuilder> {
-        let sp = sp();
-        sp_arg_frame(sp).build_fn_single_region()
-    }
-
-    #[test]
-    fn clean_spill_is_private() -> crate::Result<()> {
-        let mut b = new_builder()?;
+    /// `body` over a one-region frame, handed `&local` (`sp - 4`) and building
+    /// its own `Return`, then collapsed.
+    fn frame_fn(body: Body) -> crate::Result<Function> {
+        let mut b = sp_arg_frame(sp()).build_fn_single_region()?;
         let sp_v = b.read_variable(&sp())?;
-        let addr = frame_off(&mut b, sp_v, -4)?;
+        let local = crate::test_support::at(&mut b, sp_v, -4, ValueType::int(32))?;
+        body(&mut b, local)?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
+        Ok(fg)
+    }
+
+    /// `store [local] = 0x42; return load [local]`.
+    fn clean_spill(b: &mut FunctionBuilder, local: ValueId) -> crate::Result<()> {
         let data = b.build_int_const(0x42u64, ValueType::int(32))?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert!(
-            !frame_address_escapes(&fg),
-            "a spill address used only as a Load/Store address does not escape"
-        );
-        Ok(())
+        b.build_store(local, data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(local, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+        b.build_return(Some(loaded), &[])
     }
 
+    /// Whether `&local` escapes each row's body.
     #[test]
-    fn spill_across_call_stays_private() -> crate::Result<()> {
-        // A Call's structural SP anchor (input slot 3) is not an argument, so a
-        // spill straddling a call is still private.
-        let mut b = new_builder()?;
-        let sp_v = b.read_variable(&sp())?;
-        let addr = frame_off(&mut b, sp_v, -4)?;
-        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-        b.build_call(target, &[], &[], 0)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert!(
-            !frame_address_escapes(&fg),
-            "the Call's SP anchor must not count as an escape"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn store_of_frame_address_escapes() -> crate::Result<()> {
-        // `*global = &local`: the frame address is the store's DATA operand.
-        let mut b = new_builder()?;
-        let sp_v = b.read_variable(&sp())?;
-        let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
-        b.build_store(global, frame_addr, rsleigh::VnSpace::RAM)?;
-        b.build_return(None, &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert!(
-            frame_address_escapes(&fg),
-            "a frame address in a store's data operand escapes"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn frame_address_as_call_arg_escapes() -> crate::Result<()> {
-        let mut b = new_builder()?;
-        let sp_v = b.read_variable(&sp())?;
-        let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-        b.build_call(target, &[frame_addr], &[], 0)?;
-        b.build_return(None, &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert!(
-            frame_address_escapes(&fg),
-            "a frame address passed as a call argument escapes"
-        );
+    fn a_frame_address_escapes_only_as_a_value() -> crate::Result<()> {
+        let rows: &[(&str, Body, bool)] = &[
+            ("used only as a Load/Store address", clean_spill, false),
+            (
+                // A Call's structural SP anchor (input slot 3) is not an
+                // argument, so a spill straddling a call is still private.
+                "a spill across a call",
+                |b, local| {
+                    let data = b.build_int_const(0x42u64, ValueType::int(32))?;
+                    b.build_store(local, data, rsleigh::VnSpace::RAM)?;
+                    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
+                    b.build_call(target, &[], &[], 0)?;
+                    let loaded = b.build_load(local, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+                    b.build_return(Some(loaded), &[])
+                },
+                false,
+            ),
+            (
+                "a store's data operand (`*global = &local`)",
+                |b, local| {
+                    let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
+                    b.build_store(global, local, rsleigh::VnSpace::RAM)?;
+                    b.build_return(None, &[])
+                },
+                true,
+            ),
+            (
+                // The value can be loaded back opaquely and handed to a callee.
+                "Store(V, V), the data operand equal to the address",
+                |b, local| {
+                    b.build_store(local, local, rsleigh::VnSpace::RAM)?;
+                    b.build_return(None, &[])
+                },
+                true,
+            ),
+            (
+                "a call argument",
+                |b, local| {
+                    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
+                    b.build_call(target, &[local], &[], 0)?;
+                    b.build_return(None, &[])
+                },
+                true,
+            ),
+            (
+                // `CallOther` has no structural SP anchor (its inputs are
+                // [ctrl, mem, ..args]), so every arg is a real argument.
+                "a CallOther argument",
+                |b, local| {
+                    b.build_call_other(0, &[local], &[], true, false)?;
+                    b.build_return(None, &[])
+                },
+                true,
+            ),
+            (
+                "the returned value",
+                |b, local| b.build_return(Some(local), &[]),
+                true,
+            ),
+            (
+                // `xor(&local, mask)` leaves the SP chain before the store.
+                "non-address arithmetic",
+                |b, local| {
+                    let laundered =
+                        b.build_const_binop(0xFFu64, local, IntBinaryOp::Xor, ValueType::int(32))?;
+                    let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
+                    b.build_store(global, laundered, rsleigh::VnSpace::RAM)?;
+                    b.build_return(None, &[])
+                },
+                true,
+            ),
+        ];
+        for &(why, body, escapes) in rows {
+            assert_eq!(frame_address_escapes(&frame_fn(body)?), escapes, "{why}");
+        }
         Ok(())
     }
 
@@ -275,14 +287,9 @@ mod tests {
     fn frame_address_in_a_clobbered_register_escapes() -> crate::Result<()> {
         let sp = sp();
         let eax = strider_ir_test_utils::reg_vn(0x0, 4);
-        let mut b = strider_ir_test_utils::RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .tracked(eax)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).tracked(eax).build_fn_single_region()?;
         let sp_v = b.read_variable(&sp)?;
-        let frame_addr = frame_off(&mut b, sp_v, -4)?;
+        let frame_addr = crate::test_support::at(&mut b, sp_v, -4, ValueType::int(32))?;
         b.write_variable(&eax, frame_addr)?;
         let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[eax], 0)?;
@@ -295,54 +302,8 @@ mod tests {
     }
 
     #[test]
-    fn frame_address_as_call_other_arg_escapes() -> crate::Result<()> {
-        // `CallOther` has no structural SP anchor (its inputs are [ctrl, mem,
-        // ..args]), so every arg is a real argument.  A frame address there
-        // exposes the frame just as a `Call` arg does.
-        let mut b = new_builder()?;
-        let sp_v = b.read_variable(&sp())?;
-        let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        b.build_call_other(0, &[frame_addr], &[], true, false)?;
-        b.build_return(None, &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert!(
-            frame_address_escapes(&fg),
-            "a frame address passed as a CallOther argument escapes"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn returning_frame_address_escapes() -> crate::Result<()> {
-        let mut b = new_builder()?;
-        let sp_v = b.read_variable(&sp())?;
-        let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        b.build_return(Some(frame_addr), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert!(
-            frame_address_escapes(&fg),
-            "returning a frame address escapes"
-        );
-        Ok(())
-    }
-
-    #[test]
     fn cached_warms_is_consulted_and_clears() -> crate::Result<()> {
-        // Clean spill: escapes = false.
-        let mut b = new_builder()?;
-        let sp_v = b.read_variable(&sp())?;
-        let addr = frame_off(&mut b, sp_v, -4)?;
-        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
+        let fg = frame_fn(clean_spill)?;
 
         assert_eq!(fg.frame_escape(), None, "cold");
         assert!(!super::frame_address_escapes_cached(&fg));
@@ -358,48 +319,6 @@ mod tests {
         // Clearing forces a fresh, correct recompute.
         fg.clear_frame_escape();
         assert!(!super::frame_address_escapes_cached(&fg));
-        Ok(())
-    }
-
-    #[test]
-    fn self_store_of_frame_address_escapes() -> crate::Result<()> {
-        // `Store(V, V)` with `V` a frame address: the data operand is a frame
-        // address even though it equals the address operand. It must flag; the
-        // value can be loaded back opaquely and handed to a callee.
-        let mut b = new_builder()?;
-        let sp_v = b.read_variable(&sp())?;
-        let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        b.build_store(frame_addr, frame_addr, rsleigh::VnSpace::RAM)?;
-        b.build_return(None, &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert!(
-            frame_address_escapes(&fg),
-            "Store(V, V) exposes V through the data operand"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn laundered_frame_address_escapes() -> crate::Result<()> {
-        // `xor(&local, mask)` leaves the SP chain at the xor, before the store.
-        let mut b = new_builder()?;
-        let sp_v = b.read_variable(&sp())?;
-        let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        let mask = b.build_int_const(0xFFu64, ValueType::int(32))?;
-        let laundered =
-            b.build_int_binary_operation(frame_addr, mask, IntBinaryOp::Xor, ValueType::int(32))?;
-        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
-        b.build_store(global, laundered, rsleigh::VnSpace::RAM)?;
-        b.build_return(None, &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        assert!(
-            frame_address_escapes(&fg),
-            "a frame address feeding non-address arithmetic escapes"
-        );
         Ok(())
     }
 }

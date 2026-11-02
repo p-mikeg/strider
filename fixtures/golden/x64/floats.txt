@@ -623,7 +623,7 @@ cfg
   0x4012de 23 ops goto -> [0x4012e6]
   0x4012e6 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, AF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x25500:1, u:0x25700:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x67f00:1, u:0x68000:1, u:0x68200:1, u:0x68400:1]
-arg 2 [%v43]
+arg 2 [%v33]
 float_arg 0 [%v7]
 float_arg 1 [%v1]
 %v0:ctrl = entry
@@ -639,39 +639,29 @@ float_arg 1 [%v1]
 %v10:i1 = fcmp.equal %v9, %v9
 %v11:i1 = int.xor %v10, %v5
 %v12:i1 = int.or %v6, %v11
-%v13:i8 = extend.zero %v12
-%v14:i1 = fcmp.less %v3, %v9
-%v15:i8 = extend.zero %v14
-%v16:i8 = int.or %v13, %v15
-%v17:i1 = truncate %v16
-%v18:i1 = fcmp.equal %v3, %v9
-%v19:i8 = extend.zero %v18
-%v20:i8 = int.or %v13, %v19
-%v21:i1 = truncate %v20
-%v22:i1 = int.or %v17, %v21
-%v23:ctrl, %v24:ctrl = if %v0, %v22
-%v25:i64 = iconst[0xffffffff]
-%v26:i1 = int.or %v11, %v6
-%v27:i8 = extend.zero %v26
-%v28:i1 = fcmp.less %v9, %v3
-%v29:i8 = extend.zero %v28
-%v30:i8 = int.or %v27, %v29
-%v31:i1 = truncate %v30
-%v32:i1 = fcmp.equal %v9, %v3
-%v33:i8 = extend.zero %v32
-%v34:i8 = int.or %v27, %v33
-%v35:i1 = truncate %v34
-%v36:i1 = int.or %v31, %v35
-%v37:i1 = int.xor %v36, %v5
-%v38:i64 = extend.zero %v37
+%v13:i1 = fcmp.less %v3, %v9
+%v14:i1 = int.or %v12, %v13
+%v15:i1 = fcmp.equal %v3, %v9
+%v16:i1 = int.or %v12, %v15
+%v17:i1 = int.or %v14, %v16
+%v18:ctrl, %v19:ctrl = if %v0, %v17
+%v20:i64 = iconst[0xffffffff]
+%v21:i1 = int.or %v11, %v6
+%v22:i1 = fcmp.less %v9, %v3
+%v23:i1 = int.or %v21, %v22
+%v24:i1 = fcmp.equal %v9, %v3
+%v25:i1 = int.or %v21, %v24
+%v26:i1 = int.or %v23, %v25
+%v27:i1 = int.xor %v26, %v5
+%v28:i64 = extend.zero %v27
 
-%v39:ctrl, %v40:token = region %v24, %v23
-%v41:i64<RAX> = phi %v40, %v25, %v38
-%v42:mem = initial_memory
-%v43:i64 = initial_var[RDX]
-%v44:i80 = initial_var[ST0]
-%v45:i80 = initial_var[ST1]
-return %v39, %v42, %v41, %v43, %v7, %v1, %v44, %v45
+%v29:ctrl, %v30:token = region %v19, %v18
+%v31:i64<RAX> = phi %v30, %v20, %v28
+%v32:mem = initial_memory
+%v33:i64 = initial_var[RDX]
+%v34:i80 = initial_var[ST0]
+%v35:i80 = initial_var[ST1]
+return %v29, %v32, %v31, %v33, %v7, %v1, %v34, %v35
 
 == f64_compare @0x4012f0
 cfg
@@ -680,7 +670,7 @@ cfg
   0x4012ff 23 ops goto -> [0x401308]
   0x401308 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, AF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x25500:1, u:0x25700:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x67f00:1, u:0x68000:1, u:0x68200:1, u:0x68400:1]
-arg 2 [%v43]
+arg 2 [%v33]
 float_arg 0 [%v7]
 float_arg 1 [%v1]
 %v0:ctrl = entry
@@ -696,39 +686,29 @@ float_arg 1 [%v1]
 %v10:i1 = fcmp.equal %v9, %v9
 %v11:i1 = int.xor %v10, %v5
 %v12:i1 = int.or %v6, %v11
-%v13:i8 = extend.zero %v12
-%v14:i1 = fcmp.less %v3, %v9
-%v15:i8 = extend.zero %v14
-%v16:i8 = int.or %v13, %v15
-%v17:i1 = truncate %v16
-%v18:i1 = fcmp.equal %v3, %v9
-%v19:i8 = extend.zero %v18
-%v20:i8 = int.or %v13, %v19
-%v21:i1 = truncate %v20
-%v22:i1 = int.or %v17, %v21
-%v23:ctrl, %v24:ctrl = if %v0, %v22
-%v25:i64 = iconst[0xffffffff]
-%v26:i1 = int.or %v11, %v6
-%v27:i8 = extend.zero %v26
-%v28:i1 = fcmp.less %v9, %v3
-%v29:i8 = extend.zero %v28
-%v30:i8 = int.or %v27, %v29
-%v31:i1 = truncate %v30
-%v32:i1 = fcmp.equal %v9, %v3
-%v33:i8 = extend.zero %v32
-%v34:i8 = int.or %v27, %v33
-%v35:i1 = truncate %v34
-%v36:i1 = int.or %v31, %v35
-%v37:i1 = int.xor %v36, %v5
-%v38:i64 = extend.zero %v37
+%v13:i1 = fcmp.less %v3, %v9
+%v14:i1 = int.or %v12, %v13
+%v15:i1 = fcmp.equal %v3, %v9
+%v16:i1 = int.or %v12, %v15
+%v17:i1 = int.or %v14, %v16
+%v18:ctrl, %v19:ctrl = if %v0, %v17
+%v20:i64 = iconst[0xffffffff]
+%v21:i1 = int.or %v11, %v6
+%v22:i1 = fcmp.less %v9, %v3
+%v23:i1 = int.or %v21, %v22
+%v24:i1 = fcmp.equal %v9, %v3
+%v25:i1 = int.or %v21, %v24
+%v26:i1 = int.or %v23, %v25
+%v27:i1 = int.xor %v26, %v5
+%v28:i64 = extend.zero %v27
 
-%v39:ctrl, %v40:token = region %v24, %v23
-%v41:i64<RAX> = phi %v40, %v25, %v38
-%v42:mem = initial_memory
-%v43:i64 = initial_var[RDX]
-%v44:i80 = initial_var[ST0]
-%v45:i80 = initial_var[ST1]
-return %v39, %v42, %v41, %v43, %v7, %v1, %v44, %v45
+%v29:ctrl, %v30:token = region %v19, %v18
+%v31:i64<RAX> = phi %v30, %v20, %v28
+%v32:mem = initial_memory
+%v33:i64 = initial_var[RDX]
+%v34:i80 = initial_var[ST0]
+%v35:i80 = initial_var[ST1]
+return %v29, %v32, %v31, %v33, %v7, %v1, %v34, %v35
 
 == f32_neg_abs @0x401310
 cfg

@@ -23,7 +23,7 @@ use strider_orchestrator::opt::classify_target;
 fn classify_target_with_rom(
     view: &strider_ir::Function,
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
-) -> anyhow::Result<Option<ResolvedTargets>> {
+) -> Option<ResolvedTargets> {
     let mut view = view.clone();
     view.assume(&strider_orchestrator::opt::AssumptionOptions::default());
     let branch = view
@@ -75,7 +75,7 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
     let entries = vec![0x100, 0x200, 0x300, 0x400, 0x500, 0x600, 0x700, 0x800];
     let rom = MockRom::strided(base, stride, entries.clone(), 4);
     let (function, _target) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
+    let result = classify_target_with_rom(&function, Some(&rom));
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(
@@ -98,7 +98,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
     let entries = vec![0x100, 0x200, 0x300, 0x400];
     let rom = MockRom::strided(base, stride, entries.clone(), 4);
     let (function, _target) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
+    let result = classify_target_with_rom(&function, Some(&rom));
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts.iter().map(|t| t.addr).collect::<Vec<_>>(), entries);
@@ -117,7 +117,7 @@ fn jump_table_unbounded_idx_returns_none() {
     let stride = 4;
     let rom = MockRom::strided(base, stride, vec![0x100, 0x200, 0x300, 0x400], 4);
     let (function, _target) = build_jump_table_unbounded_scenario(base, stride);
-    let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
+    let result = classify_target_with_rom(&function, Some(&rom));
     assert_eq!(
         result, None,
         "unbounded idx must NOT classify to Multiple: the orchestrator \
@@ -133,7 +133,7 @@ fn jump_table_no_rom_returns_none() {
     let stride = 4;
     let idx_mask = 0x3u64;
     let (function, _target) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_target_with_rom(&function, None).expect("classify_target_with_rom");
+    let result = classify_target_with_rom(&function, None);
     assert_eq!(result, None);
 }
 
@@ -156,7 +156,7 @@ fn jump_table_partial_rom_returns_none() {
         cutoff: 4, // rom serves the first 4 of 8 entries
     };
     let (function, _target) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
+    let result = classify_target_with_rom(&function, Some(&rom));
     assert_eq!(
         result, None,
         "partial rom read must fail closed (None), NOT produce a partial \
@@ -181,7 +181,7 @@ fn jump_table_zero_bound_returns_none() {
     let bound = 0u64;
     let rom = MockRom::strided(base, stride, vec![0x100, 0x200, 0x300, 0x400], 4);
     let (function, _target) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
+    let result = classify_target_with_rom(&function, Some(&rom));
     assert_eq!(
         result, None,
         "bound = 0 must return None: an empty table would wrongly imply \
@@ -364,7 +364,7 @@ fn non_jump_table_load_shape_falls_through() {
     // Rom is provided anyway, to pin that the fallthrough is structural,
     // not rom-driven.
     let rom = MockRom::strided(0, 4, vec![0x100, 0x200], 4);
-    let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
+    let result = classify_target_with_rom(&function, Some(&rom));
     assert_eq!(
         result, None,
         "non-jump-table Load shape must fall through to None, NOT \

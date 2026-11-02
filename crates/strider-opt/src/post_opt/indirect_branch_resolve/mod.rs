@@ -8,11 +8,12 @@
 //! rodata jump tables and on-stack label arrays.  No match leaves the target
 //! unresolved.
 //!
-//! Known limits of the field-index rule, both seen only in crafted or
-//! hand-written asm, with no compiler shape found: a recorded guard whose
-//! bound a later truncate loses (a 16-bit cell in `[0xfe, 0x101]` indexed by
-//! its low byte) is trusted, and a test reading the cell through a phi reads
-//! no bits of it. Either can seat cells the guard rules out.
+//! Known limits of the field-index rule, seen only in crafted or hand-written
+//! asm, with no compiler shape found: a range a read guard narrows is trusted
+//! as the table's bound, though an unread test (a mask, a carry, a test
+//! looping back) or a guard a later truncate loses may be tighter; and a test
+//! reading the cell through a phi reads no bits of it. Each seats cells the
+//! code rules out.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker};
@@ -22,10 +23,6 @@ use strider_cfg::ResolvedTargets;
 use crate::ReadOnlyMemory;
 
 pub(crate) mod eval;
-// Public only for tests: `classify_sites` is the production entry.
-#[cfg(any(test, feature = "test-util"))]
-pub mod index_range;
-#[cfg(not(any(test, feature = "test-util")))]
 pub(crate) mod index_range;
 mod return_target;
 pub(crate) mod table;
@@ -40,17 +37,13 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
 /// `classify` on a classifier built for `function` alone; `classify_sites` is
 /// the production entry, which shares one across the function's sites.
-///
-/// # Errors
-///
-/// The known-bits analysis failing.
 #[cfg(any(test, feature = "test-util"))]
 pub fn classify_target(
     function: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
-) -> crate::Result<Option<ResolvedTargets>> {
-    Ok(SiteClassifier::new(function, rom)?.classify(branch))
+) -> Option<ResolvedTargets> {
+    SiteClassifier::new(function, rom).classify(branch)
 }
 
 /// One function's dispatch-site recogniser.
@@ -77,56 +70,75 @@ pub fn classify_target(
 /// Of the function's claims ([`strider_ir::Function::assumptions`]) the table
 /// walk's own memory queries honour `stack_global_disjoint` and the allocation
 /// identity `noalias_allocators` gives `decompose`, and no call-boundary
-/// relaxation (`MemPurpose::TableWalk`).  That keeps the relaxations out of
+/// relaxation (`Policy::strict`).  That keeps the relaxations out of
 /// the walk's own steps, not off the edge: every recogniser
 /// reads the IR the pipeline left, whose `LoadForward` forwards across a call
 /// under `escape_analysis`, `callee_preserves_stack_args` or a listed
 /// allocator.  A dispatch value forwarded that way arrives here folded, so a
 /// claim that is wrong for the input seats a wrong edge.
-pub struct SiteClassifier<'f> {
+pub(crate) struct SiteClassifier<'f> {
     ranges: index_range::RangeMap<'f>,
     eval: eval::Evaluator<'f>,
     returns: ReturnTargets<'f>,
+    /// Per value, the `Add(value, k)` siblings [`index_range::RangeMap::may_bound_sum`]
+    /// admits, with each `k`.
+    sums: rustc_hash::FxHashMap<ValueId, Vec<(ValueId, u128)>>,
 }
 
 impl<'f> SiteClassifier<'f> {
     /// The recogniser for `function`'s dispatch sites, with nothing computed
     /// for any of them yet.  `rom` is the binary's read-only image, consulted
     /// only by the rodata jump-table shape; `None` disables it.
-    ///
-    /// # Errors
-    ///
-    /// The known-bits analysis failing.
-    pub fn new(
+    pub(crate) fn new(
         function: &'f strider_ir::Function,
         rom: Option<&'f dyn ReadOnlyMemory>,
-    ) -> crate::Result<Self> {
-        Ok(Self {
-            ranges: index_range::RangeMap::new(function)?,
+    ) -> Self {
+        Self {
+            ranges: index_range::RangeMap::new(function),
             eval: eval::Evaluator::new(function, rom),
             returns: ReturnTargets::new(function),
-        })
+            sums: rustc_hash::FxHashMap::default(),
+        }
     }
 
     pub(crate) fn function(&self) -> &'f strider_ir::Function {
         self.ranges.function()
     }
 
-    /// The recognisers, in order, against the dispatch value of `branch`:
-    /// a literal `IntConst` address, an `InitialVar(lr)` return, a
-    /// `Load(RAM)` return [`ReturnTargets::returns_to_caller`] follows back
-    /// to the saved link register, then the table arm.  `None` when the
-    /// dispatch value matches no known sound shape, which defers the branch.
+    /// The recognisers, in order, against the dispatch value of `site`, an
+    /// `IndirectBranch` placeholder or a seated `Switch`: a literal `IntConst`
+    /// address, an `InitialVar(lr)` return, a `Load(RAM)` return
+    /// [`ReturnTargets::returns_to_caller`] follows back to the saved link
+    /// register, then the table arm.  `None` when the dispatch value matches
+    /// no known sound shape, which defers the site.
+    ///
+    /// A seated `Switch` is re-derived from its retained selector, which reads
+    /// as a wider table once a loop back-edge through its own arms closes, or
+    /// folds to the one constant it jumps to; it carries the mode its
+    /// instruction commits, so a widened arm is evaluated in its own mode. It
+    /// was seated from a table, so it is no return.
     #[must_use]
-    pub fn classify(&mut self, branch: NodeId) -> Option<ResolvedTargets> {
-        let target_value = self.function().indirect_branch_target(branch);
-        // The ISA mode this branch's instruction committed for its target(s),
-        // when it is an interworking branch; carried on the branch as a live
+    pub(crate) fn classify(&mut self, site: NodeId) -> Option<ResolvedTargets> {
+        let f = self.function();
+        let switch = matches!(f.node_kind(site), NodeKind::Switch(_));
+        // The ISA mode the site's instruction committed for its target(s),
+        // when it is an interworking branch; carried on the site as a live
         // input and evaluated per resolved target below.
-        let mode_value = self.function().indirect_branch_isa_mode(branch);
+        let (target_value, mode_value) = if switch {
+            (f.switch_selector(site), f.switch_isa_mode(site))
+        } else {
+            (
+                f.indirect_branch_target(site),
+                f.indirect_branch_isa_mode(site),
+            )
+        };
         self.single_const_target(target_value, mode_value)
-            .or_else(|| self.link_register_return(branch, target_value))
-            .or_else(|| self.classify_dispatch_value(branch, target_value, mode_value))
+            .or_else(|| {
+                (!switch)
+                    .then(|| self.link_register_return(site, target_value))
+                    .flatten()
+            })
+            .or_else(|| self.classify_dispatch_value(site, target_value, mode_value))
     }
 
     /// The literal target of an `IntConst` dispatch value.  A literal is
@@ -189,28 +201,18 @@ impl<'f> SiteClassifier<'f> {
 /// `InitialVar(lr)` shape under it.  Only the exact low-bit mask is stripped;
 /// any other constant is real arithmetic on the target.
 fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> ValueId {
-    let producer = function.producer(value);
-    if !matches!(
-        function.node_kind(producer),
-        NodeKind::IntBinaryOp(strider_ir::node::IntBinaryOp::And)
-    ) {
-        return value;
-    }
-    let Ok([a, b]) = function.producer_inputs_exact::<2>(value) else {
+    let Some((operand, mask)) = crate::const_eval::var_and_const_of(
+        function,
+        function.producer(value),
+        NodeKind::IntBinaryOp(strider_ir::node::IntBinaryOp::And),
+    ) else {
         return value;
     };
-    let Some(ty) = function.value_type_opt(value) else {
-        return value;
-    };
-    let Some(want) = ty.int_mask_u128().map(|m| m ^ 1) else {
-        return value;
-    };
-    for (operand, other) in [(a, b), (b, a)] {
-        if function.int_const_u128(other) == Some(want) {
-            return operand;
-        }
-    }
-    value
+    let want = function
+        .value_type_opt(value)
+        .and_then(|ty| ty.int_mask_u128())
+        .map(|m| m ^ 1);
+    if want == Some(mask) { operand } else { value }
 }
 
 /// Every live dispatch site of a function, and what was recovered for each.
@@ -245,40 +247,24 @@ impl ClassifiedSites {
 ///
 /// # Errors
 ///
-/// The known-bits analysis failing.
+/// None; the `Result` is the shape of the orchestrator's classifier hook.
 pub fn classify_sites(
     f: &strider_ir::Function,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> crate::Result<ClassifiedSites> {
-    let ClassifiedSites {
-        sites,
-        mut resolved,
-    } = ClassifiedSites::unresolved(f);
+    let mut out = ClassifiedSites::unresolved(f);
     // Most functions have neither kind, so the setup below is skipped then.
-    if sites.is_empty() {
-        return Ok(ClassifiedSites { sites, resolved });
+    if out.sites.is_empty() {
+        return Ok(out);
     }
     // Built once, since the graph does not change here: the ranges, the
     // evaluator's memory index, and the return verifier's settled claims all
     // carry from site to site.
-    let mut classifier = SiteClassifier::new(f, rom)?;
-    for &node in &sites {
-        // A seated `Switch` is re-derived from its retained selector, which
-        // reads as a wider table once a loop back-edge through its own arms
-        // closes; it carries the mode its instruction commits, so a widened
-        // arm is evaluated in its own mode.
-        let targets = if matches!(f.node_kind(node), NodeKind::Switch(_)) {
-            classifier.classify_dispatch_value(
-                node,
-                f.switch_selector(node),
-                f.switch_isa_mode(node),
-            )
-        } else {
-            classifier.classify(node)
-        };
-        if let Some(targets) = targets {
-            resolved.insert(node, targets);
+    let mut classifier = SiteClassifier::new(f, rom);
+    for &node in &out.sites {
+        if let Some(targets) = classifier.classify(node) {
+            out.resolved.insert(node, targets);
         }
     }
-    Ok(ClassifiedSites { sites, resolved })
+    Ok(out)
 }

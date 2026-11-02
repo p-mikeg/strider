@@ -7,10 +7,8 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;
-use crate::peephole::PeepholeRewrite;
 use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 
-#[derive(Clone)]
 pub struct IfCondInversion;
 
 thread_local! {
@@ -20,19 +18,6 @@ thread_local! {
         let capture = Capture::new();
         (bool_not(var(capture)).into_pattern(), capture)
     };
-}
-
-impl IfCondInversion {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for IfCondInversion {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl crate::peephole::PeepholePass for IfCondInversion {
@@ -48,14 +33,13 @@ impl crate::peephole::PeepholePass for IfCondInversion {
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
-    ) -> Result<PeepholeRewrite> {
-        let Some(inner_value) = bool_not_operand(edit.function(), edit.function().if_cond(root))
-        else {
-            return Ok(PeepholeRewrite::NoChange);
-        };
-        // `invert` builds no fresh node, hence `new_node: None`.
-        invert(edit, root, inner_value)?;
-        Ok(PeepholeRewrite::Changed { new_node: None })
+    ) -> Result<Option<ValueId>> {
+        if let Some(inner_value) = bool_not_operand(edit.function(), edit.function().if_cond(root))
+        {
+            // `invert` builds no fresh node, so nothing is revisited.
+            invert(edit, root, inner_value)?;
+        }
+        Ok(None)
     }
 }
 

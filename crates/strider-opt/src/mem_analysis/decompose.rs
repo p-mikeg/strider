@@ -23,86 +23,162 @@ use super::{MemExpr, MemKind};
 /// allocator set the function holds ([`Function::assumptions`]), which only
 /// grows.  The memo is also the verdict `strider-pattern`'s region filters
 /// read.
+///
+/// The walk descends the spine to its terminal, then unwinds, deriving and
+/// committing each node's verdict from the one below it, so a later query
+/// of any node it passed is a hit.
 pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> {
-    match function.memory_class(value) {
-        MemDecomp::Stack(_) | MemDecomp::Heap(_) => return resolve_slot(function, value),
-        MemDecomp::NotMemory => return None,
-        MemDecomp::Unknown => {}
+    if let Some(verdict) = memoised(function, value) {
+        return verdict;
     }
-    let result = spine_walk(function, value);
-    match result {
-        Some(e) => match e.kind {
-            MemKind::Stack => function.set_stack_slot(value, e.base, e.offset),
-            MemKind::Heap | MemKind::HeapOpaque => function.set_heap_slot(value, e.base, e.offset),
-        },
-        None => function.set_not_memory(value),
-    }
-    result
+    let (spine, end) = descend(function, value);
+    let below = match end {
+        End::Known(verdict) => Some(verdict),
+        // Below an alignment mask the offset to the phi is unknown, and the
+        // mask over it is opaque whatever the phi holds.
+        End::Phi(_) if aligned(&spine) => None,
+        End::Phi(phi) => Some(phi_names_an_allocation(function, phi).then_some(MemExpr {
+            base: phi,
+            offset: 0,
+            kind: MemKind::HeapOpaque,
+        })),
+    };
+    unwind(function, &spine, below).expect("a spine whose bottom is unknown holds a mask")
 }
 
 #[cfg(test)]
 thread_local! {
-    /// Total [`spine_walk`] iterations, the unit the spine-complexity test counts.
+    /// Total [`descend`] iterations, the unit the spine-complexity test counts.
     pub(super) static SPINE_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Where a spine walk bottomed out.
-enum SpineEnd {
-    /// A memory terminal, with the offset accrued above it.
-    Rooted(MemExpr),
-    /// A `Phi`, whose arms decide the class, plus the offset accrued above it.
-    Phi { phi: ValueId, offset: i128 },
-    /// No terminal.
-    Opaque,
+/// One step of an address spine, from a node to the one operand that carries
+/// its base.
+#[derive(Clone, Copy)]
+enum Step {
+    /// `+ c`.
+    Add(i128),
+    /// An alignment mask: a fresh stack base of its own.
+    Align,
 }
 
-/// [`spine_walk_trailed`], resolving a `Phi` end through its arms, plus the
-/// verdict for every node it passed through: they all share the root's base, at
-/// the root's offset less what accrued getting there.  Committing only the root
-/// would make a consumer-first sweep re-walk the whole spine per query,
-/// O(depth^2) over the chain.
-fn spine_walk(function: &Function, value: ValueId) -> Option<MemExpr> {
-    let mut trail: Vec<(ValueId, i128)> = Vec::new();
-    let result = match spine_walk_trailed(function, value, &mut trail) {
-        SpineEnd::Rooted(root) => Some(root),
-        SpineEnd::Phi { phi, offset } if phi_names_an_allocation(function, phi) => Some(MemExpr {
-            base: phi,
-            offset,
-            kind: MemKind::HeapOpaque,
-        }),
-        SpineEnd::Phi { .. } | SpineEnd::Opaque => None,
-    };
-    commit_trail(function, &trail, result);
-    result
+/// Where a spine bottoms out.
+enum End {
+    /// A verdict already committed: memoised, or a terminal its node decides.
+    Known(Option<MemExpr>),
+    /// A `Phi`, whose arms decide.
+    Phi(ValueId),
 }
 
-/// Commits `root`'s verdict for every node of its trail.
-fn commit_trail(function: &Function, trail: &[(ValueId, i128)], root: Option<MemExpr>) {
-    match root {
-        Some(root) => {
-            for &(v, acc) in trail {
-                // A suffix sum that no longer fits is left for its own walk.
-                let Some(offset) = root.offset.checked_sub(acc) else {
-                    continue;
-                };
-                let offset = wrap_to_addr_width(function, v, offset);
-                match root.kind {
-                    MemKind::Stack => function.set_stack_slot(v, root.base, offset),
-                    MemKind::Heap | MemKind::HeapOpaque => {
-                        function.set_heap_slot(v, root.base, offset);
-                    }
+/// The spine below `value`, each node with its step, down to the first node
+/// whose verdict needs no operand.  O(spine depth), not O(cone): only the
+/// single base-bearing operand is followed at each step.
+///
+/// Termination: each step follows one input edge toward a terminal, and
+/// revisiting a node needs a data cycle, which in valid SSA passes through a
+/// `Phi`, where the walk stops.
+fn descend(function: &Function, value: ValueId) -> (Vec<(ValueId, Step)>, End) {
+    let mut spine = Vec::new();
+    let mut cur = value;
+    loop {
+        #[cfg(test)]
+        SPINE_STEPS.with(|c| c.set(c.get() + 1));
+        if let Some(verdict) = memoised(function, cur) {
+            return (spine, End::Known(verdict));
+        }
+        let node = function.producer(cur);
+        let root = |kind| {
+            Some(MemExpr {
+                base: cur,
+                offset: 0,
+                kind,
+            })
+        };
+        let (next, step) = match *function.node_kind(node) {
+            NodeKind::InitialVar(_) if function.is_entry_sp(cur) => {
+                return (
+                    spine,
+                    End::Known(commit(function, cur, root(MemKind::Stack))),
+                );
+            }
+            // A pure allocator's return pointer is a fresh heap base, bottomed
+            // out exactly like the SP terminal.
+            NodeKind::Call { .. } if allocator_return_base(function, node) == Some(cur) => {
+                return (
+                    spine,
+                    End::Known(commit(function, cur, root(MemKind::Heap))),
+                );
+            }
+            // The arms decide, which is the caller's walk, not this one: it
+            // would have to fan out, and an arm can lead back here.
+            NodeKind::Phi => return (spine, End::Phi(cur)),
+            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+                match crate::const_eval::const_addend(function, node) {
+                    Some((operand, c)) => (operand, Step::Add(c)),
+                    None => return (spine, End::Known(commit(function, cur, None))),
                 }
             }
-        }
-        // The walk from any trail node is a suffix of this one, so it bails the
-        // same way.  The arithmetic bails clear the trail, since a suffix sum
-        // can fit where the whole one does not.
-        None => {
-            for &(v, _) in trail {
-                function.set_not_memory(v);
+            // Alignment-masked SP is a fresh opaque base, since its value
+            // depends on entry-SP alignment.
+            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+                match alignment_masked_operand(function, node) {
+                    Some((operand, _)) => (operand, Step::Align),
+                    None => return (spine, End::Known(commit(function, cur, None))),
+                }
             }
-        }
+            _ => return (spine, End::Known(commit(function, cur, None))),
+        };
+        spine.push((cur, step));
+        cur = next;
     }
+}
+
+/// Whether `spine` holds an alignment mask.
+fn aligned(spine: &[(ValueId, Step)]) -> bool {
+    spine.iter().any(|(_, step)| matches!(step, Step::Align))
+}
+
+/// Commits the verdict of each node of `spine` from the bottom up, `below`
+/// being that of the node under the last; `None` while unknown, which a mask
+/// ends.  The top node's verdict.
+fn unwind(
+    function: &Function,
+    spine: &[(ValueId, Step)],
+    below: Option<Option<MemExpr>>,
+) -> Option<Option<MemExpr>> {
+    spine.iter().rev().fold(below, |below, &(v, step)| {
+        let verdict =
+            match step {
+                Step::Add(c) => below.map(|e| {
+                    e.map(|e| MemExpr {
+                        offset: wrap_to_addr_width(function, v, e.offset.wrapping_add(c)),
+                        ..e
+                    })
+                }),
+                // Over a stack base the mask is the conservative base; over a heap
+                // one it leaves the offset to the object unknown, and heap
+                // disjointness is exact, so a Stack-kinded mask would call an
+                // aligned heap pointer Disjoint from its own object.
+                Step::Align => Some(below.flatten().filter(|e| e.kind == MemKind::Stack).map(
+                    |_| MemExpr {
+                        base: v,
+                        offset: 0,
+                        kind: MemKind::Stack,
+                    },
+                )),
+            };
+        verdict.map(|verdict| commit(function, v, verdict))
+    })
+}
+
+/// Memoises `verdict` for `v` and returns it.
+fn commit(function: &Function, v: ValueId, verdict: Option<MemExpr>) -> Option<MemExpr> {
+    match verdict {
+        Some(e) if e.kind == MemKind::Stack => function.set_stack_slot(v, e.base, e.offset),
+        Some(e) => function.set_heap_slot(v, e.base, e.offset),
+        None => function.set_not_memory(v),
+    }
+    verdict
 }
 
 /// Does every value `root` can hold derive from an allocation?  Then the
@@ -117,224 +193,115 @@ fn commit_trail(function: &Function, trail: &[(ValueId, i128)], root: Option<Mem
 /// reaches, propagated along the arm edges) and is committed for all of them,
 /// so a nested chain costs one frontier walk in total, not one per query.
 fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
-    let mut nodes = vec![root];
+    let mut frontier = vec![Frontier::new(root)];
     let mut index: FxHashMap<ValueId, usize> = FxHashMap::default();
     index.insert(root, 0);
-    // Arm to the phis holding it: the edge both verdicts propagate along.
-    let mut holders: Vec<Vec<usize>> = vec![Vec::new()];
-    // A non-heap arm: this phi can hold something that is not an allocation.
-    let mut opaque = vec![false];
-    // An allocation arm: there is something to name.  A frontier of nothing but
-    // phis has no definition at all and names nothing.
-    let mut allocated = vec![false];
     let mut i = 0;
-    while i < nodes.len() {
+    while i < frontier.len() {
         let arms: Vec<ValueId> = function
-            .phi_data_inputs(function.producer(nodes[i]))
+            .phi_data_inputs(function.producer(frontier[i].phi))
             .collect();
         for arm in arms {
-            let mut trail: Vec<(ValueId, i128)> = Vec::new();
-            match spine_walk_trailed(function, arm, &mut trail) {
-                SpineEnd::Phi { phi, .. } => {
-                    let j = match index.get(&phi) {
-                        Some(&j) => j,
-                        None => {
-                            let j = nodes.len();
-                            nodes.push(phi);
-                            holders.push(Vec::new());
-                            opaque.push(false);
-                            allocated.push(false);
-                            index.insert(phi, j);
-                            j
-                        }
-                    };
-                    holders[j].push(i);
+            let (spine, end) = descend(function, arm);
+            let below = match end {
+                End::Phi(phi) if !aligned(&spine) => {
+                    let j = *index.entry(phi).or_insert_with(|| {
+                        frontier.push(Frontier::new(phi));
+                        frontier.len() - 1
+                    });
+                    frontier[j].holders.push(i);
+                    continue;
                 }
-                SpineEnd::Rooted(e) => {
-                    commit_trail(function, &trail, Some(e));
-                    match e.kind {
-                        MemKind::Heap | MemKind::HeapOpaque => allocated[i] = true,
-                        MemKind::Stack => opaque[i] = true,
-                    }
-                }
-                SpineEnd::Opaque => {
-                    commit_trail(function, &trail, None);
-                    opaque[i] = true;
-                }
-            }
+                End::Phi(_) => None,
+                End::Known(verdict) => Some(verdict),
+            };
+            frontier[i].holds |= match unwind(function, &spine, below).flatten() {
+                Some(e) if e.kind != MemKind::Stack => ALLOCATED,
+                _ => OPAQUE,
+            };
         }
         i += 1;
     }
-    propagate(&mut opaque, &holders);
-    propagate(&mut allocated, &holders);
-    for (i, &v) in nodes.iter().enumerate() {
-        if allocated[i] && !opaque[i] {
-            function.set_heap_slot(v, v, 0);
+    propagate(&mut frontier);
+    for f in &frontier {
+        if f.holds == ALLOCATED {
+            function.set_heap_slot(f.phi, f.phi, 0);
         } else {
-            function.set_not_memory(v);
+            function.set_not_memory(f.phi);
         }
     }
-    allocated[0] && !opaque[0]
+    frontier[0].holds == ALLOCATED
 }
 
-/// Reverse-reachability closure over `holders`: a set arm sets every phi
-/// holding it.
-fn propagate(flag: &mut [bool], holders: &[Vec<usize>]) {
-    let mut work: Vec<usize> = (0..flag.len()).filter(|&i| flag[i]).collect();
+/// A non-heap arm: the phi can hold something that is not an allocation.
+const OPAQUE: u8 = 1;
+/// An allocation arm: there is something to name.  A frontier of nothing but
+/// phis has no definition at all and names nothing.
+const ALLOCATED: u8 = 2;
+
+/// One phi of [`phi_names_an_allocation`]'s frontier.
+struct Frontier {
+    phi: ValueId,
+    /// The frontier phis holding this one as an arm: the edge both verdicts
+    /// propagate along.
+    holders: Vec<usize>,
+    /// What its arms hold, [`OPAQUE`] and [`ALLOCATED`] bits.
+    holds: u8,
+}
+
+impl Frontier {
+    fn new(phi: ValueId) -> Self {
+        Self {
+            phi,
+            holders: Vec::new(),
+            holds: 0,
+        }
+    }
+}
+
+/// Reverse-reachability closure over the holders: an arm's bits are set on
+/// every phi holding it.
+fn propagate(frontier: &mut [Frontier]) {
+    let mut work: Vec<usize> = (0..frontier.len())
+        .filter(|&i| frontier[i].holds != 0)
+        .collect();
     while let Some(i) = work.pop() {
-        for &h in &holders[i] {
-            if !flag[h] {
-                flag[h] = true;
+        let holds = frontier[i].holds;
+        for k in 0..frontier[i].holders.len() {
+            let h = frontier[i].holders[k];
+            if frontier[h].holds | holds != frontier[h].holds {
+                frontier[h].holds |= holds;
                 work.push(h);
             }
         }
     }
 }
 
-/// Accumulates the constant offset down to the memory terminal.  O(spine depth),
-/// not O(cone): only the single base-bearing operand is followed at each step.
-///
-/// `trail` collects `(node, offset accrued above it)` for every node down to
-/// and including the alignment anchor.  Below the anchor offsets stop
-/// accumulating, so those nodes do not share the returned base.
-fn spine_walk_trailed(
-    function: &Function,
-    value: ValueId,
-    trail: &mut Vec<(ValueId, i128)>,
-) -> SpineEnd {
-    let mut cur = value;
-    let mut acc: i128 = 0;
-    // Once an alignment-`And` is met the base is fixed to that And output (an
-    // opaque, entry-alignment-dependent base) carrying the offset accrued above
-    // it.  Below the anchor the walk only confirms SP-rooting, so those offsets
-    // are ignored.  Iterative so a deep `And`-of-`And` chain cannot blow the
-    // host stack.
-    //
-    // Termination: each step follows one input edge toward `InitialVar(sp)`, and
-    // revisiting a node needs a data cycle, which in valid SSA passes through a
-    // `Phi`, where the walk stops.  So the spine is acyclic.
-    let mut anchor: Option<MemExpr> = None;
-    loop {
-        #[cfg(test)]
-        SPINE_STEPS.with(|c| c.set(c.get() + 1));
-        if anchor.is_none() {
-            trail.push((cur, acc));
-        }
-        // A committed verdict short-circuits the walk.
-        match function.memory_class(cur) {
-            MemDecomp::Stack(_) | MemDecomp::Heap(_) => {
-                let Some(hit) = resolve_slot(function, cur) else {
-                    trail.clear();
-                    return SpineEnd::Opaque;
-                };
-                return match anchor {
-                    // Same bail as the allocator terminal below, for a base the
-                    // memo already committed.
-                    Some(_) if hit.kind != MemKind::Stack => SpineEnd::Opaque,
-                    // Above a stack base the anchor is the conservative result.
-                    Some(a) => SpineEnd::Rooted(a),
-                    None => {
-                        let Some(sum) = hit.offset.checked_add(acc) else {
-                            trail.clear();
-                            return SpineEnd::Opaque;
-                        };
-                        SpineEnd::Rooted(MemExpr {
-                            base: hit.base,
-                            offset: wrap_to_addr_width(function, cur, sum),
-                            kind: hit.kind,
-                        })
-                    }
-                };
-            }
-            MemDecomp::NotMemory => return SpineEnd::Opaque,
-            MemDecomp::Unknown => {}
-        }
-        let node = function.producer(cur);
-        match *function.node_kind(node) {
-            NodeKind::InitialVar(_) if function.is_entry_sp(cur) => {
-                return SpineEnd::Rooted(anchor.unwrap_or(MemExpr {
-                    base: cur,
-                    offset: wrap_to_addr_width(function, cur, acc),
-                    kind: MemKind::Stack,
-                }));
-            }
-            // A pure allocator's return pointer is a fresh heap base, bottomed
-            // out exactly like the SP terminal.
-            NodeKind::Call { .. } if is_allocator_return(function, cur, node) => {
-                // An alignment mask above a heap base leaves the masked pointer's
-                // offset to the raw base unknown, and heap disjointness is exact,
-                // so returning the Stack-kinded anchor would call an aligned heap
-                // pointer SP-rooted and Disjoint from its own object.
-                if anchor.is_some() {
-                    return SpineEnd::Opaque;
-                }
-                return SpineEnd::Rooted(MemExpr {
-                    base: cur,
-                    offset: wrap_to_addr_width(function, cur, acc),
-                    kind: MemKind::Heap,
-                });
-            }
-            // The arms decide, which is the caller's walk, not this one: it
-            // would have to fan out, and an arm can lead back here.  The offset
-            // rides along; below an alignment mask it is unknown, the same bail
-            // as the allocator terminal above.
-            NodeKind::Phi => {
-                if anchor.is_some() {
-                    return SpineEnd::Opaque;
-                }
-                return SpineEnd::Phi {
-                    phi: cur,
-                    offset: wrap_to_addr_width(function, cur, acc),
-                };
-            }
-            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                // SP + const in either order.  The const shifts the accumulated
-                // offset only while above the anchor.
-                let Some((sp_operand, c)) = crate::const_eval::const_addend(function, node) else {
-                    return SpineEnd::Opaque;
-                };
-                if anchor.is_none() {
-                    // Fail-closed on overflow.
-                    let Some(next) = acc.checked_add(c) else {
-                        trail.clear();
-                        return SpineEnd::Opaque;
-                    };
-                    acc = next;
-                }
-                cur = sp_operand;
-            }
-            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                // Alignment-masked SP is a fresh opaque base, since its value
-                // depends on entry-SP alignment.  The non-mask operand must be
-                // SP-rooted; the base fixes to this And output the first time.
-                let Some(sp_operand) = alignment_masked_operand(function, node) else {
-                    return SpineEnd::Opaque;
-                };
-                anchor.get_or_insert(MemExpr {
-                    base: cur,
-                    offset: wrap_to_addr_width(function, cur, acc),
-                    kind: MemKind::Stack,
-                });
-                cur = sp_operand;
-            }
-            _ => return SpineEnd::Opaque,
-        }
+/// A `Call`'s SP as `(stack base, offset)`, `None` when it decomposes to no
+/// stack base: then no argument slot of the call is placed in a coordinate
+/// system a stack probe shares.
+pub(crate) fn call_sp(function: &Function, call: NodeId) -> Option<(ValueId, i128)> {
+    match decompose(function, function.node_inputs(call)[NodeKind::CALL_SP_SLOT])? {
+        MemExpr {
+            base,
+            offset,
+            kind: MemKind::Stack,
+        } => Some((base, offset)),
+        _ => None,
     }
 }
 
-/// `value` is the primary return of a `Call` to a known allocator, i.e. a fresh
-/// heap base. `build_call` emits ret-vals before clobbers, so the return
-/// pointer is the first `Call` value output; only that output is a base, never
-/// a clobbered register.
-fn is_allocator_return(function: &Function, value: ValueId, call: NodeId) -> bool {
+/// The heap base a `Call` returns if it is a known pure allocator, else
+/// `None`.  `build_call` emits ret-vals before clobbers, so the return pointer
+/// is the first `Call` value output; only that output is a base, never a
+/// clobbered register.
+pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option<ValueId> {
+    debug_assert!(
+        matches!(function.node_kind(call), NodeKind::Call { .. }),
+        "allocator_return_base on a non-Call"
+    );
     let first_value = function.node_kind(call).output_head_len();
-    function.node_outputs(call).get(first_value) == Some(&value)
-        && call_returns_allocation(function, call)
-}
-
-/// `call` is to a known allocator and emits a return value, so its first value
-/// output is a fresh heap base.
-fn call_returns_allocation(function: &Function, call: NodeId) -> bool {
+    let ret = *function.node_outputs(call).get(first_value)?;
     let target = function.node_inputs(call)[NodeKind::CALL_TARGET_SLOT];
     let is_alloc = function
         .int_const_u128(target)
@@ -343,34 +310,49 @@ fn call_returns_allocation(function: &Function, call: NodeId) -> bool {
     // A cheap gate before the tracked-varnode scan below: the allocator set is
     // empty by default.
     if !is_alloc {
-        return false;
+        return None;
     }
-    // The first value output is the return pointer only when the call emits
-    // one.  A declared return register is not enough: `ret_and_clobber_vns`
-    // drops one this function does not track, sliding the first clobber into
-    // that slot, and a clobber holds garbage rather than a fresh pointer.
+    // The first value output is the return pointer only when it is the first
+    // declared return register.  A declaration is not enough:
+    // `ret_and_clobber_vns` drops one this function does not track, sliding
+    // the next return register or the first clobber into that slot, and
+    // neither holds the fresh pointer.
     let all = function.all_vns();
-    let (ret_vals, _) = function
-        .get_cc(call)
-        .ret_and_clobber_vns(all, |v| vn_container::largest_container_in(all, v));
-    !ret_vals.is_empty()
+    let container = |v: &rsleigh::Vn| vn_container::largest_container_in(all, v);
+    let cc = function.get_cc(call);
+    let (ret_vals, _) = cc.ret_and_clobber_vns(all, container);
+    let pointer = cc.ret_val_regs.first().map(container)?;
+    (ret_vals.first() == Some(&pointer)).then_some(ret)
 }
 
+/// The memoised verdict for `value`, `None` while not yet computed.
+///
 /// The memo tags the region, not the identity: a heap base that is a `Phi` is
 /// the set of allocations its arms hold, which is what
 /// [`phi_names_an_allocation`] commits.
-fn resolve_slot(function: &Function, value: ValueId) -> Option<MemExpr> {
+fn memoised(function: &Function, value: ValueId) -> Option<Option<MemExpr>> {
     let (class, slot) = function.memory_decomp(value);
-    let (base, offset) = slot?;
-    let kind = match class {
-        MemDecomp::Stack(_) => MemKind::Stack,
-        MemDecomp::Heap(_) => match function.node_kind(function.producer(base)) {
-            NodeKind::Phi => MemKind::HeapOpaque,
-            _ => MemKind::Heap,
-        },
-        MemDecomp::Unknown | MemDecomp::NotMemory => return None,
-    };
-    Some(MemExpr { base, offset, kind })
+    let resolved = || slot.expect("a region class is set with the slot it resolves to");
+    Some(match class {
+        MemDecomp::Unknown => return None,
+        MemDecomp::NotMemory => None,
+        MemDecomp::Stack(_) => {
+            let (base, offset) = resolved();
+            Some(MemExpr {
+                base,
+                offset,
+                kind: MemKind::Stack,
+            })
+        }
+        MemDecomp::Heap(_) => {
+            let (base, offset) = resolved();
+            let kind = match function.kind_of_value(base) {
+                NodeKind::Phi => MemKind::HeapOpaque,
+                _ => MemKind::Heap,
+            };
+            Some(MemExpr { base, offset, kind })
+        }
+    })
 }
 
 /// A contiguous run of 1-bits over a low 0-bit run of a plausible alignment,
@@ -396,50 +378,22 @@ pub(super) fn is_alignment_mask(m: u128, width_bits: usize) -> bool {
     m & width_mask == width_mask & !mask_below(tz)
 }
 
-/// The operands of a node whose signature fixes its arity at two.
-fn binary_operands(function: &Function, node: NodeId) -> [ValueId; 2] {
-    function
-        .node_inputs_exact::<2>(node)
-        .expect("IntBinaryOp has 2 inputs per node signature")
-}
-
-/// The masked operand of an alignment-`And`, `None` when `node` is anything
-/// else.  The one reading of the anchor shape [`decompose`] roots a base at.
-pub(crate) fn alignment_masked_operand(function: &Function, node: NodeId) -> Option<ValueId> {
-    if !matches!(
-        function.node_kind(node),
-        NodeKind::IntBinaryOp(IntBinaryOp::And)
-    ) {
-        return None;
-    }
-    let [l, r] = binary_operands(function, node);
+/// The masked operand of an alignment-`And` and the alignment it rounds down
+/// to, `None` when `node` is anything else.  The one reading of the anchor
+/// shape [`decompose`] roots a base at.
+pub(crate) fn alignment_masked_operand(
+    function: &Function,
+    node: NodeId,
+) -> Option<(ValueId, i128)> {
+    let (operand, mask) = crate::const_eval::var_and_const_of(
+        function,
+        node,
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+    )?;
     // The mask only names a stack base relative to the width it is applied at.
-    let Ok(ty) = function.value_type(function.node_outputs(node)[0]) else {
-        return None;
-    };
-    let width = ty.bit_width();
-    if function
-        .int_const_u128(r)
-        .is_some_and(|m| is_alignment_mask(m, width))
-    {
-        Some(l)
-    } else if function
-        .int_const_u128(l)
-        .is_some_and(|m| is_alignment_mask(m, width))
-    {
-        Some(r)
-    } else {
-        None
-    }
-}
-
-/// The heap base a `Call` returns if it is a known pure allocator, else `None`.
-pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option<ValueId> {
-    debug_assert!(
-        matches!(function.node_kind(call), NodeKind::Call { .. }),
-        "allocator_return_base on a non-Call"
-    );
-    let first_value = function.node_kind(call).output_head_len();
-    let ret = *function.node_outputs(call).get(first_value)?;
-    call_returns_allocation(function, call).then_some(ret)
+    let width = function
+        .value_type(function.node_outputs(node)[0])
+        .ok()?
+        .bit_width();
+    is_alignment_mask(mask, width).then(|| (operand, 1i128 << mask.trailing_zeros()))
 }

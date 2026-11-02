@@ -14,7 +14,10 @@
 //! dominates, and every def that reaches `x` without passing a dominator `a`
 //! lies above `a` and at most at the end of the outermost loop holding `x` but
 //! not `a`.  A position range with no clobber in it passes every dominator it
-//! covers at once.
+//! covers at once.  A merge's region holds a clobber iff its loop block does
+//! or an arm from outside the block has its own nearest clobber below the
+//! merge's immediate dominator; an arm precedes its merge, so deciding a merge
+//! from its arms' answers ends.
 //!
 //! An irreducible memory graph has no such order, so it is laid out in
 //! discovery order with no [`Positions`] and climbed the slow way: one
@@ -66,6 +69,18 @@ pub(crate) trait ClobberProbe {
 pub(crate) struct Answers {
     nearest: FxHashMap<u32, u32>,
     dirty: FxHashMap<u32, bool>,
+    /// What a range scan learned below each def it passed or stopped at, so a
+    /// later scan crosses a run of rejected defs in one hop.
+    below: FxHashMap<u32, Below>,
+}
+
+/// The defs at and below a position, as far as a scan has decided them.
+#[derive(Clone, Copy)]
+enum Below {
+    /// The highest def at or below it that clobbers.
+    Clobber(u32),
+    /// No def from this position up to it clobbers; below is undecided.
+    CleanFrom(u32),
 }
 
 pub(crate) struct MemLayout {
@@ -92,9 +107,6 @@ pub(crate) struct Positions {
     loop_jump: Vec<u32>,
     /// Last position of a header's block; the node itself otherwise.
     end: Vec<u32>,
-    /// Lowest position of the run of defs ending at the node, each the memory
-    /// input of the next and laid out next to it.
-    chain_bottom: Vec<u32>,
 }
 
 impl MemLayout {
@@ -111,25 +123,10 @@ impl MemLayout {
                 .map(|&p| dfs.num[p as usize])
                 .collect::<SmallVec<[u32; 2]>>()
         });
-        let dom_order = graph_algorithms::dominance::DomIntervals::new(&idom_dfs);
-        // A retreating edge whose target does not dominate its source enters a
-        // loop somewhere other than its header.
-        let reducible = !graph.preds.iter().enumerate().any(|(v, preds)| {
-            preds.iter().any(|&u| {
-                let (dv, du) = (dfs.num[v], dfs.num[u as usize]);
-                dfs.is_ancestor(dv, du) && !dom_order.dominates(dv, du)
-            })
-        });
-        let nested = reducible
-            .then(|| {
-                let loops = LoopForest::new(&graph.preds, &dfs);
-                let (order, block_end) = loops.nested_order(&graph.preds, &dfs, graph.initial)?;
-                Some((loops, order, block_end))
-            })
-            .flatten();
-        let (loops, order, block_end) = match nested {
-            Some((loops, order, block_end)) => (Some(loops), order, block_end),
-            None => (None, (0..n as u32).collect(), Vec::new()),
+        let loops = LoopForest::new(&graph.preds, &dfs);
+        let (order, block_end) = match &loops {
+            Some(loops) => loops.nested_order(&graph.preds, &dfs),
+            None => ((0..n as u32).collect(), Vec::new()),
         };
 
         let mut pos = vec![NONE; n];
@@ -149,15 +146,18 @@ impl MemLayout {
             preds.push(graph.preds[v].iter().map(|&u| pos[u as usize]).collect());
             idom.push(pos[dfs.vertex[idom_dfs[dfs.num[v] as usize] as usize] as usize]);
         }
-        debug_assert_eq!(pos[graph.initial as usize], 0, "InitialMemory leads");
+        debug_assert_eq!(pos[0], 0, "InitialMemory leads");
 
         let fast = loops.map(|loops| {
-            let at = |v: u32| if v == NONE { NONE } else { pos[v as usize] };
+            // The top level, `n` in the forest, is `NONE` here.
+            let at = |v: u32| pos.get(v as usize).copied().unwrap_or(NONE);
             let mut encl = Vec::with_capacity(n);
+            let mut loop_jump = Vec::with_capacity(n);
             let mut end = Vec::with_capacity(n);
             for (p, &v) in order.iter().enumerate() {
                 let v = v as usize;
                 encl.push(at(loops.parent[v]));
+                loop_jump.push(at(loops.jump[v]));
                 end.push(if loops.is_header[v] {
                     block_end[v]
                 } else {
@@ -165,12 +165,9 @@ impl MemLayout {
                 });
             }
 
-            // Parents before children: preorder reaches a dominator first, and
-            // an enclosing header too.
+            // Parents before children: preorder reaches a dominator first.
             let mut dom_depth = vec![0u32; n];
             let mut dom_jump = vec![NONE; n];
-            let mut loop_depth = vec![0u32; n];
-            let mut loop_jump = vec![NONE; n];
             for &v in &dfs.vertex {
                 let x = pos[v as usize] as usize;
                 let parent = idom[x] as usize;
@@ -180,41 +177,6 @@ impl MemLayout {
                     dom_depth[x] = dom_depth[parent] + 1;
                     dom_jump[x] = skip(&dom_depth, &dom_jump, parent as u32);
                 }
-                if loops.is_header[v as usize] {
-                    let parent = encl[x];
-                    if parent == NONE {
-                        loop_depth[x] = 1;
-                        loop_jump[x] = NONE;
-                    } else {
-                        loop_depth[x] = loop_depth[parent as usize] + 1;
-                        let j = loop_jump[parent as usize];
-                        let jj = if j == NONE {
-                            NONE
-                        } else {
-                            loop_jump[j as usize]
-                        };
-                        let depth = |h: u32| if h == NONE { 0 } else { loop_depth[h as usize] };
-                        loop_jump[x] =
-                            if depth(parent) - depth(j) == depth(j) - depth(jj) && j != NONE {
-                                jj
-                            } else {
-                                parent
-                            };
-                    }
-                }
-            }
-
-            let mut chain_bottom = vec![NONE; n];
-            for p in 0..n {
-                let linked = p > 0
-                    && shape[p] == Shape::Def
-                    && shape[p - 1] == Shape::Def
-                    && preds[p].as_slice() == [p as u32 - 1];
-                chain_bottom[p] = if linked {
-                    chain_bottom[p - 1]
-                } else {
-                    p as u32
-                };
             }
 
             Positions {
@@ -222,7 +184,6 @@ impl MemLayout {
                 encl,
                 loop_jump,
                 end,
-                chain_bottom,
             }
         });
         Self {
@@ -273,15 +234,9 @@ impl MemLayout {
         probe: &mut dyn ClobberProbe,
         answers: &mut Answers,
     ) -> Option<NodeId> {
-        let Some(start) = self.position(start) else {
-            // Unreachable from `InitialMemory`, so nothing above it is proven
-            // and the caller bounds the answer at `start` itself.
-            debug_assert!(
-                !cone_clobbers(function, start, probe),
-                "an uncovered cone holds a clobber above the start"
-            );
-            return None;
-        };
+        // Unreachable from `InitialMemory`, so nothing above it is proven and
+        // the caller bounds the answer at `start` itself.
+        let start = self.position(start)?;
         let answer = match self.fast {
             Some(_) => self.climb(function, start, probe, answers),
             None => self.climb_slow(function, start, probe, answers),
@@ -338,26 +293,27 @@ impl MemLayout {
         }
         let stop = self.idom[phi as usize];
         let mut work = vec![phi];
-        let mut seen = FxHashSet::default();
-        let mut dirty = false;
-        while let Some(y) = work.pop() {
+        let mut seen = FxHashSet::from_iter([phi]);
+        let dirty = 'walk: loop {
+            let Some(y) = work.pop() else {
+                break false;
+            };
             for &p in &self.preds[y as usize] {
                 #[cfg(test)]
                 step();
-                if p == stop || p == phi || !seen.insert(p) {
+                if p == stop || !seen.insert(p) {
                     continue;
                 }
+                if self.shape[p as usize] == Shape::Def
+                    && probe.clobbers(function, self.node[p as usize])
+                {
+                    break 'walk true;
+                }
                 work.push(p);
-                dirty |= self.shape[p as usize] == Shape::Def
-                    && probe.clobbers(function, self.node[p as usize]);
             }
-        }
+        };
         answers.dirty.insert(phi, dirty);
         dirty
-    }
-
-    fn is_header(&self, x: u32) -> bool {
-        self.pos().end[x as usize] > x || self.preds[x as usize].contains(&x)
     }
 
     fn climb(
@@ -367,66 +323,159 @@ impl MemLayout {
         probe: &mut dyn ClobberProbe,
         answers: &mut Answers,
     ) -> u32 {
+        // Each frame above the first climbs an entry arm of the merge the
+        // frame below stands on, as far as that merge's immediate dominator;
+        // arms precede their merge, so the stack ends.  The positions every
+        // frame passed share one path, each frame's from its `base` up.
         let mut path: SmallVec<[u32; 8]> = SmallVec::new();
-        let mut known = Known::default();
-        let mut x = start;
-        let answer = 'climb: loop {
+        let mut frames = vec![Climb::new(start, None, 0)];
+        loop {
+            let frame = frames.last_mut().expect("the first frame ends the loop");
+            match self.climb_frame(function, frame, &mut path, probe, answers) {
+                Step::Answer(answer) => {
+                    for p in path.drain(frame.base..) {
+                        answers.nearest.insert(p, answer);
+                    }
+                    frames.pop();
+                    if frames.is_empty() {
+                        return answer;
+                    }
+                }
+                // What it passed stays on the path, to share the merge's
+                // immediate dominator's answer if the merge is clean.
+                Step::Bounded => {
+                    frames.pop();
+                    let merge = frames.last_mut().expect("the first frame is unbounded");
+                    merge.arm = merge.arm.map(|(i, mark)| (i + 1, mark));
+                }
+                Step::Arm(u) => {
+                    let stop = self.idom[frame.x as usize];
+                    frames.push(Climb::new(u, Some(stop), path.len()));
+                }
+            }
+        }
+    }
+
+    /// Runs one frame to its answer, past its bound, or to an entry arm of the
+    /// merge it stands on whose answer is not known yet.
+    fn climb_frame(
+        &self,
+        function: &Function,
+        frame: &mut Climb,
+        path: &mut SmallVec<[u32; 8]>,
+        probe: &mut dyn ClobberProbe,
+        answers: &mut Answers,
+    ) -> Step {
+        let Climb { x, stop, arm, .. } = frame;
+        let past = |x: u32| stop.is_some_and(|s| x <= s);
+        loop {
+            if let Some((first, mark)) = *arm {
+                let dirty = match self.arms_dirty(*x, first, answers) {
+                    Ok(dirty) => dirty,
+                    Err((i, u)) => {
+                        *arm = Some((i, mark));
+                        return Step::Arm(u);
+                    }
+                };
+                answers.dirty.insert(*x, dirty);
+                *arm = None;
+                if dirty {
+                    // The arms' positions are not below the merge.
+                    path.truncate(mark);
+                    return Step::Answer(*x);
+                }
+                // The arms passed to the immediate dominator share its answer.
+                *x = self.idom[*x as usize];
+            }
+            if past(*x) {
+                return Step::Bounded;
+            }
             #[cfg(test)]
             step();
-            if let Some(&a) = answers.nearest.get(&x) {
-                break a;
+            if let Some(&a) = answers.nearest.get(x) {
+                return Step::Answer(a);
             }
-            path.push(x);
+            path.push(*x);
             // Every def reaching `x` without passing a dominator inside the
             // same loop lies in `floor..=end[x]`.
-            let enc = self.pos().encl[x as usize];
+            let enc = self.pos().encl[*x as usize];
             let floor = if enc == NONE { 0 } else { enc + 1 };
-            let Some(c) = known.highest(self, function, probe, floor, self.pos().end[x as usize])
+            let Some(c) =
+                self.highest_clobber(function, probe, answers, floor, self.pos().end[*x as usize])
             else {
                 if enc == NONE {
                     // `InitialMemory` leads the order.
-                    break 0;
+                    return Step::Answer(0);
                 }
-                x = self.outermost_clean_loop(function, enc, probe, &mut known);
+                *x = self.outermost_clean_loop(function, enc, probe, answers);
                 continue;
             };
-            let a = self.topmost_dominator_above(x, c);
-            if a != x {
-                x = a;
-                if let Some(&a) = answers.nearest.get(&x) {
-                    break a;
+            let a = self.topmost_dominator_above(*x, c);
+            if a != *x {
+                *x = a;
+                if past(*x) {
+                    return Step::Bounded;
                 }
-                path.push(x);
+                if let Some(&a) = answers.nearest.get(x) {
+                    return Step::Answer(a);
+                }
+                path.push(*x);
             }
-            match self.shape[x as usize] {
-                Shape::Initial => break x,
+            match self.shape[*x as usize] {
+                Shape::Initial => return Step::Answer(*x),
                 Shape::Phi => {
-                    let clean = if self.pos().end[x as usize] > x {
-                        // Every def in the loop block is in the region.
-                        if c > x {
-                            break 'climb x;
+                    // The jump stops where the next dominator is at or below
+                    // `c`, so the region may hold `c`.
+                    debug_assert!(self.idom[*x as usize] <= c, "a merge passed by the jump");
+                    // Every def in a loop block is in its header's region.
+                    let block_dirty = self.pos().end[*x as usize] > *x && c > *x;
+                    match answers
+                        .dirty
+                        .get(x)
+                        .copied()
+                        .or(block_dirty.then_some(true))
+                    {
+                        Some(dirty) => {
+                            answers.dirty.insert(*x, dirty);
+                            if dirty {
+                                return Step::Answer(*x);
+                            }
+                            *x = self.idom[*x as usize];
                         }
-                        self.entry_clean(function, x, c, probe, answers)
-                    } else {
-                        !self.dirty(function, x, c, probe, answers)
-                    };
-                    if !clean {
-                        break x;
+                        None => *arm = Some((0, path.len())),
                     }
-                    x = self.idom[x as usize];
                 }
                 Shape::Def => {
-                    if (self.pos().chain_bottom[x as usize]..=x).contains(&c) {
-                        break c;
+                    if c == *x {
+                        return Step::Answer(c);
                     }
-                    x = self.idom[self.pos().chain_bottom[x as usize] as usize];
+                    *x = self.idom[*x as usize];
                 }
             }
-        };
-        for p in path {
-            answers.nearest.insert(p, answer);
         }
-        answer
+    }
+
+    /// Whether some entry arm of merge `phi`, from the `first`-th, has its
+    /// nearest clobber strictly below `phi`'s immediate dominator, which holds
+    /// iff `phi`'s region outside its own block holds a clobber.  An arm that
+    /// is the dominator itself has none.  `Err` names the first arm whose
+    /// answer is not known yet, with its index.
+    fn arms_dirty(&self, phi: u32, first: usize, answers: &Answers) -> Result<bool, (usize, u32)> {
+        let stop = self.idom[phi as usize];
+        for (i, &u) in self.preds[phi as usize].iter().enumerate().skip(first) {
+            if u >= phi || u == stop {
+                continue;
+            }
+            match answers.nearest.get(&u) {
+                Some(&n) => {
+                    if n > stop {
+                        return Ok(true);
+                    }
+                }
+                None => return Err((i, u)),
+            }
+        }
+        Ok(false)
     }
 
     /// The outermost loop header from `header` outward whose whole block past
@@ -438,236 +487,38 @@ impl MemLayout {
         function: &Function,
         header: u32,
         probe: &mut dyn ClobberProbe,
-        known: &mut Known,
+        answers: &mut Answers,
     ) -> u32 {
-        let mut h = header;
-        let mut clean = |h: u32, probe: &mut dyn ClobberProbe| {
-            known
-                .highest(self, function, probe, h + 1, self.pos().end[h as usize])
-                .is_none()
-        };
-        loop {
-            #[cfg(test)]
-            step();
-            let j = self.pos().loop_jump[h as usize];
-            if j != NONE && clean(j, probe) {
-                h = j;
-                continue;
-            }
-            let p = self.pos().encl[h as usize];
-            if p != NONE && clean(p, probe) {
-                h = p;
-                continue;
-            }
-            return h;
-        }
+        let pos = self.pos();
+        farthest(
+            header,
+            &pos.loop_jump,
+            |h| pos.encl[h as usize],
+            |h| {
+                self.highest_clobber(function, probe, answers, h + 1, pos.end[h as usize])
+                    .is_none()
+            },
+        )
     }
 
     /// The topmost dominator of `x` laid out above `c`.
     fn topmost_dominator_above(&self, x: u32, c: u32) -> u32 {
-        let mut a = x;
-        loop {
-            #[cfg(test)]
-            step();
-            let j = self.pos().dom_jump[a as usize];
-            if j != a && j > c {
-                a = j;
-                continue;
-            }
-            let p = self.idom[a as usize];
-            if p != a && p > c {
-                a = p;
-                continue;
-            }
-            return a;
-        }
+        farthest(
+            x,
+            &self.pos().dom_jump,
+            |a| self.idom[a as usize],
+            |a| a > c,
+        )
     }
 
-    /// Whether no def reaching loop header `header` from outside its block
-    /// clobbers.  `below` is the highest clobber at or below `header`.
-    fn entry_clean(
-        &self,
-        function: &Function,
-        header: u32,
-        below: u32,
-        probe: &mut dyn ClobberProbe,
-        answers: &mut Answers,
-    ) -> bool {
-        if below < self.idom[header as usize] {
-            return true;
-        }
-        !self.region_dirty(function, header, probe, answers)
-    }
-
-    /// Whether merge `phi`'s region holds a clobber.  `below` is the highest
-    /// clobber at or below `phi`.
-    fn dirty(
-        &self,
-        function: &Function,
-        phi: u32,
-        below: u32,
-        probe: &mut dyn ClobberProbe,
-        answers: &mut Answers,
-    ) -> bool {
-        if let Some(&d) = answers.dirty.get(&phi) {
-            return d;
-        }
-        if below < self.idom[phi as usize] {
-            answers.dirty.insert(phi, false);
-            return false;
-        }
-        self.region_dirty(function, phi, probe, answers)
-    }
-
-    /// Walks the region of `phi` from its arms outside its own block, taking
-    /// each enclosed loop and each merge already answered whole.
-    fn region_dirty(
-        &self,
-        function: &Function,
-        phi: u32,
-        probe: &mut dyn ClobberProbe,
-        answers: &mut Answers,
-    ) -> bool {
-        #[derive(Clone, Copy)]
-        struct Frame {
-            phi: u32,
-            stop: u32,
-            base: usize,
-            id: u32,
-        }
-        let entry_arms = |p: u32| {
-            self.preds[p as usize]
-                .iter()
-                .copied()
-                .filter(move |&u| u < p)
-        };
-        let mut frames = vec![Frame {
-            phi,
-            stop: self.idom[phi as usize],
-            base: 0,
-            id: 0,
-        }];
-        let mut next_id = 1;
-        let mut work: Vec<u32> = entry_arms(phi).collect();
-        // Per frame: a region nested in another is walked again under its own.
-        let mut seen: FxHashMap<u32, u32> = FxHashMap::default();
-        let dirty = loop {
-            let frame = *frames.last().expect("the outer frame ends the loop");
-            if work.len() == frame.base {
-                frames.pop();
-                // A header's body is the climb's to check, so only a merge's
-                // verdict is whole.
-                if self.pos().end[frame.phi as usize] == frame.phi {
-                    answers.dirty.insert(frame.phi, false);
-                }
-                if frames.is_empty() {
-                    break false;
-                }
-                work.push(self.idom[frame.phi as usize]);
-                continue;
-            }
-            let y = work.pop().expect("above the frame base");
-            #[cfg(test)]
-            step();
-            if y == frame.stop || y == frame.phi || seen.insert(y, frame.id) == Some(frame.id) {
-                continue;
-            }
-            if let Some(h) = self.outermost_loop_apart(y, frame.phi, frame.stop) {
-                // A whole loop of the region: its block is all in it.
-                if self
-                    .highest_clobber(function, probe, h, self.pos().end[h as usize])
-                    .is_some()
-                {
-                    break true;
-                }
-                if h == y || seen.insert(h, frame.id) != Some(frame.id) {
-                    work.extend(entry_arms(h));
-                }
-                continue;
-            }
-            match self.shape[y as usize] {
-                Shape::Initial => {}
-                Shape::Phi => match answers.dirty.get(&y) {
-                    Some(true) => break true,
-                    Some(false) => work.push(self.idom[y as usize]),
-                    None => {
-                        if self
-                            .highest_clobber(function, probe, self.idom[y as usize] + 1, y)
-                            .is_none()
-                        {
-                            answers.dirty.insert(y, false);
-                            work.push(self.idom[y as usize]);
-                        } else {
-                            frames.push(Frame {
-                                phi: y,
-                                stop: self.idom[y as usize],
-                                base: work.len(),
-                                id: next_id,
-                            });
-                            next_id += 1;
-                            work.extend(entry_arms(y));
-                        }
-                    }
-                },
-                Shape::Def => {
-                    let bottom = self.pos().chain_bottom[y as usize];
-                    let stop = frame.stop;
-                    let reaches_stop = (bottom..=y).contains(&stop);
-                    let lowest = if reaches_stop { stop + 1 } else { bottom };
-                    if self.highest_clobber(function, probe, lowest, y).is_some() {
-                        break true;
-                    }
-                    if !reaches_stop {
-                        work.push(self.idom[bottom as usize]);
-                    }
-                }
-            }
-        };
-        if dirty {
-            // Every open region contains the one the clobber was found in.
-            for frame in frames {
-                if self.pos().end[frame.phi as usize] == frame.phi {
-                    answers.dirty.insert(frame.phi, true);
-                }
-            }
-        }
-        dirty
-    }
-
-    /// The outermost loop whose block holds `y` but neither `phi` nor `stop`.
-    fn outermost_loop_apart(&self, y: u32, phi: u32, stop: u32) -> Option<u32> {
-        let apart = |h: u32| {
-            let block = h..=self.pos().end[h as usize];
-            !block.contains(&phi) && !block.contains(&stop)
-        };
-        let mut h = if self.is_header(y) {
-            y
-        } else {
-            self.pos().encl[y as usize]
-        };
-        if h == NONE || !apart(h) {
-            return None;
-        }
-        loop {
-            let j = self.pos().loop_jump[h as usize];
-            if j != NONE && apart(j) {
-                h = j;
-                continue;
-            }
-            let p = self.pos().encl[h as usize];
-            if p != NONE && apart(p) {
-                h = p;
-                continue;
-            }
-            return Some(h);
-        }
-    }
-
-    /// The highest position in `lo..=hi` whose def clobbers.
+    /// The highest position in `lo..=hi` whose def clobbers.  Every
+    /// candidate passed takes what the scan found below it, so a def rejected
+    /// once is crossed, never asked again.
     fn highest_clobber(
         &self,
         function: &Function,
         probe: &mut dyn ClobberProbe,
+        answers: &mut Answers,
         lo: u32,
         hi: u32,
     ) -> Option<u32> {
@@ -675,21 +526,64 @@ impl MemLayout {
             return None;
         }
         let mut hi = hi;
-        loop {
+        let mut passed: SmallVec<[u32; 8]> = SmallVec::new();
+        let found = loop {
             #[cfg(test)]
             step();
-            let c = probe.candidate(lo, hi)?;
+            // Nothing between a candidate and `hi` may clobber, whatever
+            // range asked.
+            let Some(c) = probe.candidate(lo, hi) else {
+                break Below::CleanFrom(lo);
+            };
             debug_assert!((lo..=hi).contains(&c), "candidate {c} outside {lo}..={hi}");
-            if self.shape[c as usize] == Shape::Def
-                && probe.clobbers(function, self.node[c as usize])
-            {
-                return Some(c);
+            passed.push(c);
+            let below = answers.below.get(&c).copied().unwrap_or_else(|| {
+                if self.shape[c as usize] == Shape::Def
+                    && probe.clobbers(function, self.node[c as usize])
+                {
+                    Below::Clobber(c)
+                } else {
+                    Below::CleanFrom(c)
+                }
+            });
+            match below {
+                Below::CleanFrom(t) if t > lo => hi = t - 1,
+                _ => break below,
             }
-            if c == lo {
-                return None;
-            }
-            hi = c - 1;
+        };
+        for p in passed {
+            answers.below.insert(p, found);
         }
+        match found {
+            Below::Clobber(c) if c >= lo => Some(c),
+            _ => None,
+        }
+    }
+}
+
+/// The farthest ancestor of `x` that `ok` accepts, up `parent` with the skip
+/// pointers `jump`, or `x` itself.  `ok` accepts every node between `x` and
+/// any ancestor it accepts.  `NONE` and a self-pointer end a chain.
+fn farthest(
+    mut x: u32,
+    jump: &[u32],
+    parent: impl Fn(u32) -> u32,
+    mut ok: impl FnMut(u32) -> bool,
+) -> u32 {
+    loop {
+        #[cfg(test)]
+        step();
+        let j = jump[x as usize];
+        if j != NONE && j != x && ok(j) {
+            x = j;
+            continue;
+        }
+        let p = parent(x);
+        if p != NONE && p != x && ok(p) {
+            x = p;
+            continue;
+        }
+        return x;
     }
 }
 
@@ -705,68 +599,38 @@ fn skip(depth: &[u32], jump: &[u32], parent: u32) -> u32 {
     }
 }
 
-/// The last range asked and its highest clobber, reused by a narrower ask.
-#[derive(Default)]
-struct Known {
-    last: Option<(u32, u32, Option<u32>)>,
+/// One open climb of [`MemLayout::climb`].
+struct Climb {
+    /// Where the climb stands.
+    x: u32,
+    /// For an arm's climb, its merge's immediate dominator: reaching it or
+    /// above answers the arm, which then has no clobber below it.
+    stop: Option<u32>,
+    /// Where the positions this frame passed start on the shared path.
+    base: usize,
+    /// Standing on a merge whose entry arms decide it, the first arm not yet
+    /// checked and the path's length when the merge was reached.
+    arm: Option<(usize, usize)>,
 }
 
-impl Known {
-    fn highest(
-        &mut self,
-        layout: &MemLayout,
-        function: &Function,
-        probe: &mut dyn ClobberProbe,
-        lo: u32,
-        hi: u32,
-    ) -> Option<u32> {
-        if let Some((l, h, c)) = self.last
-            && l == lo
-            && hi <= h
-            && c.is_none_or(|c| c <= hi)
-        {
-            return c;
+impl Climb {
+    fn new(x: u32, stop: Option<u32>, base: usize) -> Self {
+        Self {
+            x,
+            stop,
+            base,
+            arm: None,
         }
-        let c = layout.highest_clobber(function, probe, lo, hi);
-        self.last = Some((lo, hi, c));
-        c
     }
 }
 
-/// Whether any memory def strictly above `node` clobbers the probed
-/// location.  Vacuous for a node the layout covers, whose cone roots in
-/// `InitialMemory`.
-fn cone_clobbers(function: &Function, node: NodeId, probe: &mut dyn ClobberProbe) -> bool {
-    let preds = |n: NodeId| -> SmallVec<[NodeId; 2]> {
-        match function.node_kind(n) {
-            NodeKind::InitialMemory => SmallVec::new(),
-            NodeKind::MemPhi => function
-                .phi_data_inputs(n)
-                .map(|v| function.producer(v))
-                .collect(),
-            _ => function
-                .memory_input_of(n)
-                .map(|v| function.producer(v))
-                .into_iter()
-                .collect(),
-        }
-    };
-    let mut seen = FxHashSet::default();
-    let mut work: Vec<NodeId> = preds(node).into_vec();
-    while let Some(n) = work.pop() {
-        if !seen.insert(n) {
-            continue;
-        }
-        if !matches!(
-            function.node_kind(n),
-            NodeKind::InitialMemory | NodeKind::MemPhi
-        ) && probe.clobbers(function, n)
-        {
-            return true;
-        }
-        work.extend(preds(n));
-    }
-    false
+/// Where a [`Climb`] frame stopped.
+enum Step {
+    Answer(u32),
+    /// Past its bound with no clobber found.
+    Bounded,
+    /// At a merge needing this entry arm's answer.
+    Arm(u32),
 }
 
 /// The memory defs reachable from `InitialMemory`, in discovery order.
@@ -775,7 +639,6 @@ struct Discovered {
     shape: Vec<Shape>,
     preds: Vec<SmallVec<[u32; 2]>>,
     succs: Vec<SmallVec<[u32; 2]>>,
-    initial: u32,
 }
 
 impl Discovered {
@@ -835,7 +698,6 @@ impl Discovered {
             shape,
             preds,
             succs,
-            initial: 0,
         }
     }
 }
@@ -912,10 +774,16 @@ struct LoopForest {
     /// Innermost header whose loop holds the node, the node excluded.
     parent: Vec<u32>,
     is_header: Vec<bool>,
+    /// Loop depth of a header, by node, the top level `n` at depth 0.
+    depth: Vec<u32>,
+    /// Skip pointer up the headers enclosing a header, by node; `n` otherwise.
+    jump: Vec<u32>,
 }
 
 impl LoopForest {
-    fn new(preds: &[SmallVec<[u32; 2]>], dfs: &DepthFirst) -> Self {
+    /// `None` on an irreducible graph: a loop body with a predecessor outside
+    /// its header's DFS subtree is entered somewhere other than its header.
+    fn new(preds: &[SmallVec<[u32; 2]>], dfs: &DepthFirst) -> Option<Self> {
         let n = preds.len();
         let mut rep: Vec<u32> = (0..n as u32).collect();
         let mut parent = vec![NONE; n];
@@ -946,10 +814,14 @@ impl LoopForest {
                 i += 1;
                 for &y in &preds[x as usize] {
                     let r = find(&mut rep, y);
-                    if r != w && mark[r as usize] != w && dfs.is_ancestor(dw, dfs.num[r as usize]) {
-                        mark[r as usize] = w;
-                        body.push(r);
+                    if r == w || mark[r as usize] == w {
+                        continue;
                     }
+                    if !dfs.is_ancestor(dw, dfs.num[r as usize]) {
+                        return None;
+                    }
+                    mark[r as usize] = w;
+                    body.push(r);
                 }
             }
             for &x in &body {
@@ -957,59 +829,45 @@ impl LoopForest {
                 rep[x as usize] = w;
             }
         }
-        Self { parent, is_header }
+        // Parents before children: preorder reaches an enclosing header first.
+        let top = n as u32;
+        let mut depth = vec![0u32; n + 1];
+        let mut jump = vec![top; n + 1];
+        for &v in &dfs.vertex {
+            if is_header[v as usize] {
+                let p = match parent[v as usize] {
+                    NONE => top,
+                    p => p,
+                };
+                depth[v as usize] = depth[p as usize] + 1;
+                jump[v as usize] = skip(&depth, &jump, p);
+            }
+        }
+        Some(Self {
+            parent,
+            is_header,
+            depth,
+            jump,
+        })
     }
 
-    /// Nodes in position order, and each header's last position, or `None`
-    /// when a level has no topological order from its entry.  Each level
+    /// Nodes in position order, and each header's last position.  Each level
     /// (the top, or one loop's body with inner loops collapsed into their
     /// headers) is ordered topologically from its entry, and an inner loop's
     /// block is spliced in where its header falls.
     ///
-    /// The graph `preds` encodes must be reducible, with every node reachable
-    /// from `initial`: [`MemLayout::build`] lays out in discovery order
-    /// instead of calling this on a graph with a retreating edge to a
-    /// non-dominator or a node outside that reach.
-    fn nested_order(
-        &self,
-        preds: &[SmallVec<[u32; 2]>],
-        dfs: &DepthFirst,
-        initial: u32,
-    ) -> Option<(Vec<u32>, Vec<u32>)> {
+    /// Every node in `preds` is reachable from node 0, and the forest
+    /// exists, so the graph is reducible and every level has an order.
+    fn nested_order(&self, preds: &[SmallVec<[u32; 2]>], dfs: &DepthFirst) -> (Vec<u32>, Vec<u32>) {
         let n = preds.len();
         let top = n as u32;
-        let level = |x: u32| {
-            let p = self.parent[x as usize];
-            if p == NONE { top } else { p }
+        let level = |x: u32| match self.parent.get(x as usize) {
+            Some(&p) if p != NONE => p,
+            _ => top,
         };
-        // Loop depth and skip pointers over headers, the top level at depth 0.
-        let mut depth = vec![0u32; n + 1];
-        let mut jump = vec![top; n + 1];
-        for &v in &dfs.vertex {
-            if self.is_header[v as usize] {
-                let p = level(v);
-                depth[v as usize] = depth[p as usize] + 1;
-                let j = jump[p as usize];
-                let jj = jump[j as usize];
-                jump[v as usize] = if depth[p as usize] - depth[j as usize]
-                    == depth[j as usize] - depth[jj as usize]
-                {
-                    jj
-                } else {
-                    p
-                };
-            }
-        }
-        let ancestor_at = |mut h: u32, d: u32| {
-            while depth[h as usize] > d {
-                h = if depth[jump[h as usize] as usize] >= d {
-                    jump[h as usize]
-                } else {
-                    level(h)
-                };
-            }
-            h
-        };
+        let depth = &self.depth;
+        let ancestor_at =
+            |h: u32, d: u32| farthest(h, &self.jump, level, |a| depth[a as usize] >= d);
 
         // Edges between the representatives of one level: a node at its own
         // level, or the header of the inner loop holding it.  A header opens
@@ -1043,7 +901,8 @@ impl LoopForest {
         let mut block_end = vec![NONE; n];
         // One frame per open level: its header (`top` at the root) and the
         // members still ready to place.
-        let mut frames: Vec<(u32, Vec<u32>)> = vec![(top, vec![initial])];
+        // `InitialMemory`, discovered first, opens the top level.
+        let mut frames: Vec<(u32, Vec<u32>)> = vec![(top, vec![0])];
         while let Some((lvl, ready)) = frames.last_mut() {
             let lvl = *lvl;
             let Some(r) = ready.pop() else {
@@ -1073,7 +932,8 @@ impl LoopForest {
                 }
             }
         }
-        (order.len() == n).then_some((order, block_end))
+        assert_eq!(order.len(), n, "a reducible graph has a nested order");
+        (order, block_end)
     }
 }
 

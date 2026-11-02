@@ -5,8 +5,8 @@ use strider_ir::eval::mask_below;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 
-use crate::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::const_eval::var_and_const;
+use crate::pipeline::Optimizer;
 
 #[cfg(test)]
 mod tests;
@@ -45,27 +45,6 @@ impl KnownBitsFacts {
     }
 }
 
-enum ConstShift {
-    InRange(u32),
-    /// Shift amount known but at-or-past the output width; Sleigh returns 0,
-    /// so every output bit is known zero.
-    OverWidth,
-    Unknown,
-}
-
-/// Mirrors Sleigh's `OpBehaviorInt{Left,Right}::evaluateBinary`, which return 0
-/// for any shift amount `>= bit_width`.  Masking the amount to `bit_width - 1`
-/// instead would wrap large literal shifts back into range.
-fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u128, ty: ValueType) -> ConstShift {
-    if !rhs_kb.all_known(rhs_mask) {
-        return ConstShift::Unknown;
-    }
-    if strider_ir::eval::shift_out_of_range(rhs_kb.ones, ty) {
-        return ConstShift::OverWidth;
-    }
-    ConstShift::InRange(rhs_kb.ones as u32)
-}
-
 #[derive(Clone, Copy)]
 enum ShiftDir {
     Left,
@@ -75,6 +54,11 @@ enum ShiftDir {
 /// Transfer for both shift arms.  Vacated bits become known-zero; surviving
 /// lhs bits carry their ones/zeros along.  `None` when the shift amount is
 /// unknown, meaning fully unknown.
+///
+/// Mirrors Sleigh's `OpBehaviorInt{Left,Right}::evaluateBinary`, which return 0
+/// for any shift amount `>= bit_width`: the checked shifts below vacate every
+/// bit there.  Masking the amount to `bit_width - 1` instead would wrap large
+/// literal shifts back into range.
 fn shift_known_bits(
     function: &strider_ir::Function,
     l: KnownBitsFacts,
@@ -90,35 +74,25 @@ fn shift_known_bits(
         .value_type_opt(rhs)
         .and_then(ValueType::int_mask_u128)
         .unwrap_or(u128::MAX);
-    match classify_const_shift(rhs_kb, rhs_mask, ty) {
-        ConstShift::Unknown => None,
-        ConstShift::OverWidth => Some(KnownBitsFacts {
-            ones: 0,
-            zeros: type_mask,
-        }),
-        ConstShift::InRange(shift) => {
-            let (shifted_ones, shifted_zeros) = match dir {
-                ShiftDir::Left => {
-                    let lower_mask = mask_below(shift) & type_mask;
-                    (
-                        (l.ones << shift) & type_mask,
-                        ((l.zeros << shift) & type_mask) | lower_mask,
-                    )
-                }
-                ShiftDir::Right => {
-                    let upper_mask = !(type_mask >> shift) & type_mask;
-                    (
-                        (l.ones & type_mask) >> shift,
-                        ((l.zeros & type_mask) >> shift) | upper_mask,
-                    )
-                }
-            };
-            Some(KnownBitsFacts {
-                ones: shifted_ones,
-                zeros: shifted_zeros & !shifted_ones,
-            })
-        }
+    if !rhs_kb.all_known(rhs_mask) {
+        return None;
     }
+    let shift = u32::try_from(rhs_kb.ones).unwrap_or(u32::MAX);
+    let (ones, zeros) = match dir {
+        ShiftDir::Left => (
+            l.ones.checked_shl(shift).unwrap_or(0),
+            l.zeros.checked_shl(shift).unwrap_or(0) | mask_below(shift),
+        ),
+        ShiftDir::Right => (
+            (l.ones & type_mask).checked_shr(shift).unwrap_or(0),
+            (l.zeros & type_mask).checked_shr(shift).unwrap_or(0)
+                | !type_mask.checked_shr(shift).unwrap_or(0),
+        ),
+    };
+    Some(KnownBitsFacts {
+        ones: ones & type_mask,
+        zeros: zeros & type_mask & !ones,
+    })
 }
 
 /// Operand facts read from the IR alone: an interned constant, nothing else.
@@ -142,31 +116,18 @@ pub(crate) fn const_only(
 pub(crate) fn node_known_bits(
     function: &strider_ir::Function,
     node_id: NodeId,
-    operand: &dyn Fn(ValueId) -> KnownBitsFacts,
-) -> Result<Option<(ValueId, KnownBitsFacts)>> {
+    operand: &mut dyn FnMut(ValueId) -> KnownBitsFacts,
+) -> Option<(ValueId, KnownBitsFacts)> {
     let kind = *function.node_kind(node_id);
 
-    let Some(&out) = function
+    let (out, ty) = function
         .node_outputs(node_id)
         .iter()
-        .find(|&&o| function.value_kind(o).is_integer())
-    else {
-        return Ok(None);
-    };
-    let out_kind = function.value_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let Some(type_mask) = ty.int_mask_u128() else {
-        return Ok(None);
-    };
+        .find_map(|&o| Some((o, function.value_type_opt(o).filter(|t| t.is_integer())?)))?;
+    let type_mask = ty.int_mask_u128()?;
 
     let kb = match kind {
-        NodeKind::IntConst(_) => match function
-            .int_const_u128(out)
-            .and_then(|v| KnownBitsFacts::from_const(v, ty))
-        {
-            Some(kb) => kb,
-            None => return Ok(None),
-        },
+        NodeKind::IntConst(_) => KnownBitsFacts::from_const(function.int_const_u128(out)?, ty)?,
 
         NodeKind::IntBinaryOp(op) => {
             let [lhs, rhs] = function
@@ -192,103 +153,65 @@ pub(crate) fn node_known_bits(
                     zeros: ((l.ones & r.ones) | (l.zeros & r.zeros)) & type_mask,
                 },
                 IntBinaryOp::ShiftLeft => {
-                    return Ok(shift_known_bits(function, l, rhs, r, ty, ShiftDir::Left)
-                        .map(|facts| (out, facts)));
+                    shift_known_bits(function, l, rhs, r, ty, ShiftDir::Left)?
                 }
                 IntBinaryOp::ShiftRight => {
-                    return Ok(shift_known_bits(function, l, rhs, r, ty, ShiftDir::Right)
-                        .map(|facts| (out, facts)));
+                    shift_known_bits(function, l, rhs, r, ty, ShiftDir::Right)?
                 }
-                _ => return Ok(None),
+                _ => return None,
             }
         }
 
-        NodeKind::Truncate => {
+        NodeKind::Truncate | NodeKind::Extend(_) | NodeKind::Popcount | NodeKind::Lzcount => {
             let [value] = function
                 .graph()
                 .node_inputs_exact::<1>(node_id)
-                .expect("Truncate has 1 input per node signature");
+                .expect("a unary kind has 1 input per node signature");
             let kb = operand(value);
-            KnownBitsFacts {
-                ones: kb.ones & type_mask,
-                zeros: kb.zeros & type_mask,
-            }
-        }
-
-        NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            let [value] = function
-                .graph()
-                .node_inputs_exact::<1>(node_id)
-                .expect("Extend has 1 input per node signature");
-            let input_kind = function.value_kind(value);
-            let input_ty = input_kind.as_value_or_err()?;
-            // An untracked input width must bail, not default `input_mask` to
-            // 0: that would mark every bit known-zero.
-            let Some(input_mask) = input_ty.int_mask_u128() else {
-                return Ok(None);
-            };
-            let kb = operand(value);
-            KnownBitsFacts {
-                ones: kb.ones,
-                zeros: kb.zeros | (type_mask ^ input_mask), // upper bits are 0
-            }
-        }
-
-        NodeKind::Extend(ExtendOp::SignExtend) => {
-            // Upper bits replicate the sign bit, so they are determined only
-            // when the sign bit is; the lower bits pass through either way.
-            let [value] = function
-                .graph()
-                .node_inputs_exact::<1>(node_id)
-                .expect("Extend has 1 input per node signature");
-            let input_kind = function.value_kind(value);
-            let input_ty = input_kind.as_value_or_err()?;
-            let Some(input_mask) = input_ty.int_mask_u128() else {
-                return Ok(None);
-            };
-            let kb = operand(value);
-            // Highest bit of the input width.
-            let sign_bit = (input_mask >> 1) + 1;
-            let upper_mask = type_mask & !input_mask;
-            if kb.ones & sign_bit != 0 {
-                KnownBitsFacts {
-                    ones: (kb.ones & input_mask) | upper_mask,
-                    zeros: kb.zeros & input_mask,
+            let input_ty = function.value_type_opt(value)?;
+            match kind {
+                NodeKind::Truncate => KnownBitsFacts {
+                    ones: kb.ones & type_mask,
+                    zeros: kb.zeros & type_mask,
+                },
+                NodeKind::Extend(op) => {
+                    // An untracked input width must bail, not default
+                    // `input_mask` to 0: that would mark every bit known-zero.
+                    let input_mask = input_ty.int_mask_u128()?;
+                    let upper_mask = type_mask & !input_mask;
+                    match op {
+                        ExtendOp::ZeroExtend => KnownBitsFacts {
+                            ones: kb.ones,
+                            zeros: kb.zeros | upper_mask,
+                        },
+                        // Upper bits replicate the sign bit, so they are
+                        // determined only when the sign bit is.
+                        ExtendOp::SignExtend => {
+                            let sign_bit = (input_mask >> 1) + 1;
+                            let fill = |set: u128| if set & sign_bit == 0 { 0 } else { upper_mask };
+                            KnownBitsFacts {
+                                ones: (kb.ones & input_mask) | fill(kb.ones),
+                                zeros: (kb.zeros & input_mask) | fill(kb.zeros),
+                            }
+                        }
+                    }
                 }
-            } else if kb.zeros & sign_bit != 0 {
-                KnownBitsFacts {
-                    ones: kb.ones & input_mask,
-                    zeros: (kb.zeros & input_mask) | upper_mask,
-                }
-            } else {
-                KnownBitsFacts {
-                    ones: kb.ones & input_mask,
-                    zeros: kb.zeros & input_mask,
+                // Popcount / Lzcount: the result is in [0, bit_width(input)],
+                // so every bit above ceil_log2(bit_width + 1) is known zero.
+                // `8 * byte_size` is the width Sleigh counts over
+                // (`opbehavior.cc:791`); only `I1` differs from `bit_width`.
+                _ => {
+                    let max_val = (input_ty.byte_size() * 8) as u64;
+                    let bits_needed = u64::BITS - max_val.leading_zeros();
+                    KnownBitsFacts {
+                        ones: 0,
+                        zeros: type_mask & !mask_below(bits_needed),
+                    }
                 }
             }
         }
 
-        NodeKind::Popcount | NodeKind::Lzcount => {
-            // Result is in [0, bit_width(input)], so every bit above
-            // ceil_log2(bit_width + 1) is known zero.
-            let [value] = function
-                .graph()
-                .node_inputs_exact::<1>(node_id)
-                .expect("Popcount / Lzcount have 1 input per node signature");
-            let input_kind = function.value_kind(value);
-            let input_ty = input_kind.as_value_or_err()?;
-            // `8 * byte_size`, the width Sleigh counts over
-            // (`opbehavior.cc:791`); only `I1` differs from `bit_width`.
-            let max_val = (input_ty.byte_size() * 8) as u64;
-            let bits_needed = (u64::BITS - max_val.leading_zeros()) as usize;
-            let upper_zeros = type_mask & !mask_below(bits_needed as u32);
-            KnownBitsFacts {
-                ones: 0,
-                zeros: upper_zeros,
-            }
-        }
-
-        _ => return Ok(None),
+        _ => return None,
     };
 
     // Overlapping ones/zeros can only mean a transfer-function bug.
@@ -298,7 +221,7 @@ pub(crate) fn node_known_bits(
         "node_known_bits produced overlapping ones/zeros: {kb:?}",
     );
 
-    Ok(Some((out, kb)))
+    Some((out, kb))
 }
 
 #[cfg(test)]
@@ -332,19 +255,14 @@ fn propagates_known_bits(kind: &NodeKind) -> bool {
 
 /// Known-bits worklist analysis to fixed point.  Non-mutating.  Outputs absent
 /// from the map have no proven bits.
-///
-/// # Errors
-///
-/// Only a malformed per-node derivation errors.  Wrong input arity panics
-/// instead (validated invariant); well-formed graphs always converge.
-pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
+pub fn analyze(function: &strider_ir::Function) -> KnownBitsMap {
     // Reachable nodes only: a detached zombie can have zero inputs, which would
     // trip `node_inputs_exact` inside `node_known_bits`.  RPO seed order reduces
     // churn; the monotone fixpoint converges from any order.
     let mut known: KnownBitsMap = SecondaryMap::new();
     let mut work: Worklist<NodeId> = function.reverse_postorder_filter(|_| true).collect();
     while let Some(node_id) = work.dequeue() {
-        let Some((out, kb)) = node_known_bits(function, node_id, &|v| known[v])? else {
+        let Some((out, kb)) = node_known_bits(function, node_id, &mut |v| known[v]) else {
             continue;
         };
         // `kb` is recomputed from scratch each visit and is monotonically more
@@ -357,12 +275,11 @@ pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
             work.enqueue(consumer);
         }
     }
-    Ok(known)
+    known
 }
 
 /// Propagates known-bit information and replaces outputs whose every bit is
 /// determined with an equivalent integer constant.
-#[derive(Clone)]
 pub struct KnownBits;
 
 impl Optimizer for KnownBits {
@@ -370,17 +287,19 @@ impl Optimizer for KnownBits {
         &self,
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &crate::OptCtx<'_>,
-    ) -> crate::Result<OptimizationResult> {
-        let known = analyze(edit.function())?;
+    ) -> crate::Result<()> {
+        let known = analyze(edit.function());
 
-        // Collect first so the mutating loop below can take `&mut edit`.
-        let to_fold: Vec<(ValueId, ValueType, u128)> = known
-            .iter()
-            .filter_map(|(value, &kb)| {
+        // Collect first so the mutating loop below can take `&mut edit`.  In
+        // reverse post-order, so a fold's operand folds are finished before it
+        // walks its cone, and the walk stops at them.
+        let to_fold: Vec<(ValueId, ValueType, u128)> = edit
+            .live_reverse_postorder()
+            .into_iter()
+            .flat_map(|node| edit.node_outputs(node).to_vec())
+            .filter_map(|value| {
+                let kb = known[value];
                 let ty = edit.value_type_opt(value)?;
-                if !ty.is_integer() {
-                    return None;
-                }
                 let type_mask = ty.int_mask_u128()?;
                 if !kb.all_known(type_mask) {
                     return None;
@@ -394,22 +313,34 @@ impl Optimizer for KnownBits {
             })
             .collect();
 
+        // `And(x, C) -> x` where every bit `x` may set lies in `C`, unless
+        // either side folds below.  With the constant: an identity rewrite's
+        // footprint.
+        let masks: Vec<(ValueId, ValueId, ValueId)> = edit
+            .live_of_kind(|k| *k == NodeKind::IntBinaryOp(IntBinaryOp::And))
+            .filter_map(|node| {
+                let (x, c) = var_and_const(edit.function(), node)?;
+                let (out, ty) = edit.single_value_output(node).ok()?;
+                let type_mask = ty.int_mask_u128()?;
+                let redundant = known[x].max_value(type_mask) & !c == 0
+                    && !known[x].all_known(type_mask)
+                    && !known[out].all_known(type_mask);
+                let [l, r] = edit.node_inputs_exact::<2>(node).ok()?;
+                redundant.then_some((out, x, if l == x { r } else { l }))
+            })
+            .collect();
+
         // The cone is about to be cascade-culled with its asm-fingerprints.  A
         // contributor that never folds itself (the `x & 1` in
         // `((x & 1) | 2) & 0`) sits below the fold's direct inputs, so a
         // one-hop absorb loses it.
         //
-        // Constants first, absorb second, rewire last: the cone walk reads
-        // input edges and `replace_value` rewires them, so every walk must run
-        // over the pre-fold edges.  Creating a constant only adds a node (or
-        // dedups onto an existing one) and rewires nothing.  No `IntConst` is
-        // ever a fold's old producer, so the dedup pool is stable across the
-        // rewire pass either way.
-        let mut folds: Vec<(ValueId, ValueId)> = Vec::with_capacity(to_fold.len());
-        for &(value, ty, ones) in &to_fold {
-            folds.push((value, edit.build_int_const(ones, ty)?));
-        }
-
+        // Rewire last: the cone walk reads input edges and `replace_value`
+        // rewires them, so every walk must run over the pre-fold edges.
+        // Creating a constant only adds a node (or dedups onto an existing one)
+        // and rewires nothing.  No `IntConst` is ever a fold's old producer, so
+        // the dedup pool is stable across the rewire pass either way.
+        //
         // A fold's contributors belong to the REPLACEMENT, so the cone is
         // unioned into the fold's own producer, which the rewire below kills,
         // and `replace_value` carries that one set to the new constant.  A cone
@@ -418,15 +349,18 @@ impl Optimizer for KnownBits {
         //
         // A finished old producer covers its whole cone, so a fold above stops
         // there: nested folds (`t(i) = t(i-1) | C(i)`) would otherwise be
-        // quadratic.  The cone kinds cannot form a value cycle (only a `Phi`
-        // closes one, and it does not propagate), so `visited` only cuts
-        // diamonds; it is stamped per fold rather than cleared, since clearing
-        // costs the node space each time.
+        // quadratic, as they are in any order that walks a consumer first.
+        // The cone kinds cannot form a value cycle (only a `Phi` closes one,
+        // and it does not propagate), so `visited` only cuts diamonds; it is
+        // stamped per fold rather than cleared, since clearing costs the node
+        // space each time.
         let mut absorbed: DenseEntitySet<NodeId> = DenseEntitySet::new();
         let mut visited: SecondaryMap<NodeId, u32> = SecondaryMap::new();
         let mut stamp: u32 = 0;
         let mut stack: Vec<NodeId> = Vec::new();
-        for &(value, _) in &folds {
+        let mut folds: Vec<(ValueId, ValueId)> = Vec::with_capacity(to_fold.len());
+        for (value, ty, ones) in to_fold {
+            folds.push((value, edit.build_int_const(ones, ty)?));
             stamp += 1;
             let old_producer = edit.producer(value);
             stack.clear();
@@ -445,12 +379,13 @@ impl Optimizer for KnownBits {
             absorbed.insert(old_producer);
         }
 
-        let mut result = OptimizationResult::NoChange;
         for (value, new_value) in folds {
-            if edit.replace_value(value, new_value) {
-                result = OptimizationResult::Changed;
-            }
+            edit.replace_value(value, new_value);
         }
-        Ok(result)
+        for (out, x, c) in masks {
+            edit.absorb_fingerprint(x, c);
+            edit.replace_value(out, x);
+        }
+        Ok(())
     }
 }

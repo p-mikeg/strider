@@ -5,20 +5,23 @@
 //! A candidate is a `Load[InitialVar(sp) + K]` with `K` in a stack slot and no
 //! shadowing def on its memory chain.  Ordinals start at
 //! `first_stack_arg = arg_passing_regs.len()`, and the first slot with no
-//! anchored load ends the gap-free prefix.
+//! anchored load ends the gap-free prefix, as does an argument some dirty
+//! load reaches past.
 
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;
-use crate::mem_analysis::{MemAnalyzer, MemExpr, MemOptions, MemPurpose, ReachingDef};
-use crate::mem_ssa::narrow_load_to;
-use crate::pipeline::PostOptimizer;
+use crate::mem_analysis::{MemExpr, MemQuery, Policy, ReachingDef};
+use crate::pipeline::Optimizer;
 
-#[derive(Clone)]
 pub struct FunctionArgDetect;
 
-impl PostOptimizer for FunctionArgDetect {
+impl Optimizer for FunctionArgDetect {
+    fn is_post_pass(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
@@ -26,24 +29,20 @@ impl PostOptimizer for FunctionArgDetect {
     ) -> Result<()> {
         let cc = edit.function().default_cc();
         let first_stack_arg = cc.arg_passing_regs.len();
-        let maybe_stack_args = cc.stack_args;
-        let Some(stack_args) = maybe_stack_args else {
+        let Some(stack_args) = cc.stack_args else {
             return Ok(());
         };
         // A second run over the same `Function` re-detects from scratch; the
         // register carriers the lifter recorded sit below `first_stack_arg`.
         edit.clear_arg_values_from(first_stack_arg as u32);
-        let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(
-            MemPurpose::IncomingArgs,
-            edit.function(),
-        ));
-        // Detection reads `alias_cfg`; only the rewire reads this one (see
-        // `mem_chain_is_dirty`).
-        let narrow_cfg = alias_cfg.twin(MemOptions::for_purpose(
-            MemPurpose::TableWalk,
-            edit.function(),
-        ));
-        detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
+        let policy = Policy::incoming_args(edit.function());
+        detect_stack_args(
+            edit,
+            &MemQuery::default(),
+            policy,
+            stack_args,
+            first_stack_arg,
+        );
         Ok(())
     }
 }
@@ -59,49 +58,40 @@ impl PostOptimizer for FunctionArgDetect {
 /// every later index down by one.  Separating them needs the callee's
 /// signature; unlike [`CallStackArgCollect`](crate::CallStackArgCollect)'s
 /// over-collection, the failure mode is a wrong index, not a surplus one.
+///
+/// A dirty load's span says nothing of where the arguments lie: it may read
+/// the function's own wide store.  One reaching past the argument it starts
+/// in ends the prefix after that argument.
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
-    alias_cfg: &MemAnalyzer,
-    narrow_cfg: &MemAnalyzer,
+    query: &MemQuery,
+    policy: Policy,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
 ) {
-    // Incoming stack args sit at fixed offsets from the ENTRY stack pointer, so
-    // pinning `InitialVar(sp)` up front rejects a load rooted at a different SP
-    // terminal even when its offset coincides with a convention slot.
-    let Some(sp_node) = edit.function().initial_sp() else {
-        return;
-    };
-    // `initial_sp` does not filter liveness; no live load is rooted at a dead SP.
-    if !edit.is_live(sp_node) {
-        return;
-    }
-    let [initial_sp] = edit
-        .node_outputs_exact::<1>(sp_node)
-        .expect("InitialVar has 1 output per node signature");
-    // `span` records the furthest slot any load anchored at a start slot
-    // reaches.
-    let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> = rustc_hash::FxHashMap::default();
-    let mut span: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
-    let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
+    // Per start slot: the furthest slot a load anchored there reaches, and
+    // the clean ones among those loads, by space.
+    let mut groups: rustc_hash::FxHashMap<usize, (usize, Vec<(NodeKind, ValueId)>)> =
+        rustc_hash::FxHashMap::default();
+    let mut dirty_reach: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
     let loads: Vec<NodeId> = edit
         .live_of_kind(|k| matches!(k, NodeKind::Load(_)))
         .collect();
     for node_id in loads {
         let addr = edit.load_addr(node_id);
-        let [load_value] = edit
-            .node_outputs_exact::<1>(node_id)
-            .expect("Load has 1 output per node signature");
-        let Some(load_ty) = edit.value_type_opt(load_value) else {
-            continue;
-        };
+        let (load_value, load_ty) = edit
+            .single_value_output(node_id)
+            .expect("Load has 1 typed output per node signature");
         let load_size = load_ty.byte_size() as i128;
         let Some(MemExpr { base, offset, .. }) =
             crate::mem_analysis::decompose(edit.function(), addr)
         else {
             continue;
         };
-        if base != initial_sp {
+        // Incoming stack args sit at fixed offsets from the ENTRY stack
+        // pointer, so a load rooted at a different SP terminal is none, even
+        // when its offset coincides with a convention slot.
+        if !edit.function().is_entry_sp(base) {
             continue;
         }
         let Some(start_slot) = stack_args.slot_of(offset) else {
@@ -115,79 +105,42 @@ fn detect_stack_args(
         let Some(end_slot) = stack_args.slot_of(last_byte) else {
             continue;
         };
-        if disqualified.contains(&start_slot) {
+        // A load some def may have written over reads no incoming value; the
+        // slot's clean loads still do.  The query narrows the load's edge as
+        // it answers.
+        if !matches!(
+            query.reach_and_narrow(edit, node_id, policy),
+            ReachingDef::Clean(_)
+        ) {
+            let reach = dirty_reach.entry(start_slot).or_insert(start_slot);
+            *reach = (*reach).max(end_slot);
             continue;
         }
-        let dirty = mem_chain_is_dirty(edit, alias_cfg, narrow_cfg, node_id);
-        if dirty {
-            disqualified.insert(start_slot);
-            groups.remove(&start_slot);
-            span.remove(&start_slot);
-            continue;
-        }
-        groups.entry(start_slot).or_default().push(node_id);
-        let reach = span.entry(start_slot).or_insert(start_slot);
+        let (reach, loads) = groups.entry(start_slot).or_insert((start_slot, Vec::new()));
         *reach = (*reach).max(end_slot);
+        loads.push((*edit.node_kind(node_id), load_value));
     }
-
-    // A disqualified slot is absent from `groups`, so it ends the prefix like a
-    // genuine gap does.
+    // A slot with no clean load ends the prefix like a genuine gap does.
     let mut cursor = 0usize;
-    let mut ordinal = first_stack_arg;
-    while groups.contains_key(&cursor) {
-        let arg_span = span[&cursor] - cursor + 1;
-        let index = ordinal as u32;
-        let mut arg_loads: Vec<NodeId> = Vec::new();
-        for s in cursor..cursor + arg_span {
-            if let Some(loads) = groups.get(&s) {
-                arg_loads.extend_from_slice(loads);
-            }
-        }
+    let mut ordinal = first_stack_arg as u32;
+    while let Some(&(reach, _)) = groups.get(&cursor) {
+        let arg_loads: Vec<(NodeKind, ValueId)> = (cursor..=reach)
+            .filter_map(|s| groups.get(&s))
+            .flat_map(|(_, loads)| loads.iter().copied())
+            .collect();
         // One argument's carriers must share a Load space.  A mismatch skips
         // registration but still consumes the ordinal.
-        let first_load = *arg_loads
-            .first()
-            .expect("a present span entry always has >=1 anchored load");
-        let NodeKind::Load(space) = *edit.node_kind(first_load) else {
-            unreachable!("group members are seeded from Load nodes");
-        };
-        if arg_loads
-            .iter()
-            .all(|&l| matches!(*edit.node_kind(l), NodeKind::Load(s) if s == space))
-        {
-            for load in arg_loads {
-                let [load_value] = edit
-                    .node_outputs_exact::<1>(load)
-                    .expect("Load has 1 output per node signature");
-                edit.register_arg_value(index, load_value);
+        if arg_loads.iter().all(|&(kind, _)| kind == arg_loads[0].0) {
+            for (_, load_value) in arg_loads {
+                edit.register_arg_value(ordinal, load_value);
             }
         }
-        cursor += arg_span;
+        if (cursor..=reach).any(|s| dirty_reach.get(&s).is_some_and(|&d| d > reach)) {
+            break;
+        }
+        cursor = reach + 1;
         ordinal += 1;
     }
-}
-
-/// `true` when any path may overwrite bytes in the load's range, i.e. the
-/// nearest clobber is anything but the clean `InitialMemory` root.
-///
-/// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s, which piles the
-/// incoming-arg relaxations on top: an edge resting on a relaxation would hand
-/// it to a later walk that does not honour it.  `narrow_cfg` is `LoadForward`'s
-/// narrowing row (`MemPurpose::TableWalk`): the function's claims less the call
-/// relaxations.
-fn mem_chain_is_dirty(
-    edit: &mut crate::EditFunction<'_>,
-    alias_cfg: &MemAnalyzer,
-    narrow_cfg: &MemAnalyzer,
-    load: NodeId,
-) -> bool {
-    let mem_token = edit
-        .memory_input_of(load)
-        .expect("a Load has a memory input (slot 0)");
-    let reaching = alias_cfg.reaching(edit.function(), load, mem_token);
-    let sound = narrow_cfg.reaching(edit.function(), load, mem_token).node();
-    narrow_load_to(edit, load, sound);
-    !matches!(reaching, ReachingDef::Clean(_))
 }
 
 #[cfg(test)]

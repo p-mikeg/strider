@@ -1042,37 +1042,22 @@ impl<'f> ConstraintEval<'f> {
         phi_v: ValueId,
         edge_v: ValueId,
     ) -> Option<impl Iterator<Item = ValueId> + '_> {
-        let (phi_inputs, region_inputs) = self.arm_scan(phi_v)?;
-        Some(
-            region_inputs
-                .into_iter()
-                .enumerate()
-                .filter(move |(_, c)| {
-                    // Edge against EDGE. Do NOT rewrite the right operand
-                    // as `producer(*c)`: that is the `If`, which PRECEDES
-                    // the edge, so the direct `c == edge_v` case breaks.
-                    self.split_doms()
-                        .dominates(CtrlKey::Edge(edge_v), CtrlKey::Edge(*c))
-                })
-                // Region control input `i` maps to phi data input `i + 1`.
-                .filter_map(move |(i, _)| phi_inputs.get(i + 1).copied()),
-        )
-    }
-
-    /// The phi's inputs and its region's control inputs.
-    fn arm_scan(&self, phi_v: ValueId) -> Option<(strider_ir::Inputs<'f>, strider_ir::Inputs<'f>)> {
         let f = self.function;
         let phi_node = f.producer(phi_v);
         if !matches!(f.node_kind(phi_node), NodeKind::Phi | NodeKind::MemPhi) {
             return None;
         }
-        let phi_inputs = f.node_inputs(phi_node);
-        // The PhiToken's producer is the owning Region.
-        let region = f.producer(*phi_inputs.get(NodeKind::PHI_TOKEN_SLOT)?);
-        if !matches!(f.node_kind(region), NodeKind::Region) {
-            return None;
-        }
-        Some((phi_inputs, f.node_inputs(region)))
+        Some(
+            f.phi_arms(phi_node)
+                .filter(move |&(c, _)| {
+                    // Edge against EDGE. Do NOT rewrite the right operand
+                    // as `producer(c)`: that is the `If`, which PRECEDES
+                    // the edge, so the direct `c == edge_v` case breaks.
+                    self.split_doms()
+                        .dominates(CtrlKey::Edge(edge_v), CtrlKey::Edge(c))
+                })
+                .map(|(_, arm)| arm),
+        )
     }
 }
 
