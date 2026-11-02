@@ -97,8 +97,7 @@ impl FunctionDotDumper<'_> {
             &consumers,
         );
         let restricted = FunctionDotDumper {
-            nodes: Some(set),
-            center: Some(center),
+            view: Some(::dot::View::new(set, center)),
             ..self
         };
         ::dot::GraphDot::new(restricted, ::dot::DotStyle::dark())

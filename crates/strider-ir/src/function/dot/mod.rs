@@ -1,8 +1,8 @@
-use rustc_hash::{FxHashMap, FxHashSet};
+use ::dot::GraphDotDumper as _;
+use rustc_hash::FxHashMap;
 
 use crate::IRViewer;
 use crate::function::Function;
-use crate::graph::Graph;
 use crate::node::signature::{SlotRole, expected_signature};
 use crate::node::{NodeId, NodeKind, ValueId};
 
@@ -88,8 +88,7 @@ impl Function {
             function: self,
             names,
             node_to_arg_indices: build_arg_reverse_map(self),
-            nodes: None,
-            center: None,
+            view: None,
         }
     }
 }
@@ -100,11 +99,9 @@ pub struct FunctionDotDumper<'a> {
     names: &'a strider_target::ArchNames,
     /// Carrier node -> arg tags.
     node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
-    /// Restrict the render to the induced subgraph over these nodes; `None`
-    /// renders everything reachable from the function's entry.
-    nodes: Option<FxHashSet<NodeId>>,
-    /// Focus of a neighbourhood render, drawn with a highlight border.
-    center: Option<NodeId>,
+    /// A neighbourhood render; `None` renders everything reachable from the
+    /// function's entry.
+    view: Option<::dot::View<NodeId>>,
 }
 
 /// A carrier's argument annotation. The integer and float index spaces are
@@ -156,8 +153,6 @@ pub struct FunctionDotDumperState {
     #[cfg(test)]
     pub(super) dot_to_node: FxHashMap<String, NodeId>,
     pub(super) next_unique_id: u32,
-    /// Focus of a neighbourhood render.
-    pub(super) center: Option<NodeId>,
 }
 
 impl FunctionDotDumperState {
@@ -184,23 +179,25 @@ impl FunctionDotDumperState {
     pub(super) fn alloc_virtual_id(&mut self) -> String {
         self.fresh_id('v')
     }
+}
 
+impl FunctionDotDumper<'_> {
     /// Whether `node` draws a private box beside each consumer instead of one
     /// shared box.  True for constants, except the neighbourhood centre.
-    pub(super) fn renders_per_use(&self, graph: &Graph, node: NodeId) -> bool {
-        graph.node_kind(node).is_const() && self.center != Some(node)
+    fn renders_per_use(&self, node: NodeId) -> bool {
+        self.function.node_kind(node).is_const() && !self.is_center(node)
     }
 
     /// The DOT id for `node`: its bare `NodeId`, or a fresh `c`-prefixed
     /// counter for a [per-use](Self::renders_per_use) constant.
-    pub(super) fn get_dot_id(&mut self, graph: &Graph, node_id: NodeId) -> String {
-        let s = if self.renders_per_use(graph, node_id) {
-            self.fresh_id('c')
+    fn dot_id(&self, state: &mut FunctionDotDumperState, node_id: NodeId) -> String {
+        let s = if self.renders_per_use(node_id) {
+            state.fresh_id('c')
         } else {
             node_id.as_u32().to_string()
         };
         #[cfg(test)]
-        self.dot_to_node.insert(s.clone(), node_id);
+        state.dot_to_node.insert(s.clone(), node_id);
         s
     }
 }

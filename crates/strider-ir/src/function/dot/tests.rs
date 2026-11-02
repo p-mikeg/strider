@@ -5,7 +5,6 @@ use crate::function::Function;
 use crate::function::test_function;
 use crate::node::{NodeKind, ValueKind, ValueType};
 use crate::{IRViewer, IRWalker};
-use ::dot::GraphDotDumper as _;
 
 /// Interns `v` (masked to `ty`), then builds the `IntConst` node.
 fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
