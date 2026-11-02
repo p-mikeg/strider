@@ -230,8 +230,8 @@ classifying `match`; a single-variant test (let-else, `==`, a one-variant
 not see a tuple scrutinee, a guarded `_ if` arm or `matches!`; the remaining
 multi-variant `matches!` sites (the phi family, `graph_invariants.rs`'s
 phi-or-call producer test, `walk/mod.rs`'s memory-chain kinds, `render.rs`'s
-`Region | Phi | MemPhi` label guard, `viewer.rs`'s `Load | Store`) are
-accepted as they are.
+`Region | Phi | MemPhi` label guard, `viewer.rs`'s `Load | Store`,
+`NodeKind::is_const`'s `IntConst | FloatConst`) are accepted as they are.
 
 Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}`;
 `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
@@ -253,10 +253,11 @@ width a Sleigh varnode or temporary carries needs an entry. `bit_width(I1) ==
 `I1`. `Debug` spells `I32`, `Display` `i32`.
 
 `expected_signature` (`node/signature.rs`) is the SSoT for each kind's slot
-kinds. `Graph` holds only structure; per-function overlay (entry, `default_cc`,
+kinds. `Graph` holds only structure; per-function overlay (`default_cc`,
 `byte_order`, tracked varnodes, interners, side-tables) lives on `Function`,
-which wraps a `Graph`. `entry` is a non-optional `NodeId` (a `Function` always
-has one), so `EditFunction::new(&mut Function)` is infallible.
+which wraps a `Graph`. The entry is node 0, not a stored field:
+`Function::new` mints it first and `compact` keeps it first, so a `Function`
+always has one and `EditFunction::new(&mut Function)` is infallible.
 
 Integer constants: `IntConst(IntConstId)` interns through
 `Function::const_interner` into a `dashu_int::UBig` (all int constants, not
