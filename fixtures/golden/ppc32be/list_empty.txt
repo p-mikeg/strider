@@ -56,7 +56,7 @@ float_arg 8 [%v29]
 %v21:i32 = iconst[0x5]
 %v22:i32 = int.shift_right %v18, %v21
 %v23:i32 = int.or %v20, %v22
-%v24:i32 = iconst[0xff]
+%v24:i32 = iconst[0x7ffffff]
 %v25:i32 = int.and %v23, %v24
 %v26:i32 = initial_var[r4]
 %v27:i64 = initial_var[f1]

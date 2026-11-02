@@ -22,14 +22,14 @@
 //! pipeline.
 
 use crate::post_opt::indirect_branch_resolve::index_range;
-use rustc_hash::{FxHashMap, FxHashSet};
-use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
+use rustc_hash::FxHashMap;
+use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir::{UBig, eval};
 use strider_ir_test_utils::interp::{self, EntryVar, Outcome, Slot};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
+use strider_ir_test_utils::{RegisterSet, reg_vn};
 
-use crate::test_support::Rng;
+use crate::test_support::{COLLAPSE, Rng, run_passes};
 
 pub(crate) const TYPES: &[(u32, ValueType)] = &[
     (1, ValueType::int(8)),
@@ -258,16 +258,6 @@ impl Gen<'_> {
         b.build_int_binary_operation(x, y, IntBinaryOp::Or, ValueType::I1)
             .unwrap()
     }
-    fn cmp(
-        &mut self,
-        b: &mut FunctionBuilder,
-        x: ValueId,
-        y: ValueId,
-        op: IntCmpOp,
-        ty: ValueType,
-    ) -> ValueId {
-        b.build_int_cmp_operation(x, y, op, ty).unwrap()
-    }
 
     fn flag_tree(&mut self, b: &mut FunctionBuilder, ty: ValueType) {
         let a = self.var_or_val(b, ty);
@@ -280,13 +270,25 @@ impl Gen<'_> {
             .build_int_binary_operation(a, nb, IntBinaryOp::Add, ty)
             .unwrap();
         let zero = b.build_int_const(0u128, ty).unwrap();
-        let z = self.cmp(b, diff, zero, IntCmpOp::Equal, ty);
-        let n = self.cmp(b, diff, zero, IntCmpOp::Sless, ty);
-        let lt = self.cmp(b, a, bb, IntCmpOp::Less, ty);
+        let z = b
+            .build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)
+            .unwrap();
+        let n = b
+            .build_int_cmp_operation(diff, zero, IntCmpOp::Sless, ty)
+            .unwrap();
+        let lt = b
+            .build_int_cmp_operation(a, bb, IntCmpOp::Less, ty)
+            .unwrap();
         let c = self.not(b, lt);
-        let v = self.cmp(b, a, bb, IntCmpOp::Sborrow, ty);
-        let eqab = self.cmp(b, a, bb, IntCmpOp::Equal, ty);
-        let slt = self.cmp(b, a, bb, IntCmpOp::Sless, ty);
+        let v = b
+            .build_int_cmp_operation(a, bb, IntCmpOp::Sborrow, ty)
+            .unwrap();
+        let eqab = b
+            .build_int_cmp_operation(a, bb, IntCmpOp::Equal, ty)
+            .unwrap();
+        let slt = b
+            .build_int_cmp_operation(a, bb, IntCmpOp::Sless, ty)
+            .unwrap();
         let zty = [ValueType::int(8), ValueType::int(32)][self.rng.below(2)];
         let zn = b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [n], zty);
         let zv = b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [v], zty);
@@ -295,7 +297,9 @@ impl Gen<'_> {
         } else {
             (zv, zn)
         };
-        let ge = self.cmp(b, zn, zv, IntCmpOp::Equal, zty);
+        let ge = b
+            .build_int_cmp_operation(zn, zv, IntCmpOp::Equal, zty)
+            .unwrap();
         let out = match self.rng.below(16) {
             0 => z,
             1 => {
@@ -330,7 +334,9 @@ impl Gen<'_> {
                 let zb =
                     b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [c], zty);
                 let z0 = b.build_int_const(0u128, zty).unwrap();
-                let e = self.cmp(b, zb, z0, IntCmpOp::Equal, zty);
+                let e = b
+                    .build_int_cmp_operation(zb, z0, IntCmpOp::Equal, zty)
+                    .unwrap();
                 if self.rng.chance(50) {
                     self.not(b, e)
                 } else {
@@ -340,7 +346,9 @@ impl Gen<'_> {
             12 => {
                 // Mixed: raw diff with different operands (should NOT fold).
                 let other = self.val(b, ty);
-                let lt2 = self.cmp(b, a, other, IntCmpOp::Less, ty);
+                let lt2 = b
+                    .build_int_cmp_operation(a, other, IntCmpOp::Less, ty)
+                    .unwrap();
                 self.bor(b, lt2, z)
             }
             13 => {
@@ -372,11 +380,15 @@ impl Gen<'_> {
                 let nc = b.build_int_const(n.clone(), ty).unwrap();
                 let mc = b.build_int_const(mv, ty).unwrap();
                 let z = b.build_int_const(0u128, ty).unwrap();
-                let lt = self.cmp(b, a, nc, IntCmpOp::Less, ty);
+                let lt = b
+                    .build_int_cmp_operation(a, nc, IntCmpOp::Less, ty)
+                    .unwrap();
                 let add = b
                     .build_int_binary_operation(a, mc, IntBinaryOp::Add, ty)
                     .unwrap();
-                let eq = self.cmp(b, add, z, IntCmpOp::Equal, ty);
+                let eq = b
+                    .build_int_cmp_operation(add, z, IntCmpOp::Equal, ty)
+                    .unwrap();
                 if self.rng.chance(50) {
                     self.bor(b, lt, eq)
                 } else {
@@ -399,11 +411,15 @@ impl Gen<'_> {
                 let x = b
                     .build_int_binary_operation(a, c1c, IntBinaryOp::Add, ty)
                     .unwrap();
-                let lt = self.cmp(b, x, nc, IntCmpOp::Less, ty);
+                let lt = b
+                    .build_int_cmp_operation(x, nc, IntCmpOp::Less, ty)
+                    .unwrap();
                 let add = b
                     .build_int_binary_operation(a, c2c, IntBinaryOp::Add, ty)
                     .unwrap();
-                let eq = self.cmp(b, add, z, IntCmpOp::Equal, ty);
+                let eq = b
+                    .build_int_cmp_operation(add, z, IntCmpOp::Equal, ty)
+                    .unwrap();
                 if self.rng.chance(50) {
                     self.bor(b, lt, eq)
                 } else {
@@ -420,7 +436,8 @@ impl Gen<'_> {
                     .build_int_binary_operation(a, cc, IntBinaryOp::ShiftLeft, ty)
                     .unwrap();
                 let z = b.build_int_const(0u128, ty).unwrap();
-                self.cmp(b, sh, z, IntCmpOp::Sless, ty)
+                b.build_int_cmp_operation(sh, z, IntCmpOp::Sless, ty)
+                    .unwrap()
             }
             _ => {
                 // Equal(op(x, C1), C2)
@@ -435,7 +452,8 @@ impl Gen<'_> {
                         .unwrap(),
                     _ => b.build_int_unary_operation(a, IntUnaryOp::Neg, ty).unwrap(),
                 };
-                self.cmp(b, inner, c2, IntCmpOp::Equal, ty)
+                b.build_int_cmp_operation(inner, c2, IntCmpOp::Equal, ty)
+                    .unwrap()
             }
         };
         self.push(out, ValueType::I1);
@@ -500,7 +518,9 @@ impl Gen<'_> {
             b.build_single_output_pure(NodeKind::Truncate, [src], ValueType::I1)
         } else {
             let z = b.build_int_const(0u128, ty).unwrap();
-            let e = self.cmp(b, src, z, IntCmpOp::Equal, ty);
+            let e = b
+                .build_int_cmp_operation(src, z, IntCmpOp::Equal, ty)
+                .unwrap();
             self.not(b, e)
         };
         self.push(pack, ty);
@@ -671,7 +691,6 @@ pub(crate) fn build_random_fn(seed: u64, steps: usize) -> (strider_ir::Function,
         vns.push(vn);
     }
     let mut b = rs.build_fn_single_region().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let mut g = Gen {
         rng: &mut rng,
         pools: FxHashMap::default(),
@@ -794,54 +813,24 @@ pub(crate) fn check_seed(
 /// interpreter before and after the pipeline.
 #[test]
 fn the_pipeline_preserves_dag_semantics() {
-    let n: u64 = std::env::var("FUZZ_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_FUZZ_SEEDS);
-    let start: u64 = std::env::var("FUZZ_START")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let steps: usize = std::env::var("FUZZ_STEPS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(25);
-    let which = std::env::var("FUZZ_PASS").unwrap_or_default();
-    let mut failures = Vec::new();
+    let (n, seeds) = fuzz_seeds();
+    let steps: usize = env_or("FUZZ_STEPS", 25);
+    let which: String = env_or("FUZZ_PASS", String::new());
     let mut compared = 0usize;
-    for seed in start..start + n {
+    sweep(seeds, |seed| {
         let run = |f: &mut strider_ir::Function| -> crate::Result<()> {
             let mut p = crate::OptimizerPipeline::new();
             match which.as_str() {
-                "cf" => p.add(crate::ConstantFold::new()),
-                "kb" => p.add(crate::KnownBits),
-                "flag" => p.add(crate::FlagCmpCanonicalize::new()),
+                "cf" => p.add(&crate::ConstantFold),
+                "kb" => p.add(&crate::KnownBits),
+                "flag" => p.add(&crate::FlagCmpCanonicalize),
                 _ => p = crate::default_pipeline(),
             }
             p.run(f, &crate::OptCtx::new(None))
         };
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            check_seed(seed, steps, &run)
-        }));
-        match r {
-            Ok(Ok(c)) => compared += c,
-            Ok(Err(e)) => failures.push(e),
-            Err(_) => failures.push(format!("seed {seed}: PANIC")),
-        }
-        if failures.len() >= 3 {
-            break;
-        }
-    }
-    // Reported BEFORE the yield floors: three real failures drive the
-    // counters far below them, so asserting a floor first would report a
-    // miscompile as a yield message and discard its BEFORE/AFTER dumps.
-    if !failures.is_empty() {
-        panic!(
-            "{} failures:\n{}",
-            failures.len(),
-            failures.join("\n=====\n")
-        );
-    }
+        compared += check_seed(seed, steps, &run)?;
+        Ok(())
+    });
     // A floor on the yield: a generator change or an early `?` that stops
     // producing comparable return values fails here rather than reading green.
     assert!(
@@ -996,7 +985,6 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
         vns.push(vn);
     }
     let mut b = rs.build_fn().ok()?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let nregions = 2 + rng.below(8);
     let regions: Vec<_> = (0..nregions)
         .map(|_| b.create_region_all().unwrap())
@@ -1044,7 +1032,7 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
             let nv = if rng.chance(20) {
                 b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?
             } else if rng.chance(15) && ty == ValueType::int(32) {
-                // A truncate / extend round trip: the cast ladder `Hop` walks,
+                // A truncate / extend round trip: the cast ladder walks,
                 // and the only shape here that changes width.
                 let narrow =
                     b.build_single_output_pure(NodeKind::Truncate, [vj], ValueType::int(8));
@@ -1111,7 +1099,6 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
     }
     b.set_lift_addr(None);
     let f = b.build().ok()?;
-    strider_ir::validate::validate(&f).ok()?;
     Some(f)
 }
 
@@ -1119,109 +1106,80 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
 /// over the sea of nodes before and after the pipeline.
 #[test]
 fn the_pipeline_preserves_cfg_semantics() {
-    let n: u64 = std::env::var("FUZZ_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_FUZZ_SEEDS);
-    let start: u64 = std::env::var("FUZZ_START")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let mut failures = Vec::new();
+    let (n, seeds) = fuzz_seeds();
     let (mut built, mut compared) = (0, 0);
-    for seed in start..start + n {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || -> Result<(bool, usize), String> {
-                let Some(mut f) = build_random_cfg(seed) else {
-                    return Ok((false, 0));
-                };
-                let before_text = f.to_text(false);
-                let mut outcomes = Vec::new();
-                let mut rng = Rng(seed | 1);
-                let vecs: Vec<Vec<u64>> = (0..16)
-                    .map(|_| (0..4).map(|_| rng.next_u64()).collect())
-                    .collect();
-                for vec in &vecs {
-                    let want = run_cfg(&f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty))
-                    .map_err(|why| {
-                        format!("seed {seed}: inputs {vec:?} before the pipeline: {why:?}\n{before_text}")
-                    })?;
-                    outcomes.push(want);
-                }
-                crate::default_pipeline()
-                    .run(&mut f, &crate::OptCtx::new(None))
-                    .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
-                let mut cmp = 0;
-                for (vec, want) in vecs.iter().zip(&outcomes) {
-                    let dump = |what: String| {
-                        format!(
-                            "seed {seed}: inputs {vec:?} {what}\nBEFORE:\n{before_text}\nAFTER:\n{}",
-                            f.to_text(false)
-                        )
-                    };
-                    let got = run_cfg(&f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty))
-                        .map_err(|why| dump(format!("after the pipeline: {why:?}")))?;
-                    match want {
-                        Outcome::Return { .. } => {
-                            cmp += 1;
-                            if !refines(want, &got).map_err(dump)? {
-                                return Err(dump(format!("want {want:?} got {got:?}")));
-                            }
-                        }
-                        Outcome::Unreachable { .. } => {
-                            if !matches!(got, Outcome::Unreachable { .. }) {
-                                return Err(format!(
-                                    "seed {seed}: unreachable became {got:?}\n{before_text}"
-                                ));
-                            }
-                        }
-                        // Folding a non-terminating loop into a `Return` is a
-                        // miscompile, and the one `DeadBranchElimination`'s
-                        // exit-free-cycle guard and `LoadForward`'s back-edge
-                        // handling exist to prevent.  `Unreachable` is not an
-                        // honest second answer: no pass here CONSTRUCTS one.
-                        // `Diverge` also covers budget exhaustion, so a long
-                        // but terminating run can reach a real sink once
-                        // folded. The same truncation already produced `Ret`,
-                        // which this arm already rejected, so accepting
-                        // `Unreachable` closed nothing and hid a rerouted
-                        // sink.
-                        Outcome::Diverge(_) => {
-                            if !matches!(got, Outcome::Diverge(_)) {
-                                return Err(format!(
-                                    "seed {seed}: a non-terminating run became \
-                                     {got:?}\n{before_text}\nAFTER:\n{}",
-                                    f.to_text(false)
-                                ));
-                            }
-                        }
+    sweep(seeds, |seed| {
+        let Some(mut f) = build_random_cfg(seed) else {
+            return Ok(());
+        };
+        let before_text = f.to_text(false);
+        let mut outcomes = Vec::new();
+        let mut rng = Rng(seed | 1);
+        let vecs: Vec<Vec<u64>> = (0..16)
+            .map(|_| (0..4).map(|_| rng.next_u64()).collect())
+            .collect();
+        for vec in &vecs {
+            let want =
+                run_cfg(&f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty)).map_err(|why| {
+                    format!(
+                        "seed {seed}: inputs {vec:?} before the pipeline: {why:?}\n{before_text}"
+                    )
+                })?;
+            outcomes.push(want);
+        }
+        crate::default_pipeline()
+            .run(&mut f, &crate::OptCtx::new(None))
+            .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
+        let mut cmp = 0;
+        for (vec, want) in vecs.iter().zip(&outcomes) {
+            let dump = |what: String| {
+                format!(
+                    "seed {seed}: inputs {vec:?} {what}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                    f.to_text(false)
+                )
+            };
+            let got = run_cfg(&f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty))
+                .map_err(|why| dump(format!("after the pipeline: {why:?}")))?;
+            match want {
+                Outcome::Return { .. } => {
+                    cmp += 1;
+                    if !refines(want, &got).map_err(dump)? {
+                        return Err(dump(format!("want {want:?} got {got:?}")));
                     }
                 }
-                Ok((true, cmp))
-            },
-        ));
-        match r {
-            Ok(Ok((b, c))) => {
-                built += usize::from(b);
-                compared += c;
+                Outcome::Unreachable { .. } => {
+                    if !matches!(got, Outcome::Unreachable { .. }) {
+                        return Err(format!(
+                            "seed {seed}: unreachable became {got:?}\n{before_text}"
+                        ));
+                    }
+                }
+                // Folding a non-terminating loop into a `Return` is a
+                // miscompile, and the one `DeadBranchElimination`'s
+                // exit-free-cycle guard and `LoadForward`'s back-edge
+                // handling exist to prevent.  `Unreachable` is not an
+                // honest second answer: no pass here CONSTRUCTS one.
+                // `Diverge` also covers budget exhaustion, so a long
+                // but terminating run can reach a real sink once
+                // folded. The same truncation already produced `Ret`,
+                // which this arm already rejected, so accepting
+                // `Unreachable` closed nothing and hid a rerouted
+                // sink.
+                Outcome::Diverge(_) => {
+                    if !matches!(got, Outcome::Diverge(_)) {
+                        return Err(format!(
+                            "seed {seed}: a non-terminating run became \
+                                     {got:?}\n{before_text}\nAFTER:\n{}",
+                            f.to_text(false)
+                        ));
+                    }
+                }
             }
-            Ok(Err(e)) => failures.push(e),
-            Err(_) => failures.push(format!("seed {seed}: PANIC")),
         }
-        if failures.len() >= 3 {
-            break;
-        }
-    }
-    // Reported BEFORE the yield floors: three real failures drive the
-    // counters far below them, so asserting a floor first would report a
-    // miscompile as a yield message and discard its BEFORE/AFTER dumps.
-    if !failures.is_empty() {
-        panic!(
-            "{} failures:\n{}",
-            failures.len(),
-            failures.join("\n=====\n")
-        );
-    }
+        built += 1;
+        compared += cmp;
+        Ok(())
+    });
     // Floors on the yield. `build_random_cfg` bails for most seeds, so a
     // change that drops it to none must not read as a pass.
     assert!(
@@ -1282,7 +1240,7 @@ fn a_wide_constant_folds_across_every_limb() {
         let ret = return_values(&f);
         assert_eq!(ret.len(), 1, "{op:?}: return arity");
         assert!(
-            matches!(f.node_kind(f.producer(ret[0])), NodeKind::IntConst(_)),
+            matches!(f.kind_of_value(ret[0]), NodeKind::IntConst(_)),
             "{op:?}: the wide operation must fold\n{}",
             f.to_text(false)
         );
@@ -1357,16 +1315,12 @@ fn random_extract(b: &mut FunctionBuilder, rng: &mut Rng, w: ValueId) -> ValueId
 /// extract carries to the others only where it bounds them.
 #[test]
 fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
-    let mut failures: Vec<String> = Vec::new();
     let (mut checks, mut runs, mut nontop) = (0usize, 0usize, 0usize);
-    for seed in 0..400u64 {
+    sweep(0..400, |seed| {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let vn = reg_vn(0x1000, 4);
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let entry = b.create_region_all().unwrap();
-        let then_arm = b.create_region_all().unwrap();
-        let else_arm = b.create_region_all().unwrap();
+        let [entry, then_arm, else_arm] = std::array::from_fn(|_| b.create_region_all().unwrap());
         b.set_entry_region_all(entry).unwrap();
         b.set_region(entry);
         let w = b.read_variable(&vn).unwrap();
@@ -1379,8 +1333,7 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
         // Half the guards have a low end too: `tested - lo < n`.
         let tested = if rng.chance(50) {
             let lo = draw(&mut rng);
-            let minus = b.build_int_const(lo.wrapping_neg() & mask(ty), ty).unwrap();
-            b.build_int_binary_operation(tested, minus, IntBinaryOp::Add, ty)
+            b.build_const_binop(lo.wrapping_neg(), tested, IntBinaryOp::Add, ty)
                 .unwrap()
         } else {
             tested
@@ -1398,13 +1351,8 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
         b.build_return(None, &[]).unwrap();
         b.set_lift_addr(None);
         let mut f = b.build().unwrap();
-        {
-            let mut p = crate::OptimizerPipeline::new();
-            p.add(crate::PhiCollapse);
-            p.add(crate::RegionCollapse);
-            p.run(&mut f, &crate::OptCtx::new(None)).unwrap();
-        }
-        let ranges = std::cell::RefCell::new(index_range::RangeMap::new(&f).unwrap());
+        run_passes(&mut f, COLLAPSE).unwrap();
+        let ranges = std::cell::RefCell::new(index_range::RangeMap::new(&f));
         for _ in 0..64 {
             let word = u128::from(rng.next_u64() as u32) >> rng.below(32);
             let mut bad: Option<String> = None;
@@ -1425,10 +1373,7 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
                     if !iv.is_top(mask(f.value_type_opt(v).unwrap())) {
                         nontop += 1;
                     }
-                    let ok = iv.lo() <= val
-                        && val <= iv.hi()
-                        && (val - iv.lo()).is_multiple_of(iv.stride());
-                    if !ok && bad.is_none() {
+                    if !iv.contains(val) && bad.is_none() {
                         bad = Some(format!(
                             "seed {seed}: w={word:#x} {v:?}={val:#x} outside {iv:?}\n{}",
                             f.to_text(false)
@@ -1439,15 +1384,11 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
             .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
             runs += 1;
             if let Some(why) = bad {
-                failures.push(why);
-                break;
+                return Err(why);
             }
         }
-        if failures.len() >= 3 {
-            break;
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
+        Ok(())
+    });
     eprintln!("checks {checks} runs {runs} nontop {nontop}");
     assert!(
         nontop * 4 >= checks,
@@ -1459,33 +1400,74 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
 /// population floors below are asserted at.
 const DEFAULT_FUZZ_SEEDS: u64 = 300;
 
+/// The environment variable `name`, parsed, else `default`.
+fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+/// The seed count, `FUZZ_N` else [`DEFAULT_FUZZ_SEEDS`], and the seeds from
+/// `FUZZ_START`, else 0.
+fn fuzz_seeds() -> (u64, std::ops::Range<u64>) {
+    let n = env_or("FUZZ_N", DEFAULT_FUZZ_SEEDS);
+    let start = env_or("FUZZ_START", 0);
+    (n, start..start + n)
+}
+
+/// Runs `check` on each of `seeds`, stopping at the third failure, a panic
+/// counting as one with its message, and panics with every failure.
+///
+/// Called BEFORE a caller asserts its yield floors: three real failures drive
+/// the counters far below them, so asserting a floor first would report a
+/// miscompile as a yield message and discard its BEFORE/AFTER dumps.
+fn sweep(seeds: std::ops::Range<u64>, mut check: impl FnMut(u64) -> Result<(), String>) {
+    let mut failures = Vec::new();
+    for seed in seeds {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(seed))) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => failures.push(e),
+            Err(p) => {
+                let why = p
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| p.downcast_ref::<&str>().copied())
+                    .unwrap_or("");
+                failures.push(format!("seed {seed}: PANIC {why}"));
+            }
+        }
+        if failures.len() >= 3 {
+            break;
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n=====\n")
+    );
+}
+
 /// Every `If` compare operand and every returned value of a random CFG lies
 /// inside the interval `RangeMap::range_of` claims for it, stride included.
 #[test]
 fn a_range_contains_every_runtime_value() {
-    let n: u64 = std::env::var("FUZZ_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_FUZZ_SEEDS);
-    let start: u64 = std::env::var("FUZZ_START")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let mut failures: Vec<String> = Vec::new();
+    let (n, seeds) = fuzz_seeds();
     let mut checks = 0usize;
     let mut nontop = 0usize;
     let mut wide = 0usize;
-    for seed in start..start + n {
+    sweep(seeds, |seed| {
         let Some(mut f) = build_random_cfg(seed) else {
-            continue;
+            return Ok(());
         };
         if crate::default_pipeline()
             .run(&mut f, &crate::OptCtx::new(None))
             .is_err()
         {
-            continue;
+            return Ok(());
         }
-        let mut ranges = index_range::RangeMap::new(&f).unwrap();
+        let mut ranges = index_range::RangeMap::new(&f);
         let mut rng = Rng(seed | 1);
         for _ in 0..24 {
             let vec: Vec<UBig> = (0..4).map(|_| UBig::from(rng.next_u64() % 8)).collect();
@@ -1516,9 +1498,7 @@ fn a_range_contains_every_runtime_value() {
                 if !iv.is_top(m) {
                     nontop += 1;
                 }
-                let ok =
-                    iv.lo() <= val && val <= iv.hi() && (val - iv.lo()).is_multiple_of(iv.stride());
-                if !ok && bad.is_none() {
+                if !iv.contains(val) && bad.is_none() {
                     bad = Some(format!(
                         "seed {seed}: inputs {vec:?} value {v:?}={val:#x} at {at:?} outside {iv:?}\n{}",
                         f.to_text(false)
@@ -1527,15 +1507,11 @@ fn a_range_contains_every_runtime_value() {
             })
             .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
             if let Some(b) = bad {
-                failures.push(b);
-                break;
+                return Err(b);
             }
         }
-        if failures.len() >= 3 {
-            break;
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
+        Ok(())
+    });
     // Printed so the floors below can be re-baselined without editing this.
     eprintln!("checks {checks} nontop {nontop} wide {wide}");
     // `Interval::top` satisfies the soundness check for every value, so a
@@ -1578,7 +1554,6 @@ fn build_random_state_machine(seed: u64) -> Option<strider_ir::Function> {
         .arg(x_vn)
         .build_fn()
         .ok()?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let nregions = 3 + rng.below(8);
     let regions: Vec<_> = (0..nregions)
         .map(|_| b.create_region_all().unwrap())
@@ -1616,7 +1591,6 @@ fn build_random_state_machine(seed: u64) -> Option<strider_ir::Function> {
     }
     b.set_lift_addr(None);
     let f = b.build().ok()?;
-    strider_ir::validate::validate(&f).ok()?;
     Some(f)
 }
 
@@ -1626,27 +1600,19 @@ fn build_random_state_machine(seed: u64) -> Option<strider_ir::Function> {
 /// tighter, since an edge guard bounds the arm it carries.
 #[test]
 fn a_phi_of_constants_holds_only_its_constants() {
-    let mut failures: Vec<String> = Vec::new();
-    let n: u64 = std::env::var("FUZZ_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_FUZZ_SEEDS);
-    let start: u64 = std::env::var("FUZZ_START")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let (n, seeds) = fuzz_seeds();
     let (mut checks, mut phis, mut functions, mut ruled) = (0usize, 0usize, 0usize, 0usize);
-    for seed in start..start + n {
+    sweep(seeds, |seed| {
         let Some(mut f) = build_random_state_machine(seed) else {
-            continue;
+            return Ok(());
         };
         if crate::default_pipeline()
             .run(&mut f, &crate::OptCtx::new(None))
             .is_err()
         {
-            continue;
+            return Ok(());
         }
-        let mut ranges = index_range::RangeMap::new(&f).unwrap();
+        let mut ranges = index_range::RangeMap::new(&f);
         let mut sets: FxHashMap<ValueId, Vec<u128>> = FxHashMap::default();
         for n in strider_ir::IRWalker::walk(&f) {
             if !matches!(f.node_kind(n), NodeKind::Phi) {
@@ -1658,11 +1624,10 @@ fn a_phi_of_constants_holds_only_its_constants() {
             }
         }
         if sets.is_empty() {
-            continue;
+            return Ok(());
         }
         functions += 1;
         phis += sets.len();
-        let mut ruled_out: FxHashMap<(ValueId, NodeId), FxHashSet<u128>> = FxHashMap::default();
         let mut rng = Rng(seed | 1);
         for _ in 0..8 {
             let x = u128::from(rng.next_u64() % 10);
@@ -1674,31 +1639,23 @@ fn a_phi_of_constants_holds_only_its_constants() {
                 let val = u128::try_from(val).expect("a value inside the carrier");
                 checks += 1;
                 let iv = ranges.range_of(v, at);
-                let out = ruled_out
-                    .entry((v, at))
-                    .or_insert_with(|| ranges.ruled_out(v, at));
-                ruled += usize::from(!out.is_empty());
-                if (set.binary_search(&val).is_err() || !iv.contains(val) || out.contains(&val))
-                    && bad.is_none()
-                {
+                ruled += usize::from((0..16).any(|k| ranges.excludes(v, k, at)));
+                let out = ranges.excludes(v, val, at);
+                if (set.binary_search(&val).is_err() || !iv.contains(val) || out) && bad.is_none() {
                     bad = Some(format!(
                         "seed {seed}: x={x} phi {v:?}={val:#x} at {at:?} outside {set:?} or \
-                         {iv:?}, or ruled out by {out:?}\n{}",
+                         {iv:?}, or ruled out ({out})\n{}",
                         f.to_text(false)
                     ));
                 }
             })
             .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
             if let Some(b) = bad {
-                failures.push(b);
-                break;
+                return Err(b);
             }
         }
-        if failures.len() >= 3 {
-            break;
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
+        Ok(())
+    });
     // Measured: 106 functions, 154 phis, 32022 observations at a point with
     // a constant ruled out.  A floor over the full seed range only, as in
     // `a_range_contains_every_runtime_value`.

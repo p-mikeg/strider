@@ -19,28 +19,17 @@ mod opt;
 mod post_opt;
 #[cfg(test)]
 mod test_support;
-#[cfg(any(test, feature = "test-util"))]
-pub use post_opt::indirect_branch_resolve;
 
-pub use opt::cfg_detach::CfgDetach;
 pub use opt::constant_fold::ConstantFold;
 pub use opt::dead_branch::DeadBranchElimination;
 pub use opt::flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use opt::if_cond_inversion::IfCondInversion;
 pub use opt::known_bits::KnownBits;
-#[cfg(any(test, feature = "test-util"))]
-pub use opt::known_bits::{KnownBitsFacts, KnownBitsMap, analyze as analyze_known_bits};
 pub use opt::load_forward::LoadForward;
 pub use opt::load_readonly::LoadReadOnly;
 pub use opt::phi_collapse::PhiCollapse;
 pub use opt::region_collapse::RegionCollapse;
-pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer};
-// The object-safe clone shims are public SUPERtraits of `Optimizer` /
-// `PostOptimizer` but live in a private module, so `clone_box` was unnameable
-// downstream: a consumer holding a `Box<dyn Optimizer + Send>` out of
-// `OptimizerPipeline::passes` could not clone it, which is most of what that
-// accessor is for.
-pub use pipeline::{OptimizerClone, PostOptimizerClone};
+pub use pipeline::{OptCtx, Optimizer, OptimizerPipeline};
 #[cfg(any(test, feature = "test-util"))]
 pub use pipeline::{run_one, run_one_unvalidated, run_post};
 pub use post_opt::call_stack_args::CallStackArgCollect;
@@ -52,24 +41,23 @@ pub use strider_ir::ReadOnlyMemory;
 
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
+    p.add(&ConstantFold);
     // After ConstantFold so a folded constant address is available, and
     // inside the loop so the value it materialises feeds the next iteration.
-    p.add(LoadReadOnly);
-    p.add(KnownBits);
+    p.add(&LoadReadOnly);
+    p.add(&KnownBits);
     // After ConstantFold, so a doubled `Xor(Xor(_,1),1)` at `I1` has already
     // collapsed.
-    p.add(FlagCmpCanonicalize::new());
+    p.add(&FlagCmpCanonicalize);
     // After both, so the cond a match sees is at most one `Xor(_,1)` deep:
     // ConstantFold collapses the doubled xor and FlagCmpCanonicalize rewrites
     // the flag trees that would otherwise bury one.
-    p.add(IfCondInversion::new());
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.add(DeadBranchElimination);
-    p.add(CfgDetach);
-    p.add(LoadForward);
-    p.add_post_pass(CallStackArgCollect);
-    p.add_post_pass(FunctionArgDetect);
+    p.add(&IfCondInversion);
+    p.add(&PhiCollapse);
+    p.add(&RegionCollapse);
+    p.add(&DeadBranchElimination);
+    p.add(&LoadForward);
+    p.add_post_pass(&CallStackArgCollect);
+    p.add_post_pass(&FunctionArgDetect);
     p
 }

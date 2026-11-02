@@ -27,12 +27,11 @@ fn constant_fold_add_consts_preserves_fingerprints() {
     .unwrap();
     assert!(
         strider_orchestrator::opt::run_one(
-            &ConstantFold::new(),
+            &ConstantFold,
             &mut fg,
             &strider_orchestrator::opt::OptCtx::new(None)
         )
         .unwrap()
-        .changed()
     );
     let const7 = fg
         .walk()
@@ -63,12 +62,11 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
     .unwrap();
     assert!(
         strider_orchestrator::opt::run_one(
-            &ConstantFold::new(),
+            &ConstantFold,
             &mut fg,
             &strider_orchestrator::opt::OptCtx::new(None)
         )
         .unwrap()
-        .changed()
     );
     // Result is IntConst(0); its fingerprint must include 0x204, the
     // Xor's address, absorbed via after_replace.
@@ -110,7 +108,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     })
     .unwrap();
     let _ = strider_orchestrator::opt::run_one(
-        &ConstantFold::new(),
+        &ConstantFold,
         &mut fg,
         &strider_orchestrator::opt::OptCtx::new(None),
     )

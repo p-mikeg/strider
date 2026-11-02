@@ -450,28 +450,20 @@ float_arg 1 [%v6]
 %v17:i8 = iconst[0x0]
 %v18:i1 = icmp.equal %v16, %v17
 %v19:ctrl, %v20:ctrl = if %v0, %v18
-%v21:i32 = int.and %v12, %v2
-%v22:i1 = fcmp.less %v7, %v5
-%v23:i32 = extend.zero %v22
-%v24:i32 = int.shift_left %v23, %v10
-%v25:i32 = int.or %v21, %v24
-%v26:i32 = int.shift_right %v25, %v10
-%v27:i8 = truncate %v26
-%v28:i8 = int.and %v27, %v15
-%v29:i1 = icmp.equal %v28, %v17
-%v30:ctrl, %v31:ctrl = if %v19, %v29
-%v32:i32 = iconst[0x1]
-%v33:i32 = iconst[0x0]
+%v21:i1 = fcmp.less %v7, %v5
+%v22:ctrl, %v23:ctrl = if %v19, %v21
+%v24:i32 = iconst[0x1]
+%v25:i32 = iconst[0x0]
 
-%v34:ctrl, %v35:token = region %v31, %v30
-%v36:i32<v0> = phi %v35, %v32, %v33
-%v37:mem = initial_memory
-%v38:i32 = initial_var[v1]
-%v39:i64 = initial_var[f0_1]
-%v40:i64 = initial_var[f2_3]
-return %v34, %v37, %v36, %v38, %v39, %v40
-%v41:i32 = iconst[0xffffffff]
-return %v20, %v37, %v41, %v38, %v39, %v40
+%v26:ctrl, %v27:token = region %v22, %v23
+%v28:i32<v0> = phi %v27, %v24, %v25
+%v29:mem = initial_memory
+%v30:i32 = initial_var[v1]
+%v31:i64 = initial_var[f0_1]
+%v32:i64 = initial_var[f2_3]
+return %v26, %v29, %v28, %v30, %v31, %v32
+%v33:i32 = iconst[0xffffffff]
+return %v20, %v29, %v33, %v30, %v31, %v32
 
 == f64_compare @0x40089c
 cfg
@@ -504,28 +496,20 @@ float_arg 1 [%v6]
 %v17:i8 = iconst[0x0]
 %v18:i1 = icmp.equal %v16, %v17
 %v19:ctrl, %v20:ctrl = if %v0, %v18
-%v21:i32 = int.and %v12, %v2
-%v22:i1 = fcmp.less %v7, %v5
-%v23:i32 = extend.zero %v22
-%v24:i32 = int.shift_left %v23, %v10
-%v25:i32 = int.or %v21, %v24
-%v26:i32 = int.shift_right %v25, %v10
-%v27:i8 = truncate %v26
-%v28:i8 = int.and %v27, %v15
-%v29:i1 = icmp.equal %v28, %v17
-%v30:ctrl, %v31:ctrl = if %v19, %v29
-%v32:i32 = iconst[0x1]
-%v33:i32 = iconst[0x0]
+%v21:i1 = fcmp.less %v7, %v5
+%v22:ctrl, %v23:ctrl = if %v19, %v21
+%v24:i32 = iconst[0x1]
+%v25:i32 = iconst[0x0]
 
-%v34:ctrl, %v35:token = region %v31, %v30
-%v36:i32<v0> = phi %v35, %v32, %v33
-%v37:mem = initial_memory
-%v38:i32 = initial_var[v1]
-%v39:i64 = initial_var[f0_1]
-%v40:i64 = initial_var[f2_3]
-return %v34, %v37, %v36, %v38, %v39, %v40
-%v41:i32 = iconst[0xffffffff]
-return %v20, %v37, %v41, %v38, %v39, %v40
+%v26:ctrl, %v27:token = region %v22, %v23
+%v28:i32<v0> = phi %v27, %v24, %v25
+%v29:mem = initial_memory
+%v30:i32 = initial_var[v1]
+%v31:i64 = initial_var[f0_1]
+%v32:i64 = initial_var[f2_3]
+return %v26, %v29, %v28, %v30, %v31, %v32
+%v33:i32 = iconst[0xffffffff]
+return %v20, %v29, %v33, %v30, %v31, %v32
 
 == f32_neg_abs @0x4008c0
 cfg

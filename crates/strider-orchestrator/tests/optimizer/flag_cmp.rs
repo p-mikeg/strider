@@ -10,8 +10,10 @@
 //! ARM/Thumb lift the branch with inverted sense (an outer `BoolNeg`), so by
 //! the time the pass runs, ConstantFold has decomposed the sub-terms into
 //! direct comparisons, which the "decomposed-form" rules recognise. x86 / x64
-//! (EFLAGS) reach the canonical form directly. This test pins that every
-//! flag-register arch ends at the same single-`IntCmpOp` shape.
+//! (EFLAGS) reach the canonical form directly. PowerPC branches on one bit of
+//! a packed CR field, which the CR-bit trace resolves; MIPS has no flags but
+//! branches on `zext(slt) == 0`, the flag-free spelling of a false test. This
+//! test pins that every arch ends at the same single-`IntCmpOp` shape.
 
 use crate::common::*;
 use strider_ir::IRViewer;
@@ -99,4 +101,19 @@ fn flag_cmp_canonicalizes_branches_x86() {
 #[test]
 fn flag_cmp_canonicalizes_branches_x64() {
     assert_branches_canonicalize(Arch::X64);
+}
+
+#[test]
+fn flag_cmp_canonicalizes_branches_ppc32be() {
+    assert_branches_canonicalize(Arch::Ppc32be);
+}
+
+#[test]
+fn flag_cmp_canonicalizes_branches_ppc64le() {
+    assert_branches_canonicalize(Arch::Ppc64le);
+}
+
+#[test]
+fn flag_cmp_canonicalizes_branches_mips32le() {
+    assert_branches_canonicalize(Arch::Mips32le);
 }

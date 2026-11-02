@@ -708,7 +708,7 @@ float_arg 24 [%v53]
 %v51:i128 = initial_var[vs43]
 %v52:i128 = initial_var[vs44]
 %v53:i128 = initial_var[vs45]
-%v54:ctrl, %v55:mem, %v56:i64<r3>, %v57:i64<r4>, %v58:i64<f1>, %v59:i64<f2>, %v60:i64<f3>, %v61:i64<f4>, %v62:i64<f5>, %v63:i64<f6>, %v64:i64<f7>, %v65:i64<f8>, %v66:i128<vs34>, %v67:i128<vs35>, %v68:i128<vs36>, %v69:i128<vs37>, %v70:i128<vs38>, %v71:i128<vs39>, %v72:i128<vs40>, %v73:i128<vs41>, %v74:i64<r0>, %v75:i64<r5>, %v76:i64<r6>, %v77:i64<r7>, %v78:i64<r8>, %v79:i64<r9>, %v80:i64<r10>, %v81:i64<r12>, %v82:i64<r2Save>, %v83:i64<f9>, %v84:i64<f10>, %v85:i64<f11>, %v86:i64<f12>, %v87:i64<f13>, %v88:i128<vs42>, %v89:i128<vs43>, %v90:i128<vs44>, %v91:i128<vs45> = call %v0, %v20, %v21, %v12, %v22, %v19, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53
+%v54:ctrl, %v55:mem, %v56:i64<r3>, %v57:i64<r4>, %v58:i64<f1>, %v59:i64<f2>, %v60:i64<f3>, %v61:i64<f4>, %v62:i64<f5>, %v63:i64<f6>, %v64:i64<f7>, %v65:i64<f8>, %v66:i128<vs34>, %v67:i128<vs35>, %v68:i128<vs36>, %v69:i128<vs37>, %v70:i128<vs38>, %v71:i128<vs39>, %v72:i128<vs40>, %v73:i128<vs41>, %v74:i64<r0>, %v75:i64<r5>, %v76:i64<r6>, %v77:i64<r7>, %v78:i64<r8>, %v79:i64<r9>, %v80:i64<r10>, %v81:i64<r12>, %v82:i64<r2Save>, %v83:i64<f9>, %v84:i64<f10>, %v85:i64<f11>, %v86:i64<f12>, %v87:i64<f13>, %v88:i128<vs42>, %v89:i128<vs43>, %v90:i128<vs44>, %v91:i128<vs45> = call %v0, %v20, %v21, %v12, %v22, %v19, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v17, %v5
 %v92:i32 = load[r] %v55, %v15
 %v93:i64 = extend.sign %v92
 return %v54, %v55, %v93, %v57, %v58, %v59, %v60, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73
@@ -816,13 +816,11 @@ float_arg 24 [%v63]
 %v63:i128 = initial_var[vs45]
 %v64:ctrl, %v65:mem, %v66:i64<r3>, %v67:i64<r4>, %v68:i64<f1>, %v69:i64<f2>, %v70:i64<f3>, %v71:i64<f4>, %v72:i64<f5>, %v73:i64<f6>, %v74:i64<f7>, %v75:i64<f8>, %v76:i128<vs34>, %v77:i128<vs35>, %v78:i128<vs36>, %v79:i128<vs37>, %v80:i128<vs38>, %v81:i128<vs39>, %v82:i128<vs40>, %v83:i128<vs41>, %v84:i64<r0>, %v85:i64<r5>, %v86:i64<r6>, %v87:i64<r7>, %v88:i64<r8>, %v89:i64<r9>, %v90:i64<r10>, %v91:i64<r12>, %v92:i64<r2Save>, %v93:i64<f9>, %v94:i64<f10>, %v95:i64<f11>, %v96:i64<f12>, %v97:i64<f13>, %v98:i128<vs42>, %v99:i128<vs43>, %v100:i128<vs44>, %v101:i128<vs45> = call %v0, %v29, %v30, %v12, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v54, %v55, %v56, %v57, %v58, %v59, %v60, %v61, %v62, %v63
 %v102:i32 = load[r] %v65, %v19
-%v103:i64 = extend.zero %v102
-%v104:i32 = load[r] %v65, %v24
-%v105:i64 = extend.zero %v104
-%v106:i64 = int.add %v103, %v105
-%v107:i32 = truncate %v106
-%v108:i64 = extend.sign %v107
-return %v64, %v65, %v108, %v105, %v68, %v69, %v70, %v71, %v72, %v73, %v74, %v75, %v76, %v77, %v78, %v79, %v80, %v81, %v82, %v83
+%v103:i32 = load[r] %v65, %v24
+%v104:i32 = int.add %v102, %v103
+%v105:i64 = extend.sign %v104
+%v106:i64 = extend.zero %v103
+return %v64, %v65, %v105, %v106, %v68, %v69, %v70, %v71, %v72, %v73, %v74, %v75, %v76, %v77, %v78, %v79, %v80, %v81, %v82, %v83
 
 == forward_4 @0x100105d4
 cfg
@@ -1508,9 +1506,9 @@ float_arg 24 [%v82]
 %v48:mem = store[r] %v46, %v40, %v47
 %v49:i64 = iconst[0x1001045c]
 %v50:i64 = extend.sign %v25
-%v51:i64 = extend.sign %v43
+%v51:i64 = extend.zero %v30
 %v52:i64 = extend.sign %v34
-%v53:i64 = extend.sign %v47
+%v53:i64 = extend.zero %v38
 %v54:i64 = initial_var[r7]
 %v55:i64 = initial_var[r8]
 %v56:i64 = initial_var[r9]
@@ -1671,31 +1669,26 @@ float_arg 24 [%v74]
 %v75:ctrl, %v76:mem, %v77:i64<r3>, %v78:i64<r4>, %v79:i64<f1>, %v80:i64<f2>, %v81:i64<f3>, %v82:i64<f4>, %v83:i64<f5>, %v84:i64<f6>, %v85:i64<f7>, %v86:i64<f8>, %v87:i128<vs34>, %v88:i128<vs35>, %v89:i128<vs36>, %v90:i128<vs37>, %v91:i128<vs38>, %v92:i128<vs39>, %v93:i128<vs40>, %v94:i128<vs41>, %v95:i64<r0>, %v96:i64<r5>, %v97:i64<r6>, %v98:i64<r7>, %v99:i64<r8>, %v100:i64<r9>, %v101:i64<r10>, %v102:i64<r12>, %v103:i64<r2Save>, %v104:i64<f9>, %v105:i64<f10>, %v106:i64<f11>, %v107:i64<f12>, %v108:i64<f13>, %v109:i128<vs42>, %v110:i128<vs43>, %v111:i128<vs44>, %v112:i128<vs45> = call %v0, %v42, %v43, %v12, %v44, %v25, %v45, %v33, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v54, %v55, %v56, %v57, %v58, %v59, %v60, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73, %v74, %v9
 %v113:i64 = load[r] %v76, %v24
 %v114:i32 = load[r] %v76, %v19
-%v115:i64 = extend.zero %v114
-%v116:i32 = load[r] %v76, %v28
-%v117:i64 = extend.zero %v116
-%v118:i64 = int.add %v115, %v117
-%v119:i32 = truncate %v118
-%v120:mem = store[r] %v76, %v113, %v119
-%v121:i64 = load[r] %v120, %v32
-%v122:i32 = load[r] %v120, %v19
-%v123:i64 = extend.zero %v122
-%v124:i32 = load[r] %v120, %v28
-%v125:i64 = extend.zero %v124
-%v126:i64 = int.neg %v125
-%v127:i64 = int.add %v123, %v126
-%v128:i32 = truncate %v127
-%v129:mem = store[r] %v120, %v121, %v128
-%v130:i64 = load[r] %v129, %v24
-%v131:i32 = load[r] %v129, %v130
-%v132:i64 = extend.zero %v131
-%v133:i64 = load[r] %v129, %v32
-%v134:i32 = load[r] %v129, %v133
-%v135:i64 = extend.zero %v134
-%v136:i64 = int.xor %v132, %v135
-%v137:i32 = truncate %v136
-%v138:i64 = extend.sign %v137
-return %v75, %v129, %v138, %v135, %v79, %v80, %v81, %v82, %v83, %v84, %v85, %v86, %v87, %v88, %v89, %v90, %v91, %v92, %v93, %v94
+%v115:i32 = load[r] %v76, %v28
+%v116:i32 = int.add %v114, %v115
+%v117:mem = store[r] %v76, %v113, %v116
+%v118:i64 = load[r] %v117, %v32
+%v119:i32 = load[r] %v117, %v19
+%v120:i64 = extend.zero %v119
+%v121:i32 = load[r] %v117, %v28
+%v122:i64 = extend.zero %v121
+%v123:i64 = int.neg %v122
+%v124:i64 = int.add %v120, %v123
+%v125:i32 = truncate %v124
+%v126:mem = store[r] %v117, %v118, %v125
+%v127:i64 = load[r] %v126, %v24
+%v128:i32 = load[r] %v126, %v127
+%v129:i64 = load[r] %v126, %v32
+%v130:i32 = load[r] %v126, %v129
+%v131:i32 = int.xor %v128, %v130
+%v132:i64 = extend.sign %v131
+%v133:i64 = extend.zero %v130
+return %v75, %v126, %v132, %v133, %v79, %v80, %v81, %v82, %v83, %v84, %v85, %v86, %v87, %v88, %v89, %v90, %v91, %v92, %v93, %v94
 
 == returns_int @0x10010d18
 cfg
@@ -1843,18 +1836,17 @@ float_arg 24 [%v53]
 %v51:i128 = initial_var[vs43]
 %v52:i128 = initial_var[vs44]
 %v53:i128 = initial_var[vs45]
-%v54:ctrl, %v55:mem, %v56:i64<r3>, %v57:i64<r4>, %v58:i64<f1>, %v59:i64<f2>, %v60:i64<f3>, %v61:i64<f4>, %v62:i64<f5>, %v63:i64<f6>, %v64:i64<f7>, %v65:i64<f8>, %v66:i128<vs34>, %v67:i128<vs35>, %v68:i128<vs36>, %v69:i128<vs37>, %v70:i128<vs38>, %v71:i128<vs39>, %v72:i128<vs40>, %v73:i128<vs41>, %v74:i64<r0>, %v75:i64<r5>, %v76:i64<r6>, %v77:i64<r7>, %v78:i64<r8>, %v79:i64<r9>, %v80:i64<r10>, %v81:i64<r12>, %v82:i64<r2Save>, %v83:i64<f9>, %v84:i64<f10>, %v85:i64<f11>, %v86:i64<f12>, %v87:i64<f13>, %v88:i128<vs42>, %v89:i128<vs43>, %v90:i128<vs44>, %v91:i128<vs45> = call %v0, %v20, %v21, %v12, %v22, %v19, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53
+%v54:ctrl, %v55:mem, %v56:i64<r3>, %v57:i64<r4>, %v58:i64<f1>, %v59:i64<f2>, %v60:i64<f3>, %v61:i64<f4>, %v62:i64<f5>, %v63:i64<f6>, %v64:i64<f7>, %v65:i64<f8>, %v66:i128<vs34>, %v67:i128<vs35>, %v68:i128<vs36>, %v69:i128<vs37>, %v70:i128<vs38>, %v71:i128<vs39>, %v72:i128<vs40>, %v73:i128<vs41>, %v74:i64<r0>, %v75:i64<r5>, %v76:i64<r6>, %v77:i64<r7>, %v78:i64<r8>, %v79:i64<r9>, %v80:i64<r10>, %v81:i64<r12>, %v82:i64<r2Save>, %v83:i64<f9>, %v84:i64<f10>, %v85:i64<f11>, %v86:i64<f12>, %v87:i64<f13>, %v88:i128<vs42>, %v89:i128<vs43>, %v90:i128<vs44>, %v91:i128<vs45> = call %v0, %v20, %v21, %v12, %v22, %v19, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v17, %v5
 %v92:i64 = iconst[0xfffffffffffffff0]
 %v93:i64 = int.add %v2, %v92
 %v94:i32 = truncate %v56
 %v95:mem = store[r] %v55, %v93, %v94
 %v96:mem = store[r] %v95, %v19, %v94
-%v97:i64 = extend.zero %v94
-%v98:i64 = iconst[0x2]
-%v99:i64 = int.mul %v97, %v98
-%v100:i32 = truncate %v99
-%v101:i64 = extend.sign %v100
-return %v54, %v96, %v101, %v97, %v58, %v59, %v60, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73
+%v97:i32 = iconst[0x2]
+%v98:i32 = int.mul %v94, %v97
+%v99:i64 = extend.sign %v98
+%v100:i64 = extend.zero %v94
+return %v54, %v96, %v99, %v100, %v58, %v59, %v60, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73
 
 == main @0x10010dd4
 cfg

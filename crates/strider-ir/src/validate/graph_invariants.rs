@@ -602,7 +602,7 @@ pub(super) fn check_function_invariants_memory_linearity(
             NodeKind::Store(_) => {
                 stack.extend(graph.nth_input(producer, NodeKind::ACCESS_MEM_SLOT))
             }
-            NodeKind::MemPhi => stack.extend(live_arms(graph, &ctx.domtree, producer)),
+            NodeKind::MemPhi => stack.extend(live_arms(ctx.function, &ctx.domtree, producer)),
             NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
                 stack.extend(memory_input(producer));
             }
@@ -672,12 +672,7 @@ fn check_memory_order(
                         )
                         .0;
                 }
-                NodeKind::MemPhi => {
-                    let token = graph
-                        .nth_input(producer, NodeKind::PHI_TOKEN_SLOT)
-                        .expect("a phi has a token");
-                    break graph.value_definition(token).0;
-                }
+                NodeKind::MemPhi => break function.phi_region(producer),
                 NodeKind::InitialMemory => break tree.root(),
                 _ => break producer,
             }
@@ -746,21 +741,14 @@ fn check_memory_order(
 
 /// A phi's value inputs on edges from a node of `tree`.
 fn live_arms<'a>(
-    graph: &'a Graph,
+    function: &'a Function,
     tree: &'a DominatorTree<NodeId>,
     phi: NodeId,
 ) -> impl Iterator<Item = ValueId> + 'a {
-    let token = graph
-        .nth_input(phi, NodeKind::PHI_TOKEN_SLOT)
-        .expect("a phi has a token");
-    let region = graph.value_definition(token).0;
-    graph
-        .node_inputs(phi)
-        .into_iter()
-        .skip(1)
-        .zip(graph.node_inputs(region))
-        .filter(|&(_, edge)| tree.contains(graph.value_definition(edge).0))
-        .map(|(arm, _)| arm)
+    function
+        .phi_arms(phi)
+        .filter(|&(edge, _)| tree.contains(function.producer(edge)))
+        .map(|(_, arm)| arm)
 }
 
 /// Every data input is available where it is used, judged on an early schedule

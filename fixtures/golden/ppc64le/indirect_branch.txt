@@ -33,20 +33,18 @@ arg 0 [%v5]
 %v20:i64 = extend.zero %v6
 %v21:i64 = iconst[0x20]
 %v22:i64 = int.shift_left %v20, %v21
-%v23:i64 = iconst[0xffffffff]
-%v24:i64 = int.and %v20, %v23
-%v25:i64 = int.or %v22, %v24
-%v26:i64 = iconst[0x3]
-%v27:i64 = int.shift_left %v25, %v26
-%v28:i64 = iconst[0x3d]
-%v29:i64 = int.shift_right %v25, %v28
-%v30:i64 = int.or %v27, %v29
-%v31:i64 = iconst[0x8]
-%v32:i64 = int.and %v30, %v31
-%v33:i64 = int.add %v14, %v32
-%v34:i64 = load[r] %v17, %v33
-%v35:mem = store[r] %v17, %v19, %v34
-indirect_branch %v0, %v35, %v34
+%v23:i64 = int.or %v22, %v20
+%v24:i64 = iconst[0x3]
+%v25:i64 = int.shift_left %v23, %v24
+%v26:i64 = iconst[0x3d]
+%v27:i64 = int.shift_right %v23, %v26
+%v28:i64 = int.or %v25, %v27
+%v29:i64 = iconst[0x8]
+%v30:i64 = int.and %v28, %v29
+%v31:i64 = int.add %v14, %v30
+%v32:i64 = load[r] %v17, %v31
+%v33:mem = store[r] %v17, %v19, %v32
+indirect_branch %v0, %v33, %v32
 
 == main @0x100102a0
 cfg

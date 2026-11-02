@@ -1,18 +1,16 @@
 use super::*;
+use crate::AssumptionOptions;
 use crate::Result;
-use crate::test_support::cf_rp_pipeline;
-use anyhow::anyhow;
+use crate::mem_analysis::WALK_STEPS;
+use crate::mem_ssa::CLIMB_STEPS;
+use crate::test_support::{CF_RP, COLLAPSE, assert_near_linear, at, run_passes, steps};
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{Graph, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::IrBuilderEx;
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{sp_frame, stack_args_at, stack_vn_x86 as stack_vn};
 
-fn is_const(fg: &strider_ir::Function, v: ValueId, expected: u64) -> bool {
-    matches!(fg.kind_of_value(v), NodeKind::IntConst(_))
-        && fg.int_const_u128(v) == Some(u128::from(expected))
-}
-
-fn const_val(fg: &strider_ir::Function, v: ValueId, ctx: &str) -> u128 {
+fn const_val(fg: &Function, v: ValueId, ctx: &str) -> u128 {
     fg.int_const_u128(v).unwrap_or_else(|| {
         panic!(
             "collected arg should be an IntConst, got {:?}; {ctx}",
@@ -21,897 +19,258 @@ fn const_val(fg: &strider_ir::Function, v: ValueId, ctx: &str) -> u128 {
     })
 }
 
-/// Prologue zero-init writes and a `push ebx` save land in a later call's
-/// arg-slot window, and once lowered to memory they are indistinguishable from
-/// argument pushes.  So all 7 are collected here and disambiguation is left to
-/// the caller.
-#[test]
-fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
+/// One step of a call site's setup over a 32-bit SP; offsets are from the
+/// entry SP.
+#[derive(Clone, Copy)]
+enum St {
+    /// `sp -= 4; [sp] = v`.
+    Push(u64),
+    /// `[sp + off] = v`, 4 bytes.
+    At(i64, u64),
+    /// `[sp + off] = v`, `bits` wide.
+    Wide(i64, u128, u16),
+    /// `sp = entry_sp + off`.
+    SpAt(i64),
+    /// `[addr] = v`, a global.
+    Global(u64, u64),
+}
+use St::{At, Global, Push, SpAt, Wide};
+
+/// `steps`, then `call 0x1000`, over a 32-bit frame whose stack arguments
+/// start at `base`, one every 4 bytes.
+fn cdecl_fn(base: i128, steps: &[St]) -> Result<Function> {
     let sp = stack_vn();
+    let i32_ty = ValueType::int(32);
     let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 4))
+        .stack_args(stack_args_at(base, 4))
         .build_fn_single_region()?;
-    let sp0 = b.read_variable(&sp)?;
-    // `push ebx`, `sub esp, 16`, 4x zero-init, push arg1, push arg0, then the
-    // implicit call ret-push.
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
-
-    let sp_after_push_ebx = b.build_sub_as_add_neg(sp0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_after_push_ebx)?;
-    let init_ebx = b.build_int_const(0xEBu64, ValueType::int(32))?;
-    b.build_store(sp_after_push_ebx, init_ebx, rsleigh::VnSpace::RAM)?;
-
-    let sp_after_sub = b.build_sub_as_add_neg(sp_after_push_ebx, sixteen, ValueType::int(32))?;
-    b.write_variable(&sp, sp_after_sub)?;
-
-    // buf[0..16] at esp+0,+4,+8,+12, i.e. [-20, -16, -12, -8].
-    let zero = b.build_int_const(0u64, ValueType::int(32))?;
-    for k in 0..4 {
-        let off = b.build_int_const((k * 4) as u64, ValueType::int(32))?;
-        let addr =
-            b.build_int_binary_operation(sp_after_sub, off, IntBinaryOp::Add, ValueType::int(32))?;
-        b.build_store(addr, zero, rsleigh::VnSpace::RAM)?;
-    }
-
-    // push arg1 = 1 at [sp - 24].
-    let sp_push_arg1 = b.build_sub_as_add_neg(sp_after_sub, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_push_arg1)?;
-    let arg1 = b.build_int_const(1u64, ValueType::int(32))?;
-    b.build_store(sp_push_arg1, arg1, rsleigh::VnSpace::RAM)?;
-
-    // push arg0 = 42 at [sp - 28].
-    let sp_push_arg0 = b.build_sub_as_add_neg(sp_push_arg1, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_push_arg0)?;
-    let arg0 = b.build_int_const(42u64, ValueType::int(32))?;
-    b.build_store(sp_push_arg0, arg0, rsleigh::VnSpace::RAM)?;
-
-    // Implicit ret-addr push at [sp - 32], mimicking x86 `call`.
-    let sp_call = b.build_sub_as_add_neg(sp_push_arg0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_call)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    b.build_store(sp_call, retaddr, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    // ctrl + mem + target + sp + 7 collected args = 11 inputs.
-    let collected: Vec<u128> = inputs[4..]
-        .iter()
-        .map(|&v| const_val(&fg, v, "local_inits_in_arg_window_are_collected_too"))
-        .collect();
-    assert_eq!(
-        collected,
-        vec![42, 1, 0, 0, 0, 0, 0xEB],
-        "every plausible stack-arg store in the contiguous window is collected"
-    );
-    Ok(())
-}
-
-/// 32-bit cdecl `f(double a, int b)`: the 8-byte store at `sp+0` spans two
-/// 4-byte slots and must be ONE argument, with the cursor advancing past both
-/// so `b` lands next.
-#[test]
-fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    // a = double stored as I64 at sp+0, covering slots 0 and 1.
-    let a = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::int(64))?;
-    b.build_store(sp_v0, a, rsleigh::VnSpace::RAM)?;
-    // b = int stored as I32 at sp+8, slot 2.
-    let eight = b.build_int_const(8u64, ValueType::int(32))?;
-    let sp_plus_8 =
-        b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, ValueType::int(32))?;
-    let bv = b.build_int_const(7u64, ValueType::int(32))?;
-    b.build_store(sp_plus_8, bv, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(
-        inputs.len(),
-        6,
-        "wide store = one arg; cursor advances past both slots it covers so the \
-         int lands as arg 1; got inputs={inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 0xDEAD_BEEF_CAFE_BABE),
-        "arg0 should be the 8-byte double value, got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    assert!(
-        is_const(&fg, inputs[5], 7),
-        "arg1 should be the int 7, got {:?}",
-        fg.kind_of_value(inputs[5])
-    );
-    Ok(())
-}
-
-/// Span 4: an `I128` store at `sp+0` covers four 4-byte slots and must still be
-/// exactly ONE Call input, not one per covered slot, so the following `I32` at
-/// `sp+16` lands as arg 1.
-#[test]
-fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    // a = 16-byte value at sp+0, covering slots 0..3.
-    let const_id_a = b
-        .function_mut()
-        .intern_int_const(0xABCD_u128, ValueType::int(128));
-    let a = strider_ir_test_utils::sentinel_node(
-        b.function_mut(),
-        NodeKind::IntConst(const_id_a),
-        [],
-        [strider_ir::node::ValueKind::Typed(ValueType::int(128))],
-    );
-    let a_val = b.function().node_outputs_exact::<1>(a).unwrap()[0];
-    b.build_store(sp_v0, a_val, rsleigh::VnSpace::RAM)?;
-    // b = int at sp+16, slot 4.
-    let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
-    let sp_plus_16 =
-        b.build_int_binary_operation(sp_v0, sixteen, IntBinaryOp::Add, ValueType::int(32))?;
-    let bv = b.build_int_const(7u64, ValueType::int(32))?;
-    b.build_store(sp_plus_16, bv, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(
-        inputs.len(),
-        6,
-        "wide I128 store = one arg; cursor advances past all four slots it \
-         covers so the int lands as arg 1; got inputs={inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 0xABCD),
-        "arg0 should be the 16-byte I128 value, got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    assert!(
-        is_const(&fg, inputs[5], 7),
-        "arg1 should be the int 7, got {:?}",
-        fg.kind_of_value(inputs[5])
-    );
-    Ok(())
-}
-
-/// Odd span 3, between the covered 2- and 4-slot cases: an `I80` at `sp+0`
-/// covers three slots, so the following `I32` at `sp+12` must land as arg 1,
-/// neither absorbed into the span nor mis-indexed.
-#[test]
-fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    // a = 10-byte value at sp+0, covering slots 0..2.
-    let const_id_a = b
-        .function_mut()
-        .intern_int_const(0xABCD_u128, ValueType::int(80));
-    let a = strider_ir_test_utils::sentinel_node(
-        b.function_mut(),
-        NodeKind::IntConst(const_id_a),
-        [],
-        [strider_ir::node::ValueKind::Typed(ValueType::int(80))],
-    );
-    let a_val = b.function().node_outputs_exact::<1>(a).unwrap()[0];
-    b.build_store(sp_v0, a_val, rsleigh::VnSpace::RAM)?;
-    // b = int at sp+12, slot 3.
-    let twelve = b.build_int_const(12u64, ValueType::int(32))?;
-    let sp_plus_12 =
-        b.build_int_binary_operation(sp_v0, twelve, IntBinaryOp::Add, ValueType::int(32))?;
-    let bv = b.build_int_const(7u64, ValueType::int(32))?;
-    b.build_store(sp_plus_12, bv, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(
-        inputs.len(),
-        6,
-        "I80 store spans 3 slots = one arg; the int lands as arg 1 (slot 3); \
-         got inputs={inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 0xABCD),
-        "arg0 should be the 10-byte I80 value, got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    assert!(
-        is_const(&fg, inputs[5], 7),
-        "arg1 should be the int 7, got {:?}",
-        fg.kind_of_value(inputs[5])
-    );
-    Ok(())
-}
-
-/// Runs `cf_rp_pipeline` plus `CallStackArgCollect` and returns the sole
-/// Call's inputs.
-fn collect_call_inputs(fg: &mut strider_ir::Function) -> Result<Vec<ValueId>> {
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(fg, &crate::OptCtx::new(None))?;
-    let call_id = find_call(fg.graph())?;
-    Ok(fg.node_inputs(call_id).into_iter().collect())
-}
-
-fn find_call(graph: &Graph) -> Result<NodeId> {
-    graph
-        .all_node_ids()
-        .find(|&n| matches!(graph.node_kind(n), NodeKind::Call { .. }))
-        .ok_or_else(|| anyhow!("expected Call node, got {:?}", NodeKind::Call { cc: None }))
-}
-
-/// `push arg1=22; push arg0=11; call 0x1000` must extend the Call's inputs
-/// with `[arg0, arg1]` in positional order.
-#[test]
-fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-
-    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
-    b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    // cdecl has no arg-passing registers, so indices 4 and 5 are the stack args.
-    assert_eq!(
-        inputs.len(),
-        6,
-        "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
-    );
-
-    assert!(
-        is_const(&fg, inputs[4], 11),
-        "arg0 should be 11, got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    assert!(
-        is_const(&fg, inputs[5], 22),
-        "arg1 should be 22, got {:?}",
-        fg.kind_of_value(inputs[5])
-    );
-    Ok(())
-}
-
-/// Ten push-style stack args, proving `StackArgs` collection is unbounded.
-#[test]
-fn collects_ten_stack_args() -> Result<()> {
-    const N: usize = 10;
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let mut sp_cur = b.read_variable(&sp)?;
-    // Each `push` decrements SP and stores, so pushing argN..arg0 leaves the
-    // most recent (arg0) at the chain head, slot 0.  Value `100 + i` identifies
-    // arg `i`.
-    for i in (0..N).rev() {
-        sp_cur = b.build_sub_as_add_neg(sp_cur, four, ValueType::int(32))?;
-        b.write_variable(&sp, sp_cur)?;
-        let arg = b.build_int_const((100 + i) as u64, ValueType::int(32))?;
-        b.build_store(sp_cur, arg, rsleigh::VnSpace::RAM)?;
-    }
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(
-        inputs.len(),
-        4 + N,
-        "expected ctrl+mem+target+sp+{N} stack args; got {inputs:?}"
-    );
-    for i in 0..N {
-        assert!(
-            is_const(&fg, inputs[4 + i], (100 + i) as u64),
-            "stack arg {i} should be {}, got {:?}",
-            100 + i,
-            fg.kind_of_value(inputs[4 + i])
-        );
-    }
-    Ok(())
-}
-
-/// Slots 0 and 2 filled, slot 1 not.  Only the dense prefix is collected, so
-/// exactly one arg is wired despite slot 2 holding a plausible store.
-/// Over-collection applies WITHIN a contiguous window; a hole truncates it.
-#[test]
-fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v = b.read_variable(&sp)?;
-    let arg0 = b.build_int_const(0xA0u64, ValueType::int(32))?;
-    b.build_store(sp_v, arg0, rsleigh::VnSpace::RAM)?;
-    // Slot 2 at sp+8; slot 1 (sp+4) is left unfilled.
-    let eight = b.build_int_const(8u64, ValueType::int(32))?;
-    let addr8 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::int(32))?;
-    let arg2 = b.build_int_const(0xA2u64, ValueType::int(32))?;
-    b.build_store(addr8, arg2, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(
-        inputs.len(),
-        5,
-        "only the dense prefix (slot 0) is collected across the hole"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 0xA0),
-        "the collected arg must be slot 0's 0xA0, got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    Ok(())
-}
-
-/// One store at slot 0 of a base-0 layout (no ret-addr anchor), so exactly one
-/// positional arg is appended even with the higher slots missing.
-#[test]
-fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v1)?;
-    let only_arg = b.build_int_const(99u64, ValueType::int(32))?;
-    b.build_store(sp_v1, only_arg, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(inputs.len(), 5, "only one stack arg could be collected");
-    Ok(())
-}
-
-/// An unfilled slot 0 must leave the collection empty.  The chain anchor is
-/// the implicit ret-addr push at sp-4, which sits below slot 0's probe offset,
-/// and only slot 1 is filled, so the dense prefix is empty.
-#[test]
-fn missing_slot_zero_skips_collection() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-
-    // rel = +8 from the anchor at sp-4 below, i.e. slot 1.
-    let sp_plus_4 =
-        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
-
-    // Chain anchor at rel 0, below slot 0's probe offset (rel 4).
-    let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_minus_4)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    b.build_store(sp_minus_4, retaddr, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let before_inputs = fg.node_inputs(find_call(fg.graph())?).len();
-
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let after_inputs = fg.node_inputs(find_call(fg.graph())?).len();
-    assert_eq!(
-        before_inputs, after_inputs,
-        "no args should have been collected when slot 0 is missing"
-    );
-    Ok(())
-}
-
-#[test]
-fn call_with_no_stack_stores_unchanged() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let _sp_val = b.read_variable(&sp)?;
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let before_inputs = fg.node_inputs(find_call(fg.graph())?).len();
-
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let after_inputs = fg.node_inputs(find_call(fg.graph())?).len();
-    assert_eq!(
-        before_inputs, after_inputs,
-        "no args should have been collected"
-    );
-    Ok(())
-}
-
-/// A disjoint in-frame SP-relative store between two arg pushes is collected
-/// as another argument, not treated as a terminator: it is indistinguishable
-/// from a real push.  The trash at `sp+0` occupies slot 2 (`sp-8` and `sp-4`
-/// being slots 0 and 1), so the contiguous window is 0,1,2.
-#[test]
-fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-
-    // Trash store at sp+0, inside the cdecl arg-offset range and addressing
-    // the same memory class as an arg slot.
-    let trash = b.build_int_const(0xAAAAu64, ValueType::int(32))?;
-    b.build_store(sp_v0, trash, rsleigh::VnSpace::RAM)?;
-
-    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
-    b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    // ctrl + mem + target + sp + 3 collected args at slots 0,1,2.
-    let collected: Vec<u128> = inputs[4..]
-        .iter()
-        .map(|&v| const_val(&fg, v, "trash_in_arg_window"))
-        .collect();
-    assert_eq!(
-        collected,
-        vec![11, 22, 0xAAAA],
-        "every reaching SP-relative store in the contiguous window is collected"
-    );
-    Ok(())
-}
-
-/// Soundness floor with `stack_global_disjoint` cleared: a non-SP-rooted Store
-/// between the pushes and the Call terminates the walk, so only the push
-/// closest to the Call is collected.  Setting it recovers the upstream args.
-#[test]
-fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-
-    // A global write at a constant address, cross-class against the stack-arg
-    // slots.
-    let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
-    let global_data = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
-
-    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
-    b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = cf_rp_pipeline();
-    // At the floor `stack_global_disjoint` is off; its default would step
-    // through the global write instead.
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + memory + target + sp + arg0 = 5.
-    assert_eq!(
-        inputs.len(),
-        5,
-        "strict walker collects only the most-recent push before the global \
-         terminator; got inputs={inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 11),
-        "arg0 should be 11, got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    Ok(())
-}
-
-/// The first non-SP store terminates the walk, so no stack args reach the Call.
-#[test]
-fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Result<()> {
-    let sp = stack_vn();
-    let arg_vals: [u64; 4] = [11, 22, 33, 44];
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_initial = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-
-    let mut sp_cur = sp_initial;
-    let global_data = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    for (i, base_global_addr) in [0xCAFE0000u64, 0xCAFE0010, 0xCAFE0020, 0xCAFE0030]
-        .into_iter()
-        .enumerate()
-    {
-        let arg_idx = 3 - i;
-        sp_cur = b.build_sub_as_add_neg(sp_cur, four, ValueType::int(32))?;
-        b.write_variable(&sp, sp_cur)?;
-        let arg = b.build_int_const(arg_vals[arg_idx], ValueType::int(32))?;
-        b.build_store(sp_cur, arg, rsleigh::VnSpace::RAM)?;
-
-        let g_addr = b.build_int_const(base_global_addr, ValueType::int(32))?;
-        b.build_store(g_addr, global_data, rsleigh::VnSpace::RAM)?;
-    }
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = cf_rp_pipeline();
-    // At the floor the default `stack_global_disjoint` is off.
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    assert_eq!(
-        inputs.len(),
-        4,
-        "strict walker terminates at the leading global write; no stack args \
-         collected; got inputs={inputs:?}"
-    );
-    Ok(())
-}
-
-// Chain order is not slot order: collection must succeed for any chain order,
-// as long as every store's offset belongs to the convention's stack-arg-offset
-// set.
-
-/// i386 `free(arg0, arg1)`.  Args go to `(%esp)` and `0x4(%esp)` in program
-/// order, then `call` pushes the return address at sp-4, so the chain backward
-/// is ret-addr, arg1, arg0.  Both args must be collected even though arg1 is
-/// the most-recent stack store.
-#[test]
-fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    // In cdecl the outgoing-args region sits at the bottom of the frame and is
-    // written without first decrementing SP.
-    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
-    b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
-
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_plus_4 =
-        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
-
-    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_after_call_push)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(
-        inputs.len(),
-        6,
-        "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 11),
-        "arg0 should be 11, got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    assert!(
-        is_const(&fg, inputs[5], 22),
-        "arg1 should be 22, got {:?}",
-        fg.kind_of_value(inputs[5])
-    );
-    Ok(())
-}
-
-/// i386 `kmap_free_wakeup(arg0, arg1, arg2)`.  The compiler stores arg1, arg0,
-/// arg2 in that order, so chain order is not slot order.  All three must land
-/// in the right slots.
-#[test]
-fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let eight = b.build_int_const(8u64, ValueType::int(32))?;
-
-    let sp_plus_4 =
-        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
-
-    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
-    b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
-
-    let sp_plus_8 =
-        b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, ValueType::int(32))?;
-    let arg2 = b.build_int_const(33u64, ValueType::int(32))?;
-    b.build_store(sp_plus_8, arg2, rsleigh::VnSpace::RAM)?;
-
-    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_after_call_push)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(
-        inputs.len(),
-        7,
-        "expected ctrl+mem+target+sp+3 stack args; got {inputs:?}"
-    );
-    for (slot_idx, expected) in [11u64, 22, 33].iter().enumerate() {
-        assert!(
-            is_const(&fg, inputs[4 + slot_idx], *expected),
-            "arg{slot_idx} should be {expected}, got {:?}",
-            fg.kind_of_value(inputs[4 + slot_idx])
-        );
-    }
-    Ok(())
-}
-
-/// When one slot is written twice, the callee sees the MOST RECENT value.
-/// Walking backward, the first sighting of a slot is that most recent write;
-/// later sightings are stale and must be ignored.
-#[test]
-fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-
-    // Stale arg0, the older write.
-    let stale = b.build_int_const(0xBADu64, ValueType::int(32))?;
-    b.build_store(sp_v0, stale, rsleigh::VnSpace::RAM)?;
-
-    let sp_plus_4 =
-        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
-
-    // Overwrites the stale value.
-    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
-    b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
-
-    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_after_call_push)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    assert_eq!(
-        inputs.len(),
-        6,
-        "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 11),
-        "arg0 must be the most-recent write (11), not the stale 0xBAD; got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    Ok(())
-}
-
-/// A store outside the convention's stack-arg window must terminate the walk.
-///
-/// Chain order, latest first: `ret-addr@-12, arg0@-8, arg1@-4, local@-16`.
-/// The local at -16 is at relative offset -4 from the anchor, below slot 0, so
-/// aborting there keeps its value from leaking into an arg slot.
-#[test]
-fn out_of_window_stack_store_terminates_walk() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
-
-    // Below slot 0, so outside the stack-arg slot set.
-    let sp_minus_16 = b.build_sub_as_add_neg(sp_v0, sixteen, ValueType::int(32))?;
-    let local = b.build_int_const(0xDEADu64, ValueType::int(32))?;
-    b.build_store(sp_minus_16, local, rsleigh::VnSpace::RAM)?;
-
-    let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_minus_4, arg1, rsleigh::VnSpace::RAM)?;
-
-    let eight = b.build_int_const(8u64, ValueType::int(32))?;
-    let sp_minus_8 = b.build_sub_as_add_neg(sp_v0, eight, ValueType::int(32))?;
-    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
-    b.build_store(sp_minus_8, arg0, rsleigh::VnSpace::RAM)?;
-
-    let twelve = b.build_int_const(12u64, ValueType::int(32))?;
-    let sp_minus_12 = b.build_sub_as_add_neg(sp_v0, twelve, ValueType::int(32))?;
-    b.write_variable(&sp, sp_minus_12)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    b.build_store(sp_minus_12, retaddr, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let inputs = collect_call_inputs(&mut fg)?;
-    let collected: Vec<u128> = inputs[3..]
-        .iter()
-        .filter_map(|&out| {
-            if matches!(fg.kind_of_value(out), NodeKind::IntConst(_)) {
-                fg.int_const_u128(out)
-            } else {
-                None
+    let entry = b.read_variable(&sp)?;
+    let mut cur = entry;
+    for &step in steps {
+        let (addr, data) = match step {
+            Push(v) => {
+                let four = b.build_int_const(4u64, i32_ty)?;
+                cur = b.build_sub_as_add_neg(cur, four, i32_ty)?;
+                b.write_variable(&sp, cur)?;
+                (cur, b.build_int_const(v, i32_ty)?)
             }
-        })
-        .collect();
-    assert!(
-        !collected.contains(&0xDEAD_u128),
-        "OOW local 0xDEAD must not be collected as an arg; got {collected:?}"
-    );
-    // Termination only bounds the upstream walk, not what is already collected.
-    assert_eq!(
-        inputs.len(),
-        6,
-        "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 11),
-        "arg0 should be 11, got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
-    assert!(
-        is_const(&fg, inputs[5], 22),
-        "arg1 should be 22, got {:?}",
-        fg.kind_of_value(inputs[5])
-    );
-    Ok(())
-}
-
-/// With no per-call override the function-default convention is used.
-#[test]
-fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_plus_4 =
-        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let arg0 = b.build_int_const(77u64, ValueType::int(32))?;
-    b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
-
-    // Ret-addr-push anchor.
-    let anchor = b.build_int_const(0xABCDu64, ValueType::int(32))?;
-    b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x2000u64, ValueType::int(32))?;
+            At(off, v) => (
+                at(&mut b, entry, off, i32_ty)?,
+                b.build_int_const(v, i32_ty)?,
+            ),
+            Wide(off, v, bits) => (
+                at(&mut b, entry, off, i32_ty)?,
+                b.build_int_const(v, ValueType::int(bits))?,
+            ),
+            SpAt(off) => {
+                cur = at(&mut b, entry, off, i32_ty)?;
+                b.write_variable(&sp, cur)?;
+                continue;
+            }
+            Global(addr, v) => (
+                b.build_int_const(addr, i32_ty)?,
+                b.build_int_const(v, i32_ty)?,
+            ),
+        };
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+    }
+    let target = b.build_int_const(0x1000u64, i32_ty)?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    b.build()
+}
 
+/// [`cdecl_fn`] collected under `claims`: the collected arguments, each a
+/// constant.
+fn collected_under(claims: &AssumptionOptions, base: i128, steps: &[St]) -> Result<Vec<u128>> {
+    let mut fg = cdecl_fn(base, steps)?;
+    fg.assume(claims);
     let inputs = collect_call_inputs(&mut fg)?;
-    // ctrl + mem + target + sp + arg0 = 5 inputs.
-    assert_eq!(
-        inputs.len(),
-        5,
-        "default-CC arg at offset +4 must be collected; got inputs={inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 77),
-        "arg0 should be IntConst(77), got {:?}",
-        fg.kind_of_value(inputs[4])
-    );
+    Ok(inputs[4..]
+        .iter()
+        .map(|&v| const_val(&fg, v, "collected arg"))
+        .collect())
+}
+
+fn collected(base: i128, steps: &[St]) -> Result<Vec<u128>> {
+    collected_under(&AssumptionOptions::none(), base, steps)
+}
+
+/// [`CF_RP`] plus `CallStackArgCollect`, then the sole Call's inputs.
+fn collect_call_inputs(fg: &mut Function) -> Result<Vec<ValueId>> {
+    let mut pipeline = crate::test_support::pipeline(CF_RP);
+    pipeline.add_post_pass(&CallStackArgCollect);
+    pipeline.run(fg, &crate::OptCtx::new(None))?;
+    Ok(fg.node_inputs(find_call(fg)).into_iter().collect())
+}
+
+fn find_call(fg: &Function) -> NodeId {
+    fg.first_kind(|k| matches!(k, NodeKind::Call { .. }))
+}
+
+/// Each row's setup collects exactly its dense prefix of argument slots, in
+/// slot order, whatever order the chain wrote them in.
+#[test]
+fn collects_the_dense_argument_prefix() -> Result<()> {
+    let ten: Vec<St> = (0..10).rev().map(|i| Push(100 + i)).collect();
+    let rows: &[(&str, i128, &[St], &[u128])] = &[
+        ("push arg1; push arg0", 0, &[Push(22), Push(11)], &[11, 22]),
+        // `StackArgs` collection is unbounded.
+        (
+            "ten pushes",
+            0,
+            &ten,
+            &[100, 101, 102, 103, 104, 105, 106, 107, 108, 109],
+        ),
+        ("one push", 0, &[Push(99)], &[99]),
+        // i386 `free(arg0, arg1)`: args written to `(%esp)` and `4(%esp)` in
+        // program order, then `call` pushes the return address, so the chain
+        // backward is ret-addr, arg1, arg0.
+        (
+            "args in program order",
+            4,
+            &[At(0, 11), At(4, 22), Push(0x1234)],
+            &[11, 22],
+        ),
+        // i386 `kmap_free_wakeup`: arg1, arg0, arg2 in that order.
+        (
+            "args in arbitrary order",
+            4,
+            &[At(4, 22), At(0, 11), At(8, 33), Push(0x1234)],
+            &[11, 22, 33],
+        ),
+        // Walking backward, the first sighting of a slot is its live write.
+        (
+            "the most recent write of a slot",
+            4,
+            &[At(0, 0xBAD), At(4, 22), At(0, 11), Push(0x1234)],
+            &[11, 22],
+        ),
+        // Every reaching SP-relative store in the window is collected, so a
+        // store disjoint from the pushes is a slot, not a terminator.
+        (
+            "a store between the pushes",
+            0,
+            &[Push(22), At(0, 0xAAAA), Push(11)],
+            &[11, 22, 0xAAAA],
+        ),
+        // Prologue zero-inits and a `push ebx` save land in the window and,
+        // lowered to memory, are indistinguishable from argument pushes, so
+        // all 7 are collected and the caller disambiguates: `push ebx`,
+        // `sub esp, 16`, 4x zero-init, push arg1, push arg0, the call's
+        // return-address push.
+        (
+            "local inits in the window",
+            4,
+            &[
+                Push(0xEB),
+                SpAt(-20),
+                At(-20, 0),
+                At(-16, 0),
+                At(-12, 0),
+                At(-8, 0),
+                Push(1),
+                Push(42),
+                Push(0x1234),
+            ],
+            &[42, 1, 0, 0, 0, 0, 0xEB],
+        ),
+        // Chain, latest first: ret-addr@-12, arg0@-8, arg1@-4, local@-16.  The
+        // local is below slot 0, so the walk ends there and it does not leak
+        // into a slot.
+        (
+            "a store below the window ends the walk",
+            4,
+            &[
+                At(-16, 0xDEAD),
+                At(-4, 22),
+                At(-8, 11),
+                SpAt(-12),
+                At(-12, 0x1234),
+            ],
+            &[11, 22],
+        ),
+        // With no per-call override the function-default convention is used.
+        (
+            "the default convention's offsets",
+            4,
+            &[At(4, 77), At(0, 0xABCD)],
+            &[77],
+        ),
+        // The cursor advances past every slot a wide store covers.
+        (
+            "an 8-byte store spans slots 0 and 1",
+            0,
+            &[Wide(0, 0xDEAD_BEEF_CAFE_BABE, 64), At(8, 7)],
+            &[0xDEAD_BEEF_CAFE_BABE, 7],
+        ),
+        (
+            "an I80 store spans three slots",
+            0,
+            &[Wide(0, 0xABCD, 80), At(12, 7)],
+            &[0xABCD, 7],
+        ),
+        (
+            "an I128 store spans four slots",
+            0,
+            &[Wide(0, 0xABCD, 128), At(16, 7)],
+            &[0xABCD, 7],
+        ),
+        (
+            "a hole ends the prefix",
+            0,
+            &[At(0, 0xA0), At(8, 0xA2)],
+            &[0xA0],
+        ),
+        ("slot 0 missing", 4, &[At(4, 22), Push(0x1234)], &[]),
+        ("no stores", 0, &[], &[]),
+        // The live 8 bytes are neither store's data, so slot 0 is unknown.
+        (
+            "a wide store patched in part",
+            0,
+            &[Wide(0, 0xAAAA_AAAA_AAAA_AAAA, 64), At(4, 0xBBBB_BBBB)],
+            &[],
+        ),
+    ];
+    for &(why, base, steps, want) in rows {
+        assert_eq!(collected(base, steps)?, want, "{why}");
+    }
+    Ok(())
+}
+
+/// Soundness floor with `stack_global_disjoint` cleared: a global store
+/// between the pushes and the Call terminates the walk, so only the pushes
+/// nearer the Call are collected.  Setting it recovers the upstream args.
+#[test]
+fn a_global_store_ends_the_walk_only_at_the_floor() -> Result<()> {
+    let interleaved: Vec<St> = [44, 33, 22, 11]
+        .into_iter()
+        .zip([0xCAFE_0000u64, 0xCAFE_0010, 0xCAFE_0020, 0xCAFE_0030])
+        .flat_map(|(arg, global)| [Push(arg), Global(global, 0x1234)])
+        .collect();
+    for claimed in [false, true] {
+        let claims = AssumptionOptions {
+            stack_global_disjoint: claimed,
+            ..AssumptionOptions::none()
+        };
+        let between = [Push(22), Global(0xDEAD_BEEF, 0x1234), Push(11)];
+        let (want, want_none): (&[u128], &[u128]) = if claimed {
+            (&[11, 22], &[11, 22, 33, 44])
+        } else {
+            (&[11], &[])
+        };
+        assert_eq!(
+            collected_under(&claims, 0, &between)?,
+            want,
+            "claimed {claimed}"
+        );
+        assert_eq!(
+            collected_under(&claims, 0, &interleaved)?,
+            want_none,
+            "claimed {claimed}: a global store is the chain's first node"
+        );
+    }
     Ok(())
 }
 
@@ -953,31 +312,17 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         ..Default::default()
     };
     override_cc.validate().unwrap();
-    let call_id = fg
-        .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
-        .next()
-        .expect("Call node must exist");
-    fg.set_call_cc(call_id, override_cc);
+    fg.set_call_cc(find_call(&fg), override_cc);
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let call_id_post = fg
-        .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
-        .next()
-        .expect("Call node must still exist");
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id_post).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     // ctrl + mem + target + sp + the arg at +0 = 5 inputs.
     assert_eq!(
-        inputs.len(),
-        5,
-        "override CC [0,4] must collect arg at offset +0; got {inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 66),
-        "arg0 should be IntConst(66) from override table, got {:?}",
-        fg.kind_of_value(inputs[4])
+        inputs[4..]
+            .iter()
+            .map(|&v| const_val(&fg, v, "override"))
+            .collect::<Vec<_>>(),
+        [66],
+        "override CC [0,4] must collect the arg at offset +0"
     );
     Ok(())
 }
@@ -994,9 +339,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_plus_4 =
-        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let sp_plus_4 = b.build_const_binop(4u64, sp_v0, IntBinaryOp::Add, ValueType::int(32))?;
     let arg0 = b.build_int_const(77u64, ValueType::int(32))?;
     b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
 
@@ -1011,10 +354,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     let mut fg = b.build()?;
 
     // Canonicalize so decomposition would work if it were used.
-    {
-        let prep = cf_rp_pipeline();
-        prep.run(&mut fg, &crate::OptCtx::new(None))?;
-    }
+    run_passes(&mut fg, CF_RP)?;
 
     let arg0_store = fg
         .walk()
@@ -1023,7 +363,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
                 return false;
             }
             let inputs = fg.node_inputs(n);
-            inputs.len() == 3 && is_const(&fg, inputs[2], 77)
+            inputs.len() == 3 && fg.int_const_u128(inputs[2]) == Some(77)
         })
         .expect("arg0 Store(IntConst(77)) must exist");
 
@@ -1056,18 +396,14 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     let pass = CallStackArgCollect;
     crate::pipeline::run_post(&pass, &mut fg, &crate::OptCtx::new(None))?;
 
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + sp + arg0 = 5 inputs.
+    let inputs: Vec<ValueId> = fg.node_inputs(find_call(&fg)).into_iter().collect();
     assert_eq!(
-        inputs.len(),
-        5,
-        "side-table offset must be used to collect arg0 even with opaque address; got inputs={inputs:?}"
-    );
-    assert!(
-        is_const(&fg, inputs[4], 77),
-        "arg0 should be IntConst(77), got {:?}",
-        fg.kind_of_value(inputs[4])
+        inputs[4..]
+            .iter()
+            .map(|&v| const_val(&fg, v, "side table"))
+            .collect::<Vec<_>>(),
+        [77],
+        "the side-table offset collects arg0 even through an opaque address"
     );
     Ok(())
 }
@@ -1086,83 +422,98 @@ fn collect_walk_steps(slots: usize) -> Result<u64> {
     let entry_sp = b.read_variable(&sp)?;
     let frame_bytes = 4 * slots as i64;
     for i in 0..slots {
-        let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::int(32))?;
-        let addr =
-            b.build_int_binary_operation(entry_sp, off, IntBinaryOp::Add, ValueType::int(32))?;
+        let addr = b.build_const_binop(
+            (4 * i as i64 - frame_bytes) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         let arg = b.build_int_const(0x100 + i as u64, ValueType::int(32))?;
         b.build_store(addr, arg, rsleigh::VnSpace::RAM)?;
     }
-    let frame = b.build_int_const((-frame_bytes) as u64, ValueType::int(32))?;
-    let call_sp =
-        b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(32))?;
+    let call_sp = b.build_const_binop(
+        (-frame_bytes) as u64,
+        entry_sp,
+        IntBinaryOp::Add,
+        ValueType::int(32),
+    )?;
     b.write_variable(&sp, call_sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call(target, &[], &[], 0)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
-    let mut pipeline = crate::OptimizerPipeline::new();
-    pipeline.add(crate::PhiCollapse);
-    pipeline.add(crate::RegionCollapse);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    run_passes(&mut fg, COLLAPSE)?;
 
-    let call_id = find_call(fg.graph())?;
+    let call_id = find_call(&fg);
     fg.assume(&crate::AssumptionOptions {
         stack_global_disjoint: true,
         ..crate::AssumptionOptions::none()
     });
-    let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::CallStackArgs, &fg));
-    crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-    let args = collect_stack_args(&fg, call_id, stack_args, &alias_cfg);
-    assert_eq!(args.len(), slots, "every argument slot must be collected");
-    Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get))
+    steps(&[&WALK_STEPS], || {
+        let args = collect_stack_args(&fg, call_id, stack_args.increment, &MemQuery::default());
+        assert_eq!(args.len(), slots, "every argument slot must be collected");
+        Ok(())
+    })
 }
 
 /// Doubling the argument count may only double the work: one reverse scan of
 /// the call's chain answers every slot, rather than one walk per slot.
 #[test]
 fn collecting_stack_args_is_linear_in_the_slot_count() -> Result<()> {
-    let small = collect_walk_steps(100)?;
-    let big = collect_walk_steps(200)?;
-    assert!(
-        big * 100 <= small * 260,
-        "doubling the argument count must not square the walk: 100 slots took \
-         {small} steps, 200 slots took {big}"
-    );
-    Ok(())
+    assert_near_linear("argument slots", 100, collect_walk_steps, 260)
 }
 
-/// A wide store patched in part by a nearer narrow one is no slot's value: the
-/// live 8 bytes are neither store's data, so slot 0 is unknown and nothing is
-/// collected.
-#[test]
-fn partly_overwritten_wide_store_supplies_no_arg() -> Result<()> {
-    let sp = stack_vn();
+/// PPC64 passes a `float` right-justified in its 8-byte slot (`stfs` at
+/// slot + 4), so on big-endian a store ending at the slot's end is the slot's
+/// argument; on little-endian the same store is not.
+///
+/// Mutation: accept only a store at the slot's start.
+fn collect_right_justified(order: strider_target::Endianness) -> Result<Vec<u128>> {
+    let sp = strider_ir_test_utils::stack_vn_x86_64();
     let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
+        .stack_args(stack_args_at(8, 8))
+        .byte_order(order)
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let wide = b.build_int_const(0xAAAA_AAAA_AAAA_AAAAu64, ValueType::int(64))?;
-    b.build_store(sp_v0, wide, rsleigh::VnSpace::RAM)?;
-    // Patches the high half of the wide store, i.e. slot 1.
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_plus_4 =
-        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let patch = b.build_int_const(0xBBBB_BBBBu64, ValueType::int(32))?;
-    b.build_store(sp_plus_4, patch, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
+    let call_sp =
+        b.build_const_binop((-32i64) as u64, sp_v0, IntBinaryOp::Add, ValueType::int(64))?;
+    b.write_variable(&sp, call_sp)?;
+    for (off, value, ty) in [
+        (12u64, 0xAu64, ValueType::int(32)),
+        (16, 0xB, ValueType::int(64)),
+    ] {
+        let at = b.build_const_binop(off, call_sp, IntBinaryOp::Add, ValueType::int(64))?;
+        let v = b.build_int_const(value, ty)?;
+        b.build_store(at, v, rsleigh::VnSpace::RAM)?;
+    }
+    let target = b.build_int_const(0x1000u64, ValueType::int(64))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let inputs = collect_call_inputs(&mut fg)?;
+    Ok(inputs[4..]
+        .iter()
+        .map(|&v| const_val(&fg, v, "collect_right_justified"))
+        .collect())
+}
+
+#[test]
+fn a_right_justified_big_endian_argument_is_its_slots() -> Result<()> {
     assert_eq!(
-        inputs.len(),
-        4,
-        "ctrl + mem + target + sp and no args: the wide store is live only in \
-         part, so it is not slot 0's value; got inputs={inputs:?}"
+        collect_right_justified(strider_target::Endianness::Big)?,
+        [0xA, 0xB]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_little_endian_store_past_its_slots_start_is_no_argument() -> Result<()> {
+    assert_eq!(
+        collect_right_justified(strider_target::Endianness::Little)?,
+        [0u128; 0]
     );
     Ok(())
 }
@@ -1171,40 +522,16 @@ fn partly_overwritten_wide_store_supplies_no_arg() -> Result<()> {
 /// `Function`, so the collected tail must be replaced, not extended.
 #[test]
 fn repeated_pipeline_runs_leave_the_collected_tail_alone() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
-    b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-
-    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::int(32))?;
-    b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
-    b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
-
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
+    let mut fg = cdecl_fn(0, &[Push(22), Push(11)])?;
     let pipeline = crate::default_pipeline();
     for run in 1..=3 {
         pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-        let call_id = find_call(fg.graph())?;
-        let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-        assert_eq!(
-            inputs.len(),
-            6,
-            "run {run}: ctrl+mem+target+sp+2 stack args; got {inputs:?}"
-        );
-        assert_eq!(const_val(&fg, inputs[4], "arg0"), 11, "run {run}: arg0");
-        assert_eq!(const_val(&fg, inputs[5], "arg1"), 22, "run {run}: arg1");
+        let inputs: Vec<ValueId> = fg.node_inputs(find_call(&fg)).into_iter().collect();
+        let args: Vec<u128> = inputs[4..]
+            .iter()
+            .map(|&v| const_val(&fg, v, "rerun"))
+            .collect();
+        assert_eq!(args, [11, 22], "run {run}");
     }
     Ok(())
 }
@@ -1221,8 +548,7 @@ fn collect_at_the_offset_carrier_top(first_slot: i128, frame: i128) -> Result<us
         .stack_args(stack_args_at(first_slot, 4))
         .build_fn_single_region()?;
     let sp0 = b.read_variable(&sp)?;
-    let top = b.build_int_const(frame as u128, ValueType::int(128))?;
-    let sp1 = b.build_int_binary_operation(sp0, top, IntBinaryOp::Add, ValueType::int(128))?;
+    let sp1 = b.build_const_binop(frame as u128, sp0, IntBinaryOp::Add, ValueType::int(128))?;
     b.write_variable(&sp, sp1)?;
     let arg = b.build_int_const(7u64, ValueType::int(32))?;
     b.build_store(sp1, arg, rsleigh::VnSpace::RAM)?;
@@ -1232,10 +558,7 @@ fn collect_at_the_offset_carrier_top(first_slot: i128, frame: i128) -> Result<us
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-    Ok(fg.node_inputs(find_call(fg.graph())?).len())
+    Ok(collect_call_inputs(&mut fg)?.len())
 }
 
 #[test]
@@ -1251,42 +574,28 @@ fn the_slot_after_the_offset_carrier_ends_collection() -> Result<()> {
 }
 
 /// 32-bit: the call's SP is `sp + call_sp`, and `stores` are 4-byte stores at
-/// `sp + offset`, oldest first.  The Call's input count.
+/// `sp + offset`, oldest first.  The number of collected args.
 fn collect_across_the_wrap(call_sp: u64, stores: &[u64]) -> Result<usize> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 4))
-        .build_fn_single_region()?;
-    let sp0 = b.read_variable(&sp)?;
-    let at = |b: &mut strider_ir::FunctionBuilder, off: u64| -> Result<ValueId> {
-        let c = b.build_int_const(off, ValueType::int(32))?;
-        b.build_int_binary_operation(sp0, c, IntBinaryOp::Add, ValueType::int(32))
-    };
-    let sp1 = at(&mut b, call_sp)?;
-    b.write_variable(&sp, sp1)?;
-    for (i, &off) in stores.iter().enumerate() {
-        let addr = at(&mut b, off)?;
-        let data = b.build_int_const(0x11u64 * (i as u64 + 1), ValueType::int(32))?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-    }
-    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
-    b.build_call_cc(target, None)?;
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-    Ok(collect_call_inputs(&mut fg)?.len())
+    let mut steps = vec![SpAt(call_sp as i64)];
+    steps.extend(
+        stores
+            .iter()
+            .zip(1..)
+            .map(|(&off, i)| At(off as i64, 0x11 * i)),
+    );
+    Ok(collected(0, &steps)?.len())
 }
 
 #[test]
 fn a_nearer_store_wrapping_onto_a_slot_leaves_it_uncollected() -> Result<()> {
     assert_eq!(
         collect_across_the_wrap(0x8000_0000, &[0x8000_0000])?,
-        5,
-        "control: ctrl + mem + target + sp + slot 0"
+        1,
+        "control: slot 0"
     );
     assert_eq!(
         collect_across_the_wrap(0x8000_0000, &[0x8000_0000, 0x7FFF_FFFE])?,
-        4,
+        0,
         "sp+0x7FFF_FFFE overwrites slot 0's low half mod 2^32, so the older \
          store is not its value"
     );
@@ -1297,12 +606,12 @@ fn a_nearer_store_wrapping_onto_a_slot_leaves_it_uncollected() -> Result<()> {
 fn a_nearer_store_past_the_wrap_patches_a_slot_running_across_it() -> Result<()> {
     assert_eq!(
         collect_across_the_wrap(0x7FFF_FFFE, &[0x7FFF_FFFE])?,
-        5,
+        1,
         "control"
     );
     assert_eq!(
         collect_across_the_wrap(0x7FFF_FFFE, &[0x7FFF_FFFE, 0x8000_0000])?,
-        4,
+        0,
         "sp+0x8000_0000 overwrites slot 0's top half mod 2^32"
     );
     Ok(())
@@ -1312,27 +621,141 @@ fn a_nearer_store_past_the_wrap_patches_a_slot_running_across_it() -> Result<()>
 fn a_slot_past_the_wrap_is_collected() -> Result<()> {
     assert_eq!(
         collect_across_the_wrap(0x7FFF_FFFC, &[0x7FFF_FFFC, 0x8000_0000])?,
-        6,
+        2,
         "slot 1 at sp+0x8000_0000 is its own store's"
     );
     Ok(())
 }
 
+/// The work of one `CallStackArgCollect` run over `fg`.
+fn collect_steps(fg: &mut Function) -> Result<u64> {
+    steps(&[&WALK_STEPS, &CLIMB_STEPS], || {
+        crate::pipeline::run_post(&CallStackArgCollect, fg, &crate::OptCtx::new(None)).map(drop)
+    })
+}
+
 /// Doubling the calls may only double the work of collecting their arguments.
 #[test]
 fn collecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
-    let work = |n: usize| -> Result<u64> {
-        let mut fg = crate::test_support::memory_shapes::stack_arg_call_diamonds(n)?;
-        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        crate::mem_ssa::CLIMB_STEPS.with(|c| c.set(0));
-        crate::pipeline::run_post(&CallStackArgCollect, &mut fg, &crate::OptCtx::new(None))?;
-        Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
-            + crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get))
+    assert_near_linear(
+        "call diamonds",
+        100,
+        |n| collect_steps(&mut crate::test_support::memory_shapes::stack_arg_call_diamonds(n)?),
+        260,
+    )
+}
+
+/// Doubling the argument count may only double the work of collecting them
+/// behind an irreducible memory graph, where no index skips the stores
+/// nearer than a slot's own.
+#[test]
+fn collecting_behind_an_irreducible_loop_is_linear_in_the_slot_count() -> Result<()> {
+    let work = |k: usize| -> Result<u64> {
+        let mut fg = crate::test_support::memory_shapes::irreducible_stack_args(k)?;
+        assert!(
+            crate::mem_ssa::MemLayout::build(&fg).positions().is_none(),
+            "the memory graph has no position index"
+        );
+        let work = collect_steps(&mut fg)?;
+        let collected =
+            fg.node_inputs(find_call(&fg)).len() - NodeKind::Call { cc: None }.input_head_len();
+        assert_eq!(collected, k, "every argument is collected");
+        Ok(work)
     };
-    let (small, big) = (work(100)?, work(200)?);
-    assert!(
-        big * 100 <= small * 260,
-        "doubling the call diamonds took {small} steps to {big}"
-    );
+    assert_near_linear("arguments", 100, work, 260)
+}
+
+/// Behind a merge whose arms disagree only above the arguments, every slot
+/// is read by its own climb past the merge, so a scan reads at most
+/// `MAX_FALLBACKS` slots that way and the rest end the prefix.
+#[test]
+fn collecting_behind_a_merge_reads_a_bounded_number_of_slots_past_it() -> Result<()> {
+    let work = |k: usize| -> Result<u64> {
+        let mut fg =
+            crate::test_support::memory_shapes::irreducible_stack_args_merging(k, Some(k + 10))?;
+        let work = collect_steps(&mut fg)?;
+        let collected =
+            fg.node_inputs(find_call(&fg)).len() - NodeKind::Call { cc: None }.input_head_len();
+        assert_eq!(collected, 64, "the slots past the cap end the prefix");
+        Ok(work)
+    };
+    assert_near_linear("arguments", 100, work, 260)
+}
+
+/// Two argument stores, a listed allocator called under a lower SP, a merge
+/// of a frame local, then the call: the arguments collected under
+/// `allocators`.  The merge stops the window probe, so each slot is read by
+/// its own, private, probe.
+fn args_past_an_allocator(allocators: &[u64]) -> Result<usize> {
+    const ALLOCATOR: u64 = 0x2000;
+    let i32_ty = ValueType::int(32);
+    let sp = stack_vn();
+    let ret = strider_ir_test_utils::reg_vn(0x0, 4);
+    let mut b = strider_ir_test_utils::RegisterSet::new()
+        .tracked(sp)
+        .tracked(ret)
+        .callee_saved(sp)
+        .ret(ret)
+        .stack_vn(sp)
+        .stack_args(stack_args_at(4, 4))
+        .build_fn()?;
+    let [start, then, els, merge] = [(); 4].map(|()| b.create_region_all());
+    let (start, then, els, merge) = (start?, then?, els?, merge?);
+    b.set_entry_region_all(start)?;
+    b.set_region(start);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.read_variable(&sp)?;
+    let call_sp = at(&mut b, entry, -64, i32_ty)?;
+    b.write_variable(&sp, call_sp)?;
+    for i in 0..2i64 {
+        let slot = at(&mut b, call_sp, 4 + 4 * i, i32_ty)?;
+        let arg = b.build_int_const(0x100 + i as u64, i32_ty)?;
+        b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
+    }
+    let alloc_sp = at(&mut b, entry, -128, i32_ty)?;
+    b.write_variable(&sp, alloc_sp)?;
+    let target = b.build_int_const(ALLOCATOR, i32_ty)?;
+    b.build_call(target, &[], &[ret], 0)?;
+    b.write_variable(&sp, call_sp)?;
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, then, els)?;
+    b.set_region(then);
+    let local = at(&mut b, entry, -8, i32_ty)?;
+    let v = b.build_int_const(0x77u64, i32_ty)?;
+    b.build_store(local, v, rsleigh::VnSpace::RAM)?;
+    b.build_branch(merge)?;
+    b.set_region(els);
+    b.build_branch(merge)?;
+    b.set_region(merge);
+    let target = b.build_int_const(0x1000u64, i32_ty)?;
+    b.build_call(target, &[], &[], 0)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_passes(&mut fg, COLLAPSE)?;
+    fg.assume(&AssumptionOptions {
+        stack_global_disjoint: true,
+        noalias_allocators: allocators.iter().copied().collect(),
+        ..AssumptionOptions::none()
+    });
+    crate::pipeline::run_post(&CallStackArgCollect, &mut fg, &crate::OptCtx::new(None))?;
+    let call = fg
+        .graph()
+        .all_node_ids()
+        .find(|&n| {
+            matches!(fg.node_kind(n), NodeKind::Call { .. })
+                && fg.int_const_u128(fg.node_inputs(n)[NodeKind::CALL_TARGET_SLOT]) == Some(0x1000)
+        })
+        .expect("the call");
+    Ok(fg.node_inputs(call).len() - NodeKind::Call { cc: None }.input_head_len())
+}
+
+/// An allocator is a callee like any other: listing it does not let the
+/// argument scan past it, since the arguments are what the collection
+/// settles for good.
+#[test]
+fn a_listed_allocator_ends_the_collection_like_any_call() -> Result<()> {
+    assert_eq!(args_past_an_allocator(&[])?, 0, "an unlisted call");
+    assert_eq!(args_past_an_allocator(&[0x2000])?, 0, "a listed allocator");
     Ok(())
 }

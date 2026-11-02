@@ -99,22 +99,22 @@ cfg
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31200:8, u:0x31a00:8, u:0x63900:4]
 arg 0 [%v9]
 arg 1 [%v5]
-float_arg 0 [%v21]
-float_arg 1 [%v22]
-float_arg 2 [%v23]
-float_arg 3 [%v24]
-float_arg 4 [%v25]
-float_arg 5 [%v26]
-float_arg 6 [%v27]
-float_arg 7 [%v28]
-float_arg 13 [%v29]
-float_arg 14 [%v30]
-float_arg 15 [%v31]
-float_arg 16 [%v32]
-float_arg 17 [%v33]
-float_arg 18 [%v34]
-float_arg 19 [%v35]
-float_arg 20 [%v36]
+float_arg 0 [%v19]
+float_arg 1 [%v20]
+float_arg 2 [%v21]
+float_arg 3 [%v22]
+float_arg 4 [%v23]
+float_arg 5 [%v24]
+float_arg 6 [%v25]
+float_arg 7 [%v26]
+float_arg 13 [%v27]
+float_arg 14 [%v28]
+float_arg 15 [%v29]
+float_arg 16 [%v30]
+float_arg 17 [%v31]
+float_arg 18 [%v32]
+float_arg 19 [%v33]
+float_arg 20 [%v34]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[r1]
@@ -131,28 +131,26 @@ float_arg 20 [%v36]
 %v13:i64 = int.add %v2, %v12
 %v14:i32 = truncate %v5
 %v15:mem = store[r] %v11, %v13, %v14
-%v16:i64 = extend.zero %v10
-%v17:i64 = extend.zero %v14
-%v18:i64 = int.add %v16, %v17
-%v19:i32 = truncate %v18
-%v20:i64 = extend.sign %v19
-%v21:i64 = initial_var[f1]
-%v22:i64 = initial_var[f2]
-%v23:i64 = initial_var[f3]
-%v24:i64 = initial_var[f4]
-%v25:i64 = initial_var[f5]
-%v26:i64 = initial_var[f6]
-%v27:i64 = initial_var[f7]
-%v28:i64 = initial_var[f8]
-%v29:i128 = initial_var[vs34]
-%v30:i128 = initial_var[vs35]
-%v31:i128 = initial_var[vs36]
-%v32:i128 = initial_var[vs37]
-%v33:i128 = initial_var[vs38]
-%v34:i128 = initial_var[vs39]
-%v35:i128 = initial_var[vs40]
-%v36:i128 = initial_var[vs41]
-return %v0, %v15, %v20, %v17, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36
+%v16:i32 = int.add %v10, %v14
+%v17:i64 = extend.sign %v16
+%v18:i64 = extend.zero %v14
+%v19:i64 = initial_var[f1]
+%v20:i64 = initial_var[f2]
+%v21:i64 = initial_var[f3]
+%v22:i64 = initial_var[f4]
+%v23:i64 = initial_var[f5]
+%v24:i64 = initial_var[f6]
+%v25:i64 = initial_var[f7]
+%v26:i64 = initial_var[f8]
+%v27:i128 = initial_var[vs34]
+%v28:i128 = initial_var[vs35]
+%v29:i128 = initial_var[vs36]
+%v30:i128 = initial_var[vs37]
+%v31:i128 = initial_var[vs38]
+%v32:i128 = initial_var[vs39]
+%v33:i128 = initial_var[vs40]
+%v34:i128 = initial_var[vs41]
+return %v0, %v15, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34
 
 == runtime_const_idx @0x100102b0
 cfg

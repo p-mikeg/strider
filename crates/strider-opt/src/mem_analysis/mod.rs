@@ -1,24 +1,22 @@
 use strider_ir::node::ValueId;
 
-use AddrClass::*;
-
 mod alias;
-mod analyzer;
 mod arg_window;
 mod decompose;
 mod frame;
 mod frame_escape;
 mod index;
+mod query;
 mod ring;
 mod stamp;
 mod walker;
 
-pub(crate) use analyzer::{
-    MemAnalyzer, MemOptions, MemPurpose, ReachingDef, store_value_byte_size,
-};
-pub(crate) use arg_window::{ArgStoreScan, SlotReach};
+pub(crate) use arg_window::ArgPrefix;
 pub(crate) use decompose::{alignment_masked_operand, decompose};
 pub(crate) use frame::entry_sp_span;
+#[cfg(test)]
+pub(crate) use query::narrow_load_to;
+pub(crate) use query::{MemQuery, Policy, ReachingDef, store_value_byte_size};
 pub(crate) use ring::{reduce, ring_overlap, wrap_to_addr_width};
 pub use stamp::refresh_memory_classes;
 pub(crate) use stamp::stamp_all;
@@ -81,26 +79,13 @@ pub(crate) enum AliasVerdict {
     MayAlias,
 }
 
-impl AddrClass {
-    fn offset(self) -> Option<i128> {
-        match self {
-            StackRooted { offset, .. } | HeapRooted { offset, .. } => Some(offset),
-            Constant { addr } => Some(addr),
-            HeapOpaque | Anchor { .. } => None,
-        }
-    }
-}
-
 /// Collapses region phis to the bare `InitialVar(sp) + k` terminals
 /// `decompose` recognises, the post-`PhiCollapse` state in which
 /// `LoadForward` runs the analysis.  `ConstantFold` is left out so the
 /// deep-chain and memo tests keep their un-flattened structure.
 #[cfg(test)]
 fn collapse_phis(fg: &mut strider_ir::Function) {
-    let mut p = crate::OptimizerPipeline::new();
-    p.add(crate::PhiCollapse);
-    p.add(crate::RegionCollapse);
-    p.run(fg, &crate::OptCtx::new(None)).expect("phi collapse");
+    crate::test_support::run_passes(fg, crate::test_support::COLLAPSE).expect("phi collapse");
 }
 
 #[cfg(test)]

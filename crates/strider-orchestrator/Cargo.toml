@@ -37,7 +37,7 @@ object.workspace = true
 # The assertion vocabulary (count_kind, has_kind, build_sub_as_add_neg) is in
 # strider-ir-test-utils below.
 strider-ir = { workspace = true, features = ["test-util"] }
-# Test-only single-pass runners (run_one / run_post) used by integration tests.
+# Test-only single-pass runners (run_one / run_post) and classify_target.
 strider-opt = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true, features = ["proptest-gen"] }
 strider-target = { workspace = true, features = ["test-util"] }
