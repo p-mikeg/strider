@@ -1054,11 +1054,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Seals the region with a `TailCall` stub at `cur_addr` and reports
-    /// that address as `reason`: every stub seal names the address it could
-    /// not go on from.
+    /// Seals the region onto a [`Builder::tail_call_stub`] at `cur_addr`,
+    /// where the fall-through found nothing to decode, and reports that
+    /// address as `reason`: every stub seal names the address it could not go
+    /// on from.
     fn seal_and_report(&mut self, cur_addr: PcodeInsnAddr, reason: crate::Reason) -> Result<()> {
-        self.seal_at_fallthrough_stub(cur_addr)?;
+        self.note_empty_span_to(cur_addr);
+        let region = self.finish_current_region(RegionTerminator::Unconditional)?;
+        let stub = self.builder.tail_call_stub(cur_addr)?;
+        self.builder.region_graph.add_edge(region, stub, ());
         self.builder.incomplete.insert(cur_addr, reason);
         Ok(())
     }
@@ -1135,7 +1139,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             }
             match region.insns.last() {
                 Some(last) if is_call(last) => {
-                    self.seal_at_fallthrough_stub(cur_addr)?;
+                    self.seal_and_report(cur_addr, reason)?;
                     let outgoing: Vec<_> = self
                         .builder
                         .region_graph
@@ -1147,7 +1151,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         self.builder.non_boundary_seats.remove(&edge);
                     }
                     self.builder.region_graph[region_id].terminator = RegionTerminator::NoReturn;
-                    self.builder.incomplete.insert(cur_addr, reason);
                     return Ok(true);
                 }
                 Some(_) => return Ok(false),
@@ -1164,16 +1167,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             }
         }
         Ok(false)
-    }
-
-    /// Seals the region onto a [`Builder::tail_call_stub`] at `cur_addr`, where
-    /// the fall-through found nothing to decode.
-    fn seal_at_fallthrough_stub(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
-        self.note_empty_span_to(cur_addr);
-        let region = self.finish_current_region(RegionTerminator::Unconditional)?;
-        let stub = self.builder.tail_call_stub(cur_addr)?;
-        self.builder.region_graph.add_edge(region, stub, ());
-        Ok(())
     }
 
     /// Sequential decoding running off the recorded function extent: the
