@@ -319,7 +319,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
     /// An empty region is rejected unless its terminator is `Unconditional` (a
     /// region sealed at a zero-pcode-op instruction, which `build` segments at
-    /// every one of) or `TailCall` (a [`Self::tail_call_stub`], whose bytes are
+    /// every one of) or `TailCall` (a [`Self::edge_to_stub`] stub, whose bytes are
     /// never decoded).
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
         if region.insns.is_empty()
@@ -400,27 +400,30 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         Some(bit)
     }
 
-    /// The empty region an edge leaving this function's decoded bytes hangs
-    /// off, created on first use.  Its producers: the out-of-function arm of a
-    /// conditional branch, a direct branch target that is unmapped or holds no
-    /// instruction, and a sequential fall-through onto either.  It is wired as
-    /// a regular successor but never enqueued, so no address outside the
-    /// function's bound and no address holding no instruction is decoded.
+    /// Edges `from` to the empty region at `addr` an edge leaving this
+    /// function's decoded bytes hangs off, created on first use.  Its
+    /// producers: the out-of-function arm of a conditional branch, a direct
+    /// branch target that is unmapped or holds no instruction, and a
+    /// sequential fall-through onto either.  It is wired as a regular
+    /// successor but never enqueued, so no address outside the function's
+    /// bound and no address holding no instruction is decoded.
     ///
     /// Keyed through the index like any region, so two edges to the same
     /// address share one stub.
-    pub(super) fn tail_call_stub(&mut self, addr: PcodeInsnAddr) -> Result<NodeIndex> {
-        if let Some(existing) = self.index.get(addr) {
-            return Ok(existing);
-        }
-        self.add_region(Region {
-            start_addr: addr,
-            insns: Vec::new(),
-            empty_span_len: 0,
-            terminator: super::types::RegionTerminator::TailCall {
-                target: addr.machine_addr.addr.into(),
-            },
-        })
+    pub(super) fn edge_to_stub(&mut self, from: NodeIndex, addr: PcodeInsnAddr) -> Result<()> {
+        let stub = match self.index.get(addr) {
+            Some(existing) => existing,
+            None => self.add_region(Region {
+                start_addr: addr,
+                insns: Vec::new(),
+                empty_span_len: 0,
+                terminator: super::types::RegionTerminator::TailCall {
+                    target: addr.machine_addr.addr.into(),
+                },
+            })?,
+        };
+        self.region_graph.add_edge(from, stub, ());
+        Ok(())
     }
 
     /// The region owning `addr`; see [`RegionIndex::containing`].
@@ -861,8 +864,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             };
             if let Some(reason) = reason {
                 self.incomplete.insert(address, reason);
-                let stub = self.tail_call_stub(address)?;
-                self.region_graph.add_edge(parent, stub, ());
+                self.edge_to_stub(parent, address)?;
                 return Ok(());
             }
         }
