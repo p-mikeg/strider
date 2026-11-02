@@ -267,31 +267,12 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.engine.build_cfg(entry, cfg_opts)
     }
 
-    /// Returns the unique set only; `Function::new` keeps the largest of
-    /// nested varnodes and orders them.
-    ///
-    /// Only REGISTER and UNIQUE are tracked, the two spaces `read_vn` /
-    /// `write_vn` route through the aliasing path that consults this set; CONST
-    /// becomes a literal and RAM a Load/Store.  On x86-64 every `call`
-    /// contributes an `inst_next` CONST and every rip-relative operand a RAM
-    /// address, so tracking those grows the set, and the per-region variable map
-    /// `inherit_variables` clones, with the function.
-    pub(crate) fn find_all_unique_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
-        cfg.regions()
-            .flat_map(|region| region.insns.iter())
-            .flat_map(|wrapped| wrapped.insn.all_vns())
-            .filter(|vn| vn_container::is_aliasable_space(vn.addr_space))
-            .collect::<rustc_hash::FxHashSet<rsleigh::Vn>>()
-            .into_iter()
-            .collect()
-    }
-
     /// Every register a LOAD / STORE addresses through the REGISTER space: the
     /// FOURTH source of tracked varnodes, beside the decoded instructions, the
     /// convention, and a `CallOther`'s footprint.
     ///
     /// The address is computed, so the register appears in no pcode operand and
-    /// `find_all_unique_vns` cannot see it; untracked, it has no slot for
+    /// `aliasable_vns` cannot see it; untracked, it has no slot for
     /// `write_vn` to write and the lift fails.
     ///
     /// Silent about an address that does not resolve: the lift takes its
@@ -301,49 +282,44 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// computed offset need not land on a declared boundary, and seeding a
     /// partially-overlapping slice would break the nesting the tracked set
     /// relies on; see [`pcode_consts::register_slot`].
-    fn register_space_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
+    fn register_space_vns<'s>(
+        &'s self,
+        cfg: &'s strider_cfg::Cfg,
+    ) -> impl Iterator<Item = rsleigh::Vn> + 's {
         let declared = self.declared_reg_vns();
-        let mut found: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
-        for region in cfg.regions() {
+        cfg.regions().flat_map(move |region| {
             let mut consts = pcode_consts::PcodeConsts::default();
-            for wrapped in &region.insns {
+            region.insns.iter().filter_map(move |wrapped| {
                 consts.observe(wrapped.addr, &wrapped.insn);
-                let slot = pcode_consts::register_slot_of(&wrapped.insn, &consts, declared);
-                if let Some(vn) = slot.and_then(|s| vn_container::smallest_enclosing(declared, &s))
-                {
-                    found.insert(vn);
-                }
-            }
-        }
-        found.into_iter().collect()
+                pcode_consts::register_slot_of(&wrapped.insn, &consts, declared)
+                    .and_then(|s| vn_container::smallest_enclosing(declared, &s))
+            })
+        })
     }
 
     /// The registers the `cfg`'s rounding-mode ops with no input are
     /// ([`strider_target::call_other_abi::rounding_mode_register`]), but for
     /// one an override classifies.
-    fn rounding_mode_register_vns(
-        &self,
-        cfg: &strider_cfg::Cfg,
-        overrides: &strider_target::call_other_abi::CallOtherOverrides,
-    ) -> Vec<rsleigh::Vn> {
+    fn rounding_mode_register_vns<'s>(
+        &'s self,
+        cfg: &'s strider_cfg::Cfg,
+        overrides: &'s strider_target::call_other_abi::CallOtherOverrides,
+    ) -> impl Iterator<Item = rsleigh::Vn> + 's {
         let preset = self.arch().preset();
-        let found: rustc_hash::FxHashSet<rsleigh::Vn> = cfg
-            .regions()
+        cfg.regions()
             .flat_map(|region| region.insns.iter())
             .map(|wrapped| &wrapped.insn)
             .filter(|insn| insn.opcode == rsleigh::Opcode::CallOther)
             .filter_map(|insn| strider_cfg::user_op_of(insn, self.user_op_names()))
             .filter(|(_, name)| overrides.get(name).is_none())
-            .filter_map(|(_, name)| {
+            .filter_map(move |(_, name)| {
                 strider_target::call_other_abi::rounding_mode_register(preset, name)
             })
             .filter_map(|reg| self.sleigh_regs().name_to_vn(reg))
-            .collect();
-        found.into_iter().collect()
     }
 
-    /// Every register a `CallOther` in `cfg` touches through its ABI footprint
-    /// instead of its pcode operands: the third source of tracked varnodes,
+    /// Adds to `tracked` every register a `CallOther` in `cfg` touches through
+    /// its ABI footprint instead of its pcode operands: the third source of tracked varnodes,
     /// beside the decoded instructions and the calling convention. x86-64
     /// `syscall` reads `R10` and writes `R11`, and SysV gives neither a role.
     ///
@@ -354,10 +330,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &self,
         cfg: &strider_cfg::Cfg,
         overrides: &strider_target::call_other_abi::CallOtherOverrides,
-    ) -> Vec<rsleigh::Vn> {
+        tracked: &mut rustc_hash::FxHashSet<rsleigh::Vn>,
+    ) {
         use strider_target::call_other_abi::{CallOtherClass, CallOtherLookup, classify_with};
 
-        let mut found: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
+        // Same universe rule as `aliasable_vns`: a footprint a Rust caller
+        // built by hand can name any space.
+        let aliasable = |vn: &rsleigh::Vn| vn_container::is_aliasable_space(vn.addr_space);
         for insn in cfg
             .regions()
             .flat_map(|region| region.insns.iter())
@@ -369,26 +348,22 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             };
             match classify_with(overrides, self.arch().preset(), name) {
                 None | Some(CallOtherLookup::Class(CallOtherClass::NoOp)) => {}
-                Some(CallOtherLookup::Class(CallOtherClass::Call(abi))) => found.extend(
+                Some(CallOtherLookup::Class(CallOtherClass::Call(abi))) => tracked.extend(
                     abi.implicit_reads
                         .iter()
                         .chain(abi.implicit_writes)
-                        .filter_map(|reg| self.sleigh_regs().name_to_vn(reg)),
+                        .filter_map(|reg| self.sleigh_regs().name_to_vn(reg))
+                        .filter(aliasable),
                 ),
-                Some(CallOtherLookup::Built(abi)) => found.extend(
+                Some(CallOtherLookup::Built(abi)) => tracked.extend(
                     abi.implicit_reads
                         .iter()
                         .chain(&abi.implicit_writes)
-                        .copied(),
+                        .copied()
+                        .filter(aliasable),
                 ),
             }
         }
-        // Same universe rule as `find_all_unique_vns`: a footprint a Rust
-        // caller built by hand can name any space.
-        found
-            .into_iter()
-            .filter(|vn| vn_container::is_aliasable_space(vn.addr_space))
-            .collect()
     }
 
     /// Rejects a `Cfg` whose Load / Store space ids were not produced by this
@@ -485,24 +460,20 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // The CFG is rebuilt from scratch each lift, so the tracked set is
         // always scanned fresh.  `FunctionLifter::new` adds the stack vn; the
         // lifter is the SSoT for that.
-        let mut all_vns = self.find_all_unique_vns(cfg);
-        let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
+        let mut tracked: rustc_hash::FxHashSet<rsleigh::Vn> = aliasable_vns(cfg).collect();
         // A user-op's implicit footprint is named by neither the pcode nor the
         // convention, so it must be seeded before the universe is frozen.
-        let footprint = self.call_other_footprint_vns(cfg, cfg_opts.call_other_overrides);
-        track_vns(&mut all_vns, &mut seen, footprint);
+        self.call_other_footprint_vns(cfg, cfg_opts.call_other_overrides, &mut tracked);
         // A rounding-mode op with no input reads its register only when the
         // claim is off, so only then is that register tracked.
         if !claims.fp_rounding_mode_is_nearest {
-            let rounding = self.rounding_mode_register_vns(cfg, cfg_opts.call_other_overrides);
-            track_vns(&mut all_vns, &mut seen, rounding);
+            tracked.extend(self.rounding_mode_register_vns(cfg, cfg_opts.call_other_overrides));
         }
         // A register a LOAD / STORE reaches through the REGISTER space is named
         // by a computed address rather than a pcode operand, so it is invisible
-        // to `find_all_unique_vns` and has to be seeded here too.
-        let register_space = self.register_space_vns(cfg);
-        track_vns(&mut all_vns, &mut seen, register_space);
-        let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, per_address_ccs, cfg_opts)?;
+        // to `aliasable_vns` and has to be seeded here too.
+        tracked.extend(self.register_space_vns(cfg));
+        let mut driver = FunctionLifter::new(self, cc, cfg, tracked, per_address_ccs, cfg_opts)?;
         driver.builder.function_mut().assume(claims);
 
         // Semi-pruned SSA phi placement: iterated dominance frontier of each
@@ -540,6 +511,21 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             return_sites,
         })
     }
+}
+
+/// `Function::new` keeps the largest of nested varnodes and orders them.
+///
+/// Only REGISTER and UNIQUE are tracked, the two spaces `read_vn` /
+/// `write_vn` route through the aliasing path that consults this set; CONST
+/// becomes a literal and RAM a Load/Store.  On x86-64 every `call`
+/// contributes an `inst_next` CONST and every rip-relative operand a RAM
+/// address, so tracking those grows the set, and the per-region variable map
+/// `inherit_variables` clones, with the function.
+pub(crate) fn aliasable_vns(cfg: &strider_cfg::Cfg) -> impl Iterator<Item = rsleigh::Vn> + '_ {
+    cfg.regions()
+        .flat_map(|region| region.insns.iter())
+        .flat_map(|wrapped| wrapped.insn.all_vns())
+        .filter(|vn| vn_container::is_aliasable_space(vn.addr_space))
 }
 
 pub(crate) type RegionMap = rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>;
@@ -802,26 +788,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             }
         }
         Ok(())
-    }
-}
-
-/// Appends the varnodes of `vns` that `seen` does not already hold.
-///
-/// `seen` is a membership set, not a scan over `order`: a caller passes
-/// hundreds of per-address conventions and a linear scan per register would
-/// be quadratic in the tracked set. Neither the dedup nor the order is
-/// load-bearing downstream -- `Function::new` dedups into containers and
-/// SORTS, which is what fixes `InitialVnId` numbering -- so what matters
-/// here is only that every source reaches the list.
-pub(crate) fn track_vns(
-    order: &mut Vec<rsleigh::Vn>,
-    seen: &mut rustc_hash::FxHashSet<rsleigh::Vn>,
-    vns: impl IntoIterator<Item = rsleigh::Vn>,
-) {
-    for vn in vns {
-        if seen.insert(vn) {
-            order.push(vn);
-        }
     }
 }
 
