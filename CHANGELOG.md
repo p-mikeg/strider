@@ -1681,12 +1681,12 @@
   lose none.
 - ARM: under hard-float AAPCS, a float argument sliced from a shared
   container (`d0` / `d1` of `q0`) at an entry that is also a loop header was
-  the loop phi, not the incoming value. It now slices the container's
-  `InitialVar`, as the integer carriers already did, so before compaction
-  `function_arg(Float, j)` matches the incoming value. The body reads the
-  phi's slice, so that carrier is unused and compaction (which `analyze`
-  runs) drops it: after `analyze`, `function_arg(Float, j)` matches nothing
-  there, where it matched the loop-carried value.
+  the loop phi, not the incoming value, so `function_arg(Float, j)` matched
+  the loop-carried value. The carrier now slices the container's
+  `InitialVar`, as the integer carriers already did. The body reads the
+  phi's slice, so that carrier has no use: the matcher never reaches it and
+  the optimizer drops it, and `function_arg(Float, j)` matches nothing
+  there.
 - MIPS (`t9`) and PowerPC64 ELFv2 (`r12`): at an entry that is also a loop
   header, binding the entry-address register to the entry address
   overwrote the register's phi, so every iteration read the entry address.
