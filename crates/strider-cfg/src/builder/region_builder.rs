@@ -636,19 +636,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
         let target_var = branch_target_operand(insn, addr)?;
-        let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
-        let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
-        let terminator = if is_tail_call {
+        let target = self.decode_branch_target(target_var, addr, lift_res)?;
+        if self.is_branch_tail_call_nocheck(target) {
             // A direct `b <oob>` stays in the current ISA mode; no switch.
-            RegionTerminator::TailCall {
-                target: branch_target_addr.machine_addr.addr.into(),
-            }
+            self.finish_current_region(RegionTerminator::TailCall {
+                target: target.machine_addr.addr.into(),
+            })?;
         } else {
-            RegionTerminator::Unconditional
-        };
-        let region = self.finish_current_region(terminator)?;
-        if !is_tail_call {
-            self.enqueue(region, branch_target_addr)?;
+            let region = self.finish_current_region(RegionTerminator::Unconditional)?;
+            self.enqueue(region, target)?;
         }
         Ok(InsnOutcome::RegionClosed)
     }
