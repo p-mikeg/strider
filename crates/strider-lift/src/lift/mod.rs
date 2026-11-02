@@ -285,12 +285,10 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// A `Cfg` holds cloned `rsleigh::Insn`s and carries no lifetime, so it
     /// outlives the engine that decoded it; the space id in a Load / Store's
-    /// `inputs[0]` is that engine's raw `AddrSpace` pointer.  The comparison
-    /// here never dereferences it.
+    /// `inputs[0]` is that engine's raw `AddrSpace` pointer.
     ///
     /// What it establishes is that the id is one of THIS engine's live space
-    /// pointers, which is the whole safety precondition; it is not proof of
-    /// origin.  A dropped engine's id whose address this engine's allocator
+    /// pointers; it is not proof of origin.  A dropped engine's id whose address this engine's allocator
     /// handed back names a live space of this engine, so it passes and the
     /// Load / Store silently takes that space.  Distinguishing the two needs
     /// an id rsleigh derives from the space rather than from its address.
