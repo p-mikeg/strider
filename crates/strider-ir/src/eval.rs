@@ -10,6 +10,7 @@
 //! [`bit`], [`mask_below`] and [`sign_bit`] are the exception: they are the
 //! `u128`-carrier width helpers [`ValueType`]'s own accessors are built from.
 
+use dashu_int::ops::BitTest;
 use dashu_int::{IBig, UBig};
 
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
@@ -126,11 +127,8 @@ pub fn signed(v: &UBig, ty: ValueType) -> Option<IBig> {
     let bits = int_bits(ty)?;
     debug_assert!(bits > 0, "a supported integer width is at least 1");
     let m = mask(v, ty);
-    // `m` is below `2^bits`, so the sign bit is set exactly when `m` reaches
-    // half the modulus.
-    let half = UBig::ONE << bits.saturating_sub(1);
-    Some(if m >= half {
-        IBig::from(m) - IBig::from(half << 1)
+    Some(if m.bit(bits.saturating_sub(1)) {
+        IBig::from(m) - (IBig::ONE << bits)
     } else {
         IBig::from(m)
     })
@@ -287,14 +285,9 @@ pub fn popcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
 #[inline]
 pub fn lzcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
     int_bits(in_ty)?;
-    let masked = mask(v, in_ty);
-    // `as_words` trims the high zero limbs, so the top live limb carries the
-    // significant-bit count.
-    let words = masked.as_words();
-    let used = words.last().map_or(0, |top| {
-        words.len() * u64::BITS as usize - top.leading_zeros() as usize
-    });
-    Some(UBig::from((in_ty.byte_size() * 8).saturating_sub(used)))
+    Some(UBig::from(
+        (in_ty.byte_size() * 8).saturating_sub(mask(v, in_ty).bit_len()),
+    ))
 }
 
 #[cfg(test)]
@@ -1031,5 +1024,13 @@ mod tests {
                 Some(UBig::ONE << (usize::from(w) - 1))
             );
         }
+    }
+
+    #[test]
+    fn lzcount_past_the_carrier_counts_from_the_declared_top() {
+        let v = UBig::ONE << 200usize;
+        assert_eq!(lzcount(&v, ValueType::int(256)), Some(u(55)));
+        assert_eq!(lzcount(&v, ValueType::int(512)), Some(u(311)));
+        assert_eq!(lzcount(&UBig::ZERO, ValueType::int(512)), Some(u(512)));
     }
 }
