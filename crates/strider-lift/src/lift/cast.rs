@@ -20,12 +20,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// `& calc_mask(sizeout)` over the narrower value (`opbehavior.cc:764`).
     pub(super) fn handle_subpiece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input_vn = nth_input_or_err(insn, 0)?;
-        ensure_const_space(
-            nth_input_or_err(insn, 1)?,
-            insn.opcode,
-            "Subpiece byte-offset",
-        )?;
-        let byte_offset = nth_input_or_err(insn, 1)?.addr_off;
+        let offset_vn = nth_input_or_err(insn, 1)?;
+        ensure_const_space(offset_vn, insn.opcode, "Subpiece byte-offset")?;
+        let byte_offset = offset_vn.addr_off;
         if byte_offset >= u64::from(input_vn.size) {
             bail!(
                 "Subpiece byte_offset {byte_offset} out of range for input size {} (opcode {:?})",
@@ -106,7 +103,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         }
         let hi = self.read_vn(hi_vn)?;
         let lo = self.read_vn(lo_vn)?;
-        let out_ty: ValueType = out_vn.int_type()?;
+        let out_ty = out_vn.int_type()?;
         let hi_wide = self.builder.convert_to_int_if_needed(hi, out_ty)?;
         let lo_wide = self.builder.convert_to_int_if_needed(lo, out_ty)?;
         // The low piece's PHYSICAL bit width, from the varnode byte size: the
