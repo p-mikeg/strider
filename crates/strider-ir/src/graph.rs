@@ -1,6 +1,6 @@
-use std::hash::{Hash, Hasher};
+use std::hash::BuildHasher;
 
-use rustc_hash::FxHasher;
+use rustc_hash::FxBuildHasher;
 use strider_graph::{NodeCacheable, RawStore, ValueId};
 
 use crate::node::{NodeId, NodeKind, ValueKind};
@@ -17,11 +17,7 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
     }
 
     fn hash(kind: &NodeKind, inputs: &[ValueId], outputs: &[ValueKind]) -> u64 {
-        let mut h = FxHasher::default();
-        kind.hash(&mut h);
-        inputs.hash(&mut h);
-        outputs.hash(&mut h);
-        h.finish()
+        FxBuildHasher.hash_one((kind, inputs, outputs))
     }
 
     /// Recomputes `cand`'s identity from the live store.
@@ -55,7 +51,34 @@ mod tests {
     use crate::function::{test_function, test_function_tracking};
     use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
     use cranelift_entity::EntityRef;
-    use rustc_hash::FxHashSet;
+    use rustc_hash::{FxHashSet, FxHasher};
+    use std::hash::{Hash, Hasher};
+
+    /// The policy hash is the field-by-field `FxHasher` stream of the key.
+    #[test]
+    fn ir_cacheable_hash_is_the_fx_stream_of_its_key() {
+        let int = ValueKind::Typed(ValueType::int(32));
+        let keys: [(NodeKind, Vec<ValueId>, Vec<ValueKind>); 3] = [
+            (NodeKind::Entry, vec![], vec![ValueKind::Control]),
+            (
+                NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
+                vec![],
+                vec![int],
+            ),
+            (
+                NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add),
+                vec![ValueId::new(3), ValueId::new(1)],
+                vec![int],
+            ),
+        ];
+        for (kind, inputs, outputs) in &keys {
+            let mut h = FxHasher::default();
+            kind.hash(&mut h);
+            inputs.as_slice().hash(&mut h);
+            outputs.as_slice().hash(&mut h);
+            assert_eq!(IrCacheable::hash(kind, inputs, outputs), h.finish());
+        }
+    }
 
     #[track_caller]
     fn check_node_inputs(
