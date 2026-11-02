@@ -1,3 +1,4 @@
+#![warn(clippy::wildcard_enum_match_arm)]
 #![cfg_attr(
     test,
     allow(
