@@ -10,19 +10,6 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// Mints the `InitialMemory` node and keeps its `Memory` output as
-    /// `entry_memory`.
-    pub(super) fn build_initial_memory(&mut self) -> Result<()> {
-        let memory_node = self.function_mut().graph_mut().create_node(
-            NodeKind::InitialMemory,
-            [],
-            [ValueKind::Memory],
-        );
-        let [memory] = self.function().node_outputs_exact(memory_node)?;
-        self.entry_memory = memory;
-        Ok(())
-    }
-
     /// [`Self::build_return_node`], dropping the node.
     pub fn build_return(&mut self, value: Option<ValueId>, ret_values: &[ValueId]) -> Result<()> {
         self.build_return_node(value, ret_values).map(drop)
