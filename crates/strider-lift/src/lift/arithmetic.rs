@@ -300,16 +300,13 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // Sleigh requires all three widths to agree here, unlike the
         // comparison lowerings, whose I1 output makes only the input check
         // apply.
-        require_same_size(
-            nth_input_or_err(insn, 0)?,
-            nth_input_or_err(insn, 1)?,
-            "input",
-        )?;
-        let lhs = self.read_input(insn, 0)?;
+        let a = nth_input_or_err(insn, 0)?;
+        require_same_size(a, nth_input_or_err(insn, 1)?, "input")?;
+        let lhs = self.read_vn(a)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
         let out_ty = out_vn.int_type()?;
-        require_same_size(nth_input_or_err(insn, 0)?, out_vn, "unary op")?;
+        require_same_size(a, out_vn, "output")?;
         let lhs = self.builder.convert_to_int_if_needed(lhs, out_ty)?;
         let rhs = self.builder.convert_to_int_if_needed(rhs, out_ty)?;
         let neg_rhs = self
