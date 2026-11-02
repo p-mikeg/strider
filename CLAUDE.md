@@ -114,9 +114,11 @@ Strider:
   lives here (strider-opt re-exports it) because a `Function` holds the claims
   in force.
 - `strider-target`: target descriptions (`SleighArch`,
-  `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table)
-  and `ArchNames`, each preset's register and space names, read off a Sleigh
-  it builds once per preset per process (`SleighArch::names`).
+  `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table),
+  `ArchNames`, each preset's register and space names
+  (`SleighArch::names`), and `DecodeTables`, the sla's decode and lift facts
+  (`SleighArch::decode_tables`), each read off a Sleigh it builds once per
+  preset per process.
 - `strider-reader`: ELF loader and `ReadOnlyMemory` backend.
 - `strider-cfg`: bytes -> `Cfg` of basic-block regions via Sleigh.
   `DecodeEngine<R>` owns the `Sleigh<R>` and the decode context it carries
@@ -350,7 +352,7 @@ when both IR slots hold the same value.
   `reused_lifter_rederives_flow_context` pins through `Lifter`.
   What it erases TO is per var and is load-bearing in both directions, so each
   var's `FlowCommit` class is the sla's own `noflow` declaration, read off the
-  engine. A `noflow` commit covers one address
+  sla into `DecodeTables`. A `noflow` commit covers one address
   (`setContextRegion(a, a+1)`), so the pspec DEFAULT is right for ARM `condit`:
   `set_context_at` paints FORWARD to the next change point, and writing a live
   IT state forward predicates the code after it and can fail the decode
