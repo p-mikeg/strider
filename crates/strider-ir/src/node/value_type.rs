@@ -144,19 +144,12 @@ impl ValueType {
     /// Sign-extends `val`, read as this type's narrow representation, to a
     /// full `i128`. `None` for floats and for widths past the carrier.
     pub fn get_signed_int(self, val: u128) -> Option<i128> {
-        let mask = self.int_mask_u128()?;
-        let bits = self.bit_width();
-        if bits == 0 {
+        let Self::Int(w @ 1..=128) = self else {
             return None;
-        }
-        let masked = val & mask;
-        // At 128 bits `!mask` is 0, so the sign arm is the plain cast.
-        let sign = crate::eval::sign_bit(bits as u32);
-        if (masked & sign) != 0 {
-            Some((masked | !mask) as i128)
-        } else {
-            Some(masked as i128)
-        }
+        };
+        // The sign bit to the carrier's top, then an arithmetic shift back.
+        let spare = 128 - u32::from(w);
+        Some(((val << spare) as i128) >> spare)
     }
 
     /// The `Display` spelling read back; `None` for any other text.
@@ -388,6 +381,34 @@ mod tests {
         );
         assert_eq!(ValueType::int(8).get_signed_int(0xceu128), Some(-50i128));
         assert_eq!(ValueType::int(32).get_signed_int(50u128), Some(50i128));
+    }
+
+    /// Agrees with `eval::signed` at every width the carrier holds, on
+    /// unmasked inputs too; `None` past the carrier, at `Int(0)` and for a float.
+    #[test]
+    fn get_signed_int_agrees_with_eval_signed() {
+        use dashu_int::UBig;
+        for ty in ValueType::SUPPORTED {
+            let w = ty.bit_width();
+            let sign = 1u128.checked_shl(w.saturating_sub(1) as u32).unwrap_or(0);
+            for v in [
+                0,
+                1,
+                sign,
+                sign.wrapping_sub(1),
+                ty.int_mask_u128().unwrap_or(0),
+                u128::MAX,
+            ] {
+                let want = match ty {
+                    ValueType::Int(1..=128) => {
+                        crate::eval::signed(&UBig::from(v), ty).map(|s| i128::try_from(s).unwrap())
+                    }
+                    ValueType::Int(_) | ValueType::Float(_) => None,
+                };
+                assert_eq!(ty.get_signed_int(v), want, "{ty} {v:#x}");
+            }
+        }
+        assert_eq!(ValueType::Int(0).get_signed_int(u128::MAX), None);
     }
 
     #[test]
