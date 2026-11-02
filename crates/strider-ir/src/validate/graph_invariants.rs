@@ -425,7 +425,7 @@ pub(super) fn check_function_invariants_side_indices(
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (id, node) in function.initial_var_index_entries() {
+    for (&id, &node) in &function.side_tables().initial_var_index {
         if !reachable.contains(node) {
             continue;
         }
@@ -443,7 +443,7 @@ pub(super) fn check_function_invariants_side_indices(
         }
     }
 
-    for (value, id) in function.value_vn_entries() {
+    for (&value, &id) in &function.side_tables().value_vn {
         let producer = graph.producer(value);
         if !reachable.contains(producer) {
             continue;

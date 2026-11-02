@@ -484,28 +484,6 @@ impl crate::Function {
             .insert(user_op_id, name.into());
     }
 
-    /// The `initial_var_index` entries.
-    #[inline]
-    pub(crate) fn initial_var_index_entries(
-        &self,
-    ) -> impl Iterator<Item = (crate::node::InitialVnId, NodeId)> + '_ {
-        self.side_tables()
-            .initial_var_index
-            .iter()
-            .map(|(&vn_id, &id)| (vn_id, id))
-    }
-
-    /// The `value_vn` entries.
-    #[inline]
-    pub(crate) fn value_vn_entries(
-        &self,
-    ) -> impl Iterator<Item = (ValueId, crate::node::InitialVnId)> + '_ {
-        self.side_tables()
-            .value_vn
-            .iter()
-            .map(|(&value, &id)| (value, id))
-    }
-
     /// The `InitialVar(stack_vn)` node, whose output is the entry SP, or `None`
     /// when the function tracks no such node (`stack_vn` deduped into a wider
     /// container).  Does NOT filter by liveness: the returned node may already
