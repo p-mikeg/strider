@@ -84,13 +84,12 @@ impl Cfg {
             .region_graph
             .node_weight(region_id)
             .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
-        let RegionTerminator::CondBranch { true_target } = &region.terminator else {
+        let RegionTerminator::CondBranch { true_target } = region.terminator else {
             return Ok(IfRegionSuccessors {
                 if_true_region: None,
                 if_false_region: None,
             });
         };
-        let true_target = *true_target;
         let mut starts_at_taken = None;
         let mut contains_taken = None;
         let mut rest = None;
