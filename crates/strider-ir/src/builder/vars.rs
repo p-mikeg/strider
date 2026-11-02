@@ -3,8 +3,8 @@ use cranelift_entity::SecondaryMap;
 
 use super::FunctionBuilder;
 use crate::IRViewer;
+use crate::Result;
 use crate::builder::IRBuilderExt;
-use crate::error::Result;
 use crate::node::{InitialVnId, NodeKind, ValueId};
 use crate::region::RegionId;
 
