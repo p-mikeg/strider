@@ -125,12 +125,10 @@ impl Cfg {
         self.region_graph.node_weights()
     }
 
-    /// Unordered; a predecessor with parallel edges is yielded once per edge,
-    /// and dangling sources are skipped.
-    pub fn region_predecessors(&self, region_id: RegionId) -> impl Iterator<Item = &Region> {
+    /// Unordered; a predecessor with parallel edges is yielded once per edge.
+    pub fn region_predecessors(&self, region_id: RegionId) -> impl Iterator<Item = RegionId> + '_ {
         self.region_graph
-            .edges_directed(region_id, petgraph::Incoming)
-            .filter_map(|edge| self.region_graph.node_weight(edge.source()))
+            .neighbors_directed(region_id, petgraph::Incoming)
     }
 
     /// Unordered.

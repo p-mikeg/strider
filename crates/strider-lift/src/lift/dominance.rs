@@ -1,5 +1,4 @@
 use graph_algorithms::dominance::{Dominators, Frontiers};
-use petgraph::Direction::Incoming;
 use strider_cfg::{Cfg, RegionId};
 
 pub(crate) struct DomInfo {
@@ -18,9 +17,8 @@ impl DomInfo {
     pub(crate) fn compute(cfg: &Cfg) -> Self {
         let graph = cfg.region_graph();
         let doms = graph_algorithms::dominance::dominators(cfg.entry(), |r| graph.neighbors(r));
-        let frontiers = graph_algorithms::dominance::dominance_frontiers(&doms, |r| {
-            graph.neighbors_directed(r, Incoming)
-        });
+        let frontiers =
+            graph_algorithms::dominance::dominance_frontiers(&doms, |r| cfg.region_predecessors(r));
         let preorder = doms.tree_preorder();
         Self {
             doms,
