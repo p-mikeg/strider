@@ -474,10 +474,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         owner: NodeIndex,
         addr: PcodeInsnAddr,
     ) -> Result<()> {
-        let region = self
-            .region_graph
-            .node_weight_mut(parent)
-            .ok_or_else(|| anyhow!("invalid region index {parent:?}"))?;
+        let region = &mut self.region_graph[parent];
         if !matches!(
             region.terminator,
             super::types::RegionTerminator::Switch { .. }
@@ -545,9 +542,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         {
             return false;
         }
-        let Some(region) = self.region_graph.node_weight(owner) else {
-            return false;
-        };
+        let region = &self.region_graph[owner];
         let target = addr.machine_addr.addr;
         let Some(insn) = region
             .insns
