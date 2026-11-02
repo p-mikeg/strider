@@ -85,22 +85,23 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// `all_vns` seeds the tracked set: every REGISTER / UNIQUE varnode the
+    /// `tracked` seeds the tracked set: every REGISTER / UNIQUE varnode the
     /// `cfg`'s instructions name, every `CallOther` ABI footprint register,
     /// and every register a LOAD / STORE resolves through the REGISTER space.
     /// The stack vn and each override's argument registers are added here.
+    /// Only the set matters: `Function::new` dedups into containers and
+    /// SORTS, which is what fixes `InitialVnId` numbering.
     pub(crate) fn new(
         lifter: &'a Lifter<R>,
         cc: strider_target::BuiltCallingConvention,
         cfg: &'a strider_cfg::Cfg,
-        mut all_vns: Vec<rsleigh::Vn>,
+        mut tracked: rustc_hash::FxHashSet<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
         cfg_opts: &'a strider_cfg::CfgOptions<'a>,
     ) -> Result<Self> {
-        let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
         // The lifter is the SSoT for tracking SP: a function may never name
         // SP yet still need it tracked for stack analysis.
-        super::track_vns(&mut all_vns, &mut seen, [cc.stack_ptr]);
+        tracked.insert(cc.stack_ptr);
         // `FunctionBuilder::new` seeds the function's OWN convention only, so
         // an override's argument registers would be untracked: an integer one
         // fails the lift outright in `read_vns`, a float one gaps
@@ -111,8 +112,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .filter_map(|addr| cfg_opts.local_entries.get(per_address_ccs, addr))
         {
             lifter.check_override_cc(o, cc.stack_ptr)?;
-            let args = o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float);
-            super::track_vns(&mut all_vns, &mut seen, args.copied());
+            tracked.extend(o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float));
         }
         // `FunctionBuilder::new` seeds the CC registers and `Function::new`
         // drops enclosed sub-registers, so the function's `all_vns()` is the
@@ -135,14 +135,17 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .chain(std::iter::once(&cc.stack_ptr))
             .copied()
             .collect();
-        let mut builder =
-            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch().byte_order())?;
+        let mut builder = strider_ir::FunctionBuilder::new(
+            tracked.iter().copied().collect(),
+            cc,
+            lifter.arch().byte_order(),
+        )?;
         // Owned, because borrowing would put a lifetime on `FunctionBuilder`.
         builder.set_internal_registers(lifter.internal_register_vns().to_vec());
-        let queries = all_vns.iter().copied().chain(cc_regs);
+        let queries = tracked.into_iter().chain(cc_regs);
         let container_map =
             vn_container::ContainerMap::build(builder.function().all_vns(), queries);
-        // Since the stack vn was added to `all_vns` above, after dedup it must
+        // Since the stack vn was added to `tracked` above, after dedup it must
         // resolve to a tracked container: itself, or a larger tracked vn.
         debug_assert!(
             {
