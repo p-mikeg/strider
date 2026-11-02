@@ -147,35 +147,23 @@ impl FunctionBuilder {
     /// a phi placed at `region`. Requires `idom` to be complete, so call in
     /// dominator-tree order.
     pub fn inherit_variables(&mut self, region: RegionId, idom: RegionId) {
-        let mut variables = self.regions[idom].variables.clone();
-        for &(var_id, value) in &self.regions[region].phis {
-            variables[var_id] = value.into();
-        }
-        self.regions[region].variables = variables;
+        self.seed_variables(region, self.regions[idom].variables.clone());
     }
 
-    /// Overwrites `region`'s current-value map wholesale.
-    pub(crate) fn set_region_variables(
+    /// Sets `region`'s current-value map to `base`, then points each
+    /// phi-carrying variable at its own `Phi` output: the value `base` holds
+    /// for it is one of the phi's operands, not the region's current value.
+    pub(crate) fn seed_variables(
         &mut self,
         region: RegionId,
-        variables: SecondaryMap<InitialVnId, ValueId>,
+        base: SecondaryMap<InitialVnId, PackedOption<ValueId>>,
     ) {
-        let mut packed = SecondaryMap::new();
-        for (var_id, &value) in variables.iter() {
-            packed[var_id] = value.into();
-        }
-        self.regions[region].variables = packed;
-    }
-
-    /// Repoints every phi-carrying variable's current value at its own `Phi`
-    /// output, undoing a blanket [`Self::set_region_variables`]: the value that
-    /// seed supplied is one of the phi's operands, not the region's current
-    /// value.
-    pub(crate) fn seed_phi_vars_from_phis(&mut self, region: RegionId) {
-        let r = &mut self.regions[region];
-        for i in 0..r.phis.len() {
-            let (var_id, value) = r.phis[i];
-            r.variables[var_id] = value.into();
+        let Region {
+            variables, phis, ..
+        } = &mut self.regions[region];
+        *variables = base;
+        for &(var_id, value) in &*phis {
+            variables[var_id] = value.into();
         }
     }
 
