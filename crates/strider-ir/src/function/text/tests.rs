@@ -153,11 +153,11 @@ impl Net {
                 };
                 let Some(inputs) = inputs else { continue };
                 let kind = (spec.kind)(&mut f);
-                let node = match kind {
-                    NodeKind::Entry => f.entry(),
-                    _ => f
-                        .graph_mut()
-                        .create_node(kind, inputs, spec.outputs.iter().copied()),
+                let node = if kind == NodeKind::Entry {
+                    f.entry()
+                } else {
+                    f.graph_mut()
+                        .create_node(kind, inputs, spec.outputs.iter().copied())
                 };
                 f.side_tables_mut().extend_asm_fingerprint(node, &spec.asm);
                 ids[i] = Some(node);
