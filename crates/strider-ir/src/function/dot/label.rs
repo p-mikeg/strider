@@ -8,6 +8,17 @@ fn vn_to_display_name(names: &strider_target::ArchNames, vn: &rsleigh::Vn) -> St
     names.vn(*vn).to_string()
 }
 
+/// `ty`'s spelling, `"?"` when there is none.
+fn ty_str(ty: Option<ValueType>) -> String {
+    ty.map_or_else(|| "?".to_owned(), |t| t.to_string())
+}
+
+/// `"<sep><ty>"`, or empty when there is none. `sep` is typically `":"`, `" "`,
+/// or `"\n-> "`.
+fn ty_suffix(ty: Option<ValueType>, sep: &str) -> String {
+    ty.map_or_else(String::new, |t| format!("{sep}{t}"))
+}
+
 impl FunctionDotDumper<'_> {
     fn vn_to_name(&self, vn: &rsleigh::Vn) -> String {
         vn_to_display_name(self.names, vn)
@@ -25,29 +36,6 @@ impl FunctionDotDumper<'_> {
             .into_iter()
             .nth(idx)
             .and_then(|o| self.function.value_type_opt(o))
-    }
-
-    fn out_type_str(&self, node: NodeId) -> String {
-        self.out_type(node)
-            .map_or_else(|| "?".to_owned(), |t| t.to_string())
-    }
-
-    fn input_type_str(&self, node: NodeId, idx: usize) -> String {
-        self.input_type(node, idx)
-            .map_or_else(|| "?".to_owned(), |t| t.to_string())
-    }
-
-    /// `"<sep><type>"`, or empty when the node has no value output. `sep` is
-    /// typically `":"`, `" "`, or `"\n-> "`.
-    fn out_type_suffix(&self, node: NodeId, sep: &str) -> String {
-        self.out_type(node)
-            .map_or_else(String::new, |t| format!("{sep}{t}"))
-    }
-
-    /// [`Self::out_type_suffix`] for input slot `idx`.
-    fn input_type_suffix(&self, node: NodeId, idx: usize, sep: &str) -> String {
-        self.input_type(node, idx)
-            .map_or_else(String::new, |t| format!("{sep}{t}"))
     }
 
     /// Appends a `base sp +/- K` line to a Store/Load label when the node has a
@@ -83,7 +71,7 @@ impl FunctionDotDumper<'_> {
             // A dangling id (malformed graph) labels rather than panics.
             NodeKind::IntConst(id) => match self.function.side_tables().const_interner.get(*id) {
                 None => format!("const <dangling const {id:?}>"),
-                Some(cv) => format!("const {cv:#x}{}", self.out_type_suffix(node, ":")),
+                Some(cv) => format!("const {cv:#x}{}", ty_suffix(self.out_type(node), ":")),
             },
             NodeKind::FloatConst(bits) => match self.out_type(node) {
                 Some(ValueType::Float(32)) => {
@@ -101,23 +89,23 @@ impl FunctionDotDumper<'_> {
 
             NodeKind::Load(space) => {
                 let space = self.names.space(*space);
-                let ty = self.out_type_suffix(node, " ");
+                let ty = ty_suffix(self.out_type(node), " ");
                 self.with_sp_offset(node, format!("Load{ty}\n← {space}"))
             }
             NodeKind::Store(space) => {
                 let space = self.names.space(*space);
-                let ty = self.input_type_suffix(node, NodeKind::STORE_DATA_SLOT, " ");
+                let ty = ty_suffix(self.input_type(node, NodeKind::STORE_DATA_SLOT), " ");
                 self.with_sp_offset(node, format!("Store{ty}\n-> {space}"))
             }
             NodeKind::Truncate => self.width_change_label(node, "Truncate"),
             NodeKind::Extend(op) => self.width_change_label(node, &format!("{op:?}")),
             NodeKind::Popcount => self.width_change_label(node, "Popcount"),
             NodeKind::Lzcount => self.width_change_label(node, "Lzcount"),
-            NodeKind::IntBinaryOp(op) => format!("{op:?}{}", self.out_type_suffix(node, ":")),
+            NodeKind::IntBinaryOp(op) => format!("{op:?}{}", ty_suffix(self.out_type(node), ":")),
             NodeKind::IntUnaryOp(op) => self.width_change_label(node, &format!("{op:?}")),
             NodeKind::IntCmpOp(op) => self.cmp_label(node, op),
 
-            NodeKind::FloatBinaryOp(op) => format!("{op:?}{}", self.out_type_suffix(node, ":")),
+            NodeKind::FloatBinaryOp(op) => format!("{op:?}{}", ty_suffix(self.out_type(node), ":")),
             NodeKind::FloatUnaryOp(op) => self.width_change_label(node, &format!("{op:?}")),
             NodeKind::FloatCmpOp(op) => self.cmp_label(node, op),
 
@@ -136,11 +124,11 @@ impl FunctionDotDumper<'_> {
                     .unwrap_or_default();
                 format!(
                     "CallOther {name_prefix}#{user_op_id}{}",
-                    self.out_type_suffix(node, "\n-> "),
+                    ty_suffix(self.out_type(node), "\n-> "),
                 )
             }
-            NodeKind::CPoolRef => format!("CPoolRef{}", self.out_type_suffix(node, ":")),
-            NodeKind::New => format!("New{}", self.out_type_suffix(node, ":")),
+            NodeKind::CPoolRef => format!("CPoolRef{}", ty_suffix(self.out_type(node), ":")),
+            NodeKind::New => format!("New{}", ty_suffix(self.out_type(node), ":")),
 
             NodeKind::Switch(_) => {
                 let cases: String = self
@@ -168,14 +156,14 @@ impl FunctionDotDumper<'_> {
     fn width_change_label(&self, node: NodeId, prefix: &str) -> String {
         format!(
             "{prefix}\n{} -> {}",
-            self.input_type_str(node, 0),
-            self.out_type_str(node),
+            ty_str(self.input_type(node, 0)),
+            ty_str(self.out_type(node)),
         )
     }
 
     /// Comparison output is always `i1`, so only the input type varies.
     fn cmp_label(&self, node: NodeId, op: impl core::fmt::Debug) -> String {
-        format!("{op:?}\n{} -> i1", self.input_type_str(node, 0))
+        format!("{op:?}\n{} -> i1", ty_str(self.input_type(node, 0)))
     }
 
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
