@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 
 mod arithmetic;
-mod boolean;
 mod call;
 mod cast;
 mod cc_projection;
@@ -10,9 +9,7 @@ mod dispatch;
 mod exit_free_sink;
 mod float;
 mod function_lifter;
-mod integer;
 mod memory;
-mod misc;
 mod pcode_consts;
 pub(crate) mod pcode_util;
 mod pruned_ssa;
