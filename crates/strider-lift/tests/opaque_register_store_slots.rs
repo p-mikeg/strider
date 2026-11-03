@@ -21,7 +21,7 @@ const BYTES: [u8; 16] = [
 #[test]
 fn opaque_register_store_gives_colliding_registers_distinct_slots() {
     let arch = strider_target::SleighArch::ppc32be();
-    let mut lifter = strider_lift::lift::Lifter::new(
+    let mut lifter = strider_lift::Lifter::new(
         arch,
         rsleigh::mem_readers::BufMemReader::new(BYTES.to_vec(), 0x1000),
     )

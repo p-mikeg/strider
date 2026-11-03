@@ -28,8 +28,8 @@ use strider_ir::{
     ValueType, VnTypeExt,
 };
 
-use crate::lift::FunctionLifter;
-use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
+use crate::FunctionLifter;
+use crate::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 /// Sleigh's contract guarantees `a` and `b` equal widths wherever this runs.
 /// The lift resizes operands to one width before the builder sees them, so

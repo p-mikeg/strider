@@ -11,11 +11,9 @@ fn reads_reg_and_entry_const(
     reg: &str,
     bytes: Vec<u8>,
 ) -> (bool, bool) {
-    let mut lifter = strider_lift::lift::Lifter::new(
-        arch,
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))
+            .expect("lifter");
     let reg_vn = lifter.sleigh_regs().name_to_vn(reg).expect("the register");
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
     let cfg = lifter
@@ -96,7 +94,7 @@ fn a_loop_header_entry_binds_t9_on_the_entry_edge() {
         0x67, 0x39, 0x00, 0x01, 0x17, 0x20, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe0, 0x00,
         0x08, 0x00, 0x00, 0x00, 0x00,
     ];
-    let mut lifter = strider_lift::lift::Lifter::new(
+    let mut lifter = strider_lift::Lifter::new(
         strider_target::SleighArch::mipsbe64(),
         rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
     )

@@ -3,7 +3,7 @@
 //! decodes every alternate-ISA address in the base ISA.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_lift::lift::Lifter;
+use strider_lift::Lifter;
 use strider_target::SleighArch;
 
 /// One `build_cfg` per iteration, more iterations than the budget, so a single
