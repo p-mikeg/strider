@@ -1,8 +1,8 @@
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
-use crate::lift::FunctionLifter;
-use crate::lift::pcode_consts::opaque_clobber_set;
-use crate::lift::pcode_util::{Result, require_output_vn};
+use crate::FunctionLifter;
+use crate::pcode_consts::opaque_clobber_set;
+use crate::pcode_util::{Result, require_output_vn};
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// A LOAD from the constant space has its address AS its value: GHIDRA's

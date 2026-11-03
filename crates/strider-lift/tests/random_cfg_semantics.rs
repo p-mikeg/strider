@@ -605,7 +605,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
         .collect();
     let arch = strider_target::SleighArch::x86_64();
     let mut lifter =
-        strider_lift::lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(image, BASE))
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(image, BASE))
             .expect("lifter");
     let mut tally = Tally::default();
     for (g, blocks) in functions.iter().enumerate() {

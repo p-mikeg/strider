@@ -4,7 +4,7 @@ use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeKind, ValueKind, Val
 use strider_ir::{IRBuilderExt, IRViewer, node::ValueId};
 
 use super::handler_tests::{lift_bytes, with_test_lifter_tracking_arch};
-use crate::lift::FunctionLifter;
+use crate::FunctionLifter;
 use strider_ir_test_utils::reg_vn;
 
 type TestReader = rsleigh::mem_readers::BufMemReader<Vec<u8>>;

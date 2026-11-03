@@ -2,7 +2,7 @@
 //! whatever an earlier function committed at the slot's own address.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_lift::lift::Lifter;
+use strider_lift::Lifter;
 use strider_target::SleighArch;
 
 /// fixtures/out/mips32be/control.elf `abs_val`:

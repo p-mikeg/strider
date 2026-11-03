@@ -41,7 +41,7 @@ fn lift_over_built_at(
         impl FnOnce(&rsleigh::SleighRegs) -> anyhow::Result<BuiltCallingConvention>,
     )>,
 ) -> anyhow::Result<()> {
-    let mut lifter = strider_lift::lift::Lifter::new(
+    let mut lifter = strider_lift::Lifter::new(
         arch,
         rsleigh::mem_readers::BufMemReader::new(code.to_vec(), 0x1000),
     )?;
