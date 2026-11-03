@@ -3,10 +3,13 @@ import strider
 
 _SA = strider.sleigh.SleighArch
 # Every preset constructor: the public classmethods, bound to the class.
+# `preset` is the by-name lookup, not a preset.
 _PRESETS = sorted(
     n
     for n in dir(_SA)
-    if not n.startswith("_") and getattr(getattr(_SA, n), "__self__", None) is _SA
+    if not n.startswith("_")
+    and n != "preset"
+    and getattr(getattr(_SA, n), "__self__", None) is _SA
 )
 
 
@@ -28,3 +31,13 @@ def test_sleigh_arch_repr():
     a = strider.sleigh.SleighArch.x86_64()
     assert "SleighArch" in repr(a)
     assert "x86_64" in repr(a)
+
+
+@pytest.mark.parametrize("name", _PRESETS)
+def test_sleigh_arch_preset_by_name(name):
+    assert _SA.preset(name) == getattr(_SA, name)()
+
+
+def test_sleigh_arch_preset_unknown_name_raises():
+    with pytest.raises(strider.StriderError, match="x86_64"):
+        _SA.preset("no_such_arch")
