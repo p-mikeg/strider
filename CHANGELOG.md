@@ -161,6 +161,8 @@
 
 ### Breaking, Rust
 
+- `Function::compact` returns its `NodeIdRemap`, not a `Result`: it cannot
+  fail.
 - `strider_ir::SideTables` is `FunctionSideTables`.
 - `TemplatePat` is sealed: no type outside strider-pattern implements it, so
   a hand-written type is no longer a rewrite RHS. `MatchPat` is still open.

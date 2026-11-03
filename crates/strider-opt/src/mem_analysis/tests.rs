@@ -1723,7 +1723,7 @@ mod heap_tests {
         fg.assume(&super::allocating(&[MALLOC]));
         crate::default_pipeline().run(&mut fg, &crate::OptCtx::new(None))?;
         assert_eq!(heap_stores(&fg), 1, "the run classifies the store as heap");
-        fg.compact()?;
+        fg.compact();
         let mut fg = fg.clone();
         let no_rules: &[crate::BoxedRule] = &[];
         crate::apply_rules_count(&mut crate::EditFunction::new(&mut fg), no_rules)?;
