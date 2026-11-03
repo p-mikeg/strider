@@ -734,29 +734,6 @@ fn arch_independent_entries_resolve_on_every_arch() {
     }
 }
 
-/// Every preset a row can name has to reach a register table, and every
-/// name in the row has to resolve on it.  A typo is otherwise invisible
-/// until a real binary hits the op.
-#[test]
-fn arch_scoped_footprints_resolve_on_their_own_register_tables() {
-    for preset in crate::ArchPreset::ALL {
-        let regs = preset.arch().probe_regs();
-        let rows = preset
-            .family()
-            .call_other
-            .iter()
-            .filter(|row| row.only.is_none_or(|only| only.contains(preset)))
-            .map(|row| (row.names[0], row.class));
-        for (name, class) in rows {
-            let CallOtherClass::Call(abi) = class else {
-                continue;
-            };
-            abi.build(&regs)
-                .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
-        }
-    }
-}
-
 /// The Vn-resolved override path: a caller with a footprint of its own
 /// answers ahead of the tables, and names it did not claim still come
 /// from them.

@@ -2,6 +2,8 @@ mod aarch64;
 mod arm32;
 mod mips;
 mod ppc;
+#[cfg(test)]
+mod tests;
 mod x86;
 
 pub(crate) use aarch64::AARCH64;
