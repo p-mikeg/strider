@@ -1,5 +1,7 @@
 use super::{DecodeFacts, Family};
+use crate::ArchPreset;
 use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Prefix, Row};
+use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 use CallOtherClass::NoOp;
 
 pub(crate) static PPC: Family = Family {
@@ -32,6 +34,7 @@ pub(crate) static PPC: Family = Family {
     call_other: CALL_OTHER,
     call_other_prefixes: PREFIXES,
     call_other_fallback: None,
+    calling_conventions: CALLING_CONVENTIONS,
 };
 
 /// PowerPC `wrtee` / `wrteei`, which write MSR.EE; `mfmsr` reads it back.
@@ -519,3 +522,310 @@ const PREFIXES: &[Prefix] = &[Prefix {
     prefixes: &["altv", "vsx", "vector"],
     class: PURE,
 }];
+
+const CALLING_CONVENTIONS: &[CcPreset] = &[
+    CcPreset {
+        name: "powerpc_sysv32",
+        cc: CallingConvention::powerpc_sysv32(),
+        arches: &[ArchPreset::Ppc32Be, ArchPreset::Ppc32Le],
+        ghidra: &[(
+            "PowerPC/data/languages/ppc_32.cspec",
+            None,
+            &[ArchPreset::Ppc32Be, ArchPreset::Ppc32Le],
+        )],
+    },
+    // A kernel flavour takes its userland prototype.
+    CcPreset {
+        name: "powerpc_sysv32_linux_kernel",
+        cc: CallingConvention::powerpc_sysv32_linux_kernel(),
+        arches: &[ArchPreset::Ppc32Be, ArchPreset::Ppc32Le],
+        ghidra: &[(
+            "PowerPC/data/languages/ppc_32.cspec",
+            None,
+            &[ArchPreset::Ppc32Be, ArchPreset::Ppc32Le],
+        )],
+    },
+    CcPreset {
+        name: "powerpc64_elf_v1",
+        cc: CallingConvention::powerpc64_elf_v1(),
+        arches: &[ArchPreset::Ppc64Be],
+        ghidra: &[(
+            "PowerPC/data/languages/ppc_64_be.cspec",
+            None,
+            &[ArchPreset::Ppc64Be],
+        )],
+    },
+    CcPreset {
+        name: "powerpc64_elf_v1_linux_kernel",
+        cc: CallingConvention::powerpc64_elf_v1_linux_kernel(),
+        arches: &[ArchPreset::Ppc64Be],
+        ghidra: &[(
+            "PowerPC/data/languages/ppc_64_be.cspec",
+            None,
+            &[ArchPreset::Ppc64Be],
+        )],
+    },
+    // Ghidra gives a big-endian ELFv2 image `ppc_64_be.cspec`, so ELFv2 is
+    // held to both ppc64 files.
+    CcPreset {
+        name: "powerpc64_elf_v2",
+        cc: CallingConvention::powerpc64_elf_v2(),
+        arches: &[ArchPreset::Ppc64Be, ArchPreset::Ppc64Le],
+        ghidra: &[
+            (
+                "PowerPC/data/languages/ppc_64_le.cspec",
+                None,
+                &[ArchPreset::Ppc64Le],
+            ),
+            (
+                "PowerPC/data/languages/ppc_64_be.cspec",
+                None,
+                &[ArchPreset::Ppc64Be],
+            ),
+        ],
+    },
+    CcPreset {
+        name: "powerpc64_elf_v2_linux_kernel",
+        cc: CallingConvention::powerpc64_elf_v2_linux_kernel(),
+        arches: &[ArchPreset::Ppc64Be, ArchPreset::Ppc64Le],
+        ghidra: &[
+            (
+                "PowerPC/data/languages/ppc_64_le.cspec",
+                None,
+                &[ArchPreset::Ppc64Le],
+            ),
+            (
+                "PowerPC/data/languages/ppc_64_be.cspec",
+                None,
+                &[ArchPreset::Ppc64Be],
+            ),
+        ],
+    },
+];
+
+/// The float windows without the AltiVec window the userland presets append
+/// to them, for the `*_linux_kernel` flavours: a PowerPC Linux kernel is built
+/// `-mno-altivec -mno-vsx`, so no vector register carries an argument or a
+/// result there.  Naming them anyway would seed twelve 16-byte varnodes on
+/// every function and renumber `arg(n)`, neither of which the kernel's own
+/// code can produce.
+const PPC32_SCALAR_ARGS_F: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
+const PPC64_SCALAR_ARGS_F: &[&str] = &[
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
+];
+const PPC_SCALAR_RET_F: &[&str] = &["f1", "f2"];
+
+/// Base for `powerpc64_elf_v1` and `powerpc64_elf_v2`, which differ in
+/// `stack_args.base_offset` (ELFv1's 48-byte linkage area vs ELFv2's 32, each
+/// plus the 64-byte parameter save area) and in `ret_val_regs_float`.
+const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
+    stack_ptr: "r1",
+    arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
+    // ELFv1 3.2.3 / ELFv2 2.2.3.1: floating-point arguments in f1..f13.  The
+    // f1..f8 window is the 32-bit SysV rule (`powerpc_sysv32`).
+    //
+    // ELFv2 2.2.3 / the ELFv1 AltiVec supplement then pass vector arguments in
+    // v2..v13, a register file of its own (`vs34`-`vs45`; see
+    // `callee_saved_regs` for the `vN` spelling), byte-disjoint from f0-f31.
+    // Appended AFTER the floats so the float positions do not shift: a vector
+    // argument's own ordinal is not its index here, the same positional
+    // approximation `arm_aapcs` documents.  `*_linux_kernel` drops the window
+    // (`PPC64_SCALAR_ARGS_F`).
+    arg_passing_regs_float: &[
+        "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "vs34",
+        "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
+    ],
+    callee_saved_regs: &[
+        // r13 is the userland TLS thread pointer, reserved and never written
+        // there.  In the ppc64 Linux kernel it is the per-CPU `paca` pointer,
+        // which `setup_paca`, `setjmp` / `longjmp`, `restore_gprs` and every
+        // `mfsprg r13,1` interrupt entry write, and a task migrating inside a
+        // callee resumes on another CPU's paca.  Listed callee-saved anyway:
+        // the equality is then an
+        // address-identity claim the kernel does not make, while the call's
+        // memory clobber already cuts every load through it.
+        //
+        // r2 (TOC) is NOT callee-saved: ELFv1 3.5.11 / ELFv2 2.3.2.1 put the
+        // save and restore on the CALLER, and a cross-module callee does alter
+        // it.  Modelled preserved anyway, the same tradeoff as `LR` below: it
+        // keeps TOC-relative loads resolvable across a call, and a caller that
+        // needs r2 afterwards reloads it from the save slot, so the reload is
+        // what a correct binary reads.
+        "r2", "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24",
+        "r25", "r26", "r27", "r28", "r29", "r30", "r31",
+        // PPC64 ELFv1 3.4 marks LR volatile/caller-saved.  Listing it
+        // callee-saved anyway is the deliberate link-register tradeoff (same
+        // as `powerpc_sysv32`): it makes `InitialVar(lr)` propagate through
+        // call sites, so the indirect-branch resolver's `LinkRegister` arm
+        // fires for functions returning via the entry LR.
+        //
+        // ELFv1 3.2.2 / ELFv2 2.2.1 make f14-f31 non-volatile.
+        "LR", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24", "f25",
+        "f26", "f27", "f28", "f29", "f30", "f31",
+        // CR2-CR4 are the non-volatile condition fields; CR0/CR1 and CR5-CR7
+        // are volatile. Named individually because that is how `mfcr` /
+        // `mtcrf` name them, never as the 8-byte `crall` container, which
+        // spans the volatile fields too.
+        "cr2", "cr3", "cr4",
+        // ELFv2 2.2.1 and the ELFv1 AltiVec supplement make v20-v31
+        // non-volatile in full.  The sla overlays AltiVec onto the top 32 VSX
+        // registers and leaves the `vN` spellings commented out, so v20-v31
+        // are `vs52`-`vs63` (`ppc_common.sinc`).
+        "vs52", "vs53", "vs54", "vs55", "vs56", "vs57", "vs58", "vs59", "vs60", "vs61", "vs62",
+        "vs63",
+    ],
+    ret_val_regs: &["r3", "r4"],
+    // `long double` is IBM double-double and returns in the f1:f2 pair, as
+    // does `_Complex double`.  A vector returns in v2 (`vs34`), as does an
+    // IEEE `__float128` / `_Float128` and, under `-mabi=ieeelongdouble`,
+    // every `long double`.
+    ret_val_regs_float: &["f1", "f2", "vs34"],
+    // 48-byte linkage area, then the 8-doubleword parameter save area that
+    // homes r3-r10; the first stack-ONLY argument is above both.  GHIDRA's
+    // ppc_64_be.cspec agrees on 112.
+    stack_args: Some(StackArgs {
+        base_offset: 112,
+        increment: 8,
+    }),
+    ret_stack_pop: 0,
+    link_register: Some("LR"),
+    preserves_memory: false,
+    preserves_all_registers: false,
+    entry_address: None,
+    reg_args_adjoin_stack_args: true,
+};
+
+impl CallingConvention {
+    /// Returns the PowerPC 32-bit System V ABI calling convention.
+    #[must_use]
+    pub const fn powerpc_sysv32() -> Self {
+        // PowerPC 32-bit System V, byte-order independent (`powerpc-linux-gnu-gcc`
+        // with either `-mbig-endian` or `-mlittle-endian`).  `r1` is the SP by
+        // PowerPC convention.  Stack args start at 8: a 4-byte back-chain plus a
+        // 4-byte LR save.  r3/r4 double as the pair for 64-bit returns.
+        CallingConvention {
+            stack_ptr: "r1",
+            arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
+            // SysV PPC32: floating-point arguments in f1..f8, then the AltiVec
+            // supplement's vector arguments in v2..v13 (`vs34`-`vs45`), the
+            // same append-after-the-floats layout as `POWERPC64_ELF_BASE`.
+            arg_passing_regs_float: &[
+                "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37",
+                "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
+            ],
+            callee_saved_regs: &[
+                // r2 (system/TLS thread pointer) and r13 (small-data-area base)
+                // are reserved/dedicated: preserved across calls like r14-r31.
+                "r2", "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23",
+                "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31", "LR",
+                // SysV PPC32 3-16: f14-f31 are non-volatile.
+                "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24", "f25",
+                "f26", "f27", "f28", "f29", "f30", "f31",
+                // CR2-CR4 are the non-volatile condition fields; CR0/CR1 and
+                // CR5-CR7 are volatile. Named individually because that is how
+                // `mfcr` / `mtcrf` name them, never as the 8-byte `crall`
+                // container, which spans the volatile fields too.
+                "cr2", "cr3", "cr4",
+                // The SysV AltiVec supplement makes v20-v31 non-volatile in
+                // full; the sla spells them `vs52`-`vs63` (see
+                // `POWERPC64_ELF_BASE`).
+                "vs52", "vs53", "vs54", "vs55", "vs56", "vs57", "vs58", "vs59", "vs60", "vs61",
+                "vs62", "vs63",
+            ],
+            ret_val_regs: &["r3", "r4"],
+            // The f1:f2 pair carries `long double` / `_Complex double`; v2
+            // carries a vector result (AltiVec supplement).
+            ret_val_regs_float: &["f1", "f2", "vs34"],
+            stack_args: Some(StackArgs {
+                base_offset: 8,
+                increment: 4,
+            }),
+            ret_stack_pop: 0,
+            // `bl` writes the return address to the `LR` SPR; Sleigh's PPC
+            // table names it uppercase.
+            link_register: Some("LR"),
+            preserves_memory: false,
+            preserves_all_registers: false,
+            entry_address: None,
+            reg_args_adjoin_stack_args: false,
+        }
+    }
+
+    /// Returns the PowerPC 64-bit ELFv1 calling convention.
+    #[must_use]
+    pub const fn powerpc64_elf_v1() -> Self {
+        // PowerPC 64-bit ELFv1, BE (`powerpc64-linux-gnu-gcc`).  Stack args start
+        // at 112: the 48-byte linkage area plus the 64-byte parameter save area.
+        //
+        // ELFv1 has function descriptors: an external function symbol resolves to
+        // a 3-pointer descriptor (entry, TOC, env), not the entry itself.  Only
+        // the register-level ABI is modelled here.
+        POWERPC64_ELF_BASE
+    }
+
+    /// Returns the PowerPC 64-bit ELFv2 calling convention.
+    #[must_use]
+    pub const fn powerpc64_elf_v2() -> Self {
+        // PowerPC 64-bit ELFv2, LE (`powerpc64le-linux-gnu-gcc`).  Drops function
+        // descriptors, so symbols point straight at the entry point, and shrinks
+        // the linkage area from 48 to 32 bytes.  Register usage matches ELFv1.
+        CallingConvention {
+            // 32-byte linkage area plus the same 8-doubleword parameter save
+            // area, so arguments past the eighth start at r1+96.  GHIDRA's
+            // ppc_64_le.cspec says 112, which is the ELFv1 figure copied over.
+            stack_args: Some(StackArgs {
+                base_offset: 96,
+                increment: 8,
+            }),
+            // ELFv2 2.2.3.3 returns a homogeneous float aggregate of up to
+            // eight members in f1-f8 and a homogeneous VECTOR aggregate of up
+            // to eight in v2-v9 (`vs34`-`vs41`), so the whole window carries a
+            // result and not just its first member.  ELFv1 returns either
+            // aggregate through a hidden
+            // pointer, so the base's f1:f2 pair (`long double`,
+            // `_Complex double`) plus v2 is the whole story there.
+            ret_val_regs_float: &[
+                "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37",
+                "vs38", "vs39", "vs40", "vs41",
+            ],
+            // ELFv2 2.2.2.1: a caller entering through the GLOBAL entry leaves
+            // the function's own address in r12, which the two-instruction
+            // prologue turns into the TOC pointer. ELFv1 has no such register
+            // contract, hence the override here rather than in the base.
+            entry_address: Some("r12"),
+            ..POWERPC64_ELF_BASE
+        }
+    }
+
+    /// Returns the Linux kernel-internal CC for 32-bit PowerPC System V.
+    #[must_use]
+    pub const fn powerpc_sysv32_linux_kernel() -> Self {
+        CallingConvention {
+            arg_passing_regs_float: PPC32_SCALAR_ARGS_F,
+            ret_val_regs_float: PPC_SCALAR_RET_F,
+            ..Self::powerpc_sysv32()
+        }
+    }
+
+    /// Returns the Linux kernel-internal CC for PowerPC 64-bit ELFv1.
+    #[must_use]
+    pub const fn powerpc64_elf_v1_linux_kernel() -> Self {
+        CallingConvention {
+            arg_passing_regs_float: PPC64_SCALAR_ARGS_F,
+            ret_val_regs_float: PPC_SCALAR_RET_F,
+            ..POWERPC64_ELF_BASE
+        }
+    }
+
+    /// Returns the Linux kernel-internal CC for PowerPC 64-bit ELFv2.
+    #[must_use]
+    pub const fn powerpc64_elf_v2_linux_kernel() -> Self {
+        CallingConvention {
+            arg_passing_regs_float: PPC64_SCALAR_ARGS_F,
+            // ELFv2 2.2.3.3's homogeneous float aggregate, without the
+            // homogeneous VECTOR aggregate the userland preset also returns.
+            ret_val_regs_float: &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"],
+            ..Self::powerpc64_elf_v2()
+        }
+    }
+}
