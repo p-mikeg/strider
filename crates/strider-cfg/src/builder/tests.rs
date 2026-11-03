@@ -1215,13 +1215,7 @@ fn an_undecodable_arm_is_dropped_only_from_the_site_that_seeded_it() {
     b.region_graph.add_edge(live, arm, ());
     // The failing site wired its arm edge before the decode that errored.
     b.region_graph.add_edge(failed, arm, ());
-    b.undecodable_seeded.push((
-        failed,
-        crate::UndecodableTarget {
-            site: addr(0x1000, 0),
-            target: addr(shared, 0),
-        },
-    ));
+    b.refused_arms.push((failed, addr(shared, 0)));
 
     b.drop_refused_switch_arms();
 
@@ -1280,13 +1274,7 @@ fn a_refused_arm_seated_in_both_modes_loses_both_parallel_edges() {
     b.region_graph.add_edge(site, bad_arm, ());
     b.region_graph.add_edge(site, good_arm, ());
     b.region_graph.add_edge(site, bad_arm, ());
-    b.undecodable_seeded.push((
-        site,
-        crate::UndecodableTarget {
-            site: addr(0x1000, 0),
-            target: addr(bad, 0),
-        },
-    ));
+    b.refused_arms.push((site, addr(bad, 0)));
 
     b.drop_refused_switch_arms();
 
