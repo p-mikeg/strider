@@ -11,7 +11,7 @@ publish.workspace = true
 [features]
 # Exposes builder/inspection helpers used only by downstream crates' tests
 # (e.g. `build_call_cc`, `EditFunction::live_snapshot`,
-# `SideTables::memory_slot_resolved`). Absent from the
+# `Function::memory_slot_resolved`). Absent from the
 # wheel: `cargo tree -p strider-py -e normal` resolves strider-ir with no
 # features. A plain `cargo build --workspace` DOES enable it, because
 # strider-ir-test-utils is a default member that depends on it normally and
