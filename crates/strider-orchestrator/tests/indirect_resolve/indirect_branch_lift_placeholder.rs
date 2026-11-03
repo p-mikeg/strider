@@ -301,11 +301,11 @@ fn unresolved_branches_table_tracks_each_placeholder() {
     let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     assert_eq!(
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
         1,
         "expected exactly one tracked placeholder, got {}",
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
     );
-    let (addr, _placeholder) = outcome.unresolved_branches[0];
+    let (addr, _placeholder) = outcome.sites.unresolved_branches[0];
     assert_eq!(addr.machine_addr.addr, 0x1000);
 }
