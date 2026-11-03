@@ -9,7 +9,8 @@ mod sites;
 pub(crate) mod test_support;
 
 use anyhow::Result;
-use strider_cfg::{CfgOptions, Incompleteness, MachineInsnAddr, PcodeInsnAddr, Reason};
+use rustc_hash::FxHashMap;
+use strider_cfg::{Incompleteness, MachineInsnAddr, PcodeInsnAddr, Reason, ResolvedTargets};
 
 use crate::{AnalyzeOptions, AnalyzeResult, Strider};
 use reports::{
@@ -50,8 +51,6 @@ enum Termination {
 
 /// What the loop carries from one round to the next.
 struct LoopState<'s> {
-    /// The caller's cfg options, whose `known_targets` `sites` seeds from.
-    base: &'s CfgOptions<'s>,
     /// Every site's answer, over the caller's seeds.
     sites: SiteTable<'s>,
     /// Sticky: a site that lost ground in ANY round, or whose seat the loop
@@ -73,53 +72,64 @@ impl<R> Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    /// The resolve loop behind [`Strider::analyze`], before compaction.
+    /// [`Strider::analyze`] with `classify` in place of
+    /// [`strider_opt::classify_sites`].
     ///
     /// # Errors
     ///
-    /// As [`Self::build_round`] and [`SiteTable::fold`].
+    /// As [`Strider::analyze`].
     pub(crate) fn resolve(
         &mut self,
-        start_addr: MachineInsnAddr,
+        entry: u64,
         cc: &strider_target::BuiltCallingConvention,
         opts: &AnalyzeOptions<'_>,
-        pipeline: &strider_opt::OptimizerPipeline,
+        pipeline: Option<strider_opt::OptimizerPipeline>,
         classify: Classifier<'_>,
     ) -> Result<AnalyzeResult> {
-        let mut st = LoopState::new(&opts.cfg);
+        anyhow::ensure!(
+            opts.cfg.derived_targets.is_empty(),
+            "analyze keeps its own answers in derived_targets; seed through \
+             known_targets instead"
+        );
+        let pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
+        let start_addr = MachineInsnAddr::from(entry);
+        let mut st = LoopState::new(opts.cfg.known_targets);
         // Every round rebuilds the whole function from the seat set: cfg, lift
         // and pipeline. Carrying a round's work forward would make the cfg a
         // function of more than the seats, which is what convergence rests on.
-        loop {
+        let mut result = loop {
             let (round, resolutions) = self.build_round(
                 start_addr,
                 cc,
                 opts,
-                &st.sites.cfg_options(st.base),
-                pipeline,
+                &st.sites.cfg_options(&opts.cfg),
+                &pipeline,
                 classify,
             )?;
             // A stale round still carries a seat the loop has since withdrawn
             // or trimmed, so it is no answer even when nothing else moves.
             let stale = st.observe(&round);
             if round.is_settled() && !stale {
-                return st.finish(round, Termination::Converged);
+                break st.finish(round, Termination::Converged)?;
             }
             if st.folds == MAX_RESOLUTION_ITERATIONS {
-                return st.finish(round, Termination::CapReached(resolutions));
+                break st.finish(round, Termination::CapReached(resolutions))?;
             }
             if !st.fold(&round, resolutions)? && !stale {
-                return st.finish(round, Termination::Converged);
+                break st.finish(round, Termination::Converged)?;
             }
+        };
+        if opts.compact {
+            result.function.compact();
         }
+        Ok(result)
     }
 }
 
 impl<'s> LoopState<'s> {
-    fn new(base: &'s CfgOptions<'s>) -> Self {
+    fn new(seeds: &'s FxHashMap<PcodeInsnAddr, ResolvedTargets>) -> Self {
         Self {
-            base,
-            sites: SiteTable::new(base.known_targets),
+            sites: SiteTable::new(seeds),
             derived_incomplete: Vec::new(),
             assumed_modes: Vec::new(),
             incomplete: Incompleteness::default(),
