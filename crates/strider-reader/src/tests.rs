@@ -1,4 +1,5 @@
-use super::{DESCENTS, MemRegion, MemRegionsLookupTable, RegionIndex};
+use crate::index::DESCENTS;
+use crate::{MemRegion, MemRegionsLookupTable, RegionIndex};
 
 /// The fallback a read takes when no region fully covers it, and the one
 /// method here with no caller outside the crate.
