@@ -233,7 +233,7 @@ where
         let mut result =
             self.resolve(MachineInsnAddr::from(entry), cc, opts, &pipeline, classify)?;
         if opts.compact {
-            result.function.compact()?;
+            result.function.compact();
         }
         Ok(result)
     }

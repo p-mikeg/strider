@@ -418,7 +418,7 @@ fn shared_container_float_carrier_is_the_incoming_value_at_a_loop_header_entry()
     // The body reads the phi's slice, so the incoming-value slice is unused
     // and compaction drops it: the float params then have no carrier, while
     // r0's carrier, the phi's own operand, survives.
-    f.compact().expect("compaction succeeds");
+    f.compact();
     for j in 0..2 {
         assert!(
             f.side_tables().float_arg_index_to_values(j).is_empty(),

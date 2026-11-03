@@ -67,7 +67,7 @@ fn empty_entry_region_collapses_through_entry_node() -> crate::Result<()> {
     crate::default_pipeline().run(&mut fg, &crate::OptCtx::new(None))?;
 
     // The pipeline splices Entry's control past the empty region but does not
-    // sweep the arena (the orchestrator's `retain_reachable` does that), so the
+    // sweep the arena (`Function::compact` does that), so the
     // spliced-out region survives as unreachable residue.
     let reachable: std::collections::HashSet<_> = fg.walk().collect();
     assert!(
