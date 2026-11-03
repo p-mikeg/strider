@@ -2,26 +2,6 @@ use anyhow::Result;
 
 use super::Lifter;
 
-/// Every address a `Call` this cfg holds selects its `per_address_ccs`
-/// override by: a direct call's target ([`strider_cfg::direct_call_target`]),
-/// and a tail-call terminator's target. Mirror of
-/// [`FunctionLifter::call_override`] and `handle_tail_call`.
-fn override_call_targets(
-    cfg: &strider_cfg::Cfg,
-    code_space: rsleigh::VnSpace,
-) -> impl Iterator<Item = u64> + '_ {
-    cfg.regions().flat_map(move |region| {
-        region
-            .insns
-            .iter()
-            .filter_map(move |w| strider_cfg::direct_call_target(&w.insn, code_space))
-            .chain(match region.terminator {
-                strider_cfg::RegionTerminator::TailCall { target } => Some(target.addr),
-                _ => None,
-            })
-    })
-}
-
 /// Per-function translation context, borrowing the shared [`Lifter`] engine
 /// and owning a fresh [`strider_ir::FunctionBuilder`].
 pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
@@ -83,35 +63,16 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// `tracked` seeds the tracked set: every REGISTER / UNIQUE varnode the
-    /// `cfg`'s instructions name, every `CallOther` ABI footprint register,
-    /// and every register a LOAD / STORE resolves through the REGISTER space.
-    /// The stack vn and each override's argument registers are added here.
-    /// Only the set matters: `Function::new` dedups into containers and
-    /// SORTS, which is what fixes `InitialVnId` numbering.
+    /// `tracked` is the whole universe, [`Lifter::tracked_vns`], so it holds
+    /// `cc`'s stack vn.
     pub(crate) fn new(
         lifter: &'a Lifter<R>,
         cc: strider_target::BuiltCallingConvention,
         cfg: &'a strider_cfg::Cfg,
-        mut tracked: rustc_hash::FxHashSet<rsleigh::Vn>,
+        tracked: rustc_hash::FxHashSet<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
         cfg_opts: &'a strider_cfg::CfgOptions<'a>,
     ) -> Result<Self> {
-        // The lifter is the SSoT for tracking SP: a function may never name
-        // SP yet still need it tracked for stack analysis.
-        tracked.insert(cc.stack_ptr);
-        // `FunctionBuilder::new` seeds the function's OWN convention only, so
-        // an override's argument registers would be untracked: an integer one
-        // fails the lift outright in `read_vns`, a float one gaps
-        // `float_arg_slots` and truncates the call's float arguments there.
-        // Only the overrides THIS cfg selects: a caller passes a binary-wide
-        // table, and walking all of it costs the table per function.
-        for o in override_call_targets(cfg, lifter.sleigh().default_code_space())
-            .filter_map(|addr| cfg_opts.local_entries.get(per_address_ccs, addr))
-        {
-            lifter.check_override_cc(o, cc.stack_ptr)?;
-            tracked.extend(o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float));
-        }
         let mut builder = strider_ir::FunctionBuilder::new(
             tracked.iter().copied().collect(),
             cc,
@@ -136,7 +97,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .chain([&cc.stack_ptr])
             .copied();
         let container_map = vn_container::ContainerMap::build(f.all_vns(), queries);
-        // Since the stack vn was added to `tracked` above, after dedup it must
+        // Since `tracked` holds the stack vn, after dedup it must
         // resolve to a tracked container: itself, or a larger tracked vn.
         debug_assert!(
             {
