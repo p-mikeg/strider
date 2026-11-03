@@ -560,12 +560,12 @@
 - Assigning `LifterOptions.cfg` or `LifterOptions.assumptions` still raises
   `AttributeError`, now reading "readonly attribute" where it read
   "attribute ... is not writable": the option classes are frozen.
-- A pattern compile's stack budget, a quarter of the thread's remaining stack
-  past a fixed reserve, is read through `stacker` on every platform it reports
-  a stack on. Windows, the BSDs, Solaris, illumos and Haiku, which took the
-  fixed 48 KiB fallback, now budget from the real stack, so a deeper pattern
-  compiles there; Android, which `stacker` does not report, now takes the
-  fallback. Linux and macOS are unchanged.
+- A pattern compile's stack budget is read off the thread's remaining stack
+  through `stacker` on every platform it reports a stack on. Windows, the
+  BSDs, Solaris, illumos and Haiku, which took the fixed 48 KiB fallback, now
+  budget from the real stack, so a deeper pattern compiles there; Android,
+  which `stacker` does not report, now takes the fallback. Linux and macOS
+  read the same stack bounds as before.
 - Of several captures a rewrite's template references and its pattern leaves
   unbound, the error names the first written, where it named the last.
 - `hash(CastMask)` returns different values than in 0.2.0; equal masks still
@@ -983,7 +983,7 @@
   small thread can still crash then.
 - Python: a query compiled on a thread with little stack left refuses with
   `StriderError` before it recurses, where a window of thread sizes (a
-  `threading.stack_size` of 40 to 48 KiB in a debug build, which ones by
+  `threading.stack_size` of 32 to 48 KiB in a debug build, which ones by
   Python version and pattern shape) crashed the process. The budget was a
   quarter of the stack left at the first operand, but one lowering step past
   the last check, and then the refusal itself, are fixed costs, up to 18 KiB
