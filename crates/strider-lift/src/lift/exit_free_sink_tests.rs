@@ -32,7 +32,7 @@ fn exit_free_loop_keeps_its_store_through_compaction() {
     ]);
     assert_eq!(sinks(&f), 1, "the exit-free cycle gets exactly one sink");
     assert_eq!(stores(&f), 1);
-    f.compact().expect("compaction");
+    f.compact();
     assert_eq!(stores(&f), 1, "the store survives compaction");
     assert_eq!(sinks(&f), 1, "the sink survives compaction");
 }
@@ -53,7 +53,7 @@ fn multi_region_exit_free_cycle_keeps_its_store() {
         "the join carries a loop-carried MemPhi"
     );
     assert_eq!(sinks(&f), 1, "one sink for the one exit-free cycle");
-    f.compact().expect("compaction");
+    f.compact();
     assert_eq!(stores(&f), 1, "the store survives compaction");
 }
 
