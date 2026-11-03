@@ -10,6 +10,8 @@ pub(crate) use mips::MIPS;
 pub(crate) use ppc::PPC;
 pub(crate) use x86::X86;
 
+use crate::call_other_abi::{CallOtherClass, Prefix, Row};
+
 /// What strider knows about one architecture family, shared by its presets.
 /// No `Default`: a new family answers every field.
 pub(crate) struct Family {
@@ -23,6 +25,21 @@ pub(crate) struct Family {
     /// `(op, register)`: the input-less rounding op and the register it is,
     /// per [`crate::call_other_abi::rounding_mode_register`].
     pub(crate) rounding_register: Option<(&'static str, &'static str)>,
+    /// [`crate::call_other_abi::classify`] asks, in order: these exact rows
+    /// (the first whose `only` admits the preset), the arch-independent rows,
+    /// [`Self::call_other_prefixes`], then [`Self::call_other_fallback`].
+    /// Prefixes come after every exact row because an exact row is the
+    /// exception carved out of a stem (the PPC `vsx*` loads under `vsx`).
+    ///
+    /// Names scoped to the arches that emit them: a footprint of named
+    /// registers resolves on one arch's Sleigh table alone (the Linux syscall
+    /// ABIs, SMCCC, the x86 MSR / MONITOR-MWAIT / SWAPGS family), and a generic
+    /// spelling (`monitor`, `trap`, `vrev`, `swi`) must not reach an arch
+    /// meaning it otherwise.
+    pub(crate) call_other: &'static [Row],
+    pub(crate) call_other_prefixes: &'static [Prefix],
+    /// Classification by rule, for a family whose names no stem separates.
+    pub(crate) call_other_fallback: Option<fn(&str) -> Option<CallOtherClass>>,
 }
 
 /// One family per name.
