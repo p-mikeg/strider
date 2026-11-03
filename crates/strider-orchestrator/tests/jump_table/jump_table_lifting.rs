@@ -15,7 +15,7 @@
 //! its switch table rather than as IR comparison constants.
 //!
 //! Unit-level coverage of `build_switch`'s primitive lives in
-//! `crates/strider-lift/src/lift/control.rs::tests`.
+//! `crates/strider-lift/src/control.rs::tests`.
 
 use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;

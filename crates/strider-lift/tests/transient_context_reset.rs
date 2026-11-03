@@ -2,7 +2,7 @@
 //! function to the next on a reused engine.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_lift::lift::Lifter;
+use strider_lift::Lifter;
 use strider_target::SleighArch;
 
 /// `mov lr, pc` commits ARM's `LRset` at the NEXT address, and `ARMinstructions

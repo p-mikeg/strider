@@ -1,4 +1,4 @@
-use crate::lift::pcode_util::nth_input_or_err;
+use crate::pcode_util::nth_input_or_err;
 use anyhow::{Result, anyhow, bail};
 use strider_ir::node::ValueId;
 use strider_ir::{IRBuilderExt, IRViewer};

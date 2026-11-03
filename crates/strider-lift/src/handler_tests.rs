@@ -6,7 +6,7 @@ use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp,
 
 use strider_ir_test_utils::reg_vn;
 
-use crate::lift::{FunctionLifter, Lifter};
+use crate::{FunctionLifter, Lifter};
 
 type TestReader = BufMemReader<Vec<u8>>;
 

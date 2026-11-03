@@ -19,15 +19,15 @@ fn bytes() -> Vec<u8> {
     v
 }
 
-fn lifter() -> strider_lift::lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+fn lifter() -> strider_lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
     let arch = strider_target::SleighArch::arm_thumb();
-    strider_lift::lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes(), BASE))
+    strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes(), BASE))
         .expect("lifter")
 }
 
 /// Every machine instruction a build decoded, as opcode names per address.
 fn build(
-    l: &mut strider_lift::lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
+    l: &mut strider_lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
     at: u64,
 ) -> strider_cfg::Cfg {
     l.build_cfg(
@@ -79,9 +79,9 @@ fn thumbee_bytes() -> Vec<u8> {
     v
 }
 
-fn thumbee_lifter() -> strider_lift::lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+fn thumbee_lifter() -> strider_lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
     let arch = strider_target::SleighArch::arm_thumb();
-    strider_lift::lift::Lifter::new(
+    strider_lift::Lifter::new(
         arch,
         rsleigh::mem_readers::BufMemReader::new(thumbee_bytes(), BASE),
     )
