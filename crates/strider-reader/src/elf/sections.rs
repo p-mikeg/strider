@@ -396,21 +396,21 @@ impl AddressSet {
 /// moves up to `align_up(watermark, sh_addralign)`, the watermark starting at
 /// the image base.
 ///
-/// Populated only for an ET_REL. A linked image has real, disjoint `sh_addr`s,
-/// so it holds no entries and every address passes through untouched.
-/// The layout is filter-independent (every section participates, loaded or
-/// not), so the fetch and ROM views agree on where a section is even when only
-/// one of them maps it.
-pub struct ElfSectionLayout {
-    /// Section index -> loaded base. Absent means the section's own `sh_addr`.
+/// `None` for a linked image, whose `sh_addr`s are real and disjoint, so every
+/// address passes through untouched. The layout is filter-independent (every
+/// section participates, loaded or not), so the fetch and ROM views agree on
+/// where a section is even when only one of them maps it.
+pub struct ElfSectionLayout(Option<Rebased>);
+
+/// An ET_REL's synthetic link.
+struct Rebased {
+    /// Section index -> loaded base, for every section header: an index
+    /// absent from it is out of range.
     bases: BTreeMap<usize, u64>,
     /// Sections whose base plus declared size runs past the address space: the
     /// base is where their region would go, and nothing can be addressed
     /// through it.
     unseated: BTreeSet<usize>,
-    /// ET_REL, so `bases` holds every section header and an index absent from
-    /// it is out of range rather than a pass-through.
-    rebased: bool,
     /// Symbol index -> synthetic address, for every ET_REL symbol the link
     /// would place outside this object: undefined and `SHN_COMMON` ones.
     externs: BTreeMap<usize, u64>,
@@ -447,20 +447,12 @@ impl ElfSectionLayout {
     /// runs past `u64::MAX` from its base leaves the watermark alone and
     /// addresses none of its symbols.
     pub fn new(obj: &object::File<'_>) -> Self {
-        let mut bases = BTreeMap::new();
-        let mut unseated = BTreeSet::new();
         // A linked image's section addresses are the real ones.
         if obj.kind() != ObjectKind::Relocatable {
-            return Self {
-                bases,
-                unseated,
-                rebased: false,
-                externs: BTreeMap::new(),
-                got_base: 0,
-                word: 0,
-                toc_base: None,
-            };
+            return Self(None);
         }
+        let mut bases = BTreeMap::new();
+        let mut unseated = BTreeSet::new();
         let mut watermark = ET_REL_IMAGE_BASE;
         let mut toc_section = None;
         for sec in obj.sections() {
@@ -543,15 +535,14 @@ impl ElfSectionLayout {
         for index in deferred {
             externs.insert(index, toc_base.unwrap_or(got_base));
         }
-        Self {
+        Self(Some(Rebased {
             bases,
             unseated,
-            rebased: true,
             externs,
             got_base,
             word,
             toc_base,
-        }
+        }))
     }
 
     /// The address an ET_REL gives a symbol the link would place outside the
@@ -561,33 +552,33 @@ impl ElfSectionLayout {
     ///
     /// `None` for a defined symbol and for any symbol of a linked image.
     pub fn extern_address(&self, symbol_index: usize) -> Option<u64> {
-        self.externs.get(&symbol_index).copied()
+        self.0.as_ref()?.externs.get(&symbol_index).copied()
     }
 
-    /// Where the synthetic GOT starts, `_GLOBAL_OFFSET_TABLE_`.
-    pub(crate) fn got_base(&self) -> u64 {
-        self.got_base
+    /// Where the synthetic GOT starts, `_GLOBAL_OFFSET_TABLE_`; only an
+    /// ET_REL has one.
+    pub(crate) fn got_base(&self) -> Option<u64> {
+        Some(self.0.as_ref()?.got_base)
     }
 
     /// The GOT slot holding symbol `symbol_index`'s address, and its width.
     pub(crate) fn got_slot(&self, symbol_index: usize) -> Option<(u64, usize)> {
-        let offset = (symbol_index as u64).checked_mul(self.word)?;
-        Some((self.got_base.checked_add(offset)?, self.word as usize))
+        let r = self.0.as_ref()?;
+        let offset = (symbol_index as u64).checked_mul(r.word)?;
+        Some((r.got_base.checked_add(offset)?, r.word as usize))
     }
 
     /// The PowerPC64 TOC pointer: `.TOC.`, `0x8000` past the object's `.toc`.
     pub(crate) fn toc_base(&self) -> Option<u64> {
-        self.toc_base
-    }
-
-    /// Whether the layout rebased an ET_REL.
-    pub(crate) fn is_rebased(&self) -> bool {
-        self.rebased
+        self.0.as_ref()?.toc_base
     }
 
     /// Where `sec` is loaded.
     pub fn section_base<'d>(&self, sec: &impl ObjectSection<'d>) -> u64 {
-        self.base(sec.index().0).unwrap_or_else(|| sec.address())
+        self.0
+            .as_ref()
+            .and_then(|r| r.bases.get(&sec.index().0).copied())
+            .unwrap_or_else(|| sec.address())
     }
 
     /// Where `sym` resolves to. gABI: an ET_REL `st_value` is an offset from
@@ -600,17 +591,13 @@ impl ElfSectionLayout {
     /// declared size the address space cannot hold: the offset it declares has
     /// no base, so the symbol has no address.
     pub fn try_symbol_address<'d>(&self, sym: &impl object::ObjectSymbol<'d>) -> Option<u64> {
-        let Some(index) = sym.section_index() else {
+        let (Some(index), Some(r)) = (sym.section_index(), &self.0) else {
             return Some(sym.address());
         };
-        if self.unseated.contains(&index.0) {
+        if r.unseated.contains(&index.0) {
             return None;
         }
-        match self.base(index.0) {
-            Some(base) => Some(base.wrapping_add(sym.address())),
-            None if self.rebased => None,
-            None => Some(sym.address()),
-        }
+        Some(r.bases.get(&index.0)?.wrapping_add(sym.address()))
     }
 
     /// [`try_symbol_address`], reading an out-of-range `st_shndx` as the bare
@@ -621,10 +608,6 @@ impl ElfSectionLayout {
     pub fn symbol_address<'d>(&self, sym: &impl object::ObjectSymbol<'d>) -> u64 {
         self.try_symbol_address(sym)
             .unwrap_or_else(|| sym.address())
-    }
-
-    fn base(&self, section_index: usize) -> Option<u64> {
-        self.bases.get(&section_index).copied()
     }
 }
 
