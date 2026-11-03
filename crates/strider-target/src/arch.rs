@@ -1,3 +1,5 @@
+use crate::family::{self, DecodeFacts, Family};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Endianness {
     /// Least-significant byte at the lowest address (x86, AArch64 LE).
@@ -191,7 +193,8 @@ macro_rules! arch_presets {
     ($(
         $(#[$doc:meta])*
         $variant:ident => $name:literal, $ctor:ident, $family:ident,
-                          $sla:ident, $pspec:ident, $endian:ident;
+                          $sla:ident, $pspec:ident, $endian:ident,
+                          $register_endian:ident, $ghidra_id:literal;
     )+) => {
         /// One variant per [`SleighArch`] preset.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -210,11 +213,29 @@ macro_rules! arch_presets {
                 match self { $(Self::$variant => $name,)+ }
             }
 
-            /// The family this preset belongs to, which keys the
-            /// [`DecodeFacts`] table.
+            /// The family this preset belongs to.
             #[must_use]
-            pub(crate) const fn family(self) -> ArchFamily {
-                match self { $(Self::$variant => ArchFamily::$family,)+ }
+            pub(crate) const fn family(self) -> &'static Family {
+                match self { $(Self::$variant => &family::$family,)+ }
+            }
+
+            /// The name of the family this preset belongs to: `"x86"`,
+            /// `"arm32"`, `"aarch64"`, `"mips"` or `"ppc"`.
+            #[must_use]
+            pub const fn family_name(self) -> &'static str {
+                self.family().name
+            }
+
+            /// The Ghidra language id this preset is.
+            #[must_use]
+            pub const fn ghidra_id(self) -> &'static str {
+                match self { $(Self::$variant => $ghidra_id,)+ }
+            }
+
+            /// The byte order of the Sleigh REGISTER space,
+            /// [`SleighArch::register_endianness`].
+            const fn register_endianness(self) -> Endianness {
+                match self { $(Self::$variant => Endianness::$register_endian,)+ }
             }
 
             /// The arch this preset names, inverse of [`SleighArch::preset`].
@@ -249,10 +270,10 @@ macro_rules! arch_presets {
 }
 
 arch_presets! {
-    X86 => "x86", x86, X86, SLA_SPEC_X86, PSPEC_X86, Little;
-    X86_64 => "x86_64", x86_64, X86, SLA_SPEC_X86_64, PSPEC_X86_64, Little;
+    X86 => "x86", x86, X86, SLA_SPEC_X86, PSPEC_X86, Little, Little, "x86:LE:32:default";
+    X86_64 => "x86_64", x86_64, X86, SLA_SPEC_X86_64, PSPEC_X86_64, Little, Little, "x86:LE:64:default";
     /// ARM 32-bit little-endian, non-Thumb.
-    Arm => "arm", arm, Arm32, SLA_SPEC_ARM8_LE, PSPEC_ARMT, Little;
+    Arm => "arm", arm, ARM32, SLA_SPEC_ARM8_LE, PSPEC_ARMT, Little, Little, "ARM:LE:32:v8";
     /// Legacy **BE32** ARM 32-bit: big-endian instructions AND data,
     /// pre-ARMv6.
     ///
@@ -266,7 +287,7 @@ arch_presets! {
     /// or store (`vld1.32 {d0[0]}`) addresses lane 0 at the D register's
     /// high word, a core-register `vmov` (`vmov.32 r0, d0[0]`) at its low
     /// word.  NEON lane values under this preset are not meaningful.
-    ArmBe => "arm_be", arm_be, Arm32, SLA_SPEC_ARM8_BE, PSPEC_ARMT, Big;
+    ArmBe => "arm_be", arm_be, ARM32, SLA_SPEC_ARM8_BE, PSPEC_ARMT, Big, Big, "ARM:BE:32:v8";
     /// **BE8** ARM 32-bit (GHIDRA's `ARM:LEBE:32`): little-endian
     /// instructions, big-endian data, i.e. modern ARMv6+ big-endian.
     /// Every ARMv6+ big-endian Linux target, kernel and userland, is this.
@@ -274,194 +295,33 @@ arch_presets! {
     /// `SLA_SPEC_ARM8_BE8` is `SLA_SPEC_ARM8_LE` with the transfers
     /// whose bytes depend on the data order, the `vld1` / `vst1`
     /// multiple-element forms, made one per element.
-    ArmBeKernel => "arm_be_kernel", arm_be_kernel, Arm32, SLA_SPEC_ARM8_BE8, PSPEC_ARMT, Big;
+    ArmBeKernel => "arm_be_kernel", arm_be_kernel, ARM32, SLA_SPEC_ARM8_BE8, PSPEC_ARMT, Big, Little, "ARM:LEBE:32:v8LEInstruction";
     /// ARM 32-bit `-mthumb`: Cortex-M pspec defaults over the full-ARM-state
     /// sla, so ARM state stays reachable (`arm-linux-gnueabihf-gcc -mthumb`).
-    ArmThumb => "arm_thumb", arm_thumb, Arm32, SLA_SPEC_ARM8_LE, PSPEC_ARMCORTEX, Little;
-    Aarch64 => "aarch64", aarch64, Aarch64, SLA_SPEC_AARCH64, PSPEC_AARCH64, Little;
-    Aarch64Be => "aarch64be", aarch64be, Aarch64, SLA_SPEC_AARCH64BE, PSPEC_AARCH64, Big;
-    MipsBe32 => "mipsbe32", mipsbe32, Mips, SLA_SPEC_MIPS32BE, PSPEC_MIPS32, Big;
-    MipsLe32 => "mipsle32", mipsle32, Mips, SLA_SPEC_MIPS32LE, PSPEC_MIPS32, Little;
+    ArmThumb => "arm_thumb", arm_thumb, ARM32, SLA_SPEC_ARM8_LE, PSPEC_ARMCORTEX, Little, Little, "ARM:LE:32:v8T";
+    Aarch64 => "aarch64", aarch64, AARCH64, SLA_SPEC_AARCH64, PSPEC_AARCH64, Little, Little, "AARCH64:LE:64:v8A";
+    Aarch64Be => "aarch64be", aarch64be, AARCH64, SLA_SPEC_AARCH64BE, PSPEC_AARCH64, Big, Big, "AARCH64:BE:64:v8A";
+    MipsBe32 => "mipsbe32", mipsbe32, MIPS, SLA_SPEC_MIPS32BE, PSPEC_MIPS32, Big, Big, "MIPS:BE:32:default";
+    MipsLe32 => "mipsle32", mipsle32, MIPS, SLA_SPEC_MIPS32LE, PSPEC_MIPS32, Little, Little, "MIPS:LE:32:default";
     /// Linux N64 ABI (`mips64-linux-gnuabi64-gcc`).
-    MipsBe64 => "mipsbe64", mipsbe64, Mips, SLA_SPEC_MIPS64BE, PSPEC_MIPS64, Big;
+    MipsBe64 => "mipsbe64", mipsbe64, MIPS, SLA_SPEC_MIPS64BE, PSPEC_MIPS64, Big, Big, "MIPS:BE:64:default";
     /// Linux N64 ABI (`mips64el-linux-gnuabi64-gcc`).
-    MipsLe64 => "mipsle64", mipsle64, Mips, SLA_SPEC_MIPS64LE, PSPEC_MIPS64, Little;
+    MipsLe64 => "mipsle64", mipsle64, MIPS, SLA_SPEC_MIPS64LE, PSPEC_MIPS64, Little, Little, "MIPS:LE:64:default";
     /// `powerpc-linux-gnu-gcc`, System V 32-bit ABI.
-    Ppc32Be => "ppc32be", ppc32be, Ppc, SLA_SPEC_PPC_32_BE, PSPEC_PPC_32, Big;
+    Ppc32Be => "ppc32be", ppc32be, PPC, SLA_SPEC_PPC_32_BE, PSPEC_PPC_32, Big, Big, "PowerPC:BE:32:default";
     /// `powerpc-linux-gnu-gcc -mlittle-endian`.
-    Ppc32Le => "ppc32le", ppc32le, Ppc, SLA_SPEC_PPC_32_LE, PSPEC_PPC_32, Little;
+    Ppc32Le => "ppc32le", ppc32le, PPC, SLA_SPEC_PPC_32_LE, PSPEC_PPC_32, Little, Little, "PowerPC:LE:32:default";
     /// `powerpc64-linux-gnu-gcc`, ELFv1 ABI with function descriptors.
     /// Needs the Power ISA + Altivec sla spec: the stripped `PPC_64_BE`
     /// spec rejects Power7+ scalar ops (`popcntw`, `popcntd`, `cntlzd`,
     /// `cnttzd`) and Altivec vector ops with `Unable to resolve
     /// constructor`.
-    Ppc64Be => "ppc64be", ppc64be, Ppc, SLA_SPEC_PPC_64_ISA_ALTIVEC_BE, PSPEC_PPC_64, Big;
+    Ppc64Be => "ppc64be", ppc64be, PPC, SLA_SPEC_PPC_64_ISA_ALTIVEC_BE, PSPEC_PPC_64, Big, Big, "PowerPC:BE:64:A2ALT";
     /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI: no function descriptors and
     /// no dot-prefixed symbols.  Power ISA + Altivec sla spec, see
     /// [`SleighArch::ppc64be`].
-    Ppc64Le => "ppc64le", ppc64le, Ppc, SLA_SPEC_PPC_64_ISA_ALTIVEC_LE, PSPEC_PPC_64, Little;
+    Ppc64Le => "ppc64le", ppc64le, PPC, SLA_SPEC_PPC_64_ISA_ALTIVEC_LE, PSPEC_PPC_64, Little, Little, "PowerPC:LE:64:A2ALT";
 }
-
-/// The family a preset belongs to, which keys the [`DecodeFacts`] table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum ArchFamily {
-    X86,
-    Arm32,
-    Aarch64,
-    Mips,
-    Ppc,
-}
-
-/// What decoding and lifting know about one family, each field the answer of
-/// the [`SleighArch`] method of the same name. No `Default`: a new family
-/// answers every field.
-struct DecodeFacts {
-    isa_mode_var: Option<&'static str>,
-    flow_commit_vars: &'static [&'static str],
-    transient_decode_vars: &'static [&'static str],
-    has_delay_slots: bool,
-    /// [`SleighArch::callother_output_is_exact_in`] short of its x87 rule.
-    callother_output_exact: bool,
-    internal_registers: &'static [&'static str],
-    /// Volatile registers the pspec does not mark.
-    volatile_registers: &'static [&'static str],
-    /// Registers inside a pspec volatile range that are not volatile.
-    non_volatile_registers: &'static [&'static str],
-}
-
-impl ArchFamily {
-    fn facts(self) -> &'static DecodeFacts {
-        match self {
-            Self::X86 => &X86_FACTS,
-            Self::Arm32 => &ARM32_FACTS,
-            Self::Aarch64 => &AARCH64_FACTS,
-            Self::Mips => &MIPS_FACTS,
-            Self::Ppc => &PPC_FACTS,
-        }
-    }
-}
-
-static X86_FACTS: DecodeFacts = DecodeFacts {
-    isa_mode_var: None,
-    flow_commit_vars: &[],
-    transient_decode_vars: &[],
-    has_delay_slots: false,
-    callother_output_exact: true,
-    internal_registers: &["xmmTmp1", "xmmTmp2"],
-    volatile_registers: &[],
-    non_volatile_registers: &[],
-};
-
-static ARM32_FACTS: DecodeFacts = DecodeFacts {
-    isa_mode_var: Some("TMode"),
-    flow_commit_vars: &["condit", "TEEMode"],
-    // `condit` is deliberately absent: it belongs to `flow_commit_vars`, which
-    // RE-DERIVES it by re-lifting the owning instruction. These are cleared
-    // with no re-lift, including at a region start, which destroys an IT state
-    // the predecessor legitimately committed.
-    transient_decode_vars: &["LRset", "REToverride", "CALLoverride"],
-    has_delay_slots: false,
-    callother_output_exact: false,
-    internal_registers: &[
-        "mult_addr",
-        "mult_dat8",
-        "mult_dat16",
-        "tmpNG",
-        "tmpZR",
-        "tmpCY",
-        "tmpOV",
-    ],
-    volatile_registers: &[],
-    non_volatile_registers: &[],
-};
-
-static AARCH64_FACTS: DecodeFacts = DecodeFacts {
-    isa_mode_var: None,
-    flow_commit_vars: &[],
-    transient_decode_vars: &[],
-    has_delay_slots: false,
-    callother_output_exact: false,
-    internal_registers: &[
-        "tmp_ldWn",
-        "tmp_ldXn",
-        "tmp_stWn",
-        "tmp_stXn",
-        "VecMemAddr",
-        "VectorSelem",
-        "VecRegAddr",
-        "glob_mask32",
-        "glob_mask64",
-        "TMPZ1",
-        "TMPZ2",
-        "TMPZ3",
-        "TMPZ4",
-        "TMPZ5",
-        "TMPZ6",
-        "tmpCY",
-        "tmpOV",
-        "tmpNG",
-        "tmpZR",
-    ],
-    volatile_registers: &[],
-    // The kernel's `current`: only a context switch writes it, and a task
-    // resumes with its own, so two reads in one function are one value.
-    non_volatile_registers: &["sp_el0"],
-};
-
-static MIPS_FACTS: DecodeFacts = DecodeFacts {
-    // The low bit selects the alternate ISA, which `RELP` fixes: every MIPS
-    // pspec here pins it to 1, so that ISA is MIPS16e. rsleigh ships
-    // `PSPEC_MIPS32MICRO` / `PSPEC_MIPS64MICRO` for `RELP=0` (microMIPS) and no
-    // preset uses them, so a microMIPS image decodes its odd-addressed
-    // functions against MIPS16e tables; Python's `load_elf` refuses one.
-    isa_mode_var: Some("ISA_MODE"),
-    flow_commit_vars: &[],
-    // `ext_delay` is written by the five MIPS16e branch/call constructors
-    // (`mips16.sinc:520,528,542,550,557`), reachable only at `ISA_MODE=1`.
-    transient_decode_vars: &["PAIR_INSTRUCTION_FLAG", "ext_delay"],
-    has_delay_slots: true,
-    callother_output_exact: false,
-    internal_registers: &["tsp"],
-    // CP0 `Count` is a cycle counter, `Random` a TLB index that steps every
-    // cycle, `Cause` holds the pending-interrupt bits the hardware sets,
-    // `PerfCnt.1`/`.3`/`.5`/`.7` are the performance counters (the even
-    // selects are their controls) and `cop0_reg9.6` Octeon's `CvmCount`.
-    // No MIPS pspec marks any of them.
-    volatile_registers: &[
-        "Count",
-        "Random",
-        "Cause",
-        "PerfCnt.1",
-        "PerfCnt.3",
-        "PerfCnt.5",
-        "PerfCnt.7",
-        "cop0_reg9.6",
-    ],
-    non_volatile_registers: &[],
-};
-
-static PPC_FACTS: DecodeFacts = DecodeFacts {
-    isa_mode_var: None,
-    flow_commit_vars: &[],
-    transient_decode_vars: &[],
-    has_delay_slots: false,
-    callother_output_exact: false,
-    internal_registers: &["r2Save", "RESERVE_ADDRESS"],
-    // The counters among the SPRs, by number; the pspec marks only the
-    // timebase. DEC 22, the 8xx breakpoint counters COUNTA/COUNTB 150/151,
-    // SPURR 308, PURR 309, HDEC 310, ATBL/ATBU 526/527, UPMC1-6 771-776,
-    // PMC1-8 787-794, IC 848, VTB 849; the 7xx/74xx UPMC5/6 929/930,
-    // UPMC1-4 937/938/941/942, PMC5/6 945/946, PMC1-4 953/954/957/958; the
-    // 40x PIT 987 and the 403 TBHI/TBLO 988/989.
-    volatile_registers: &[
-        "spr016", "spr096", "spr097", "spr134", "spr135", "spr136", "spr20e", "spr20f", "spr303",
-        "spr304", "spr305", "spr306", "spr307", "spr308", "spr313", "spr314", "spr315", "spr316",
-        "spr317", "spr318", "spr319", "spr31a", "spr350", "spr351", "spr3a1", "spr3a2", "spr3a9",
-        "spr3aa", "spr3ad", "spr3ae", "spr3b1", "spr3b2", "spr3b9", "spr3ba", "spr3bd", "spr3be",
-        "spr3db", "spr3dc", "spr3dd",
-    ],
-    non_volatile_registers: &[],
-};
 
 /// The Sleigh configuration describing one target architecture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -505,10 +365,7 @@ impl SleighArch {
     /// loads and stores must follow this, while every other load and store
     /// follows [`Self::endianness`].
     pub fn register_endianness(&self) -> Endianness {
-        match self.preset {
-            ArchPreset::ArmBeKernel => Endianness::Little,
-            _ => self.endianness,
-        }
+        self.preset.register_endianness()
     }
 
     /// [`Self::endianness`] and [`Self::register_endianness`] together.
@@ -524,7 +381,7 @@ impl SleighArch {
     }
 
     fn facts(&self) -> &'static DecodeFacts {
-        self.preset.family().facts()
+        &self.preset.family().facts
     }
 
     /// The context variable holding the address-low-bit ISA mode, or `None` on
@@ -780,24 +637,24 @@ mod tests {
     /// wrong family moves both sides and survives; this one does not.
     #[test]
     fn every_preset_is_in_its_own_family() {
-        use super::{ArchFamily, ArchPreset};
-        let cases: &[(ArchPreset, ArchFamily)] = &[
-            (ArchPreset::X86, ArchFamily::X86),
-            (ArchPreset::X86_64, ArchFamily::X86),
-            (ArchPreset::Arm, ArchFamily::Arm32),
-            (ArchPreset::ArmBe, ArchFamily::Arm32),
-            (ArchPreset::ArmBeKernel, ArchFamily::Arm32),
-            (ArchPreset::ArmThumb, ArchFamily::Arm32),
-            (ArchPreset::Aarch64, ArchFamily::Aarch64),
-            (ArchPreset::Aarch64Be, ArchFamily::Aarch64),
-            (ArchPreset::MipsBe32, ArchFamily::Mips),
-            (ArchPreset::MipsLe32, ArchFamily::Mips),
-            (ArchPreset::MipsBe64, ArchFamily::Mips),
-            (ArchPreset::MipsLe64, ArchFamily::Mips),
-            (ArchPreset::Ppc32Be, ArchFamily::Ppc),
-            (ArchPreset::Ppc32Le, ArchFamily::Ppc),
-            (ArchPreset::Ppc64Be, ArchFamily::Ppc),
-            (ArchPreset::Ppc64Le, ArchFamily::Ppc),
+        use super::ArchPreset;
+        let cases: &[(ArchPreset, &str)] = &[
+            (ArchPreset::X86, "x86"),
+            (ArchPreset::X86_64, "x86"),
+            (ArchPreset::Arm, "arm32"),
+            (ArchPreset::ArmBe, "arm32"),
+            (ArchPreset::ArmBeKernel, "arm32"),
+            (ArchPreset::ArmThumb, "arm32"),
+            (ArchPreset::Aarch64, "aarch64"),
+            (ArchPreset::Aarch64Be, "aarch64"),
+            (ArchPreset::MipsBe32, "mips"),
+            (ArchPreset::MipsLe32, "mips"),
+            (ArchPreset::MipsBe64, "mips"),
+            (ArchPreset::MipsLe64, "mips"),
+            (ArchPreset::Ppc32Be, "ppc"),
+            (ArchPreset::Ppc32Le, "ppc"),
+            (ArchPreset::Ppc64Be, "ppc"),
+            (ArchPreset::Ppc64Le, "ppc"),
         ];
         for preset in ArchPreset::ALL {
             assert!(
@@ -806,7 +663,50 @@ mod tests {
             );
         }
         for (preset, family) in cases {
-            assert_eq!(preset.family(), *family, "{preset:?}");
+            assert_eq!(preset.family_name(), *family, "{preset:?}");
+        }
+    }
+
+    /// Each preset's Ghidra language id and its data and REGISTER-space byte
+    /// orders, spelled out: only BE8 `ArmBeKernel` has the two differ.
+    #[test]
+    fn every_preset_pins_its_ghidra_id_and_byte_orders() {
+        use super::Endianness::{Big, Little};
+        use super::{ArchPreset, Endianness};
+        let cases: &[(ArchPreset, &str, Endianness, Endianness)] = &[
+            (ArchPreset::X86, "x86:LE:32:default", Little, Little),
+            (ArchPreset::X86_64, "x86:LE:64:default", Little, Little),
+            (ArchPreset::Arm, "ARM:LE:32:v8", Little, Little),
+            (ArchPreset::ArmBe, "ARM:BE:32:v8", Big, Big),
+            (
+                ArchPreset::ArmBeKernel,
+                "ARM:LEBE:32:v8LEInstruction",
+                Big,
+                Little,
+            ),
+            (ArchPreset::ArmThumb, "ARM:LE:32:v8T", Little, Little),
+            (ArchPreset::Aarch64, "AARCH64:LE:64:v8A", Little, Little),
+            (ArchPreset::Aarch64Be, "AARCH64:BE:64:v8A", Big, Big),
+            (ArchPreset::MipsBe32, "MIPS:BE:32:default", Big, Big),
+            (ArchPreset::MipsLe32, "MIPS:LE:32:default", Little, Little),
+            (ArchPreset::MipsBe64, "MIPS:BE:64:default", Big, Big),
+            (ArchPreset::MipsLe64, "MIPS:LE:64:default", Little, Little),
+            (ArchPreset::Ppc32Be, "PowerPC:BE:32:default", Big, Big),
+            (ArchPreset::Ppc32Le, "PowerPC:LE:32:default", Little, Little),
+            (ArchPreset::Ppc64Be, "PowerPC:BE:64:A2ALT", Big, Big),
+            (ArchPreset::Ppc64Le, "PowerPC:LE:64:A2ALT", Little, Little),
+        ];
+        for preset in ArchPreset::ALL {
+            assert!(
+                cases.iter().any(|(p, ..)| p == preset),
+                "{preset:?} has no pinned row"
+            );
+        }
+        for (preset, id, data, register) in cases {
+            let arch = preset.arch();
+            assert_eq!(preset.ghidra_id(), *id, "{preset:?}");
+            assert_eq!(arch.endianness(), *data, "{preset:?} data");
+            assert_eq!(arch.register_endianness(), *register, "{preset:?} register");
         }
     }
 
@@ -822,10 +722,7 @@ mod tests {
                 arch.entry_mode_context(0).map(|(v, _)| v),
                 "{preset:?} must carry the mode it decodes with",
             );
-            let expected = matches!(
-                preset.family(),
-                super::ArchFamily::Arm32 | super::ArchFamily::Mips
-            );
+            let expected = matches!(preset.family_name(), "arm32" | "mips");
             assert_eq!(
                 arch.isa_mode_var().is_some(),
                 expected,
@@ -865,7 +762,6 @@ mod tests {
     /// system-register file (`tpidr_el1` included).
     #[test]
     fn volatile_registers_per_preset() {
-        use super::ArchFamily;
         for preset in ArchPreset::ALL {
             let arch = preset.arch();
             let regs = arch.probe_regs();
@@ -875,9 +771,9 @@ mod tests {
                 let end = vn.addr_off + u64::from(vn.size);
                 ranges.iter().any(|r| r.start < end && vn.addr_off < r.end)
             };
-            let (counters, plain): (&[&str], &[&str]) = match preset.family() {
-                ArchFamily::X86 | ArchFamily::Arm32 => (&[], &[]),
-                ArchFamily::Aarch64 => (
+            let (counters, plain): (&[&str], &[&str]) = match preset.family_name() {
+                "x86" | "arm32" => (&[], &[]),
+                "aarch64" => (
                     &[
                         "cntvct_el0",
                         "cntpct_el0",
@@ -890,16 +786,17 @@ mod tests {
                     ],
                     &["x0", "sp", "NG", "sp_el0"],
                 ),
-                ArchFamily::Mips => (
+                "mips" => (
                     &["Count", "Random", "Cause", "PerfCnt.1", "cop0_reg9.6"],
                     &["v0", "Status", "Compare", "PerfCnt"],
                 ),
-                ArchFamily::Ppc => (
+                "ppc" => (
                     &[
                         "TBLr", "TBUr", "spr016", "spr313", "spr31a", "spr135", "spr351",
                     ],
                     &["r3", "LR", "spr110", "spr036", "spr15f"],
                 ),
+                other => panic!("{preset:?}: no volatile pins for family {other}"),
             };
             assert_eq!(ranges.is_empty(), counters.is_empty(), "{preset:?}");
             for name in counters {
