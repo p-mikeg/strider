@@ -40,6 +40,12 @@ pub(crate) use regions::RegionMap;
 
 pub struct LiftOutcome {
     pub function: strider_ir::Function,
+    pub sites: LiftSites,
+}
+
+/// The control sites a lift records against their nodes, for the resolver.
+#[derive(Default)]
+pub struct LiftSites {
     /// One entry per region that terminated in an unresolved indirect branch,
     /// mapping the `BranchIndirect`'s pcode address to the `IndirectBranch`
     /// placeholder anchoring its dispatch varnode.
@@ -312,9 +318,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
         Ok(LiftOutcome {
             function: driver.builder.build()?,
-            unresolved_branches: driver.unresolved_branches,
-            switch_anchors: driver.switch_anchors,
-            return_sites: driver.return_sites,
+            sites: driver.sites,
         })
     }
 }

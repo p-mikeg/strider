@@ -1,7 +1,7 @@
 pub use strider_opt as opt;
 
 pub use strider_cfg::{Incompleteness, Reason};
-pub use strider_lift::{LiftOutcome, Lifter};
+pub use strider_lift::{LiftOutcome, LiftSites, Lifter};
 
 mod resolve;
 

@@ -27,9 +27,9 @@ fn x86_64_ud2_terminates_cleanly() {
 
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     assert!(
-        outcome.unresolved_branches.is_empty(),
+        outcome.sites.unresolved_branches.is_empty(),
         "ud2 produced {} unresolved branch(es); expected 0",
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
     );
     assert!(
         cfg.region_graph()
@@ -55,9 +55,9 @@ fn aarch64_brk_terminates_cleanly() {
 
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     assert!(
-        outcome.unresolved_branches.is_empty(),
+        outcome.sites.unresolved_branches.is_empty(),
         "brk produced {} unresolved branch(es); expected 0",
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
     );
     assert!(
         cfg.region_graph()
@@ -85,9 +85,9 @@ fn mips_break_terminates_cleanly() {
 
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     assert!(
-        outcome.unresolved_branches.is_empty(),
+        outcome.sites.unresolved_branches.is_empty(),
         "break produced {} unresolved branch(es); expected 0",
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
     );
     assert!(
         cfg.region_graph()
