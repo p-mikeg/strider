@@ -21,8 +21,8 @@ import pytest
 import strider
 from strider import pattern as p
 
-#: Comfortably inside the 512-level `MAX_PATTERN_NESTING` bound (a nested
-#: call costs two), so only the stack bound can answer here.
+#: Comfortably inside the 512-level `MAX_PATTERN_NESTING` bound (one level per
+#: nested operand), so only the stack bound can answer here.
 _NESTED = 255
 
 #: The smallest stack a caller realistically asks for.
@@ -303,16 +303,18 @@ def _on_small_thread_child(kib: int, setup: str, loop: str):
         (40, 0, _STACK_REFUSALS),
         (32, 2, _STACK_REFUSALS),
         (40, 2, _STACK_REFUSALS),
-        (128, 0, (_MEMORY_SLOT,)),
-        (256, 2, (_MEMORY_SLOT,)),
+        (64, 0, (_MEMORY_SLOT, _OVER_BUDGET)),
+        (256, 0, (_MEMORY_SLOT,)),
+        (512, 2, (_MEMORY_SLOT,)),
     ],
 )
 def test_any_refusal_fits_a_minimal_thread(kib, nest, refusals):
     """A refusal reaches the caller of a small thread, and `.backtrace`, read
     later on the main thread, still has frames. At 32 and 40 KiB a stack bound
-    refuses before the walk reaches the memory slot; from 128 KiB, 256 under
-    two loads, the walk gets there in an unoptimised build too, and the
-    refusal is the slot's own (a constant there never matches)."""
+    refuses before the walk reaches the memory slot; at 64 KiB either the
+    budget or the slot answers, by build; at 256 KiB, 512 under two loads, the
+    walk reaches the slot with room to spare in an unoptimised build too, and
+    the refusal is the slot's own (a constant there never matches)."""
     out = _on_small_thread_child(
         kib,
         f"""\
