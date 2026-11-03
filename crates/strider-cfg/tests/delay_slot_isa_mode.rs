@@ -45,11 +45,11 @@ fn bounded(size: u64) -> CfgOptions<'static> {
 /// `(address, machine length)` of every instruction in the region at `start`.
 fn lens_at(cfg: &Cfg, start: u64) -> Vec<(u64, u32)> {
     cfg.regions()
-        .find(|r| r.start_addr.machine_addr.addr == start)
+        .find(|r| r.start_addr.machine() == start)
         .unwrap_or_else(|| panic!("no region at {start:#x}"))
         .insns
         .iter()
-        .map(|i| (i.addr.machine_addr.addr, i.len))
+        .map(|i| (i.addr.machine(), i.len))
         .collect()
 }
 

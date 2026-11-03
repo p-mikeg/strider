@@ -27,7 +27,7 @@ fn decode(cfg: &Cfg) -> Vec<(u64, u32, Vec<rsleigh::Opcode>)> {
     let mut v: Vec<_> = cfg
         .regions()
         .flat_map(|r| r.insns.iter())
-        .map(|i| (i.addr.machine_addr.addr, i.len, i.insn.opcode))
+        .map(|i| (i.addr.machine(), i.len, i.insn.opcode))
         .fold(Vec::<(u64, u32, Vec<_>)>::new(), |mut acc, (a, l, op)| {
             match acc.last_mut() {
                 Some(last) if last.0 == a => last.2.push(op),
@@ -159,7 +159,7 @@ fn the_nop_after_a_kernel_blx_to_a_lower_callee_stays_an_arm_nop() {
     let cold = build(&mut fresh, entry, size);
     let nop = cold
         .regions()
-        .find(|r| r.start_addr.machine_addr.addr == BAD_STACK + 0x98)
+        .find(|r| r.start_addr.machine() == BAD_STACK + 0x98)
         .expect("a region at the nop");
     assert!(
         nop.insns.is_empty(),
