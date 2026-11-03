@@ -212,7 +212,7 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
     let data = f.data();
     let loads = Loads::of(f);
     let is_64 = f.is_64();
-    let (rel_ent, rela_ent) = if is_64 { (16, 24) } else { (8, 12) };
+    let (rel_ent, rela_ent) = entry_sizes(is_64);
     let tables = match placed_tables(&tags, &loads, data, is_64) {
         Ok(tables) => tables,
         Err(why) => return LoaderView::Unreadable(why),
@@ -303,6 +303,11 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
     }
 }
 
+/// `(SHT_REL, SHT_RELA)` entry sizes.
+fn entry_sizes(is_64: bool) -> (u64, u64) {
+    if is_64 { (16, 24) } else { (8, 12) }
+}
+
 /// The relocation tables `tags` place, or why they cannot be read. A RELR
 /// table is only checked to be there: its words hold `B + A`, `B` modelled
 /// 0, as the file has them.
@@ -312,7 +317,8 @@ fn placed_tables(
     data: &[u8],
     is_64: bool,
 ) -> Result<Vec<Table>, &'static str> {
-    let (rel_ent, rela_ent, word) = if is_64 { (16, 24, 8) } else { (8, 12, 4) };
+    let (rel_ent, rela_ent) = entry_sizes(is_64);
+    let word = if is_64 { 8 } else { 4 };
     let mut tables = Vec::new();
     for (at, size, ent, sh_type, want) in [
         (
