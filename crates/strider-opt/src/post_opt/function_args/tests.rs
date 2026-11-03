@@ -509,7 +509,7 @@ fn unused_register_arg_dropped_by_compact() -> Result<()> {
         "arg 0 registered at build time"
     );
 
-    fg.compact()?;
+    fg.compact();
     assert!(
         fg.side_tables().arg_index_to_values(0).is_empty(),
         "unused arg carrier dropped after compact"
