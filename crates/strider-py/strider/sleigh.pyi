@@ -3,12 +3,16 @@ ABI and varnode surface."""
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 __all__: list[str]
 
 #: Every architecture preset, the names `SleighArch`'s classmethods carry.
 ARCH_PRESETS: tuple[str, ...]
+
+#: Every calling-convention preset, the names `CallingConvention`'s preset
+#: classmethods carry, family by family.
+CC_PRESETS: tuple[str, ...]
 
 class SleighArch:
     """A target architecture: instruction-set specification plus byte order.
@@ -88,6 +92,15 @@ class SleighArch:
     @classmethod
     def ppc64le(cls) -> SleighArch:
         """64-bit PowerPC, little-endian."""
+        ...
+    @classmethod
+    def preset(cls, name: str) -> SleighArch:
+        """The preset called `name` (one of `ARCH_PRESETS`), as
+        `SleighArch.<name>()` builds it. Raises `StriderError` naming the
+        known presets for any other name."""
+        ...
+    def calling_conventions(self) -> tuple[CallingConvention, ...]:
+        """The calling-convention presets for this arch, in roster order."""
         ...
     def name(self) -> str:
         """The preset's short name, e.g. `"x86_64"` or `"arm_thumb"`."""
@@ -202,6 +215,7 @@ class CallingConvention:
         preserves_memory: bool = ...,
         arg_passing_regs_float: list[str] = ...,
         reg_args_adjoin_stack_args: bool = ...,
+        entry_address: Optional[str] = ...,
     ) -> CallingConvention:
         """Build a convention from register names resolved against `sleigh`.
 
@@ -218,6 +232,9 @@ class CallingConvention:
         MIPS O32 / N64, PowerPC64 ELF), so a by-value argument split between
         them is one object: its address reaching a callee keeps every
         incoming stack argument read after a call unknown.
+        `entry_address` names the register the ABI guarantees holds the
+        function's own entry address on entry (PPC64 ELFv2 `r12`, MIPS
+        abicalls `t9`); `None` promises nothing.
 
         Names are resolved and most ABI invariants checked here, so a bad one
         raises `StriderError` at construction. Among them:
@@ -234,6 +251,21 @@ class CallingConvention:
         (`arm`, `arm_thumb` and `arm_be_kernel` share one); any other raises
         `StriderError` at `analyze` time.
         """
+        ...
+    @classmethod
+    def preset(cls, name: str) -> CallingConvention:
+        """The preset called `name` (one of `CC_PRESETS`), as
+        `CallingConvention.<name>()` builds it. Raises `StriderError` naming
+        the known presets for any other name."""
+        ...
+    def to_dict(self) -> dict[str, Any]:
+        """The keyword arguments of `custom` other than `sleigh`, so
+        `CallingConvention.custom(arch, **cc.to_dict())` rebuilds an
+        equivalent convention. `stack_arg_increment` is `0` when nothing is
+        passed on the stack.
+
+        Raises `StriderError` for a `preserves_all()` / `preserves_regs()`
+        variant: `custom` cannot express `preserves_all_registers`."""
         ...
     def preserves_all(self) -> CallingConvention:
         """A variant that clobbers nothing: every register callee-saved and
