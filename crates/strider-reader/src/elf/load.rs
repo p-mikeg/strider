@@ -306,7 +306,7 @@ impl OwnedElf {
             let got = apply_elf_relocations_with(
                 &mut image.regions,
                 obj,
-                filter,
+                &image.owners,
                 layout,
                 &image.writable,
                 &image.executable,
