@@ -718,6 +718,14 @@
 
 ### Added, Python
 
+- `strider.sleigh.CC_PRESETS`, `CallingConvention.preset(name)` and
+  `SleighArch.preset(name)` (a `StriderError` naming the known presets on an
+  unknown name), `SleighArch.calling_conventions()` (the convention presets
+  for an arch, in roster order), `CallingConvention.to_dict()` (the keyword
+  arguments of `custom` other than `sleigh`, so
+  `custom(arch, **cc.to_dict())` rebuilds it; a `preserves_all()` /
+  `preserves_regs()` variant raises, `custom` cannot express it) and the
+  `entry_address` keyword of `CallingConvention.custom`.
 - `AssumptionOptions.fp_rounding_mode_is_nearest` (default `True`): the x86
   SSE rounding mode, MXCSR.RC, the x87 RC at `fst` and `fstp` to memory, the
   PowerPC FPSCR.RN, the ARM FPSCR.RMode, the AArch64 FPCR.RMode and the MIPS
@@ -784,6 +792,10 @@
 
 ### Changed, Rust
 
+- strider-target is laid out per family: `family/<name>.rs` holds a family's
+  decode facts, CallOther rows and calling conventions.
+  `CallingConvention::presets()`, `SleighArch::calling_conventions()` and
+  `ArchPreset::ghidra_id()` are added.
 - A `.filter()` node predicate also runs in the operand gate before each
   match attempt, so it runs more often per candidate, and an operand's
   predicate may run before its root's.
