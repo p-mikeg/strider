@@ -57,11 +57,7 @@ pub(crate) fn make_cfg(
         region_graph,
         entry,
         index,
-        undecodable_seeded: Vec::new(),
-        incomplete: crate::Incompleteness::default(),
-        link_register_seated: Vec::new(),
-        tail_call_seated: Vec::new(),
-        flowing_isa_bits: std::collections::BTreeMap::new(),
+        report: crate::BuildReport::default(),
         space_ids: rsleigh::SpaceIds::default(),
     }
 }

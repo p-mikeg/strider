@@ -8,8 +8,6 @@ pub(crate) use flow::{FlowContext, FlowVars, hold_var};
 use region_builder::{DecodeFailure, RegionBuilder, decode_failure};
 pub(crate) use strider_target::FlowCommit;
 
-use std::collections::BTreeMap;
-
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::EdgeIndex;
 
@@ -41,9 +39,8 @@ pub(super) struct WorkItem {
 /// A seeded `Switch` arm, carried down every edge decoded off it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ArmSeed {
-    /// The indirect branch the arm was seated from.
-    pub(super) site: PcodeInsnAddr,
-    /// The region the site sealed as a `Switch`.
+    /// The region the indirect branch sealed as a `Switch`, whose terminator
+    /// names the site ([`Builder::refuse_undecodable`]).
     pub(super) switch: NodeIndex,
     pub(super) arm: PcodeInsnAddr,
 }
@@ -100,31 +97,22 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// The seeded arm the region under construction descends from, which every
     /// edge it enqueues inherits.
     pub(super) descent: Option<ArmSeed>,
-    /// Seeded arms that, or whose code, would not decode, each with the
-    /// `Switch` region that seated it; see [`Cfg::undecodable_seeded_targets`].
-    /// Keyed on the SITE, not the address alone: two explorations of one
-    /// address decode in different contexts by construction, so a failure at
-    /// one site says nothing about the same address reached from another.
-    pub(super) undecodable_seeded: Vec<(NodeIndex, crate::UndecodableTarget)>,
-    /// The ISA-mode bit flowing into each indirect-branch site, sampled at the
-    /// site's seal; see [`Self::sample_flowing_isa_bit`].
-    pub(super) flowing_isa_bits: BTreeMap<PcodeInsnAddr, bool>,
-    /// What this build cannot vouch for; see [`Cfg::incomplete`].
-    pub(super) incomplete: crate::Incompleteness,
+    /// What the build reports beside its graph; see [`Cfg`]'s accessors.
+    pub(super) report: crate::BuildReport,
     /// The address each [`Self::seat_non_boundary_target`] edge was seated for.
     /// Every other edge targets a region starting exactly at its own address,
     /// so a split can move it by start alone; these point INTO the region, and
     /// only the half that keeps those bytes may keep the edge.
     pub(super) non_boundary_seats: rustc_hash::FxHashMap<EdgeIndex, PcodeInsnAddr>,
-    /// Sites seated as a `Return` from a `LinkRegister` answer; see
-    /// [`Cfg::link_register_seated`].
-    pub(super) link_register_seated: Vec<PcodeInsnAddr>,
-    /// Sites seated as a `TailCall` from a single resolved target.
-    pub(super) tail_call_seated: Vec<PcodeInsnAddr>,
-    /// Seeded arms whose address an earlier decode already owns in the other
-    /// ISA mode, with the region that seated them. The arm goes, as the loser
-    /// of [`Self::next_work_item`]'s arbitration.
-    pub(super) clashing_seeded: Vec<(NodeIndex, PcodeInsnAddr)>,
+    /// `(Switch region, arm)` for each arm [`Self::drop_refused_switch_arms`]
+    /// strips: one that, or whose code, would not decode, and one whose address
+    /// an earlier decode already owns in the other ISA mode, the loser of
+    /// [`Self::next_work_item`]'s arbitration.
+    ///
+    /// Keyed on the SITE, not the address alone: two explorations of one
+    /// address decode in different contexts by construction, so a failure at
+    /// one site says nothing about the same address reached from another.
+    pub(super) refused_arms: Vec<(NodeIndex, PcodeInsnAddr)>,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
@@ -144,14 +132,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             index: RegionIndex::default(),
             work_queue: Vec::new(),
             seeded_queue: Vec::new(),
-            clashing_seeded: Vec::new(),
-            undecodable_seeded: Vec::new(),
-            flowing_isa_bits: BTreeMap::new(),
-            incomplete: crate::Incompleteness::default(),
+            refused_arms: Vec::new(),
+            report: crate::BuildReport::default(),
             non_boundary_seats: rustc_hash::FxHashMap::default(),
             committed_next: rustc_hash::FxHashSet::default(),
-            link_register_seated: Vec::new(),
-            tail_call_seated: Vec::new(),
             function_mode,
             descent: None,
         }
@@ -182,7 +166,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             (Some(want), Some(decoded)) if want != decoded
         );
         if clash {
-            self.incomplete.insert(addr, Reason::IsaModeConflict);
+            self.report.incomplete.insert(addr, Reason::IsaModeConflict);
         }
         clash
     }
@@ -246,14 +230,13 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     /// Enqueue `addr` as a strider-*resolved indirect* target of the `Switch`
-    /// region `parent`, resolved from the branch at `branch_site`.  Sleigh
-    /// never flowed the mode here, so decode in the function mode (default
-    /// transients: unlike a direct edge, no source region's context reaches a
-    /// resolved target, so IT-block and register-list state start fresh) with
-    /// the ISA-mode var set to `bit`, what the branch commits: an interworking
-    /// branch's own bit, else the mode flowing INTO the branch
-    /// ([`Self::sample_flowing_isa_bit`]), so a `mov pc` in a Thumb region of
-    /// an otherwise-ARM function keeps Thumb.
+    /// region `parent`.  Sleigh never flowed the mode here, so decode in the
+    /// function mode (default transients: unlike a direct edge, no source
+    /// region's context reaches a resolved target, so IT-block and
+    /// register-list state start fresh) with the ISA-mode var set to `bit`,
+    /// what the branch commits: an interworking branch's own bit, else the
+    /// mode flowing INTO the branch ([`Self::sample_flowing_isa_bit`]), so a
+    /// `mov pc` in a Thumb region of an otherwise-ARM function keeps Thumb.
     ///
     /// `flowing` is the branch site's live value for each FLOWING committed var
     /// (`RegionBuilder::flowing_commits`), applied over the function mode as
@@ -266,7 +249,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         parent: NodeIndex,
         addr: PcodeInsnAddr,
         bit: Option<bool>,
-        branch_site: PcodeInsnAddr,
         flowing: &[(&'static str, u32)],
     ) {
         let carried = self.carry(self.function_mode.clone(), flowing, bit);
@@ -275,7 +257,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             addr,
             carried,
             seeded_by: Some(ArmSeed {
-                site: branch_site,
                 switch: parent,
                 arm: addr,
             }),
@@ -382,7 +363,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// region painted the address last. `None` on an arch with no ISA-mode var.
     pub(super) fn sample_flowing_isa_bit(&mut self, site: PcodeInsnAddr) -> Option<bool> {
         self.engine.arch.isa_mode_var()?;
-        if let Some(&bit) = self.flowing_isa_bits.get(&site) {
+        if let Some(&bit) = self.report.flowing_isa_bits.get(&site) {
             return Some(bit);
         }
         // Degrading to the function's own mode, not to `false`, which would
@@ -396,7 +377,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             site.machine_addr.addr,
             entry_bit,
         );
-        self.flowing_isa_bits.insert(site, bit);
+        self.report.flowing_isa_bits.insert(site, bit);
         Some(bit)
     }
 
@@ -481,7 +462,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             let edge = self.region_graph.add_edge(parent, owner, ());
             self.non_boundary_seats.insert(edge, addr);
             if !benign {
-                self.incomplete.insert(addr, Reason::InteriorTarget);
+                self.report.incomplete.insert(addr, Reason::InteriorTarget);
             }
             return Ok(());
         }
@@ -499,7 +480,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         );
         // Reported whether or not an arm went with it: this path wires no edge,
         // so anything unsaid here leaves the site an arm short in silence.
-        self.incomplete.insert(addr, Reason::InteriorTarget);
+        self.report.incomplete.insert(addr, Reason::InteriorTarget);
         Ok(())
     }
 
@@ -603,7 +584,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 // The bytes decoded in another mode, so this arm names a stream
                 // that is not there. Wiring the edge anyway would leave the seat
                 // disagreeing with its own `IsaModeConflict` inside one build.
-                self.clashing_seeded.push((parent_region_id, addr));
+                self.refused_arms.push((parent_region_id, addr));
                 return Ok(());
             }
             let target = if is_start {
@@ -675,23 +656,42 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 stack.push(pred);
             }
         }
-        for switch in self.region_graph.node_indices() {
-            let RegionTerminator::Switch { addr: site, .. } = self.region_graph[switch].terminator
-            else {
-                continue;
-            };
-            for arm in self.region_graph.neighbors(switch) {
-                if reaching.contains(&arm) {
-                    self.undecodable_seeded.push((
-                        switch,
-                        crate::UndecodableTarget {
-                            site,
-                            target: self.region_graph[arm].start_addr,
-                        },
-                    ));
-                }
-            }
+        let refused: Vec<_> = self
+            .region_graph
+            .node_indices()
+            .filter(|&switch| {
+                matches!(
+                    self.region_graph[switch].terminator,
+                    RegionTerminator::Switch { .. }
+                )
+            })
+            .flat_map(|switch| {
+                self.region_graph
+                    .neighbors(switch)
+                    .filter(|arm| reaching.contains(arm))
+                    .map(move |arm| (switch, arm))
+            })
+            .collect();
+        for (switch, arm) in refused {
+            self.refuse_undecodable(switch, self.region_graph[arm].start_addr);
         }
+    }
+
+    /// Refuses the arm at `arm` of the `Switch` region `switch` as undecodable,
+    /// reporting it against the site that region's terminator names: a dropped
+    /// arm demotes the terminator in place and a split keeps it on `switch`, so
+    /// that site is the one the arm was seated from.
+    fn refuse_undecodable(&mut self, switch: NodeIndex, arm: PcodeInsnAddr) {
+        let (RegionTerminator::Switch { addr: site, .. }
+        | RegionTerminator::UnresolvedIndirectBranch { addr: site, .. }) =
+            self.region_graph[switch].terminator
+        else {
+            unreachable!("an arm's seating region {switch:?} is no dispatch");
+        };
+        self.refused_arms.push((switch, arm));
+        self.report
+            .undecodable_seeded
+            .push(crate::UndecodableTarget { site, target: arm });
     }
 
     /// Removes the `Switch` arm behind each target this build refused: one that
@@ -713,10 +713,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// seated in both modes is a contradiction, which the orchestrator drops
     /// before seating it.
     fn drop_refused_switch_arms(&mut self) {
-        for (parent, bad) in self.undecodable_seeded.clone() {
-            self.drop_switch_arm(parent, bad.target);
-        }
-        for (parent, target) in std::mem::take(&mut self.clashing_seeded) {
+        for (parent, target) in std::mem::take(&mut self.refused_arms) {
             self.drop_switch_arm(parent, target);
         }
     }
@@ -823,7 +820,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 _ => None,
             };
             if let Some(reason) = reason {
-                self.incomplete.insert(address, reason);
+                self.report.incomplete.insert(address, reason);
                 self.edge_to_stub(parent, address)?;
                 return Ok(());
             }
@@ -856,14 +853,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             ),
             None => (address, Reason::UndecodableTarget),
         };
-        self.incomplete.insert(at, reason);
-        self.undecodable_seeded.push((
-            seed.switch,
-            crate::UndecodableTarget {
-                site: seed.site,
-                target: seed.arm,
-            },
-        ));
+        self.report.incomplete.insert(at, reason);
+        self.refuse_undecodable(seed.switch, seed.arm);
         if let Some(parent) = parent_region.filter(|_| !is_arm) {
             lost_successor.push((parent, e));
         }
@@ -894,40 +885,35 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
         // No resolver ran, so every dispatch left without an edge is
         // unresolved and every seated answer unverified.
+        let report = &mut self.report;
         for region in self.region_graph.node_weights() {
             match &region.terminator {
                 RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
-                    self.incomplete.insert(*addr, Reason::UnresolvedBranch);
+                    report.incomplete.insert(*addr, Reason::UnresolvedBranch);
                 }
                 RegionTerminator::Switch { addr, .. } => {
-                    self.incomplete.insert(*addr, Reason::UnverifiedSeed);
+                    report.incomplete.insert(*addr, Reason::UnverifiedSeed);
                 }
                 _ => {}
             }
         }
-        for &addr in self
+        for &addr in report
             .link_register_seated
             .iter()
-            .chain(&self.tail_call_seated)
+            .chain(&report.tail_call_seated)
         {
-            self.incomplete.insert(addr, Reason::UnverifiedSeed);
+            report.incomplete.insert(addr, Reason::UnverifiedSeed);
         }
-
         let mut reported = rustc_hash::FxHashSet::default();
+        report
+            .undecodable_seeded
+            .retain(|&bad| reported.insert(bad));
+
         Ok(Cfg {
             region_graph: self.region_graph,
             entry: starting_region,
             index: self.index,
-            undecodable_seeded: self
-                .undecodable_seeded
-                .into_iter()
-                .map(|(_, bad)| bad)
-                .filter(|&bad| reported.insert(bad))
-                .collect(),
-            incomplete: self.incomplete,
-            link_register_seated: self.link_register_seated,
-            tail_call_seated: self.tail_call_seated,
-            flowing_isa_bits: self.flowing_isa_bits,
+            report: self.report,
             space_ids: self.engine.space_ids().clone(),
         })
     }
