@@ -1330,53 +1330,75 @@ fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
 fn entries_off_dynsym<Elf: object::read::elf::FileHeader>(
     f: &object::read::elf::ElfFile<'_, Elf>,
 ) -> Vec<(u64, RelocInfo)> {
-    use object::read::elf::{Rel as _, Rela as _, SectionHeader as _};
+    use object::read::elf::SectionHeader as _;
     let endian = f.endian();
     let dynsym = f.elf_dynamic_symbol_table().section();
+    f.elf_section_table()
+        .iter()
+        .filter(|sh| {
+            sh.sh_flags(endian).into() & u64::from(object::elf::SHF_ALLOC) != 0
+                && sh.link(endian) != dynsym
+        })
+        .flat_map(|sh| raw_entries(f, sh))
+        .map(|(offset, r_type, sym, rela_addend)| {
+            let r = RelocInfo {
+                r_type,
+                r_type2: object::elf::R_MIPS_NONE,
+                r_type3: object::elf::R_MIPS_NONE,
+                sym: (sym != 0).then_some(object::SymbolIndex(sym as usize)),
+                rela_addend,
+                generic: None,
+            };
+            (offset, r)
+        })
+        .collect()
+}
+
+/// `(r_offset, r_type, r_sym, r_addend)` of each entry of the relocation
+/// section `sh`, as it lies: `r_addend` is `None` in an implicit-addend
+/// table. Empty when `sh` holds no table that decodes; a CREL stream stops
+/// at its first bad entry.
+pub(crate) fn raw_entries<Elf: object::read::elf::FileHeader>(
+    f: &object::read::elf::ElfFile<'_, Elf>,
+    sh: &Elf::SectionHeader,
+) -> Vec<(u64, u32, u32, Option<i64>)> {
+    use object::read::elf::{Rel as _, Rela as _, SectionHeader as _};
+    let endian = f.endian();
+    let data = f.data();
     let mips64el = f.elf_header().is_mips64el(endian);
-    let mut out = Vec::new();
-    for sh in f.elf_section_table().iter() {
-        if sh.sh_flags(endian).into() & u64::from(object::elf::SHF_ALLOC) == 0
-            || sh.link(endian) == dynsym
-        {
-            continue;
-        }
-        let info = |r_type: u32, sym: u32, rela_addend: Option<i64>| RelocInfo {
-            r_type,
-            r_type2: object::elf::R_MIPS_NONE,
-            r_type3: object::elf::R_MIPS_NONE,
-            sym: (sym != 0).then_some(object::SymbolIndex(sym as usize)),
-            rela_addend,
-            generic: None,
-        };
-        if let Ok(Some((rela, _))) = sh.rela(endian, f.data()) {
-            for e in rela {
-                let r = info(
+    if let Ok(Some((rela, _))) = sh.rela(endian, data) {
+        rela.iter()
+            .map(|e| {
+                (
+                    e.r_offset(endian).into(),
                     e.r_type(endian, mips64el),
                     e.r_sym(endian, mips64el),
                     Some(e.r_addend(endian).into()),
-                );
-                out.push((e.r_offset(endian).into(), r));
-            }
-        } else if let Ok(Some((rel, _))) = sh.rel(endian, f.data()) {
-            for e in rel {
-                out.push((
+                )
+            })
+            .collect()
+    } else if let Ok(Some((rel, _))) = sh.rel(endian, data) {
+        rel.iter()
+            .map(|e| {
+                (
                     e.r_offset(endian).into(),
-                    info(e.r_type(endian), e.r_sym(endian), None),
-                ));
-            }
-        } else if sh.sh_type(endian) == object::elf::SHT_CREL
-            && let Ok(data) = sh.data(endian, f.data())
-            && let Ok(crel) = object::read::elf::CrelIterator::new(data)
-        {
-            let rela = crel.is_rela();
-            for e in crel.map_while(|e| e.ok()) {
-                let r = info(e.r_type, e.r_sym, rela.then_some(e.r_addend));
-                out.push((e.r_offset, r));
-            }
-        }
+                    e.r_type(endian),
+                    e.r_sym(endian),
+                    None,
+                )
+            })
+            .collect()
+    } else if sh.sh_type(endian) == object::elf::SHT_CREL
+        && let Ok(bytes) = sh.data(endian, data)
+        && let Ok(crel) = object::read::elf::CrelIterator::new(bytes)
+    {
+        let rela = crel.is_rela();
+        crel.map_while(|e| e.ok())
+            .map(|e| (e.r_offset, e.r_type, e.r_sym, rela.then_some(e.r_addend)))
+            .collect()
+    } else {
+        Vec::new()
     }
-    out
 }
 
 /// `STT_GNU_IFUNC`, from `st_info`'s low nibble.
