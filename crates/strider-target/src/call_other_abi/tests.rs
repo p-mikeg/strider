@@ -1,19 +1,8 @@
 use super::*;
 
-/// Every family, once.
-fn families() -> Vec<&'static crate::family::Family> {
-    let mut out: Vec<&'static crate::family::Family> = Vec::new();
-    for preset in crate::ArchPreset::ALL {
-        if !out.contains(&preset.family()) {
-            out.push(preset.family());
-        }
-    }
-    out
-}
-
 /// Every family's exact rows.
 fn family_rows() -> impl Iterator<Item = &'static Row> {
-    families().into_iter().flat_map(|f| f.call_other)
+    crate::family::FAMILIES.iter().flat_map(|f| f.call_other)
 }
 
 /// The family rows answering `name` on `preset`.
@@ -38,7 +27,8 @@ fn empty_abi() -> CallOtherAbi {
 #[test]
 fn set_isa_mode_is_noop_on_every_arch() {
     // `setISAMode` is NoOp on every arch (incl. ARM32); the mode is carried
-    // on the `IndirectBranch`, not this op (see the TABLE comment above).
+    // on the `IndirectBranch`, not this op (see its row of `ROWS` in
+    // `common.rs`).
     let arm32: Vec<_> = crate::ArchPreset::ALL
         .iter()
         .filter(|p| *p.family() == crate::family::ARM32)
