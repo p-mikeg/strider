@@ -410,9 +410,6 @@ fn refusal(ob: &Bound<'_, PyAny>, slot: Slot) -> PyErr {
 
 /// `ob` sealed as a query's root.
 pub(crate) fn root_pattern(ob: &Bound<'_, PyAny>) -> PyResult<Pattern> {
-    // Opened here rather than at the first operand, so the stack budget also
-    // covers the root builder's own frames.
-    let _depth = DepthGuard::enter()?;
     let py = ob.py();
     if let Ok(p) = ob.downcast::<PyPat>() {
         return match &p.get().repr.op {
@@ -901,8 +898,10 @@ impl dyn Builder + '_ {
         })
     }
 
-    /// Sealed as a root, on the node's own anchor.
+    /// Sealed as a root, on the node's own anchor. The root is a walk level,
+    /// opened here so the stack budget covers the builder's own frames.
     fn pattern(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<Pattern> {
+        let _depth = DepthGuard::enter()?;
         let pat = self.node(py, caps)?.build();
         Ok(match self.when(py) {
             Some(f) => pat.with_root_post_match(f),
