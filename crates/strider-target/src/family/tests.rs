@@ -1,4 +1,4 @@
-//! Every register name a family carries resolves on every preset it applies to.
+//! Family tables checked against the presets they apply to.
 
 use crate::ArchPreset;
 use crate::call_other_abi::CallOtherClass;
@@ -68,4 +68,39 @@ fn every_family_register_name_resolves_on_every_preset_it_applies_to() {
         }
     }
     assert!(checked > 1000, "only {checked} names checked");
+}
+
+/// Every preset a family's rows name belongs to that family, so a row cannot
+/// be scoped to a preset whose `family()` never asks it.
+#[test]
+fn every_family_row_names_only_its_own_presets() {
+    for family in super::FAMILIES {
+        let named = family
+            .call_other
+            .iter()
+            .flat_map(|row| row.only.unwrap_or_default())
+            .chain(family.calling_conventions.iter().flat_map(|cc| cc.arches));
+        for preset in named {
+            assert!(
+                preset.family() == family,
+                "{}: names {preset:?}, a {} preset",
+                family.name,
+                preset.family_name(),
+            );
+        }
+    }
+}
+
+/// The families of `ArchPreset::ALL` are exactly `FAMILIES`, each once.
+#[test]
+fn every_preset_family_is_registered_once() {
+    let mut from_presets: Vec<&str> = ArchPreset::ALL.iter().map(|p| p.family_name()).collect();
+    from_presets.sort_unstable();
+    from_presets.dedup();
+    let mut registered: Vec<&str> = super::FAMILIES.iter().map(|f| f.name).collect();
+    registered.sort_unstable();
+    let len = registered.len();
+    registered.dedup();
+    assert_eq!(registered.len(), len, "a family is registered twice");
+    assert_eq!(from_presets, registered);
 }
