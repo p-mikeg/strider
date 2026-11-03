@@ -118,7 +118,9 @@ Strider:
   `ArchNames`, each preset's register and space names
   (`SleighArch::names`), and `DecodeTables`, the sla's decode and lift facts
   (`SleighArch::decode_tables`), each read off a Sleigh it builds once per
-  preset per process.
+  preset per process. One `family/<name>.rs` per architecture family holds
+  everything it knows (decode facts, CallOther rows, calling conventions);
+  see the crate README for adding a preset, row or family.
 - `strider-reader`: ELF loader and `ReadOnlyMemory` backend.
 - `strider-cfg`: bytes -> `Cfg` of basic-block regions via Sleigh.
   `DecodeEngine<R>` owns the `Sleigh<R>` and the decode context it carries
