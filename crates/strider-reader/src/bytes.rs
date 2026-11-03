@@ -213,6 +213,21 @@ impl FileBytes {
     }
 }
 
+/// The unsigned integer `bytes` hold, lowest first under `le` and
+/// most-significant first otherwise.
+pub(crate) fn read_uint(bytes: &[u8], le: bool) -> u64 {
+    let n = bytes.len();
+    debug_assert!(n <= 8, "a field wider than the carrier");
+    let mut word = [0u8; 8];
+    if le {
+        word[..n].copy_from_slice(bytes);
+        u64::from_le_bytes(word)
+    } else {
+        word[8 - n..].copy_from_slice(bytes);
+        u64::from_be_bytes(word)
+    }
+}
+
 /// `out.len()` bytes of `value`, lowest first under `le` and
 /// most-significant first otherwise, truncated to that width.
 pub(crate) fn write_uint(out: &mut [u8], value: u64, le: bool) {

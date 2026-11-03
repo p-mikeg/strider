@@ -97,14 +97,15 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 /// Any patch list the regions already carry is replaced, so re-applying over
 /// one region set is idempotent.
 ///
-/// `layout` must be the one built for `obj`, `loaded_with` the filter the
-/// regions were loaded with and `writable` the image's writable mappings.
+/// `layout` must be the one built for `obj`, `owners` the sections the regions
+/// were loaded from ([`LoadedImage::owners`](super::sections::LoadedImage::owners))
+/// and `writable` the image's writable mappings.
 ///
 /// Returns the GOT slots the relocations referenced, as regions of their own.
 ///
 /// # Errors
 ///
-/// When a loaded section's bytes cannot be read; when the relocation tables
+/// When the relocation tables
 /// walked name more entries than [`RELOCATION_ENTRY_BUDGET`] times what the
 /// file holds (see `without_repeated_tables` and
 /// [`loader_view`](super::dynamic::loader_view)); and when a table the
@@ -113,7 +114,7 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 pub(crate) fn apply_elf_relocations_with(
     regions: &mut [MemRegion],
     obj: &object::File<'_>,
-    loaded_with: super::sections::LoadFilter,
+    owners: &std::collections::BTreeSet<usize>,
     layout: &super::sections::ElfSectionLayout,
     writable: &AddressSet,
     executable: &AddressSet,
@@ -139,7 +140,6 @@ pub(crate) fn apply_elf_relocations_with(
         ),
         _ => {}
     }
-    let owners = super::sections::loaded_section_indices(obj, layout, loaded_with)?;
     // One lookup per relocation instead of a scan of every region; an ET_REL
     // carries one region per SHF_ALLOC section.
     let region_index = RegionIndex::new(regions);
@@ -176,7 +176,7 @@ pub(crate) fn apply_elf_relocations_with(
         (None, true) => None,
     };
     if let Some(walked) = walked {
-        for_each_reloc_site(walked, &owners, layout, |site_addr, avail, r, pair| {
+        for_each_reloc_site(walked, owners, layout, |site_addr, avail, r, pair| {
             apply_one_relocation(
                 &mut ctx,
                 RelocSite {
@@ -626,17 +626,7 @@ fn without_repeated_tables_of<Elf: object::read::elf::FileHeader>(
     let mut bytes = f.data().to_vec();
     let mut put = |index: usize, field: u64, value: u64, width: usize| -> Option<()> {
         let at = usize::try_from(shoff + index as u64 * shentsize + field).ok()?;
-        let value = if le {
-            value.to_le_bytes()
-        } else {
-            value.to_be_bytes()
-        };
-        let value = if le {
-            &value[..width]
-        } else {
-            &value[8 - width..]
-        };
-        bytes.get_mut(at..at + width)?.copy_from_slice(value);
+        crate::bytes::write_uint(bytes.get_mut(at..at + width)?, value, le);
         Some(())
     };
     // Elf32_Shdr / Elf64_Shdr: sh_type at 4, sh_flags at 8, sh_link at
@@ -1109,20 +1099,8 @@ fn i386_got_absolute(region: &MemRegion, p: u64) -> Option<bool> {
 
 /// The file-initial `width`-byte field at `addr`, which `region` holds whole.
 fn read_field(region: &MemRegion, addr: u64, width: usize, endian_le: bool) -> u64 {
-    debug_assert!(width <= 8, "a field wider than the carrier");
     let off = (addr - region.start_addr()) as usize;
-    let field = &region.raw()[off..off + width];
-    let mut raw = 0u64;
-    if endian_le {
-        for (n, &b) in field.iter().enumerate() {
-            raw |= u64::from(b) << (8 * n);
-        }
-    } else {
-        for &b in field {
-            raw = (raw << 8) | u64::from(b);
-        }
-    }
-    raw
+    crate::bytes::read_uint(&region.raw()[off..off + width], endian_le)
 }
 
 /// A Thumb-2 instruction read as one little-endian word, with its halfwords
@@ -1223,17 +1201,13 @@ fn resolve_symbol_target(
         }
         _ => Isa::Same,
     };
-    let st_info = match sym.flags() {
-        object::SymbolFlags::Elf { st_info, .. } => st_info,
-        _ => 0,
-    };
     Some(Target {
         addr,
         index: idx.0,
         isa,
         local: sym.is_local(),
         weak_undefined: sym.is_weak() && sym.is_undefined(),
-        ifunc: is_ifunc(st_info) && !sym.is_undefined(),
+        ifunc: is_ifunc(&sym) && !sym.is_undefined(),
         gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
         // ppc64 ELFv1 only, and the arch test comes first: the name lookup
         // below reads `.shstrtab` and this runs once per relocation, so on
@@ -1406,8 +1380,11 @@ fn entries_off_dynsym<Elf: object::read::elf::FileHeader>(
 }
 
 /// `STT_GNU_IFUNC`, from `st_info`'s low nibble.
-fn is_ifunc(st_info: u8) -> bool {
-    st_info & 0xf == object::elf::STT_GNU_IFUNC
+fn is_ifunc<'d>(sym: &impl ObjectSymbol<'d>) -> bool {
+    matches!(
+        sym.flags(),
+        object::SymbolFlags::Elf { st_info, .. } if st_info & 0xf == object::elf::STT_GNU_IFUNC
+    )
 }
 
 /// Holes over the MIPS primary GOT entries the dynamic loader writes, which
@@ -1505,14 +1482,10 @@ fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
             .as_ref()
             .and_then(|table| table.symbol_by_index(index).ok())
             .is_some_and(|sym| {
-                let st_info = match sym.flags() {
-                    object::SymbolFlags::Elf { st_info, .. } => st_info,
-                    _ => 0,
-                };
                 matches!(
                     sym.section(),
                     object::SymbolSection::Section(_) | object::SymbolSection::Absolute
-                ) && !is_ifunc(st_info)
+                ) && !is_ifunc(&sym)
                     && held == sym.address()
             });
         if !served {
@@ -1648,7 +1621,12 @@ mod tests {
                 &super::super::dynamic::LoaderView::NotDynamic,
             )
             .expect("regions");
-        let (mut regions, writable, executable) = (image.regions, image.writable, image.executable);
+        let (mut regions, writable, executable, owners) = (
+            image.regions,
+            image.writable,
+            image.executable,
+            image.owners,
+        );
 
         let bytes = |regions: &[MemRegion]| -> Vec<Vec<u8>> {
             regions
@@ -1663,7 +1641,7 @@ mod tests {
         apply_elf_relocations_with(
             &mut regions,
             &obj,
-            filter,
+            &owners,
             &layout,
             &writable,
             &executable,
@@ -1674,7 +1652,7 @@ mod tests {
         apply_elf_relocations_with(
             &mut regions,
             &obj,
-            filter,
+            &owners,
             &layout,
             &writable,
             &executable,
