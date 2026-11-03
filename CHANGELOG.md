@@ -1763,9 +1763,9 @@
 - `Graph::NODE_RECORD_SIZE` / `VALUE_RECORD_SIZE`: the arena's bytes per node
   and per node output.
 - `OptimizerPipeline` is `Clone`, copying its pass references.
-- `Function::assumptions` / `assume` and `SideTables::assumptions`: the
-  claims in force, which every pass reads, and the one verb that adds to
-  them, dropping the memos a new claim can change.
+- `Function::assumptions` / `assume`: the claims in force, which every pass
+  reads, and the one verb that adds to them, dropping the memos a new claim
+  can change.
 - `strider_opt::refresh_memory_classes`: re-derives what `stack_only()` /
   `heap_only()` read after an edit made outside a pipeline.
 - `EditFunction::absorb_node_fingerprint` (the node-keyed
