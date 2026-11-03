@@ -70,7 +70,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             cc,
             lifter.arch().byte_order(),
         )?;
-        builder.set_internal_registers(lifter.internal_register_vns());
+        builder.set_internal_registers(&lifter.tables().internal_register_vns);
         // `FunctionBuilder::new` seeds the CC registers and `Function::new`
         // drops enclosed sub-registers, so the function's `all_vns()` is the
         // canonical tracked set.  Resolving a varnode INTO that set is the

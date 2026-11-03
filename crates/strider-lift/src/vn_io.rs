@@ -88,7 +88,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // Stash an ISA-mode commit for `pending_isa_mode`. Full `Vn` equality,
         // not just space+offset: a differently-sized varnode sharing the offset
         // is a different register.
-        if self.lifter.isa_mode_switch_vn() == Some(*vn)
+        if self.lifter.tables().isa_mode_switch_vn == Some(*vn)
             && let Some(addr) = self.builder.lift_addr()
         {
             // FIRST write per machine address wins. MIPS writes ISAModeSwitch
