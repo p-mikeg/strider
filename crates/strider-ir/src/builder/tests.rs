@@ -2728,11 +2728,11 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     );
     assert!(
         !clobbered.contains(&rax),
-        "call_clobbered_for must not contain the ret-val register rax; got {clobbered:?}"
+        "the clobber group must not contain the ret-val register rax; got {clobbered:?}"
     );
     assert!(
         clobbered.contains(&rcx),
-        "call_clobbered_for must still contain the plain caller-clobbered reg rcx"
+        "the clobber group must still contain the plain caller-clobbered reg rcx"
     );
 
     let region = b.create_region_all()?;
