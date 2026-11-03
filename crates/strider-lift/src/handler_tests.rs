@@ -121,11 +121,14 @@ fn with_test_lifter_arch_cc(
     // Value opcodes never consult the region id or map, so any valid id works.
     let region_id = cfg.entry();
     let cfg_opts = strider_cfg::CfgOptions::default();
+    let conventions = lifter
+        .convention_vns(&cfg, &cc, &cfg_opts, per_address_ccs)
+        .expect("conventions");
     let mut driver = FunctionLifter::new(
         &lifter,
         cc,
         &cfg,
-        all_vns.into_iter().collect(),
+        all_vns.into_iter().chain(conventions).collect(),
         per_address_ccs,
         &cfg_opts,
     )
