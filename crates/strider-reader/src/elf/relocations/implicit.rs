@@ -1,0 +1,224 @@
+//! Holes over what the loader writes without a relocation entry to say so:
+//! `R_*_COPY` objects, the MIPS primary GOT and the lazy-binding GOT header.
+
+use object::{Architecture as A, Object, ObjectSection, ObjectSymbol, ObjectSymbolTable};
+
+use crate::MemRegion;
+use crate::elf::sections::AddressSet;
+
+use super::Ctx;
+use super::apply::{is_ifunc, read_field};
+
+/// Records the object an `R_*_COPY` at `addr` fills: `size` bytes, or with
+/// no size known, up to the end of every region holding `addr`.
+pub(super) fn note_copy(ctx: &mut Ctx<'_, '_>, addr: u64, size: Option<u64>, r_type: u32) {
+    let end = match size {
+        Some(size) => addr.saturating_add(size),
+        None => ctx
+            .regions
+            .iter()
+            .filter(|region| region.contains(addr))
+            .map(MemRegion::end_addr)
+            .max()
+            .unwrap_or(addr),
+    };
+    ctx.copies.push((addr, end, r_type));
+}
+
+/// Holes over every byte of every `R_*_COPY` object a region holds: what
+/// the loader copies there is the defining library's, never the file's.
+/// The objects are merged first, and each region finds the ones it overlaps
+/// by a binary search, so the work is the regions' count times its log
+/// plus the bytes held.
+pub(super) fn hole_copies(ctx: &mut Ctx<'_, '_>) {
+    let copies = std::mem::take(&mut ctx.copies);
+    let Some(&(_, _, r_type)) = copies.first() else {
+        return;
+    };
+    let objects = AddressSet::merged(copies.iter().map(|&(lo, hi, _)| (lo, hi)).collect());
+    let mut held = Vec::new();
+    for region in ctx.regions {
+        let (start, end) = (region.start_addr(), region.end_addr());
+        for &(lo, hi) in objects.overlapping(start, end) {
+            held.push((lo.max(start), hi.min(end)));
+        }
+    }
+    for &(lo, hi) in AddressSet::merged(held).as_slice() {
+        let holder = ctx.holding(lo, 1);
+        ctx.unmodelled(holder, lo, (hi - lo) as usize, r_type);
+    }
+}
+
+/// Holes over the MIPS primary GOT entries the dynamic loader writes, which
+/// no relocation record covers (MIPS psABI, "Global Offset Table"; glibc's
+/// `elf_machine_runtime_setup` and `elf_machine_got_rel`):
+///
+/// * the lazy resolver's word, and the module pointer's when the top bit of
+///   the second word asks for one;
+/// * every global entry, `DT_MIPS_GOTSYM .. DT_MIPS_SYMTABNO`, except one
+///   whose `.dynsym` symbol is defined in a section or absolute, is no IFUNC,
+///   and is already held at its `st_value`. That is the address the loader's
+///   lookup finds for a symbol the image defines, as a `GLOB_DAT` is taken to
+///   resolve. An imported symbol's entry holds 0, or its lazy-binding stub,
+///   which the loader replaces before the program runs or on the first call.
+///
+/// The local entries hold `B + value`, `B` modelled 0, and stay as the file
+/// has them. `object` builds its dynamic symbol table from an `SHT_DYNSYM`
+/// SECTION HEADER alone, so a section-stripped image has none and no symbol
+/// can be checked: every global entry is a hole, as it is for a dynamic image
+/// missing one of the tags that place the GOT, which makes every `.got` word
+/// one. A hole names `R_MIPS_GLOB_DAT`, the relocation that covers the same
+/// kind of entry outside the primary GOT.
+pub(super) fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
+    let obj = ctx.obj;
+    if !matches!(obj.architecture(), A::Mips | A::Mips64)
+        || !matches!(
+            obj.kind(),
+            object::ObjectKind::Executable | object::ObjectKind::Dynamic
+        )
+    {
+        return;
+    }
+    let word: u64 = if obj.is_64() { 8 } else { 4 };
+    let width = word as usize;
+    let tags = match mips_got_tags(obj) {
+        None => return,
+        Some(Some(tags)) => tags,
+        // The loader reads every one of the tags, so an image missing one says
+        // nothing about which words it writes: every `.got` word is a hole.
+        Some(None) => {
+            for sec in obj.sections().filter(|s| s.name() == Ok(".got")) {
+                let base = ctx.layout.section_base(&sec);
+                // Up to the end of the mapping holding it, whatever `sh_size`
+                // claims.
+                for i in 0..sec.size() / word {
+                    let Some(addr) = i.checked_mul(word).and_then(|o| base.checked_add(o)) else {
+                        break;
+                    };
+                    let Some(holder) = ctx.holding(addr, width) else {
+                        break;
+                    };
+                    ctx.unmodelled(Some(holder), addr, width, object::elf::R_MIPS_GLOB_DAT);
+                }
+            }
+            return;
+        }
+    };
+    let slot = |i: u64| {
+        i.checked_mul(word)
+            .and_then(|off| tags.base.checked_add(off))
+    };
+    let hole = |ctx: &mut Ctx<'_, '_>, addr: u64| {
+        let holder = ctx.holding(addr, width);
+        ctx.unmodelled(holder, addr, width, object::elf::R_MIPS_GLOB_DAT);
+    };
+
+    if tags.local_gotno >= 1
+        && let Some(addr) = slot(0)
+    {
+        hole(ctx, addr);
+    }
+    if tags.local_gotno >= 2
+        && let Some(addr) = slot(1)
+        && let Some(region) = ctx.holding(addr, width)
+        && read_field(region, addr, width, ctx.endian_le) >> (word * 8 - 1) != 0
+    {
+        hole(ctx, addr);
+    }
+
+    // `.dynsym` says which entries the loader leaves as they are.
+    let dynsym = obj.dynamic_symbol_table();
+    let globals = tags.symtabno.saturating_sub(tags.gotsym);
+    for i in 0..globals {
+        let Some(addr) = tags.local_gotno.checked_add(i).and_then(slot) else {
+            break;
+        };
+        // Past the mapping holding the GOT nothing is served, so a count
+        // running past it stops here.
+        let Some(region) = ctx.holding(addr, width) else {
+            break;
+        };
+        let held = read_field(region, addr, width, ctx.endian_le);
+        let index = object::SymbolIndex((tags.gotsym + i) as usize);
+        let served = dynsym
+            .as_ref()
+            .and_then(|table| table.symbol_by_index(index).ok())
+            .is_some_and(|sym| {
+                matches!(
+                    sym.section(),
+                    object::SymbolSection::Section(_) | object::SymbolSection::Absolute
+                ) && !is_ifunc(&sym)
+                    && held == sym.address()
+            });
+        if !served {
+            hole(ctx, addr);
+        }
+    }
+}
+
+/// Holes over the two GOT header words the dynamic loader writes for lazy
+/// binding, which no relocation record covers: ARM's link map and resolver
+/// at `DT_PLTGOT + 4` / `+ 8` (glibc's `elf_machine_runtime_setup`), which
+/// PLT0 jumps through, and the secure-PLT PPC32 pair at `DT_PPC_GOT + 4` /
+/// `+ 8`. Only an image with a `DT_JMPREL` has them; `DF_BIND_NOW` or not,
+/// a hole costing only the fold. A hole names the arch's `JUMP_SLOT`.
+pub(super) fn lazy_got_header(ctx: &mut Ctx<'_, '_>) {
+    use object::elf;
+    let obj = ctx.obj;
+    let (base_tag, r_type) = match obj.architecture() {
+        A::Arm => (elf::DT_PLTGOT, elf::R_ARM_JUMP_SLOT),
+        A::PowerPc => (elf::DT_PPC_GOT, elf::R_PPC_JMP_SLOT),
+        _ => return,
+    };
+    let Some(Some(tags)) = crate::elf::dynamic::dynamic_tags(obj) else {
+        return;
+    };
+    let (Some(base), Some(_)) = (tags.get(base_tag), tags.get(elf::DT_JMPREL)) else {
+        return;
+    };
+    for off in [4, 8] {
+        let Some(addr) = base.checked_add(off) else {
+            return;
+        };
+        let holder = ctx.holding(addr, 4);
+        ctx.unmodelled(holder, addr, 4, r_type);
+    }
+}
+
+/// The dynamic tags that place a MIPS primary GOT.
+pub(super) struct MipsGotTags {
+    /// `DT_PLTGOT`, the GOT's start.
+    base: u64,
+    /// `DT_MIPS_LOCAL_GOTNO`, the reserved and local entries before the
+    /// global ones.
+    local_gotno: u64,
+    /// `DT_MIPS_GOTSYM`, the `.dynsym` index of the first global entry's
+    /// symbol; `DT_MIPS_SYMTABNO` with no global entries.
+    gotsym: u64,
+    /// `DT_MIPS_SYMTABNO`, the `.dynsym` count.
+    symtabno: u64,
+}
+
+/// [`MipsGotTags`] from the loader's dynamic array: `None` without a
+/// `PT_DYNAMIC`, `Some(None)` when the array cannot be read or lacks any of
+/// the four tags.
+pub(super) fn mips_got_tags(obj: &object::File<'_>) -> Option<Option<MipsGotTags>> {
+    let Some(tags) = crate::elf::dynamic::dynamic_tags(obj)? else {
+        return Some(None);
+    };
+    let tag = |want: u32| tags.get(want);
+    let (Some(base), Some(local_gotno), Some(gotsym), Some(symtabno)) = (
+        tag(object::elf::DT_PLTGOT),
+        tag(object::elf::DT_MIPS_LOCAL_GOTNO),
+        tag(object::elf::DT_MIPS_GOTSYM),
+        tag(object::elf::DT_MIPS_SYMTABNO),
+    ) else {
+        return Some(None);
+    };
+    Some(Some(MipsGotTags {
+        base,
+        local_gotno,
+        gotsym,
+        symtabno,
+    }))
+}
