@@ -177,6 +177,53 @@ def test_the_count_bound_answers_where_no_other_bound_reaches():
     assert "over 512 levels" in str(value), value
 
 
+def _captures(n: int):
+    a = p.Capture("A")
+    pat = p.anything()
+    for _ in range(n):
+        pat = pat.capture(a)
+    return pat
+
+
+@pytest.mark.parametrize(("n", "fits"), [(511, True), (512, False)])
+def test_a_pat_root_is_one_of_the_512_levels(n, fits):
+    """`anything()` under `n` captures is `n + 1` levels, the root among them:
+    512 compile and 513 are refused, though construction accepts both."""
+    fn = _function()
+    pat = _captures(n)
+    kind, value = _on_thread(lambda: fn.find_all(pat), 256 << 20)
+    if fits:
+        assert kind == "ok", value
+    else:
+        assert kind == "raised", value
+        assert "over 512 levels" in str(value), value
+
+
+@pytest.mark.parametrize("into_pat", [False, True])
+@pytest.mark.parametrize(("n", "fits"), [(510, True), (511, False)])
+def test_a_builder_root_is_one_of_the_512_levels(n, fits, into_pat):
+    """A `load` over `n` captures of `anything()` is `n + 2` levels, the
+    builder root counting one, bare or as its `into_pat()` `Pat`, whose own
+    operand walk counts the same and so refuses first."""
+    fn = _function()
+    sealed = []
+
+    def query():
+        root = p.load(_captures(n))
+        if into_pat:
+            root = root.into_pat()
+            sealed.append(root)
+        return fn.find_all(root)
+
+    kind, value = _on_thread(query, 256 << 20)
+    if fits:
+        assert kind == "ok", value
+    else:
+        assert kind == "raised", value
+        assert "over 512 levels" in str(value), value
+        assert not sealed
+
+
 def test_a_reentrant_index_raises_instead_of_recursing_forever():
     """A `__index__` that re-enters the builder must raise, not recurse
     forever. The depth guard's error has to escape the int-extraction attempt
