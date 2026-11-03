@@ -27,7 +27,7 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         let split_index = second_region
             .insn_index_at(addr)
             .ok_or_else(|| {
-                let a = addr.machine_addr.addr;
+                let a = addr.machine();
                 anyhow!(
                     "split address {a:#x} (pcode {}) is not an instruction boundary of region {region_id:?}",
                     addr.insn_index,

@@ -30,8 +30,7 @@ pub(super) fn next_pcode_addr(
         bail!("sleigh returned zero-length machine instruction at pcode addr {addr:?}");
     }
     let next_machine = addr
-        .machine_addr
-        .addr
+        .machine()
         .checked_add(lift_res.machine_insn_len as u64)
         .ok_or_else(|| anyhow!("machine-address overflow advancing past pcode addr {addr:?}"))?;
     Ok(PcodeInsnAddr {
@@ -62,7 +61,7 @@ impl DecodeFailure {
     pub(in crate::builder) fn addr(self) -> u64 {
         match self {
             Self::Unmapped(addr) | Self::NotCode { addr, .. } => addr,
-            Self::PastEnd(at) => at.machine_addr.addr,
+            Self::PastEnd(at) => at.machine(),
         }
     }
 }
@@ -82,7 +81,7 @@ impl std::fmt::Display for DecodeFailure {
             Self::PastEnd(at) => write!(
                 f,
                 "a seeded arm's code falls through past the function's end at {:#x}",
-                at.machine_addr.addr
+                at.machine()
             ),
         }
     }

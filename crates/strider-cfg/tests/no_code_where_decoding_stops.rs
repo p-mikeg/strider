@@ -32,7 +32,7 @@ fn at(addr: u64) -> PcodeInsnAddr {
 fn decoded_addrs(cfg: &Cfg) -> Vec<u64> {
     let mut v: Vec<u64> = cfg
         .regions()
-        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine_addr.addr))
+        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine()))
         .collect();
     v.sort_unstable();
     v.dedup();
@@ -165,7 +165,7 @@ fn a_branch_into_the_zero_pcode_op_run_past_a_call_keeps_a_successor() {
     assert_eq!(cfg.region_graph().neighbors(nop).count(), 1);
     let call = cfg
         .regions()
-        .find(|r| r.insns.iter().any(|i| i.addr.machine_addr.addr == 0x1002))
+        .find(|r| r.insns.iter().any(|i| i.addr.machine() == 0x1002))
         .expect("the call decodes");
     assert_eq!(call.terminator, RegionTerminator::NoReturn);
 }
@@ -246,7 +246,7 @@ fn a_literal_pool_after_a_call_is_never_decoded() {
     );
     let call_region = cfg
         .regions()
-        .find(|r| r.insns.iter().any(|i| i.addr.machine_addr.addr == 0x100c))
+        .find(|r| r.insns.iter().any(|i| i.addr.machine() == 0x100c))
         .expect("the call decodes");
     assert_eq!(call_region.terminator, RegionTerminator::NoReturn);
     assert_eq!(
@@ -292,7 +292,7 @@ fn a_seeded_arm_into_a_data_range_is_an_undecodable_seeded_target() {
     assert_eq!(
         cfg.undecodable_seeded_targets()
             .iter()
-            .map(|u| u.target.machine_addr.addr)
+            .map(|u| u.target.machine())
             .collect::<Vec<_>>(),
         vec![0x1008]
     );
