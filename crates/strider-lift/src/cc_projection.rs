@@ -34,30 +34,4 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             }),
         }
     }
-
-    /// Ret-val varnodes in ABI order.  Test-only: production `build_cc_call`
-    /// takes both halves from a single `ret_and_clobber_vns` scan.
-    #[cfg(test)]
-    pub(crate) fn call_ret_vals_for(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
-        cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| {
-            self.container_map.container_of(v)
-        })
-        .0
-    }
-
-    /// Non-ret caller-saved varnodes in `all_vns` order.  Test-only, same as
-    /// [`Self::call_ret_vals_for`].
-    #[cfg(test)]
-    pub(crate) fn call_clobbered_for(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
-        cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| {
-            self.container_map.container_of(v)
-        })
-        .1
-    }
 }
