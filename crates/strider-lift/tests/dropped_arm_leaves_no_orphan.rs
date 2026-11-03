@@ -32,11 +32,9 @@ fn bytes() -> Vec<u8> {
 #[test]
 fn a_dropped_arm_region_is_removed_and_the_function_lifts() {
     let arch = strider_target::SleighArch::arm();
-    let mut lifter = strider_lift::lift::Lifter::new(
-        arch,
-        rsleigh::mem_readers::BufMemReader::new(bytes(), BASE),
-    )
-    .expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes(), BASE))
+            .expect("lifter");
     let cc = strider_target::CallingConvention::arm_aapcs()
         .build(lifter.sleigh_regs())
         .expect("aapcs");

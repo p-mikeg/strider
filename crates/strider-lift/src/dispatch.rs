@@ -4,7 +4,7 @@ use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
-use crate::lift::FunctionLifter;
+use crate::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// `region_map` is consulted only by the branch opcodes.

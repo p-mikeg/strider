@@ -236,8 +236,8 @@ pub(super) fn decode_user_op<'a>(
         return Ok((u64::from(id), name));
     }
     // Why it names none.
-    let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
-    crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
+    let id_vn = crate::pcode_util::nth_input_or_err(insn, 0)?;
+    crate::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
     let id = u32::try_from(id_vn.addr_off)
         .map_err(|_| anyhow!("CallOther user-op id {:#x} exceeds u32", id_vn.addr_off))?;
     anyhow::bail!("CallOther user-op id {id} not in Sleigh's user_op table")
@@ -262,7 +262,7 @@ mod tests {
         let regs = x86_64_sleigh_regs();
         let cc = strider_target::CallingConvention::x86_64_systemv().build(&regs)?;
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
-        let mut lifter = crate::lift::Lifter::new(arch, reader)?;
+        let mut lifter = crate::Lifter::new(arch, reader)?;
         let cfg = lifter.build_cfg(0x1000u64.into(), opts)?;
         Ok(lifter
             .build_ir_with(
@@ -400,7 +400,7 @@ mod tests {
         // 1002: c3       ret
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0x0f, 0x05, 0xc3], 0x1000);
         let mut lifter =
-            crate::lift::Lifter::new(strider_target::SleighArch::x86_64(), reader).expect("lifter");
+            crate::Lifter::new(strider_target::SleighArch::x86_64(), reader).expect("lifter");
         let cfg = lifter
             .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
             .expect("cfg");
@@ -416,7 +416,7 @@ mod tests {
     ) -> anyhow::Result<strider_ir::Function> {
         let arch = strider_target::SleighArch::ppc32be();
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
-        let mut lifter = crate::lift::Lifter::new(arch, reader)?;
+        let mut lifter = crate::Lifter::new(arch, reader)?;
         let cc = strider_target::CallingConvention::powerpc_sysv32().build(lifter.sleigh_regs())?;
         let cfg = lifter.build_cfg(0x1000u64.into(), opts)?;
         Ok(lifter
@@ -492,7 +492,7 @@ mod tests {
         let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
         let arch = strider_target::SleighArch::ppc32be();
         let reader = rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000);
-        let mut lifter = crate::lift::Lifter::new(arch, reader).expect("lifter");
+        let mut lifter = crate::Lifter::new(arch, reader).expect("lifter");
         let cc = strider_target::CallingConvention::powerpc_sysv32()
             .build(lifter.sleigh_regs())
             .expect("cc");
@@ -557,7 +557,7 @@ mod tests {
         ];
         let arch = strider_target::SleighArch::ppc32be();
         let reader = rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000);
-        let mut lifter = crate::lift::Lifter::new(arch, reader).expect("lifter");
+        let mut lifter = crate::Lifter::new(arch, reader).expect("lifter");
         let cc = strider_target::CallingConvention::powerpc_sysv32()
             .build(lifter.sleigh_regs())
             .expect("cc");

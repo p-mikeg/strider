@@ -177,7 +177,7 @@ pub(super) fn flowing_isa_bits(
 /// A site the pipeline culled took its `Return` with it.
 pub(super) fn settle_return_sites(
     function: &mut strider_ir::Function,
-    sites: &[strider_lift::lift::ReturnSite],
+    sites: &[strider_lift::ReturnSite],
 ) -> Vec<PcodeInsnAddr> {
     let mut unverified = Vec::new();
     let mut live = Vec::with_capacity(sites.len());
