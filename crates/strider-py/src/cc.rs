@@ -55,6 +55,34 @@ forall_preset!(
     ]
 );
 
+impl PyCallingConvention {
+    pub(crate) fn from_preset(p: &'static strider_target::CcPreset) -> Self {
+        Self {
+            inner: CcImpl::Preset(p.cc),
+            preset_name: p.name,
+            source_arch: None,
+        }
+    }
+
+    fn check_expressible(&self, preserves_all_registers: bool) -> PyResult<()> {
+        if preserves_all_registers {
+            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "CallingConvention.to_dict: a preserves_all() / preserves_regs() \
+                 variant is not expressible through custom(...)"
+            )));
+        }
+        Ok(())
+    }
+
+    fn vn_name(&self, arch: strider_target::SleighArch, vn: rsleigh::Vn) -> PyResult<&'static str> {
+        arch.names().regs().vn_to_name(vn).ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "CallingConvention.to_dict: no register name for {vn:?}"
+            ))
+        })
+    }
+}
+
 #[pymethods]
 impl PyCallingConvention {
     /// A variant of this convention that clobbers nothing: every register
@@ -125,6 +153,9 @@ impl PyCallingConvention {
     ///         argument split between registers and the stack is then one
     ///         object, and its address reaching a callee keeps every
     ///         incoming stack argument read after a call unknown.
+    ///     entry_address: Register name the ABI guarantees holds the
+    ///         function's own entry address on entry (PPC64 ELFv2 `r12`,
+    ///         MIPS abicalls `t9`), or `None` for no such promise.
     ///
     /// Raises `StriderError` here when `stack_pointer` is not as wide as the
     /// arch's addresses, when `stack_arg_base` is set and `stack_arg_increment`
@@ -150,6 +181,7 @@ impl PyCallingConvention {
         preserves_memory=false,
         arg_passing_regs_float=Vec::new(),
         reg_args_adjoin_stack_args=false,
+        entry_address=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn custom(
@@ -167,6 +199,7 @@ impl PyCallingConvention {
         preserves_memory: bool,
         arg_passing_regs_float: Vec<String>,
         reg_args_adjoin_stack_args: bool,
+        entry_address: Option<String>,
     ) -> PyResult<Self> {
         let source_arch = sleigh.inner;
         let regs = source_arch.names().regs();
@@ -191,6 +224,10 @@ impl PyCallingConvention {
             .as_deref()
             .map(|name| one("link_register", name))
             .transpose()?;
+        let entry_vn = entry_address
+            .as_deref()
+            .map(|name| one("entry_address", name))
+            .transpose()?;
         let stack_args = stack_arg_base.map(|base_offset| strider_target::StackArgs {
             base_offset,
             increment: stack_arg_increment,
@@ -207,9 +244,7 @@ impl PyCallingConvention {
             link_register: lr_vn,
             preserves_memory,
             preserves_all_registers: false,
-            // A custom convention makes no entry-register promise; only the
-            // presets that carry an ABI guarantee do.
-            entry_address: None,
+            entry_address: entry_vn,
             reg_args_adjoin_stack_args,
         };
         built.validate().map_err(crate::errors::into_strider_err)?;
@@ -221,6 +256,84 @@ impl PyCallingConvention {
             preset_name: "custom",
             source_arch: Some(source_arch),
         })
+    }
+
+    /// The preset named `name` (one of `strider.sleigh.CC_PRESETS`), as
+    /// `CallingConvention.<name>()` builds it.  Raises `StriderError` for an
+    /// unknown name, listing the known ones.
+    #[classmethod]
+    fn preset(_cls: &Bound<'_, PyType>, name: &str) -> PyResult<Self> {
+        strider_target::CallingConvention::presets()
+            .find(|p| p.name == name)
+            .map(Self::from_preset)
+            .ok_or_else(|| {
+                let known: Vec<_> = strider_target::CallingConvention::presets()
+                    .map(|p| p.name)
+                    .collect();
+                crate::errors::into_strider_err(anyhow::anyhow!(
+                    "unknown calling convention preset {name:?}; known: {}",
+                    known.join(", ")
+                ))
+            })
+    }
+
+    /// The keyword arguments of `custom` other than `sleigh`, so
+    /// `CallingConvention.custom(arch, **cc.to_dict())` rebuilds an equivalent
+    /// convention.  A preset yields its own register names; a `custom` one the
+    /// names of its resolved registers.  `stack_arg_increment` is `0` when
+    /// the convention passes nothing on the stack.
+    ///
+    /// Raises `StriderError` for a `preserves_all()` / `preserves_regs()`
+    /// variant: `custom` cannot express `preserves_all_registers`.
+    fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        use pyo3::types::PyDict;
+        let d = PyDict::new_bound(py);
+        match &self.inner {
+            CcImpl::Preset(cc) => {
+                self.check_expressible(cc.preserves_all_registers)?;
+                d.set_item("arg_passing_regs", cc.arg_passing_regs.to_vec())?;
+                d.set_item("callee_saved_regs", cc.callee_saved_regs.to_vec())?;
+                d.set_item("ret_val_regs", cc.ret_val_regs.to_vec())?;
+                d.set_item("ret_val_regs_float", cc.ret_val_regs_float.to_vec())?;
+                d.set_item("stack_pointer", cc.stack_ptr)?;
+                d.set_item("stack_arg_base", cc.stack_args.map(|s| s.base_offset))?;
+                d.set_item(
+                    "stack_arg_increment",
+                    cc.stack_args.map_or(0, |s| s.increment),
+                )?;
+                d.set_item("ret_stack_pop", cc.ret_stack_pop)?;
+                d.set_item("link_register", cc.link_register)?;
+                d.set_item("preserves_memory", cc.preserves_memory)?;
+                d.set_item("arg_passing_regs_float", cc.arg_passing_regs_float.to_vec())?;
+                d.set_item("reg_args_adjoin_stack_args", cc.reg_args_adjoin_stack_args)?;
+                d.set_item("entry_address", cc.entry_address)?;
+            }
+            CcImpl::Custom(cc) => {
+                self.check_expressible(cc.preserves_all_registers)?;
+                let arch = self.source_arch.expect("custom has a source arch");
+                let one = |vn| self.vn_name(arch, vn);
+                let names = |vns: &[rsleigh::Vn]| {
+                    vns.iter().map(|&vn| one(vn)).collect::<PyResult<Vec<_>>>()
+                };
+                d.set_item("arg_passing_regs", names(&cc.arg_passing_regs)?)?;
+                d.set_item("callee_saved_regs", names(&cc.callee_saved_regs)?)?;
+                d.set_item("ret_val_regs", names(&cc.ret_val_regs)?)?;
+                d.set_item("ret_val_regs_float", names(&cc.ret_val_regs_float)?)?;
+                d.set_item("stack_pointer", one(cc.stack_ptr)?)?;
+                d.set_item("stack_arg_base", cc.stack_args.map(|s| s.base_offset))?;
+                d.set_item(
+                    "stack_arg_increment",
+                    cc.stack_args.map_or(0, |s| s.increment),
+                )?;
+                d.set_item("ret_stack_pop", cc.ret_stack_pop)?;
+                d.set_item("link_register", cc.link_register.map(one).transpose()?)?;
+                d.set_item("preserves_memory", cc.preserves_memory)?;
+                d.set_item("arg_passing_regs_float", names(&cc.arg_passing_regs_float)?)?;
+                d.set_item("reg_args_adjoin_stack_args", cc.reg_args_adjoin_stack_args)?;
+                d.set_item("entry_address", cc.entry_address.map(one).transpose()?)?;
+            }
+        }
+        Ok(d)
     }
 
     /// The preset name this convention was constructed from (e.g.
