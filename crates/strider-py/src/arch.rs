@@ -27,6 +27,32 @@ impl PySleighArch {
         }
     }
 
+    /// The arch preset named `name` (one of `strider.sleigh.ARCH_PRESETS`), as
+    /// `SleighArch.<name>()` builds it.  Raises `StriderError` for an unknown
+    /// name, listing the known ones.
+    #[classmethod]
+    fn preset(cls: &Bound<'_, PyType>, name: &str) -> PyResult<Self> {
+        let known = strider_target::ArchPreset::ALL.iter().map(|p| p.name());
+        if !known.clone().any(|n| n == name) {
+            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "unknown arch preset {name:?}; known: {}",
+                known.collect::<Vec<_>>().join(", ")
+            )));
+        }
+        cls.call_method0(name)?.extract()
+    }
+
+    /// The calling-convention presets for this arch, in roster order.
+    fn calling_conventions<'py>(&self, py: Python<'py>) -> Bound<'py, pyo3::types::PyTuple> {
+        pyo3::types::PyTuple::new_bound(
+            py,
+            self.inner
+                .calling_conventions()
+                .map(|p| crate::cc::PyCallingConvention::from_preset(p).into_py(py))
+                .collect::<Vec<_>>(),
+        )
+    }
+
     /// `SleighArch.<preset>()`, the call that produces this arch.
     fn __repr__(&self) -> String {
         format!("SleighArch.{}()", self.name())
@@ -64,6 +90,15 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The roster the classmethods above are checked against: a preset added
     // to `arch_presets!` reaches Python only through that hand-written list,
     // and nothing else compares the two.
+    m.add(
+        "CC_PRESETS",
+        pyo3::types::PyTuple::new_bound(
+            py,
+            strider_target::CallingConvention::presets()
+                .map(|p| p.name)
+                .collect::<Vec<_>>(),
+        ),
+    )?;
     m.add(
         "ARCH_PRESETS",
         pyo3::types::PyTuple::new_bound(
