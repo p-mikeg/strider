@@ -153,14 +153,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.arch().names().regs()
     }
 
-    /// This engine's resolved [`strider_target::SleighArch::internal_registers`].
-    pub(crate) fn internal_register_vns(&self) -> &'static [rsleigh::Vn] {
-        &self.engine.tables().internal_register_vns
-    }
-
-    /// See [`strider_target::DecodeTables::isa_mode_switch_vn`].
-    pub(crate) fn isa_mode_switch_vn(&self) -> Option<rsleigh::Vn> {
-        self.engine.tables().isa_mode_switch_vn
+    /// This engine's sla decode and lift facts.
+    pub(crate) fn tables(&self) -> &'static strider_target::DecodeTables {
+        self.engine.tables()
     }
 
     /// Whether `vn` shares a byte with a volatile register.
@@ -168,18 +163,10 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         let (start, end) = (vn.addr_off, vn.addr_off + u64::from(vn.size));
         vn.addr_space == rsleigh::VnSpace::REGISTER
             && self
-                .engine
                 .tables()
                 .volatile_ranges
                 .iter()
                 .any(|r| r.start < end && start < r.end)
-    }
-
-    /// The declared register file, for containment queries against a computed
-    /// REGISTER-space address.
-    #[must_use]
-    pub(crate) fn declared_reg_vns(&self) -> &'static [rsleigh::Vn] {
-        &self.engine.tables().declared_reg_vns
     }
 
     /// The CFG of the function at `entry`; see
