@@ -167,7 +167,7 @@ impl fmt::Display for Incompleteness {
             if i > 0 {
                 f.write_str(", ")?;
             }
-            write!(f, "{:#x}", addr.machine_addr.addr)?;
+            write!(f, "{:#x}", addr.machine())?;
             if addr.insn_index != 0 {
                 write!(f, ".{}", addr.insn_index)?;
             }
