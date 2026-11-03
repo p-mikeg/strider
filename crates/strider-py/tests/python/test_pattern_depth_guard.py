@@ -31,6 +31,20 @@ _SMALL_STACK = 1 << 20
 #: A quarter of that, well under any fixed budget a guard could assume.
 _TINY_STACK = 256 * 1024
 
+#: The outermost guard's refusal, on a thread that starts the compile under
+#: the reserve one step and its refusal take.
+_TOO_LITTLE = "too little of this thread's stack left"
+
+#: The stack budget's refusal, past that reserve.
+_OVER_BUDGET = "pattern nesting too deep for this thread's stack"
+
+#: What a stack bound raises on a thread of 32 or 40 KiB: which one is a few
+#: KiB of interpreter frames either way.
+_STACK_REFUSALS = (_TOO_LITTLE, _OVER_BUDGET)
+
+#: A constant in a memory slot, refused by the operand walk.
+_MEMORY_SLOT = "a memory-input slot (`mem`) requires a memory producer"
+
 
 def _chain(n: int):
     pat = p.anything()
@@ -258,7 +272,6 @@ def test_a_raising_index_surfaces_its_own_error():
         p.load().addr(Boom()).into_pat()  # type: ignore[arg-type]
 
 
-
 def _on_small_thread_child(kib: int, setup: str, loop: str):
     """Run `loop` on fresh `kib` KiB threads in a child, since a SIGSEGV takes
     the whole process down."""
@@ -283,31 +296,23 @@ def _on_small_thread_child(kib: int, setup: str, loop: str):
     )
 
 
-def _skip_if_compiling_overflows(kib: int, levels: int):
-    """Skips where `levels` nested loads, which nothing refuses, overflow."""
-    fits = _on_small_thread_child(
-        kib,
-        "",
-        f"""\
-        pat = p.anything()
-        for _ in range({levels}):
-            pat = p.load(pat)
-        t = threading.Thread(target=lambda: fn.find_all(pat))
-        t.start()
-        t.join()
-        """,
-    )
-    if fits.returncode != 0:
-        pytest.skip(f"this build overflows the thread compiling {levels} level(s)")
-
-
-@pytest.mark.parametrize("kib", [32, 40, 64])
-@pytest.mark.parametrize("nest", [0, 2])
-def test_any_refusal_fits_a_minimal_thread(kib, nest):
-    """A refusal the matcher raises (a constant in a memory slot never
-    matches) reaches the caller of a 32 KiB thread, and `.backtrace`, read
-    later on the main thread, still has frames."""
-    _skip_if_compiling_overflows(kib, nest + 1)
+@pytest.mark.parametrize(
+    ("kib", "nest", "refusals"),
+    [
+        (32, 0, _STACK_REFUSALS),
+        (40, 0, _STACK_REFUSALS),
+        (32, 2, _STACK_REFUSALS),
+        (40, 2, _STACK_REFUSALS),
+        (128, 0, (_MEMORY_SLOT,)),
+        (256, 2, (_MEMORY_SLOT,)),
+    ],
+)
+def test_any_refusal_fits_a_minimal_thread(kib, nest, refusals):
+    """A refusal reaches the caller of a small thread, and `.backtrace`, read
+    later on the main thread, still has frames. At 32 and 40 KiB a stack bound
+    refuses before the walk reaches the memory slot; from 128 KiB, 256 under
+    two loads, the walk gets there in an unoptimised build too, and the
+    refusal is the slot's own (a constant there never matches)."""
     out = _on_small_thread_child(
         kib,
         f"""\
@@ -326,20 +331,32 @@ def test_any_refusal_fits_a_minimal_thread(kib, nest):
         t = threading.Thread(target=run)
         t.start()
         t.join()
-        print("raised", "stack backtrace" in errs[0].backtrace.lower(), flush=True)
+        print("stack backtrace" in errs[0].backtrace.lower(), flush=True)
+        print(errs[0], flush=True)
         """,
     )
     assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
-    assert out.stdout.split() == ["raised", "True"], out.stdout
+    has_frames, message = out.stdout.split("\n", 1)
+    assert has_frames == "True", out.stdout
+    assert message.startswith(refusals), out.stdout
 
 
-@pytest.mark.parametrize("kib", [32, 40, 64])
+@pytest.mark.parametrize(
+    ("kib", "refusals"),
+    [
+        (32, _STACK_REFUSALS),
+        (40, _STACK_REFUSALS),
+        (64, (_OVER_BUDGET,)),
+        (128, (_OVER_BUDGET,)),
+    ],
+)
 @pytest.mark.parametrize("shape", ["value", "builder", "join"])
-def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, shape):
+def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, refusals, shape):
     """The refusal is raised on the stack the guard just declared spent, so
     building it must not resolve the Rust backtrace there, a SIGSEGV on a
-    32 KiB thread. Each depth runs on a fresh thread until one refuses."""
-    _skip_if_compiling_overflows(kib, 1)
+    32 KiB thread. Each depth runs on a fresh thread until one refuses. Under
+    48 KiB the outermost guard may refuse at once; from 64 KiB the walk starts
+    in an unoptimised build too, and the budget is what refuses."""
     setup = f"""\
         a = p.Capture("A")
 
@@ -367,12 +384,15 @@ def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, shape):
             t.start()
             t.join()
             if out:
-                print("raised", "stack backtrace" in out[0].backtrace.lower())
+                print("stack backtrace" in out[0].backtrace.lower(), flush=True)
+                print(out[0], flush=True)
                 break
         """
     out = _on_small_thread_child(kib, setup, loop)
     assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
-    assert out.stdout.split() == ["raised", "True"], out.stdout
+    has_frames, message = out.stdout.split("\n", 1)
+    assert has_frames == "True", out.stdout
+    assert message.startswith(refusals), out.stdout
 
 
 @pytest.mark.parametrize("shape", ["value", "builder", "join", "store"])
