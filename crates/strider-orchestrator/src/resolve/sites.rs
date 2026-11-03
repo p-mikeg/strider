@@ -9,7 +9,7 @@ use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTargets, seated_from, seate
 use strider_ir::node::NodeId;
 
 use super::merge::{adopt_known_modes, drop_contradicted, merge_derived, union_with_seed};
-use super::round::Anchors;
+use super::round::FlowingAnchor;
 use super::visit;
 
 /// One fold's effect on the induced edge set.
@@ -21,10 +21,10 @@ pub(super) struct Progress {
     pub(super) grew: Vec<PcodeInsnAddr>,
     /// Addresses that LOST a successor, so the signal is not monotone there.
     pub(super) narrowed: Vec<PcodeInsnAddr>,
-    /// Addresses whose one target turned into or out of a `Single`: out of
+    /// Some address's one target turned into or out of a `Single`: out of
     /// range the cfg seats a `Single` as a tail call but defers a table's
     /// arm, so an unchanged successor set is not an unchanged seat.
-    pub(super) reshaped: Vec<PcodeInsnAddr>,
+    pub(super) reshaped: bool,
     /// Addresses whose fold dropped a successor the CLASSIFIER proved this
     /// round, or whose answer stopped being a superset. A seed says nothing
     /// about what the classifier derives, so this list is never suppressed.
@@ -41,7 +41,50 @@ impl Progress {
     /// Some address's seat differs from the previous round's: the loop's
     /// progress signal.
     pub(super) fn changed(&self) -> bool {
-        !self.grew.is_empty() || !self.narrowed.is_empty() || !self.reshaped.is_empty()
+        !self.grew.is_empty() || !self.narrowed.is_empty() || self.reshaped
+    }
+}
+
+/// One address's classifications in one round, before any touches the seats.
+struct Staged {
+    /// The anchors' answers, merged.
+    targets: ResolvedTargets,
+    /// The ISA-mode bit flowing into the branch.
+    flowing: bool,
+    /// Every successor the classifications name, before any mode filter:
+    /// what the fold has to account for. `None` is the `LinkRegister`
+    /// successor, which `ResolvedTargets` cannot hold alongside concrete
+    /// targets, so a merge that drops it has to be visible here.
+    reported: FxHashSet<Option<u64>>,
+    /// Every `(target, mode)` the classifications prove: a target proved in
+    /// both modes is dropped however many anchors there are, where merging
+    /// them pairwise can forget the contradiction.
+    proved: FxHashSet<(u64, bool)>,
+}
+
+impl Staged {
+    fn new(flowing: bool) -> Self {
+        Self {
+            targets: ResolvedTargets::Withdrawn,
+            flowing,
+            reported: FxHashSet::default(),
+            proved: FxHashSet::default(),
+        }
+    }
+
+    /// Merges one anchor's answer in: two anchors at one address UNION.
+    fn add(&mut self, targets: ResolvedTargets) {
+        for (target, bit) in visit(targets.successors()) {
+            self.reported.insert(target);
+            if let (Some(target), Some(bit)) = (target, bit) {
+                self.proved.insert((target, bit));
+            }
+        }
+        // `Withdrawn` is the merge's identity.
+        self.targets = match &self.targets {
+            ResolvedTargets::Withdrawn => targets,
+            prev => merge_derived(prev, &targets, self.flowing),
+        };
     }
 }
 
@@ -132,130 +175,109 @@ impl<'s> SiteTable<'s> {
     ///
     /// Within one round, two anchors can share one address: their target sets
     /// are UNIONED, not last-write-wins. Across rounds the staged set REPLACES
-    /// the previous seat.
+    /// the previous seat, so a set that narrows from unseatable to seatable
+    /// once other branches resolve is not stranded; convergence rides on the
+    /// per-address diff, so an unchanged cone re-inserts an equal value and
+    /// reads as no growth.
     ///
     /// # Errors
     ///
-    /// A classified node that is no anchor of `placeholders` or `switches`
-    /// (internal-consistency violation).
+    /// A classified node that is no anchor (internal-consistency violation).
     pub(super) fn fold(
         &mut self,
-        placeholders: &Anchors,
-        switches: &Anchors,
+        anchors: &[FlowingAnchor],
         resolutions: impl IntoIterator<Item = (NodeId, ResolvedTargets)>,
-        flowing_isa_bit: &FxHashMap<PcodeInsnAddr, bool>,
     ) -> Result<Progress> {
-        let node_to_addr: FxHashMap<NodeId, PcodeInsnAddr> = placeholders
+        let mut progress = Progress::default();
+        for (addr, staged) in self.stage(anchors, resolutions)? {
+            self.apply(addr, staged, &mut progress);
+        }
+        Ok(progress)
+    }
+
+    /// The round's classifications per address, so same-address collisions
+    /// merge before anything touches the seats. A frozen site takes none:
+    /// folding one back in would re-enter the cycle that froze it.
+    fn stage(
+        &self,
+        anchors: &[FlowingAnchor],
+        resolutions: impl IntoIterator<Item = (NodeId, ResolvedTargets)>,
+    ) -> Result<FxHashMap<PcodeInsnAddr, Staged>> {
+        let by_node: FxHashMap<NodeId, (PcodeInsnAddr, bool)> = anchors
             .iter()
-            .chain(switches)
-            .map(|&(addr, node)| (node, addr))
+            .map(|&(addr, node, flowing)| (node, (addr, flowing)))
             .collect();
-        // In the resolve loop every staged address came from `node_to_addr`,
-        // built from the same anchors `flowing_isa_bits` mapped, so the lookup
-        // hits; the default is for a caller that folds without one (the unit
-        // tests), where `false` is the base ISA mode rather than a third rule
-        // for the bit.
-        let flowing_at = |addr: PcodeInsnAddr| flowing_isa_bit.get(&addr).copied().unwrap_or(false);
-        // Staged per address first, so same-address collisions merge before
-        // anything touches the seats.
-        let mut staged: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        // Every successor the round's classifications name, before any mode
-        // filter: what the fold has to account for. `None` is the
-        // `LinkRegister` successor, which `ResolvedTargets` cannot hold
-        // alongside concrete targets, so a merge that drops it has to be
-        // visible here.
-        let mut reported: FxHashMap<PcodeInsnAddr, FxHashSet<Option<u64>>> = FxHashMap::default();
-        // Every `(target, mode)` the classifications prove, per address: a
-        // target proved in both modes is dropped however many anchors there
-        // are, where merging them pairwise can forget the contradiction.
-        let mut proved: FxHashMap<PcodeInsnAddr, FxHashSet<(u64, bool)>> = FxHashMap::default();
+        let mut staged: FxHashMap<PcodeInsnAddr, Staged> = FxHashMap::default();
         for (node, targets) in resolutions {
-            let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
+            let &(addr, flowing) = by_node.get(&node).ok_or_else(|| {
                 anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
             })?;
-            // A frozen site takes no further classification: folding one back
-            // in would re-enter the cycle that froze it.
             if self.frozen.contains(&addr) {
                 continue;
             }
-            let reported_at = reported.entry(addr).or_default();
-            let proved_at = proved.entry(addr).or_default();
-            for (target, bit) in visit(targets.successors()) {
-                reported_at.insert(target);
-                if let (Some(target), Some(bit)) = (target, bit) {
-                    proved_at.insert((target, bit));
-                }
-            }
             staged
                 .entry(addr)
-                .and_modify(|e| *e = merge_derived(e, &targets, flowing_at(addr)))
-                .or_insert(targets);
+                .or_insert_with(|| Staged::new(flowing))
+                .add(targets);
         }
-        // Across rounds, this round's staged set REPLACES the previous round's
-        // seat (within the round they merged above), so a set that narrows
-        // from unseatable to seatable once other branches resolve is not
-        // stranded; convergence rides on the per-address diff, so an unchanged
-        // cone re-inserts an equal value and reads as no growth. Every
-        // successor the round reported yet did not seat comes back in
-        // `Progress::derived_incomplete`.
-        let mut progress = Progress::default();
-        for (addr, targets) in staged {
-            let (targets, contradicted) = match proved.get(&addr) {
-                Some(proved_at) => drop_contradicted(targets, proved_at),
-                None => (targets, false),
-            };
-            let seat = self.seat(addr);
-            // A re-derivation reports no mode where the dispatch commits none,
-            // including at an address a caller seed gave a mode. Re-deriving
-            // must widen the arm set, not re-decode the old arms in the mode
-            // flowing into the branch.
-            let (targets, assumed_mode) = adopt_known_modes(seat, targets, flowing_at(addr));
-            // The caller's own seed is unioned in by ADDRESS every round, after
-            // both mode filters and never subject to them: a seed carries a
-            // mode only if the caller built one, and filtering it against a
-            // mode-bearing classification would delete the whole caller answer.
-            let targets = match self.seed(addr) {
-                Some(seed) => union_with_seed(seed, &targets),
-                None => targets,
-            };
-            let seated: FxHashSet<Option<u64>> = visit(targets.successors())
-                .map(|(target, _bit)| target)
-                .collect();
-            let derived_dropped = contradicted
-                || reported
-                    .get(&addr)
-                    .into_iter()
-                    .flatten()
-                    .any(|a| !seated.contains(a));
-            let prev: BTreeSet<_> = seat
-                .into_iter()
-                .flat_map(|seat| visit(seat.successors()))
-                .collect();
-            let next: BTreeSet<_> = visit(targets.successors()).collect();
-            let narrowed = seat.is_some_and(|seat| seat.narrows_to(&targets));
-            if prev != next {
-                if narrowed {
-                    progress.narrowed.push(addr);
-                } else {
-                    progress.grew.push(addr);
-                }
-            } else if seat.is_some_and(|seat| is_single(seat) != is_single(&targets)) {
-                // Settles in one round: in range both shapes seat the same
-                // `Switch`, and out of range a `Single` is consumed as a tail
-                // call, which nothing classifies again.
-                progress.reshaped.push(addr);
+        Ok(staged)
+    }
+
+    /// Seats `staged` at `addr`, recording in `progress` how the seat moved
+    /// and every successor the round reported yet did not seat.
+    fn apply(&mut self, addr: PcodeInsnAddr, staged: Staged, progress: &mut Progress) {
+        let Staged {
+            targets,
+            flowing,
+            reported,
+            proved,
+        } = staged;
+        let (targets, contradicted) = drop_contradicted(targets, &proved);
+        let seat = self.seat(addr);
+        // A re-derivation reports no mode where the dispatch commits none,
+        // including at an address a caller seed gave a mode. Re-deriving
+        // must widen the arm set, not re-decode the old arms in the mode
+        // flowing into the branch.
+        let (targets, assumed_mode) = adopt_known_modes(seat, targets, flowing);
+        // The caller's own seed is unioned in by ADDRESS every round, after
+        // both mode filters and never subject to them: a seed carries a
+        // mode only if the caller built one, and filtering it against a
+        // mode-bearing classification would delete the whole caller answer.
+        let targets = match self.seed(addr) {
+            Some(seed) => union_with_seed(seed, &targets),
+            None => targets,
+        };
+        let seated: FxHashSet<Option<u64>> = visit(targets.successors())
+            .map(|(target, _bit)| target)
+            .collect();
+        let derived_dropped = contradicted || reported.iter().any(|a| !seated.contains(a));
+        let prev: BTreeSet<_> = seat
+            .into_iter()
+            .flat_map(|seat| visit(seat.successors()))
+            .collect();
+        let next: BTreeSet<_> = visit(targets.successors()).collect();
+        let narrowed = seat.is_some_and(|seat| seat.narrows_to(&targets));
+        if prev != next {
+            if narrowed {
+                progress.narrowed.push(addr);
+            } else {
+                progress.grew.push(addr);
             }
-            if derived_dropped || narrowed {
-                progress.derived_incomplete.push(addr);
-            }
-            // Decodable, and the arm set is whole: nothing evaluated THIS arm's
-            // mode, which is `UnverifiedSeed`, not `UnresolvedBranch`.
-            if assumed_mode {
-                progress.assumed_modes.push(addr);
-            }
-            self.seats.insert(addr, targets);
+        } else if seat.is_some_and(|seat| is_single(seat) != is_single(&targets)) {
+            // Settles in one round: in range both shapes seat the same
+            // `Switch`, and out of range a `Single` is consumed as a tail
+            // call, which nothing classifies again.
+            progress.reshaped = true;
         }
-        Ok(progress)
+        if derived_dropped || narrowed {
+            progress.derived_incomplete.push(addr);
+        }
+        // Decodable, and the arm set is whole: nothing evaluated THIS arm's
+        // mode, which is `UnverifiedSeed`, not `UnresolvedBranch`.
+        if assumed_mode {
+            progress.assumed_modes.push(addr);
+        }
+        self.seats.insert(addr, targets);
     }
 }
 
@@ -267,41 +289,61 @@ fn is_single(targets: &ResolvedTargets) -> bool {
 mod tests {
     use super::*;
     use crate::resolve::test_support::{
-        TARGET_VISITS, assert_linear_visits, fn_with_live_indirect_branch, mid_insn_addr, multiple,
-        pcode_addr, successor_set,
+        TARGET_VISITS, assert_linear_visits, mid_insn_addr, multiple, pcode_addr, successor_set,
     };
 
-    /// The classifier's answers as the tests write them, `None` for a site it
-    /// could not derive.
-    type Answers = FxHashMap<NodeId, Option<ResolvedTargets>>;
+    /// The classifier's answers, by node.
+    type Answers = FxHashMap<NodeId, ResolvedTargets>;
 
-    /// [`SiteTable::fold`] over `seats`, the loop's answers so far, skipping
-    /// `frozen` sites; `seats` comes back folded.
+    /// An anchor's node: the fold never reads the function, so any id serves.
+    fn node(i: u32) -> NodeId {
+        NodeId::from_u32(i)
+    }
+
+    /// [`SiteTable::fold`] over `seats`, the loop's answers so far; `seats`
+    /// comes back folded.
     fn fold_into(
         seats: &mut FxHashMap<PcodeInsnAddr, ResolvedTargets>,
         seeds: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-        placeholders: &Anchors,
-        switches: &Anchors,
+        anchors: &[FlowingAnchor],
         answers: Answers,
-        flowing: &FxHashMap<PcodeInsnAddr, bool>,
-        frozen: &FxHashSet<PcodeInsnAddr>,
     ) -> Result<Progress> {
-        let mut sites = SiteTable {
-            seeds,
-            seats: std::mem::take(seats),
-            narrowed_once: FxHashSet::default(),
-            frozen: frozen.clone(),
-        };
-        let progress = sites.fold(
-            placeholders,
-            switches,
-            answers
-                .into_iter()
-                .filter_map(|(node, answer)| Some((node, answer?))),
-            flowing,
-        );
+        let mut sites = SiteTable::new(seeds);
+        sites.seats = std::mem::take(seats);
+        let progress = sites.fold(anchors, answers);
         *seats = sites.seats;
         progress
+    }
+
+    /// One fold at `pcode_addr(0x1000)`, its one anchor with `flowing` flowing
+    /// in: the loop holding `prev`, the caller seeding `seed`, the classifier
+    /// answering `next`. Returns the progress and the folded seat.
+    fn fold_at(
+        prev: Option<ResolvedTargets>,
+        next: ResolvedTargets,
+        seed: Option<ResolvedTargets>,
+        flowing: bool,
+    ) -> (Progress, ResolvedTargets) {
+        let addr = pcode_addr(0x1000);
+        let mut known: FxHashMap<_, _> = prev.into_iter().map(|p| (addr, p)).collect();
+        let seeds: FxHashMap<_, _> = seed.into_iter().map(|s| (addr, s)).collect();
+        let progress = fold_into(
+            &mut known,
+            &seeds,
+            &[(addr, node(0), flowing)],
+            std::iter::once((node(0), next)).collect(),
+        )
+        .expect("fold");
+        (progress, known.remove(&addr).expect("folded"))
+    }
+
+    /// [`fold_at`] with the base ISA mode flowing in.
+    fn round(
+        prev: Option<ResolvedTargets>,
+        next: ResolvedTargets,
+        seed: Option<ResolvedTargets>,
+    ) -> (Progress, ResolvedTargets) {
+        fold_at(prev, next, seed, false)
     }
 
     /// What every lookup reads, for each way a site can hold an answer. The
@@ -383,7 +425,6 @@ mod tests {
     /// folds and freezes ran: the loop never copies the seeds or overrides.
     #[test]
     fn the_cfg_borrows_the_callers_table_after_folds_and_freezes() {
-        let (_function, node) = fn_with_live_indirect_branch();
         let site = pcode_addr(0x1000);
         let seeds: FxHashMap<_, _> = (0..1000u64)
             .map(|i| {
@@ -406,10 +447,8 @@ mod tests {
         let mut sites = SiteTable::new(&seeds);
         sites
             .fold(
-                &vec![(site, node)],
-                &Vec::new(),
-                [(node, multiple(&[(0x2000, None)]))],
-                &FxHashMap::default(),
+                &[(site, node(0), false)],
+                [(node(0), multiple(&[(0x2000, None)]))],
             )
             .expect("fold");
         sites.freeze(site, ResolvedTargets::Withdrawn);
@@ -425,7 +464,6 @@ mod tests {
     /// it, and its own answer is unioned with that seed.
     #[test]
     fn withdrawing_one_dispatch_keeps_the_caller_seed_of_its_neighbour() {
-        let (_function, node) = fn_with_live_indirect_branch();
         let first = mid_insn_addr(0x1000);
         let second = PcodeInsnAddr {
             insn_index: 5,
@@ -442,10 +480,8 @@ mod tests {
         );
         sites
             .fold(
-                &vec![(second, node)],
-                &Vec::new(),
-                [(node, multiple(&[(0x5000, None)]))],
-                &FxHashMap::default(),
+                &[(second, node(0), false)],
+                [(node(0), multiple(&[(0x5000, None)]))],
             )
             .expect("fold");
         assert_eq!(
@@ -473,7 +509,6 @@ mod tests {
     /// mode-bearing answer is the loop's own, at the anchor, or the caller's,
     /// under the machine start.
     fn fold_mid_insn(caller_seeded: bool) -> (ResolvedTargets, Progress) {
-        let (_function, node) = fn_with_live_indirect_branch();
         let anchor = mid_insn_addr(0x1000);
         let answer = multiple(&[(0x2000, Some(true))]);
         let seeds: FxHashMap<_, _> = if caller_seeded {
@@ -487,10 +522,8 @@ mod tests {
         }
         let progress = sites
             .fold(
-                &Vec::new(),
-                &vec![(anchor, node)],
-                [(node, multiple(&[(0x2000, None), (0x3000, None)]))],
-                &FxHashMap::default(),
+                &[(anchor, node(0), false)],
+                [(node(0), multiple(&[(0x2000, None), (0x3000, None)]))],
             )
             .expect("fold");
         (sites.seat(anchor).expect("seated").clone(), progress)
@@ -532,58 +565,17 @@ mod tests {
         // re-classification must report no growth (or an unchanged cone
         // churns to the iteration cap), while a narrowed set must still be
         // applied (or an unseatable site is stranded unresolved forever).
-        let (_function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let unresolved: Anchors = vec![(addr, node)];
-
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        known.insert(
-            addr,
-            ResolvedTargets::table([0x2000, 0x3000].map(strider_cfg::ResolvedTarget::from)),
-        );
-        let mut same: Answers = FxHashMap::default();
-        same.insert(
-            node,
-            Some(ResolvedTargets::table(
-                [0x2000, 0x3000].map(strider_cfg::ResolvedTarget::from),
-            )),
-        );
-        let progress = fold_into(
-            &mut known,
-            &FxHashMap::default(),
-            &unresolved,
-            &Vec::new(),
-            same,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
-        )
-        .expect("apply");
+        let table =
+            |arms: [u64; 2]| ResolvedTargets::table(arms.map(strider_cfg::ResolvedTarget::from));
+        let (progress, folded) =
+            round(Some(table([0x2000, 0x3000])), table([0x2000, 0x3000]), None);
         assert!(
             !progress.changed(),
             "identical re-classification must not report growth"
         );
-        assert_eq!(
-            known[&addr],
-            ResolvedTargets::table([0x2000, 0x3000].map(strider_cfg::ResolvedTarget::from))
-        );
+        assert_eq!(folded, table([0x2000, 0x3000]));
 
-        let mut improved: Answers = FxHashMap::default();
-        improved.insert(
-            node,
-            Some(ResolvedTargets::table(
-                [0x2000, 0x2004].map(strider_cfg::ResolvedTarget::from),
-            )),
-        );
-        let progress = fold_into(
-            &mut known,
-            &FxHashMap::default(),
-            &unresolved,
-            &Vec::new(),
-            improved,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
-        )
-        .expect("apply");
+        let (progress, folded) = round(Some(folded), table([0x2000, 0x2004]), None);
         assert!(
             progress.changed(),
             "an improved classification must be applied"
@@ -592,37 +584,19 @@ mod tests {
             !progress.narrowed.is_empty(),
             "dropping 0x3000 for 0x2004 is not monotone discovery"
         );
-        assert_eq!(
-            known[&addr],
-            ResolvedTargets::table([0x2000, 0x2004].map(strider_cfg::ResolvedTarget::from))
-        );
+        assert_eq!(folded, table([0x2000, 0x2004]));
     }
 
     #[test]
     fn fold_first_classification_grows() {
-        let (_function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let unresolved: Anchors = vec![(addr, node)];
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        let mut resolutions: Answers = FxHashMap::default();
-        resolutions.insert(node, Some(ResolvedTargets::Single(0x2000.into())));
-        let progress = fold_into(
-            &mut known,
-            &FxHashMap::default(),
-            &unresolved,
-            &Vec::new(),
-            resolutions,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
-        )
-        .expect("apply");
+        let (progress, folded) = round(None, ResolvedTargets::Single(0x2000.into()), None);
         assert!(
             progress.changed(),
             "a first-time classification must register as growth"
         );
-        assert_eq!(progress.grew, vec![addr]);
+        assert_eq!(progress.grew, vec![pcode_addr(0x1000)]);
         assert!(progress.narrowed.is_empty());
-        assert_eq!(known[&addr], ResolvedTargets::Single(0x2000.into()));
+        assert_eq!(folded, ResolvedTargets::Single(0x2000.into()));
     }
 
     /// A seeded one-arm table and a derived `Single` of the same target name
@@ -630,22 +604,12 @@ mod tests {
     /// `Single` as a tail call, so the change of shape is progress.
     #[test]
     fn a_table_turning_single_at_one_target_is_progress() {
-        let (_function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let seeds: FxHashMap<_, _> = std::iter::once((addr, multiple(&[(0x9000, None)]))).collect();
-        let mut sites = SiteTable::new(&seeds);
-        let progress = sites
-            .fold(
-                &vec![(addr, node)],
-                &Vec::new(),
-                [(node, ResolvedTargets::Single(0x9000.into()))],
-                &FxHashMap::default(),
-            )
-            .expect("fold");
-        assert_eq!(
-            sites.seat(addr),
-            Some(&ResolvedTargets::Single(0x9000.into()))
+        let (progress, folded) = round(
+            None,
+            ResolvedTargets::Single(0x9000.into()),
+            Some(multiple(&[(0x9000, None)])),
         );
+        assert_eq!(folded, ResolvedTargets::Single(0x9000.into()));
         assert!(progress.changed(), "the seat changed shape");
     }
 
@@ -656,66 +620,36 @@ mod tests {
     #[test]
     fn fold_does_not_go_quadratic_in_arms_at_one_site() {
         use strider_cfg::ResolvedTarget;
-        let (_function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let anchors: Anchors = vec![(addr, node)];
         assert_linear_visits("folding seated arms against re-derived ones", |arms| {
-            let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-            known.insert(
-                addr,
-                ResolvedTargets::table(
-                    (0..arms).map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true))),
-                ),
-            );
-            let mut resolutions: Answers = FxHashMap::default();
-            resolutions.insert(
-                node,
+            let (progress, _folded) = round(
                 Some(ResolvedTargets::table(
-                    (0..arms * 2).map(|i| ResolvedTarget::new(0x2_0000 + i * 4, None)),
+                    (0..arms).map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true))),
                 )),
+                ResolvedTargets::table(
+                    (0..arms * 2).map(|i| ResolvedTarget::new(0x2_0000 + i * 4, None)),
+                ),
+                None,
             );
-            let progress = fold_into(
-                &mut known,
-                &FxHashMap::default(),
-                &anchors,
-                &Vec::new(),
-                resolutions,
-                &FxHashMap::default(),
-                &rustc_hash::FxHashSet::default(),
-            )
-            .expect("apply");
-            assert_eq!(progress.derived_incomplete, vec![addr]);
+            assert_eq!(progress.derived_incomplete, vec![pcode_addr(0x1000)]);
         });
     }
 
     #[test]
     fn fold_merges_two_anchors_at_same_addr() {
         // Two distinct placeholders sharing one address must union, not let
-        // the second insert overwrite the first. Any two `NodeId`s work as
-        // anchor keys since `SiteTable::fold` never looks at node kind, so
-        // the fixture reuses the function's `IntConst` as the second.
-        use strider_ir::node::NodeKind;
-        use strider_ir::{IRViewer, IRWalker};
-        let (function, indirect) = fn_with_live_indirect_branch();
-        let other = function
-            .walk()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
-            .expect("const node");
-        assert_ne!(indirect, other, "need two distinct NodeIds");
+        // the second insert overwrite the first.
         let addr = pcode_addr(0x1000);
-        let unresolved: Anchors = vec![(addr, indirect), (addr, other)];
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        let mut resolutions: Answers = FxHashMap::default();
-        resolutions.insert(indirect, Some(ResolvedTargets::Single(0x2000.into())));
-        resolutions.insert(other, Some(ResolvedTargets::Single(0x3000.into())));
+        let mut known = FxHashMap::default();
         fold_into(
             &mut known,
             &FxHashMap::default(),
-            &unresolved,
-            &Vec::new(),
-            resolutions,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
+            &[(addr, node(0), false), (addr, node(1), false)],
+            [
+                (node(0), ResolvedTargets::Single(0x2000.into())),
+                (node(1), ResolvedTargets::Single(0x3000.into())),
+            ]
+            .into_iter()
+            .collect(),
         )
         .expect("apply");
         assert_eq!(
@@ -730,27 +664,18 @@ mod tests {
     /// loses the return successor. It must not read as clean growth.
     #[test]
     fn fold_reports_a_dropped_link_register_successor() {
-        use strider_ir::node::NodeKind;
-        use strider_ir::{IRViewer, IRWalker};
-        let (function, indirect) = fn_with_live_indirect_branch();
-        let other = function
-            .walk()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
-            .expect("const node");
         let addr = pcode_addr(0x1000);
-        let unresolved: Anchors = vec![(addr, indirect), (addr, other)];
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        let mut resolutions: Answers = FxHashMap::default();
-        resolutions.insert(indirect, Some(ResolvedTargets::LinkRegister));
-        resolutions.insert(other, Some(ResolvedTargets::Single(0x2000.into())));
+        let mut known = FxHashMap::default();
         let progress = fold_into(
             &mut known,
             &FxHashMap::default(),
-            &unresolved,
-            &Vec::new(),
-            resolutions,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
+            &[(addr, node(0), false), (addr, node(1), false)],
+            [
+                (node(0), ResolvedTargets::LinkRegister),
+                (node(1), ResolvedTargets::Single(0x2000.into())),
+            ]
+            .into_iter()
+            .collect(),
         )
         .expect("apply");
         assert_eq!(
@@ -769,9 +694,7 @@ mod tests {
     /// accumulated for every other address.
     #[test]
     fn fold_does_not_go_quadratic_in_accumulated_targets() {
-        let (_function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
-        let unresolved: Anchors = vec![(addr, node)];
         let visits = |accumulated: u64| {
             let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = (0..accumulated)
                 .map(|i| {
@@ -784,20 +707,17 @@ mod tests {
                     )
                 })
                 .collect();
-            let mut resolutions: Answers = FxHashMap::default();
-            resolutions.insert(
-                node,
-                Some(ResolvedTargets::table(vec![0x2000.into(), 0x2004.into()])),
-            );
+            let answers: Answers = std::iter::once((
+                node(0),
+                ResolvedTargets::table(vec![0x2000.into(), 0x2004.into()]),
+            ))
+            .collect();
             TARGET_VISITS.with(|v| v.set(0));
             let progress = fold_into(
                 &mut known,
                 &FxHashMap::default(),
-                &unresolved,
-                &Vec::new(),
-                resolutions,
-                &FxHashMap::default(),
-                &rustc_hash::FxHashSet::default(),
+                &[(addr, node(0), false)],
+                answers,
             )
             .expect("apply");
             assert!(progress.changed());
@@ -822,38 +742,20 @@ mod tests {
     #[test]
     fn fold_keeps_a_seated_mode_a_rederivation_does_not_report() {
         use strider_cfg::ResolvedTarget;
-        let (_function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let anchors: Anchors = vec![(addr, node)];
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        known.insert(
-            addr,
-            ResolvedTargets::table(vec![
+        let (_progress, folded) = round(
+            Some(ResolvedTargets::table(vec![
                 ResolvedTarget::new(0x2000, Some(true)),
                 ResolvedTarget::new(0x2004, Some(true)),
-            ]),
-        );
-        let mut rederived: Answers = FxHashMap::default();
-        rederived.insert(
-            node,
-            Some(ResolvedTargets::table(vec![
+            ])),
+            ResolvedTargets::table(vec![
                 ResolvedTarget::new(0x2000, None),
                 ResolvedTarget::new(0x2004, None),
                 ResolvedTarget::new(0x2008, None),
-            ])),
+            ]),
+            None,
         );
-        fold_into(
-            &mut known,
-            &FxHashMap::default(),
-            &Vec::new(),
-            &anchors,
-            rederived,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
-        )
-        .expect("apply");
         assert_eq!(
-            ResolvedTargets::arms(&known[&addr]),
+            folded.arms(),
             &[
                 ResolvedTarget::new(0x2000, Some(true)),
                 ResolvedTarget::new(0x2004, Some(true)),
@@ -937,38 +839,13 @@ mod tests {
     #[test]
     fn fold_keeps_the_caller_seed_against_a_mode_bearing_answer() {
         use strider_cfg::ResolvedTarget;
-        let (_function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let anchors: Anchors = vec![(addr, node)];
-        let mut seed: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        seed.insert(
-            addr,
-            ResolvedTargets::table(vec![
-                ResolvedTarget::new(0x2000, None),
-                ResolvedTarget::new(0x3000, None),
-            ]),
+        let (_progress, folded) = round(
+            None,
+            ResolvedTargets::Single(ResolvedTarget::new(0x4000, Some(true))),
+            Some(multiple(&[(0x2000, None), (0x3000, None)])),
         );
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        let mut resolutions: Answers = FxHashMap::default();
-        resolutions.insert(
-            node,
-            Some(ResolvedTargets::Single(ResolvedTarget::new(
-                0x4000,
-                Some(true),
-            ))),
-        );
-        fold_into(
-            &mut known,
-            &seed,
-            &anchors,
-            &Vec::new(),
-            resolutions,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
-        )
-        .expect("apply");
         assert_eq!(
-            ResolvedTargets::arms(&known[&addr]),
+            folded.arms(),
             &[
                 ResolvedTarget::new(0x2000, None),
                 ResolvedTarget::new(0x3000, None),
@@ -976,39 +853,6 @@ mod tests {
             ],
             "seeding may only ADD edges, whatever the classifier proves about the mode",
         );
-    }
-
-    /// One [`SiteTable::fold`] round at one address: `known` holding `prev`,
-    /// the classifier reporting `next`, no caller seed unless `seed`.
-    fn round(
-        prev: Option<ResolvedTargets>,
-        next: ResolvedTargets,
-        seed: Option<ResolvedTargets>,
-    ) -> (Progress, ResolvedTargets) {
-        let (_function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let anchors: Anchors = vec![(addr, node)];
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        if let Some(prev) = prev {
-            known.insert(addr, prev);
-        }
-        let mut seeds: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        if let Some(seed) = seed {
-            seeds.insert(addr, seed);
-        }
-        let mut resolutions: Answers = FxHashMap::default();
-        resolutions.insert(node, Some(next));
-        let progress = fold_into(
-            &mut known,
-            &seeds,
-            &anchors,
-            &Vec::new(),
-            resolutions,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
-        )
-        .expect("apply");
-        (progress, known.remove(&addr).expect("folded"))
     }
 
     /// A one-arm table answer keeps its shape through a merge: the cfg seats an
@@ -1161,32 +1005,16 @@ mod tests {
     /// the mode at its own branch, not in the entry's.
     #[test]
     fn the_flowing_mode_is_read_per_site() {
-        let (_function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let anchors: Anchors = vec![(addr, node)];
         // The site already proved Thumb at 0x2000; the round re-derives it
         // mode-less and adds 0x3000.
-        let seated = multiple(&[(0x2000, Some(true))]);
-        let rederived = multiple(&[(0x2000, None), (0x3000, None)]);
-
         let fold = |flowing: bool| {
-            let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-            known.insert(addr, seated.clone());
-            let mut resolutions: Answers = FxHashMap::default();
-            resolutions.insert(node, Some(rederived.clone()));
-            let mut flowing_map: FxHashMap<PcodeInsnAddr, bool> = FxHashMap::default();
-            flowing_map.insert(addr, flowing);
-            fold_into(
-                &mut known,
-                &FxHashMap::default(),
-                &anchors,
-                &Vec::new(),
-                resolutions,
-                &flowing_map,
-                &rustc_hash::FxHashSet::default(),
-            )
-            .expect("apply");
-            ResolvedTargets::arms(&known[&addr]).len()
+            let (_progress, folded) = fold_at(
+                Some(multiple(&[(0x2000, Some(true))])),
+                multiple(&[(0x2000, None), (0x3000, None)]),
+                None,
+                flowing,
+            );
+            folded.arms().len()
         };
 
         assert_eq!(
@@ -1225,7 +1053,7 @@ mod tests {
         let addr = pcode_addr(0x1000);
         let seeds: FxHashMap<_, _> = seed.into_iter().map(|s| (addr, s)).collect();
         let nodes: Vec<NodeId> = (0..answers.len() as u32).map(NodeId::from_u32).collect();
-        let anchors: Anchors = nodes.iter().map(|&n| (addr, n)).collect();
+        let anchors: Vec<FlowingAnchor> = nodes.iter().map(|&n| (addr, n, false)).collect();
         let mut out = Vec::new();
         for shift in 0..answers.len() {
             for reversed in [false, true] {
@@ -1237,19 +1065,10 @@ mod tests {
                 let resolutions: Answers = nodes
                     .iter()
                     .zip(order)
-                    .map(|(&n, a)| (n, Some(a.clone())))
+                    .map(|(&n, a)| (n, a.clone()))
                     .collect();
                 let mut known = FxHashMap::default();
-                let progress = fold_into(
-                    &mut known,
-                    &seeds,
-                    &anchors,
-                    &Vec::new(),
-                    resolutions,
-                    &FxHashMap::default(),
-                    &FxHashSet::default(),
-                )
-                .expect("fold");
+                let progress = fold_into(&mut known, &seeds, &anchors, resolutions).expect("fold");
                 out.push((
                     known.remove(&addr).expect("folded"),
                     progress.derived_incomplete,
@@ -1295,30 +1114,17 @@ mod tests {
     /// `refusals` cut cannot be folded back in.
     #[test]
     fn a_withdrawn_site_folds_nothing() {
-        let (_function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
-        let anchors: Anchors = vec![(addr, node)];
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        known.insert(addr, multiple(&[(0x2000, None)]));
-        let mut resolutions: Answers = FxHashMap::default();
-        resolutions.insert(node, Some(multiple(&[(0x2000, None), (0x3000, None)])));
-        let withdrawn: rustc_hash::FxHashSet<PcodeInsnAddr> = std::iter::once(addr).collect();
-
-        let progress = fold_into(
-            &mut known,
-            &FxHashMap::default(),
-            &anchors,
-            &Vec::new(),
-            resolutions,
-            &FxHashMap::default(),
-            &withdrawn,
-        )
-        .expect("fold");
-
+        let none = FxHashMap::default();
+        let mut sites = SiteTable::new(&none);
+        sites.freeze(addr, multiple(&[(0x2000, None)]));
+        let progress = sites
+            .fold(
+                &[(addr, node(0), false)],
+                [(node(0), multiple(&[(0x2000, None), (0x3000, None)]))],
+            )
+            .expect("fold");
         assert!(!progress.changed());
-        assert_eq!(
-            successor_set(&known[&addr]),
-            successor_set(&multiple(&[(0x2000, None)])),
-        );
+        assert_eq!(sites.seat(addr), Some(&multiple(&[(0x2000, None)])));
     }
 }

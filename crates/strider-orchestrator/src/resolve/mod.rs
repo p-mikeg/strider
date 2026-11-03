@@ -18,7 +18,7 @@ use reports::{
     unverified_seeded_sites,
 };
 pub use round::Classifier;
-use round::{Resolutions, Round, flowing_isa_bits};
+use round::{Resolutions, Round};
 use sites::SiteTable;
 
 /// Caps the folds, so a run builds at most one more round than this.
@@ -173,10 +173,7 @@ impl<'s> LoopState<'s> {
     ///
     /// As [`SiteTable::fold`].
     fn fold(&mut self, round: &Round, resolutions: Resolutions) -> Result<bool> {
-        let flowing = flowing_isa_bits(&round.cfg, &round.placeholders, &round.switches);
-        let progress =
-            self.sites
-                .fold(&round.placeholders, &round.switches, resolutions, &flowing)?;
+        let progress = self.sites.fold(&round.flowing_anchors(), resolutions)?;
         self.derived_incomplete
             .extend(self.sites.note_narrowed(&progress.narrowed));
         let changed = progress.changed();
@@ -192,15 +189,6 @@ impl<'s> LoopState<'s> {
     ///
     /// As [`SiteTable::fold`].
     fn finish(mut self, round: Round, end: Termination) -> Result<AnalyzeResult> {
-        let Round {
-            cfg,
-            function,
-            placeholders,
-            switches,
-            live,
-            unclassified,
-            unverified_returns: returns,
-        } = round;
         // The cap is spent on a round nothing has folded yet, so its own
         // verdict is only known by folding it. Into a COPY of the loop's own
         // answers (the seeds are borrowed, never copied), with no narrow-twice
@@ -214,8 +202,7 @@ impl<'s> LoopState<'s> {
             Termination::Converged => (Vec::new(), None),
             Termination::CapReached(resolutions) => {
                 let mut folded = self.sites.clone();
-                let flowing = flowing_isa_bits(&cfg, &placeholders, &switches);
-                let progress = folded.fold(&placeholders, &switches, resolutions, &flowing)?;
+                let progress = folded.fold(&round.flowing_anchors(), resolutions)?;
                 self.derived_incomplete.extend(progress.derived_incomplete);
                 self.assumed_modes.extend(progress.assumed_modes);
                 // Only the LAST round's growth: a site that settled earlier is
@@ -224,6 +211,15 @@ impl<'s> LoopState<'s> {
             }
         };
         let settled = folded.as_ref().unwrap_or(&self.sites);
+        let Round {
+            cfg,
+            function,
+            placeholders,
+            switches,
+            live,
+            unclassified,
+            unverified_returns: returns,
+        } = round;
 
         let mut unresolved = live_unresolved_branches(
             &live,

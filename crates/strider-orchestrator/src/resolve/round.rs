@@ -13,6 +13,10 @@ use crate::{AnalyzeOptions, LiftOutcome, LiftSites, Strider};
 /// node lifted for it.
 pub(super) type Anchors = Vec<(PcodeInsnAddr, NodeId)>;
 
+/// An anchor with the ISA-mode bit a target seated there with no mode of its
+/// own decodes in.
+pub(super) type FlowingAnchor = (PcodeInsnAddr, NodeId, bool);
+
 /// The classifier's answers, by node: a site it could not derive has none.
 pub(super) type Resolutions = FxHashMap<NodeId, ResolvedTargets>;
 
@@ -56,6 +60,25 @@ impl Round {
             .iter()
             .chain(&self.switches)
             .map(|&(site, _)| site)
+    }
+
+    /// Every dispatch site with its flowing ISA-mode bit.
+    ///
+    /// Read off the cfg, which sampled it while each site's region was
+    /// decoding ([`strider_cfg::Cfg::flowing_isa_bit_at_site`]). Probing the
+    /// live engine again here would answer for whichever region painted the
+    /// branch address last, and [`super::merge::adopt_known_modes`] would then
+    /// take the wrong `interworking` verdict. Every site is sampled on an arch
+    /// with an ISA-mode var; on one without, the bit is `false`.
+    pub(super) fn flowing_anchors(&self) -> Vec<FlowingAnchor> {
+        self.placeholders
+            .iter()
+            .chain(&self.switches)
+            .map(|&(addr, node)| {
+                let bit = self.cfg.flowing_isa_bit_at_site(addr).unwrap_or(false);
+                (addr, node, bit)
+            })
+            .collect()
     }
 }
 
@@ -145,27 +168,6 @@ where
         };
         Ok((round, resolved))
     }
-}
-
-/// The ISA-mode bit a target seated with no mode of its own decodes in, per
-/// indirect site.
-///
-/// Read off the cfg, which sampled it while each site's region was decoding
-/// ([`strider_cfg::Cfg::flowing_isa_bit_at_site`]). Probing the live engine again here
-/// would answer for whichever region painted the branch address last, and
-/// [`super::merge::adopt_known_modes`] would then take the wrong `interworking`
-/// verdict. Every site is sampled on an arch with an ISA-mode var; on one
-/// without, the bit is `false`.
-pub(super) fn flowing_isa_bits(
-    cfg: &strider_cfg::Cfg,
-    placeholders: &Anchors,
-    switches: &Anchors,
-) -> FxHashMap<PcodeInsnAddr, bool> {
-    placeholders
-        .iter()
-        .chain(switches.iter())
-        .map(|(addr, _)| (*addr, cfg.flowing_isa_bit_at_site(*addr).unwrap_or(false)))
-        .collect()
 }
 
 /// The return sites whose target is not the function's entry return address.
