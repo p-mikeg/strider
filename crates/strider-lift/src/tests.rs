@@ -276,7 +276,7 @@ fn only_aliasable_space_varnodes_are_tracked() {
     let opts = strider_cfg::CfgOptions::default();
     let cfg = lifter.build_cfg(0x1000u64.into(), &opts).expect("cfg");
 
-    let tracked: Vec<_> = super::aliasable_vns(&cfg).collect();
+    let tracked: Vec<_> = crate::tracked::aliasable_vns(&cfg).collect();
     assert!(!tracked.is_empty(), "the lift tracks something");
     let stray: Vec<_> = tracked
         .iter()
