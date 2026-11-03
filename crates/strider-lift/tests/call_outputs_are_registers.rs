@@ -12,11 +12,9 @@ fn call_outputs_name_no_unique_temporary() {
     // 1008: c3            ret
     let bytes = vec![0x01, 0xc8, 0xe8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xc3];
     let arch = strider_target::SleighArch::x86_64();
-    let lifter = strider_lift::lift::Lifter::new(
-        arch,
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("lifter");
+    let lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))
+            .expect("lifter");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(lifter.sleigh_regs())
         .expect("systemv");
