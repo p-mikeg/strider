@@ -1,0 +1,627 @@
+AT_S12E0R UNCLASSIFIED
+AT_S12E0W UNCLASSIFIED
+AT_S12E1R UNCLASSIFIED
+AT_S12E1W UNCLASSIFIED
+AT_S1E0R UNCLASSIFIED
+AT_S1E0W UNCLASSIFIED
+AT_S1E1R call reads=[] writes=[] mem=true noret=false
+AT_S1E1RP UNCLASSIFIED
+AT_S1E1W UNCLASSIFIED
+AT_S1E1WP UNCLASSIFIED
+AT_S1E2R UNCLASSIFIED
+AT_S1E2W UNCLASSIFIED
+AT_S1E3R UNCLASSIFIED
+AT_S1E3W UNCLASSIFIED
+AlignmentFault UNCLASSIFIED
+AuthDA UNCLASSIFIED
+AuthDB UNCLASSIFIED
+AuthIA UNCLASSIFIED
+AuthIB UNCLASSIFIED
+CachePrefetchPredictionRestrictionByContext UNCLASSIFIED
+CallHyperVisor call reads=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"] writes=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"] mem=true noret=false
+CallSecureMonitor call reads=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"] writes=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"] mem=true noret=false
+CallSupervisor call reads=["x8", "x0", "x1", "x2", "x3", "x4", "x5"] writes=["x0"] mem=true noret=false
+ClearExclusiveLocal call reads=[] writes=[] mem=false noret=false
+ControlFlowPredictionRestrictionByContext UNCLASSIFIED
+CopyPtrTag_AddToPtrTag_Exclude UNCLASSIFIED
+DCPSInstruction UNCLASSIFIED
+DC_CGDSW call reads=[] writes=[] mem=true noret=false
+DC_CGDVAC call reads=[] writes=[] mem=true noret=false
+DC_CGDVADP call reads=[] writes=[] mem=true noret=false
+DC_CGDVAP call reads=[] writes=[] mem=true noret=false
+DC_CGSW call reads=[] writes=[] mem=true noret=false
+DC_CGVAC call reads=[] writes=[] mem=true noret=false
+DC_CGVADP call reads=[] writes=[] mem=true noret=false
+DC_CGVAP call reads=[] writes=[] mem=true noret=false
+DC_CIGDSW call reads=[] writes=[] mem=true noret=false
+DC_CIGDVAC call reads=[] writes=[] mem=true noret=false
+DC_CIGSW call reads=[] writes=[] mem=true noret=false
+DC_CIGVAC call reads=[] writes=[] mem=true noret=false
+DC_CISW call reads=[] writes=[] mem=true noret=false
+DC_CIVAC call reads=[] writes=[] mem=true noret=false
+DC_CSW call reads=[] writes=[] mem=true noret=false
+DC_CVAC call reads=[] writes=[] mem=true noret=false
+DC_CVAP call reads=[] writes=[] mem=true noret=false
+DC_CVAU call reads=[] writes=[] mem=true noret=false
+DC_GVA call reads=[] writes=[] mem=true noret=false
+DC_GZVA call reads=[] writes=[] mem=true noret=false
+DC_IGDSW call reads=[] writes=[] mem=true noret=false
+DC_IGDVAC call reads=[] writes=[] mem=true noret=false
+DC_IGSW call reads=[] writes=[] mem=true noret=false
+DC_IGVAC call reads=[] writes=[] mem=true noret=false
+DC_ISW call reads=[] writes=[] mem=true noret=false
+DC_IVAC call reads=[] writes=[] mem=true noret=false
+DC_ZVA call reads=[] writes=[] mem=true noret=false
+DRPSInstruction UNCLASSIFIED
+DataMemoryBarrier call reads=[] writes=[] mem=true noret=false
+DataSynchronizationBarrier call reads=[] writes=[] mem=true noret=false
+DataValuePredictionRestrictionByContext UNCLASSIFIED
+ExceptionReturn call reads=[] writes=[] mem=false noret=true
+ExclusiveMonitorPass call reads=[] writes=[] mem=false noret=false
+ExclusiveMonitorsStatus call reads=[] writes=[] mem=false noret=false
+HaltBreakPoint UNCLASSIFIED
+Hint_Prefetch call reads=[] writes=[] mem=false noret=false
+IC_IALLU call reads=[] writes=[] mem=true noret=false
+IC_IALLUIS call reads=[] writes=[] mem=true noret=false
+IC_IVAU call reads=[] writes=[] mem=true noret=false
+InstructionSynchronizationBarrier call reads=[] writes=[] mem=true noret=false
+LOAcquire call reads=[] writes=[] mem=true noret=false
+LORelease call reads=[] writes=[] mem=true noret=false
+LoadMemTag UNCLASSIFIED
+MP_INT_ABS call reads=[] writes=[] mem=false noret=false
+MP_INT_MULT UNCLASSIFIED
+MP_INT_RIGHT UNCLASSIFIED
+MP_INT_UMULT UNCLASSIFIED
+MemoryCopy UNCLASSIFIED
+MemoryCopyForward UNCLASSIFIED
+NEON_aesd call reads=[] writes=[] mem=false noret=false
+NEON_aese call reads=[] writes=[] mem=false noret=false
+NEON_aesimc call reads=[] writes=[] mem=false noret=false
+NEON_aesmc call reads=[] writes=[] mem=false noret=false
+NEON_bfdot call reads=[] writes=[] mem=false noret=false
+NEON_bfmlalb call reads=[] writes=[] mem=false noret=false
+NEON_bfmlalt call reads=[] writes=[] mem=false noret=false
+NEON_bfmmla call reads=[] writes=[] mem=false noret=false
+NEON_cls call reads=[] writes=[] mem=false noret=false
+NEON_ext call reads=[] writes=[] mem=false noret=false
+NEON_facge call reads=[] writes=[] mem=false noret=false
+NEON_facgt call reads=[] writes=[] mem=false noret=false
+NEON_fcadd call reads=[] writes=[] mem=false noret=false
+NEON_fcmeq call reads=[] writes=[] mem=false noret=false
+NEON_fcmge call reads=[] writes=[] mem=false noret=false
+NEON_fcmgt call reads=[] writes=[] mem=false noret=false
+NEON_fcmla call reads=[] writes=[] mem=false noret=false
+NEON_fcmle call reads=[] writes=[] mem=false noret=false
+NEON_fcmlt call reads=[] writes=[] mem=false noret=false
+NEON_fcvtzs call reads=[] writes=[] mem=false noret=false
+NEON_fcvtzu call reads=[] writes=[] mem=false noret=false
+NEON_fmax call reads=[] writes=[] mem=false noret=false
+NEON_fmaxnm call reads=[] writes=[] mem=false noret=false
+NEON_fmaxnmp call reads=[] writes=[] mem=false noret=false
+NEON_fmaxnmv call reads=[] writes=[] mem=false noret=false
+NEON_fmaxp call reads=[] writes=[] mem=false noret=false
+NEON_fmaxv call reads=[] writes=[] mem=false noret=false
+NEON_fmin call reads=[] writes=[] mem=false noret=false
+NEON_fminnm call reads=[] writes=[] mem=false noret=false
+NEON_fminnmp call reads=[] writes=[] mem=false noret=false
+NEON_fminnmv call reads=[] writes=[] mem=false noret=false
+NEON_fminp call reads=[] writes=[] mem=false noret=false
+NEON_fminv call reads=[] writes=[] mem=false noret=false
+NEON_fmov call reads=[] writes=[] mem=false noret=false
+NEON_fmulx call reads=[] writes=[] mem=false noret=false
+NEON_fnmadd call reads=[] writes=[] mem=false noret=false
+NEON_fnmsub call reads=[] writes=[] mem=false noret=false
+NEON_frecpe call reads=[] writes=[] mem=false noret=false
+NEON_frecps call reads=[] writes=[] mem=false noret=false
+NEON_frecpx call reads=[] writes=[] mem=false noret=false
+NEON_frint call reads=[] writes=[] mem=false noret=false
+NEON_frint32 call reads=[] writes=[] mem=false noret=false
+NEON_frint64 call reads=[] writes=[] mem=false noret=false
+NEON_frsqrte call reads=[] writes=[] mem=false noret=false
+NEON_frsqrts call reads=[] writes=[] mem=false noret=false
+NEON_fsqrt call reads=[] writes=[] mem=false noret=false
+NEON_neg call reads=[] writes=[] mem=false noret=false
+NEON_pmul call reads=[] writes=[] mem=false noret=false
+NEON_pmull call reads=[] writes=[] mem=false noret=false
+NEON_pmull2 call reads=[] writes=[] mem=false noret=false
+NEON_raddhn call reads=[] writes=[] mem=false noret=false
+NEON_rbit call reads=[] writes=[] mem=false noret=false
+NEON_rev16 call reads=[] writes=[] mem=false noret=false
+NEON_rev32 call reads=[] writes=[] mem=false noret=false
+NEON_rev64 call reads=[] writes=[] mem=false noret=false
+NEON_rshrn call reads=[] writes=[] mem=false noret=false
+NEON_rshrn2 call reads=[] writes=[] mem=false noret=false
+NEON_rsubhn call reads=[] writes=[] mem=false noret=false
+NEON_rsubhn2 call reads=[] writes=[] mem=false noret=false
+NEON_saba call reads=[] writes=[] mem=false noret=false
+NEON_sabd call reads=[] writes=[] mem=false noret=false
+NEON_saddlv call reads=[] writes=[] mem=false noret=false
+NEON_scvtf call reads=[] writes=[] mem=false noret=false
+NEON_sdot call reads=[] writes=[] mem=false noret=false
+NEON_sha1c call reads=[] writes=[] mem=false noret=false
+NEON_sha1m call reads=[] writes=[] mem=false noret=false
+NEON_sha1p call reads=[] writes=[] mem=false noret=false
+NEON_sha1su0 call reads=[] writes=[] mem=false noret=false
+NEON_sha1su1 call reads=[] writes=[] mem=false noret=false
+NEON_sha256h call reads=[] writes=[] mem=false noret=false
+NEON_sha256h2 call reads=[] writes=[] mem=false noret=false
+NEON_sha256su0 call reads=[] writes=[] mem=false noret=false
+NEON_sha256su1 call reads=[] writes=[] mem=false noret=false
+NEON_sha512h call reads=[] writes=[] mem=false noret=false
+NEON_sha512h2 call reads=[] writes=[] mem=false noret=false
+NEON_sha512su0 call reads=[] writes=[] mem=false noret=false
+NEON_sha512su1 call reads=[] writes=[] mem=false noret=false
+NEON_shadd call reads=[] writes=[] mem=false noret=false
+NEON_shl call reads=[] writes=[] mem=false noret=false
+NEON_shsub call reads=[] writes=[] mem=false noret=false
+NEON_sli call reads=[] writes=[] mem=false noret=false
+NEON_sm3partw1 call reads=[] writes=[] mem=false noret=false
+NEON_sm3partw2 call reads=[] writes=[] mem=false noret=false
+NEON_sm3ss1 call reads=[] writes=[] mem=false noret=false
+NEON_sm3tt1a call reads=[] writes=[] mem=false noret=false
+NEON_sm3tt1b call reads=[] writes=[] mem=false noret=false
+NEON_sm3tt2a call reads=[] writes=[] mem=false noret=false
+NEON_sm3tt2b call reads=[] writes=[] mem=false noret=false
+NEON_sm4e call reads=[] writes=[] mem=false noret=false
+NEON_sm4ekey call reads=[] writes=[] mem=false noret=false
+NEON_smax call reads=[] writes=[] mem=false noret=false
+NEON_smaxp call reads=[] writes=[] mem=false noret=false
+NEON_smaxv call reads=[] writes=[] mem=false noret=false
+NEON_smin call reads=[] writes=[] mem=false noret=false
+NEON_sminp call reads=[] writes=[] mem=false noret=false
+NEON_sminv call reads=[] writes=[] mem=false noret=false
+NEON_smmla call reads=[] writes=[] mem=false noret=false
+NEON_sqadd call reads=[] writes=[] mem=false noret=false
+NEON_sqdmulh call reads=[] writes=[] mem=false noret=false
+NEON_sqdmull call reads=[] writes=[] mem=false noret=false
+NEON_sqrdml_as_h call reads=[] writes=[] mem=false noret=false
+NEON_sqrdmulh call reads=[] writes=[] mem=false noret=false
+NEON_sqrshl call reads=[] writes=[] mem=false noret=false
+NEON_sqrshrn call reads=[] writes=[] mem=false noret=false
+NEON_sqrshrn2 call reads=[] writes=[] mem=false noret=false
+NEON_sqrshrun call reads=[] writes=[] mem=false noret=false
+NEON_sqrshrun2 call reads=[] writes=[] mem=false noret=false
+NEON_sqshl call reads=[] writes=[] mem=false noret=false
+NEON_sqshlu call reads=[] writes=[] mem=false noret=false
+NEON_sqshrn call reads=[] writes=[] mem=false noret=false
+NEON_sqshrn2 call reads=[] writes=[] mem=false noret=false
+NEON_sqshrun call reads=[] writes=[] mem=false noret=false
+NEON_sqshrun2 call reads=[] writes=[] mem=false noret=false
+NEON_sqsub call reads=[] writes=[] mem=false noret=false
+NEON_sqxtn call reads=[] writes=[] mem=false noret=false
+NEON_sqxtn2 call reads=[] writes=[] mem=false noret=false
+NEON_sqxtun call reads=[] writes=[] mem=false noret=false
+NEON_sqxtun2 call reads=[] writes=[] mem=false noret=false
+NEON_srhadd call reads=[] writes=[] mem=false noret=false
+NEON_sri call reads=[] writes=[] mem=false noret=false
+NEON_srshl call reads=[] writes=[] mem=false noret=false
+NEON_srshr call reads=[] writes=[] mem=false noret=false
+NEON_sshl call reads=[] writes=[] mem=false noret=false
+NEON_sshr call reads=[] writes=[] mem=false noret=false
+NEON_sudot call reads=[] writes=[] mem=false noret=false
+NEON_uaba call reads=[] writes=[] mem=false noret=false
+NEON_uabd call reads=[] writes=[] mem=false noret=false
+NEON_uaddlv call reads=[] writes=[] mem=false noret=false
+NEON_ucvtf call reads=[] writes=[] mem=false noret=false
+NEON_udot call reads=[] writes=[] mem=false noret=false
+NEON_uhadd call reads=[] writes=[] mem=false noret=false
+NEON_uhsub call reads=[] writes=[] mem=false noret=false
+NEON_umax call reads=[] writes=[] mem=false noret=false
+NEON_umaxp call reads=[] writes=[] mem=false noret=false
+NEON_umaxv call reads=[] writes=[] mem=false noret=false
+NEON_umin call reads=[] writes=[] mem=false noret=false
+NEON_uminp call reads=[] writes=[] mem=false noret=false
+NEON_uminv call reads=[] writes=[] mem=false noret=false
+NEON_ummla call reads=[] writes=[] mem=false noret=false
+NEON_umull call reads=[] writes=[] mem=false noret=false
+NEON_uqadd call reads=[] writes=[] mem=false noret=false
+NEON_uqrshl call reads=[] writes=[] mem=false noret=false
+NEON_uqrshrn call reads=[] writes=[] mem=false noret=false
+NEON_uqrshrn2 call reads=[] writes=[] mem=false noret=false
+NEON_uqshl call reads=[] writes=[] mem=false noret=false
+NEON_uqshrn call reads=[] writes=[] mem=false noret=false
+NEON_uqshrn2 call reads=[] writes=[] mem=false noret=false
+NEON_uqsub call reads=[] writes=[] mem=false noret=false
+NEON_uqxtn call reads=[] writes=[] mem=false noret=false
+NEON_uqxtn2 call reads=[] writes=[] mem=false noret=false
+NEON_urecpe call reads=[] writes=[] mem=false noret=false
+NEON_urhadd call reads=[] writes=[] mem=false noret=false
+NEON_urshl call reads=[] writes=[] mem=false noret=false
+NEON_urshr call reads=[] writes=[] mem=false noret=false
+NEON_ursqrte call reads=[] writes=[] mem=false noret=false
+NEON_usdot call reads=[] writes=[] mem=false noret=false
+NEON_ushl call reads=[] writes=[] mem=false noret=false
+NEON_usmmla call reads=[] writes=[] mem=false noret=false
+NEON_usqadd call reads=[] writes=[] mem=false noret=false
+RandomizePtrTag_Exclude UNCLASSIFIED
+SIMD_PIECE UNCLASSIFIED
+SVE_abs UNCLASSIFIED
+SVE_add UNCLASSIFIED
+SVE_addpl UNCLASSIFIED
+SVE_addvl UNCLASSIFIED
+SVE_adr UNCLASSIFIED
+SVE_and UNCLASSIFIED
+SVE_ands UNCLASSIFIED
+SVE_andv UNCLASSIFIED
+SVE_asr UNCLASSIFIED
+SVE_asrd UNCLASSIFIED
+SVE_asrr UNCLASSIFIED
+SVE_bic UNCLASSIFIED
+SVE_bics UNCLASSIFIED
+SVE_brka UNCLASSIFIED
+SVE_brkas UNCLASSIFIED
+SVE_brkb UNCLASSIFIED
+SVE_brkbs UNCLASSIFIED
+SVE_brkn UNCLASSIFIED
+SVE_brkns UNCLASSIFIED
+SVE_brkpa UNCLASSIFIED
+SVE_brkpas UNCLASSIFIED
+SVE_brkpb UNCLASSIFIED
+SVE_brkpbs UNCLASSIFIED
+SVE_clasta UNCLASSIFIED
+SVE_clastb UNCLASSIFIED
+SVE_cls UNCLASSIFIED
+SVE_clz UNCLASSIFIED
+SVE_cmpeq UNCLASSIFIED
+SVE_cmpge UNCLASSIFIED
+SVE_cmpgt UNCLASSIFIED
+SVE_cmphi UNCLASSIFIED
+SVE_cmphs UNCLASSIFIED
+SVE_cmple UNCLASSIFIED
+SVE_cmplo UNCLASSIFIED
+SVE_cmpls UNCLASSIFIED
+SVE_cmplt UNCLASSIFIED
+SVE_cmpne UNCLASSIFIED
+SVE_cnot UNCLASSIFIED
+SVE_cnt UNCLASSIFIED
+SVE_cntb UNCLASSIFIED
+SVE_cntd UNCLASSIFIED
+SVE_cnth UNCLASSIFIED
+SVE_cntp UNCLASSIFIED
+SVE_cntw UNCLASSIFIED
+SVE_compact UNCLASSIFIED
+SVE_cpy UNCLASSIFIED
+SVE_ctermeq UNCLASSIFIED
+SVE_ctermne UNCLASSIFIED
+SVE_decb UNCLASSIFIED
+SVE_decd UNCLASSIFIED
+SVE_dech UNCLASSIFIED
+SVE_decp UNCLASSIFIED
+SVE_decw UNCLASSIFIED
+SVE_dup UNCLASSIFIED
+SVE_dupm UNCLASSIFIED
+SVE_eon UNCLASSIFIED
+SVE_eor UNCLASSIFIED
+SVE_eors UNCLASSIFIED
+SVE_eorv UNCLASSIFIED
+SVE_ext UNCLASSIFIED
+SVE_fabd UNCLASSIFIED
+SVE_fabs UNCLASSIFIED
+SVE_facge UNCLASSIFIED
+SVE_facgt UNCLASSIFIED
+SVE_fadd UNCLASSIFIED
+SVE_fadda UNCLASSIFIED
+SVE_faddv UNCLASSIFIED
+SVE_fcadd UNCLASSIFIED
+SVE_fcmeq UNCLASSIFIED
+SVE_fcmge UNCLASSIFIED
+SVE_fcmgt UNCLASSIFIED
+SVE_fcmla UNCLASSIFIED
+SVE_fcmle UNCLASSIFIED
+SVE_fcmlt UNCLASSIFIED
+SVE_fcmne UNCLASSIFIED
+SVE_fcmuo UNCLASSIFIED
+SVE_fcpy UNCLASSIFIED
+SVE_fcvt UNCLASSIFIED
+SVE_fcvtzs UNCLASSIFIED
+SVE_fcvtzu UNCLASSIFIED
+SVE_fdiv UNCLASSIFIED
+SVE_fdivr UNCLASSIFIED
+SVE_fdup UNCLASSIFIED
+SVE_fexpa UNCLASSIFIED
+SVE_fmad UNCLASSIFIED
+SVE_fmax UNCLASSIFIED
+SVE_fmaxnm UNCLASSIFIED
+SVE_fmaxnmv UNCLASSIFIED
+SVE_fmaxv UNCLASSIFIED
+SVE_fmin UNCLASSIFIED
+SVE_fminnm UNCLASSIFIED
+SVE_fminnmv UNCLASSIFIED
+SVE_fminv UNCLASSIFIED
+SVE_fmla UNCLASSIFIED
+SVE_fmls UNCLASSIFIED
+SVE_fmov UNCLASSIFIED
+SVE_fmsb UNCLASSIFIED
+SVE_fmul UNCLASSIFIED
+SVE_fmulx UNCLASSIFIED
+SVE_fneg UNCLASSIFIED
+SVE_fnmad UNCLASSIFIED
+SVE_fnmla call reads=[] writes=[] mem=false noret=false
+SVE_fnmls UNCLASSIFIED
+SVE_fnmsb UNCLASSIFIED
+SVE_frecpe UNCLASSIFIED
+SVE_frecps UNCLASSIFIED
+SVE_frecpx UNCLASSIFIED
+SVE_frinta UNCLASSIFIED
+SVE_frinti UNCLASSIFIED
+SVE_frintm UNCLASSIFIED
+SVE_frintn UNCLASSIFIED
+SVE_frintp UNCLASSIFIED
+SVE_frintx UNCLASSIFIED
+SVE_frintz UNCLASSIFIED
+SVE_frsqrte UNCLASSIFIED
+SVE_frsqrts UNCLASSIFIED
+SVE_fscale UNCLASSIFIED
+SVE_fsqrt UNCLASSIFIED
+SVE_fsub UNCLASSIFIED
+SVE_fsubr UNCLASSIFIED
+SVE_ftmad UNCLASSIFIED
+SVE_ftsmul UNCLASSIFIED
+SVE_ftssel UNCLASSIFIED
+SVE_incb UNCLASSIFIED
+SVE_incd UNCLASSIFIED
+SVE_inch UNCLASSIFIED
+SVE_incp UNCLASSIFIED
+SVE_incw UNCLASSIFIED
+SVE_index UNCLASSIFIED
+SVE_insr UNCLASSIFIED
+SVE_lasta UNCLASSIFIED
+SVE_lastb UNCLASSIFIED
+SVE_ld1b UNCLASSIFIED
+SVE_ld1d UNCLASSIFIED
+SVE_ld1h UNCLASSIFIED
+SVE_ld1rb UNCLASSIFIED
+SVE_ld1rd UNCLASSIFIED
+SVE_ld1rh UNCLASSIFIED
+SVE_ld1rqb UNCLASSIFIED
+SVE_ld1rqd UNCLASSIFIED
+SVE_ld1rqh UNCLASSIFIED
+SVE_ld1rqw UNCLASSIFIED
+SVE_ld1rsb UNCLASSIFIED
+SVE_ld1rsh UNCLASSIFIED
+SVE_ld1rsw UNCLASSIFIED
+SVE_ld1rw UNCLASSIFIED
+SVE_ld1sb UNCLASSIFIED
+SVE_ld1sh UNCLASSIFIED
+SVE_ld1sw UNCLASSIFIED
+SVE_ld1w UNCLASSIFIED
+SVE_ld2b UNCLASSIFIED
+SVE_ld2d UNCLASSIFIED
+SVE_ld2h UNCLASSIFIED
+SVE_ld2w UNCLASSIFIED
+SVE_ld3b UNCLASSIFIED
+SVE_ld3d UNCLASSIFIED
+SVE_ld3h UNCLASSIFIED
+SVE_ld3w UNCLASSIFIED
+SVE_ld4b UNCLASSIFIED
+SVE_ld4d UNCLASSIFIED
+SVE_ld4h UNCLASSIFIED
+SVE_ld4w UNCLASSIFIED
+SVE_ldff1b UNCLASSIFIED
+SVE_ldff1d UNCLASSIFIED
+SVE_ldff1h UNCLASSIFIED
+SVE_ldff1sb UNCLASSIFIED
+SVE_ldff1sh UNCLASSIFIED
+SVE_ldff1sw UNCLASSIFIED
+SVE_ldff1w UNCLASSIFIED
+SVE_ldnf1b UNCLASSIFIED
+SVE_ldnf1d UNCLASSIFIED
+SVE_ldnf1h UNCLASSIFIED
+SVE_ldnf1sb UNCLASSIFIED
+SVE_ldnf1sh UNCLASSIFIED
+SVE_ldnf1sw UNCLASSIFIED
+SVE_ldnf1w UNCLASSIFIED
+SVE_ldnt1b UNCLASSIFIED
+SVE_ldnt1d UNCLASSIFIED
+SVE_ldnt1h UNCLASSIFIED
+SVE_ldnt1w UNCLASSIFIED
+SVE_ldr call reads=[] writes=[] mem=true noret=false
+SVE_lsl UNCLASSIFIED
+SVE_lslr UNCLASSIFIED
+SVE_lsr UNCLASSIFIED
+SVE_lsrr UNCLASSIFIED
+SVE_mad UNCLASSIFIED
+SVE_mla UNCLASSIFIED
+SVE_mls UNCLASSIFIED
+SVE_movprfx UNCLASSIFIED
+SVE_msb UNCLASSIFIED
+SVE_mul UNCLASSIFIED
+SVE_nand UNCLASSIFIED
+SVE_nands UNCLASSIFIED
+SVE_neg UNCLASSIFIED
+SVE_nor UNCLASSIFIED
+SVE_nors UNCLASSIFIED
+SVE_not UNCLASSIFIED
+SVE_orn UNCLASSIFIED
+SVE_orns UNCLASSIFIED
+SVE_orr UNCLASSIFIED
+SVE_orrs UNCLASSIFIED
+SVE_orv UNCLASSIFIED
+SVE_pfalse UNCLASSIFIED
+SVE_pfirst UNCLASSIFIED
+SVE_pnext UNCLASSIFIED
+SVE_prfb UNCLASSIFIED
+SVE_prfd UNCLASSIFIED
+SVE_prfh UNCLASSIFIED
+SVE_prfw UNCLASSIFIED
+SVE_ptest UNCLASSIFIED
+SVE_ptrue UNCLASSIFIED
+SVE_ptrues UNCLASSIFIED
+SVE_punpkhi UNCLASSIFIED
+SVE_punpklo UNCLASSIFIED
+SVE_rbit UNCLASSIFIED
+SVE_rdffr UNCLASSIFIED
+SVE_rdffrs UNCLASSIFIED
+SVE_rdvl UNCLASSIFIED
+SVE_rev UNCLASSIFIED
+SVE_revb UNCLASSIFIED
+SVE_revh UNCLASSIFIED
+SVE_revw UNCLASSIFIED
+SVE_sabd UNCLASSIFIED
+SVE_saddv UNCLASSIFIED
+SVE_scvtf UNCLASSIFIED
+SVE_sdiv UNCLASSIFIED
+SVE_sdivr UNCLASSIFIED
+SVE_sdot UNCLASSIFIED
+SVE_sel UNCLASSIFIED
+SVE_smax UNCLASSIFIED
+SVE_smaxv UNCLASSIFIED
+SVE_smin UNCLASSIFIED
+SVE_sminv UNCLASSIFIED
+SVE_smulh UNCLASSIFIED
+SVE_splice UNCLASSIFIED
+SVE_sqadd UNCLASSIFIED
+SVE_sqdecb UNCLASSIFIED
+SVE_sqdecd UNCLASSIFIED
+SVE_sqdech UNCLASSIFIED
+SVE_sqdecp UNCLASSIFIED
+SVE_sqdecw UNCLASSIFIED
+SVE_sqincb UNCLASSIFIED
+SVE_sqincd UNCLASSIFIED
+SVE_sqinch UNCLASSIFIED
+SVE_sqincp UNCLASSIFIED
+SVE_sqincw UNCLASSIFIED
+SVE_sqsub UNCLASSIFIED
+SVE_st1b UNCLASSIFIED
+SVE_st1d UNCLASSIFIED
+SVE_st1h UNCLASSIFIED
+SVE_st1w UNCLASSIFIED
+SVE_st2b UNCLASSIFIED
+SVE_st2d UNCLASSIFIED
+SVE_st2h UNCLASSIFIED
+SVE_st2w UNCLASSIFIED
+SVE_st3b UNCLASSIFIED
+SVE_st3d UNCLASSIFIED
+SVE_st3h UNCLASSIFIED
+SVE_st3w UNCLASSIFIED
+SVE_st4b UNCLASSIFIED
+SVE_st4d UNCLASSIFIED
+SVE_st4h UNCLASSIFIED
+SVE_st4w UNCLASSIFIED
+SVE_stnt1b UNCLASSIFIED
+SVE_stnt1d UNCLASSIFIED
+SVE_stnt1h UNCLASSIFIED
+SVE_stnt1w UNCLASSIFIED
+SVE_str call reads=[] writes=[] mem=true noret=false
+SVE_sub UNCLASSIFIED
+SVE_subr UNCLASSIFIED
+SVE_sunpkhi UNCLASSIFIED
+SVE_sunpklo UNCLASSIFIED
+SVE_sxtb UNCLASSIFIED
+SVE_sxth UNCLASSIFIED
+SVE_sxtw UNCLASSIFIED
+SVE_tbl UNCLASSIFIED
+SVE_trn1 UNCLASSIFIED
+SVE_trn2 UNCLASSIFIED
+SVE_uabd UNCLASSIFIED
+SVE_uaddv UNCLASSIFIED
+SVE_ucvtf UNCLASSIFIED
+SVE_udiv UNCLASSIFIED
+SVE_udivr UNCLASSIFIED
+SVE_udot UNCLASSIFIED
+SVE_umax UNCLASSIFIED
+SVE_umaxv UNCLASSIFIED
+SVE_umin UNCLASSIFIED
+SVE_uminv UNCLASSIFIED
+SVE_umulh UNCLASSIFIED
+SVE_uqadd UNCLASSIFIED
+SVE_uqdecb UNCLASSIFIED
+SVE_uqdecd UNCLASSIFIED
+SVE_uqdech UNCLASSIFIED
+SVE_uqdecp UNCLASSIFIED
+SVE_uqdecw UNCLASSIFIED
+SVE_uqincb UNCLASSIFIED
+SVE_uqincd UNCLASSIFIED
+SVE_uqinch UNCLASSIFIED
+SVE_uqincp UNCLASSIFIED
+SVE_uqincw UNCLASSIFIED
+SVE_uqsub UNCLASSIFIED
+SVE_uunpkhi UNCLASSIFIED
+SVE_uunpklo UNCLASSIFIED
+SVE_uxtb UNCLASSIFIED
+SVE_uxth UNCLASSIFIED
+SVE_uxtw UNCLASSIFIED
+SVE_uzp1 UNCLASSIFIED
+SVE_uzp2 UNCLASSIFIED
+SVE_whilele UNCLASSIFIED
+SVE_whilelo UNCLASSIFIED
+SVE_whilels UNCLASSIFIED
+SVE_whilelt UNCLASSIFIED
+SVE_wrffr UNCLASSIFIED
+SVE_zip1 UNCLASSIFIED
+SVE_zip2 UNCLASSIFIED
+SendEvent call reads=[] writes=[] mem=false noret=false
+SendEventLocally call reads=[] writes=[] mem=false noret=false
+SetPtrTag UNCLASSIFIED
+SoftwareBreakpoint call reads=[] writes=[] mem=false noret=true
+SpeculationBarrier UNCLASSIFIED
+StoreMemTag UNCLASSIFIED
+SysOp_R UNCLASSIFIED
+SysOp_W call reads=[] writes=[] mem=true noret=false
+TLBI_ALLE1 call reads=[] writes=[] mem=true noret=false
+TLBI_ALLE1IS call reads=[] writes=[] mem=true noret=false
+TLBI_ALLE2 call reads=[] writes=[] mem=true noret=false
+TLBI_ALLE2IS call reads=[] writes=[] mem=true noret=false
+TLBI_ALLE3 call reads=[] writes=[] mem=true noret=false
+TLBI_ALLE3IS call reads=[] writes=[] mem=true noret=false
+TLBI_ASIDE1 call reads=[] writes=[] mem=true noret=false
+TLBI_ASIDE1IS call reads=[] writes=[] mem=true noret=false
+TLBI_IPAS2E1 call reads=[] writes=[] mem=true noret=false
+TLBI_IPAS2E1IS call reads=[] writes=[] mem=true noret=false
+TLBI_IPAS2LE1 call reads=[] writes=[] mem=true noret=false
+TLBI_IPAS2LE1IS call reads=[] writes=[] mem=true noret=false
+TLBI_VAAE1 call reads=[] writes=[] mem=true noret=false
+TLBI_VAAE1IS call reads=[] writes=[] mem=true noret=false
+TLBI_VAALE1 call reads=[] writes=[] mem=true noret=false
+TLBI_VAALE1IS call reads=[] writes=[] mem=true noret=false
+TLBI_VAE1 call reads=[] writes=[] mem=true noret=false
+TLBI_VAE1IS call reads=[] writes=[] mem=true noret=false
+TLBI_VAE2 call reads=[] writes=[] mem=true noret=false
+TLBI_VAE2IS call reads=[] writes=[] mem=true noret=false
+TLBI_VAE3 call reads=[] writes=[] mem=true noret=false
+TLBI_VAE3IS call reads=[] writes=[] mem=true noret=false
+TLBI_VALE1 call reads=[] writes=[] mem=true noret=false
+TLBI_VALE1IS call reads=[] writes=[] mem=true noret=false
+TLBI_VALE2 call reads=[] writes=[] mem=true noret=false
+TLBI_VALE2IS call reads=[] writes=[] mem=true noret=false
+TLBI_VALE3 call reads=[] writes=[] mem=true noret=false
+TLBI_VALE3IS call reads=[] writes=[] mem=true noret=false
+TLBI_VMALLE1 call reads=[] writes=[] mem=true noret=false
+TLBI_VMALLE1IS call reads=[] writes=[] mem=true noret=false
+TLBI_VMALLS12E1 call reads=[] writes=[] mem=true noret=false
+TLBI_VMALLS12E1IS call reads=[] writes=[] mem=true noret=false
+UndefinedInstructionException call reads=[] writes=[] mem=false noret=true
+UnkSytemRegRead call reads=[] writes=[] mem=false noret=false
+UnkSytemRegWrite call reads=[] writes=[] mem=true noret=false
+ValidCallTarget UNCLASSIFIED
+ValidJumpTarget UNCLASSIFIED
+ValidJumpTargetIfPermittedBySCTLR UNCLASSIFIED
+ValidJumpTargetWhenDestIsX16OrX17 UNCLASSIFIED
+WaitForEvent call reads=[] writes=[] mem=true noret=false
+WaitForInterrupt call reads=[] writes=[] mem=true noret=false
+Yield call reads=[] writes=[] mem=false noret=false
+a64_TBL call reads=[] writes=[] mem=false noret=false
+cancelTransaction UNCLASSIFIED
+commitTransaction UNCLASSIFIED
+crc32b UNCLASSIFIED
+crc32h UNCLASSIFIED
+crc32w UNCLASSIFIED
+crc32x UNCLASSIFIED
+fpcrRoundingControl lowered:rounding reg=fpcr
+memorySet UNCLASSIFIED
+memorySetTag UNCLASSIFIED
+pacda UNCLASSIFIED
+pacdb UNCLASSIFIED
+pacdza UNCLASSIFIED
+pacdzb UNCLASSIFIED
+pacga UNCLASSIFIED
+pacia UNCLASSIFIED
+pacib UNCLASSIFIED
+paciza UNCLASSIFIED
+pacizb UNCLASSIFIED
+store64ByteAtomic UNCLASSIFIED
+sveStreamingModeStart UNCLASSIFIED
+sveStreamingModeStop UNCLASSIFIED
+transactionDepth UNCLASSIFIED
+transactionStart UNCLASSIFIED
+xpac UNCLASSIFIED

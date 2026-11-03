@@ -25,6 +25,7 @@ test-util = []
 strider-target = { workspace = true, features = ["test-util"] }
 # The vendored Ghidra .cspec / .ldefs the presets are checked against.
 roxmltree.workspace = true
+expect-test.workspace = true
 
 [lints]
 workspace = true
