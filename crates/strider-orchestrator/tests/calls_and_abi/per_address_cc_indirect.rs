@@ -212,7 +212,7 @@ fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
 /// Regression: an override CC declaring return registers (e.g. plain
 /// SystemV: RAX / XMM0) must put each ret reg in EXACTLY one output
 /// group. The spliced Call's outputs are
-/// `[Control, Memory] ++ ret_vals ++ clobbers`; `call_clobbered_for`
+/// `[Control, Memory] ++ ret_vals ++ clobbers`; `ret_and_clobber_vns`
 /// excludes the ret regs from the clobber group. A clobber derivation
 /// that failed to filter them would list RAX/XMM0 in BOTH groups, so the
 /// per-output `value_vn` tags would contain duplicates.
