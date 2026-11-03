@@ -225,8 +225,7 @@ impl Function {
     /// Pre-compaction `NodeId` / `ValueId` / `UseId` values are invalidated;
     /// callers holding one MUST rewrite it through the returned
     /// [`NodeIdRemap`].  Entries whose node did not survive are dropped.
-    /// Never returns `Err`.
-    pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
+    pub fn compact(&mut self) -> NodeIdRemap {
         // The pre-order yields the entry first, so it stays node 0.
         let reachable: Vec<NodeId> = self.walk().collect();
         let remap = self.graph.retain_reachable_stale_cache(reachable);
@@ -238,7 +237,7 @@ impl Function {
         // the id rewrite MUST precede the cache rebuild.
         self.side_tables.gc_payload_tables(&mut self.graph);
         self.graph.rebuild_cache();
-        Ok(remap)
+        remap
     }
 }
 
@@ -465,7 +464,7 @@ mod compact_tests {
         f.assume(&listed);
 
         f.invalidate_analyses();
-        f.compact().expect("compact succeeds on a valid function");
+        f.compact();
 
         let Function {
             graph: _,
@@ -488,7 +487,7 @@ mod compact_tests {
         let _zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::int(64));
         let pre_count = f.graph().all_node_ids().count();
 
-        let _remap = f.compact().expect("compact succeeds on a valid function");
+        let _remap = f.compact();
 
         let post_count = f.graph().all_node_ids().count();
         assert!(post_count < pre_count, "compact must shrink the graph");
@@ -532,7 +531,7 @@ mod compact_tests {
             .graph_mut()
             .create_node(NodeKind::Return, [entry_ctrl, mem, sum_value], []);
 
-        let remap = f.compact().expect("compact succeeds on a valid function");
+        let remap = f.compact();
         let sum = remap.node_old_to_new(sum).expect("the sum is reachable");
         let a = remap.value_old_to_new(a).expect("lhs is reachable");
         let b = remap.value_old_to_new(b).expect("rhs is reachable");
@@ -592,7 +591,7 @@ mod compact_tests {
         f.graph_mut()
             .create_node(NodeKind::Return, [entry_ctrl, mem_value, wide_value], []);
 
-        let remap = f.compact().expect("compact succeeds");
+        let remap = f.compact();
 
         let new_wide = remap
             .node_old_to_new(wide_node)
@@ -630,7 +629,7 @@ mod compact_tests {
         );
         f.set_stack_slot(key_value, base_value, -16);
 
-        let remap = f.compact().expect("compact must succeed");
+        let remap = f.compact();
 
         assert!(
             remap.node_old_to_new(zombie).is_none(),
@@ -679,7 +678,7 @@ mod compact_tests {
         f.set_heap_slot(heap_key, base, 24);
         f.set_stack_slot(stack_key, base, -8);
 
-        let remap = f.compact().expect("compact must succeed");
+        let remap = f.compact();
 
         let new = |v| remap.value_old_to_new(v).expect("survives");
         let (heap_class, heap_slot) = f.memory_decomp(new(heap_key));
@@ -715,7 +714,7 @@ mod compact_tests {
         f.side_tables_mut()
             .extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
 
-        let remap = f.compact().expect("compact must succeed");
+        let remap = f.compact();
         let new_id = remap
             .node_old_to_new(surviving)
             .expect("surviving IntConst must remain after compact");
@@ -755,7 +754,7 @@ mod compact_tests {
             "zombie must be present before compact"
         );
 
-        let _remap: NodeIdRemap = f.compact().expect("compact must succeed");
+        let _remap: NodeIdRemap = f.compact();
 
         // The zombie NodeId is invalid post-compact, so probe the remap instead.
         assert!(
@@ -814,7 +813,7 @@ mod compact_tests {
             "offset must be set before compact"
         );
 
-        let remap = f.compact().expect("compact must succeed");
+        let remap = f.compact();
 
         assert!(remap.node_old_to_new(zombie_phi).is_none());
         assert!(remap.node_old_to_new(zombie_stack).is_none());
@@ -875,7 +874,7 @@ mod compact_tests {
                 .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_value], []);
         f.side_tables_mut().register_arg_value(0, arg_value);
 
-        let remap = f.compact().expect("compact must succeed");
+        let remap = f.compact();
         let new_arg_value = remap
             .value_old_to_new(arg_value)
             .expect("the live arg carrier value must survive compaction");
@@ -933,7 +932,7 @@ mod compact_tests {
         f.set_vn_for_value(live_phi_value, live_vn);
         f.set_vn_for_value(dead_phi_value, dead_vn);
 
-        let remap = f.compact().expect("compact must succeed");
+        let remap = f.compact();
         let new_live_phi = remap
             .node_old_to_new(live_phi)
             .expect("reachable phi must survive compaction");
@@ -992,7 +991,7 @@ mod compact_tests {
         f.side_tables_mut().register_arg_value(0, live_value);
         f.side_tables_mut().register_arg_value(1, dead_value);
 
-        f.compact().expect("compact must succeed");
+        f.compact();
 
         // arg 1's only value was pruned, so the index goes entirely.
         assert!(
@@ -1034,7 +1033,7 @@ mod compact_tests {
             f.side_tables_mut().register_arg_value(0, value);
         }
 
-        f.compact().expect("compact must succeed");
+        f.compact();
 
         let ids: Vec<_> = f
             .side_tables()
@@ -1083,7 +1082,7 @@ mod compact_tests {
         f.graph_mut()
             .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
 
-        let remap = f.compact().expect("compact must succeed");
+        let remap = f.compact();
         let new_call = remap.node_old_to_new(call).expect("the Call survives");
 
         assert_eq!(
@@ -1178,7 +1177,7 @@ mod compact_tests {
         assert_eq!(f.get_cc(call).stack_args, cc.stack_args,);
         assert_eq!(f.get_vn_for_value(clob), Some(clob_vn));
 
-        let remap = f.compact().expect("compact must succeed");
+        let remap = f.compact();
         let new_call = remap
             .node_old_to_new(call)
             .expect("live Call must survive compaction");

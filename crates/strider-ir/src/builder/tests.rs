@@ -2301,7 +2301,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     );
 
     let mut bfg = b.build()?;
-    bfg.compact()?;
+    bfg.compact();
 
     let post = bfg.side_tables().const_interner.len();
     assert_eq!(
@@ -3049,7 +3049,7 @@ fn switch_targets_survive_compact() -> Result<()> {
         b.build_return(None, &[])?;
     }
     let mut f = b.build()?;
-    f.compact()?;
+    f.compact();
     let sw = f
         .graph()
         .all_node_ids()
