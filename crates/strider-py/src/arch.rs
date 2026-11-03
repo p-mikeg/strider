@@ -91,15 +91,6 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // to `arch_presets!` reaches Python only through that hand-written list,
     // and nothing else compares the two.
     m.add(
-        "CC_PRESETS",
-        pyo3::types::PyTuple::new_bound(
-            py,
-            strider_target::CallingConvention::presets()
-                .map(|p| p.name)
-                .collect::<Vec<_>>(),
-        ),
-    )?;
-    m.add(
         "ARCH_PRESETS",
         pyo3::types::PyTuple::new_bound(
             py,
