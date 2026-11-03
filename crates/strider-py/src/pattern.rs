@@ -410,6 +410,9 @@ fn refusal(ob: &Bound<'_, PyAny>, slot: Slot) -> PyErr {
 
 /// `ob` sealed as a query's root.
 pub(crate) fn root_pattern(ob: &Bound<'_, PyAny>) -> PyResult<Pattern> {
+    // Opened here rather than at the first operand, so the stack budget also
+    // covers the root builder's own frames.
+    let _depth = DepthGuard::enter()?;
     let py = ob.py();
     if let Ok(p) = ob.downcast::<PyPat>() {
         return match &p.get().repr.op {
@@ -480,8 +483,8 @@ fn parse_value_ty(name: &str) -> PyResult<T> {
 // recursion and so hits no interpreter limit. Dropping any of them is safe
 // however deep: every builder and `Pat` defers its operand slots (`defer_drop`).
 
-/// Walk levels, one per nested operand. Well above any hand-written pattern;
-/// a machine-generated one can exceed it.
+/// Walk levels, the root and one per nested operand. Well above any
+/// hand-written pattern; a machine-generated one can exceed it.
 ///
 /// The cheap bound of the two, and the one calibrated for the main thread's
 /// 8 MiB stack. The stack budget below is what holds on a smaller one.
@@ -497,10 +500,20 @@ const MAX_PATTERN_NESTING: u32 = 512;
 /// refused here.
 const MAX_COMPILE_STEPS: u64 = 4096;
 
-/// Fraction of the stack left below the outermost guard that one compile may
-/// consume. The match walk that follows costs about what the compile did, so a
-/// quarter spends half the headroom and leaves half spare.
+/// Fraction of the stack left below the outermost guard, less
+/// [`STEP_RESERVE`], that one compile may consume. The match walk that follows
+/// costs about what the compile did, so a quarter spends half the headroom and
+/// leaves half spare.
 const STACK_BUDGET_SHARE: usize = 4;
+
+/// Stack held back from the budget for what runs past the last check that
+/// passed: one lowering step, then the refusal the next check raises. Both are
+/// fixed costs, not a share of what is left, so a fraction alone leaves too
+/// little on a thread that starts the compile nearly spent. In an unoptimised
+/// build a `store` step measures 18.3 KiB at the root and 14.4 KiB nested,
+/// and the refusal about 3 KiB. Under this much left, the outermost guard
+/// refuses at once.
+const STEP_RESERVE: usize = 32 * 1024;
 
 /// Stack one compile may consume where the thread's own bounds are not
 /// reported, low enough that the walk after it fits in a 256 KiB thread.
@@ -554,9 +567,20 @@ impl DepthGuard {
             }
             if next == 1 {
                 STACK_BASE.set(here);
-                let left = stacker::remaining_stack();
-                STACK_BUDGET
-                    .set(left.map_or(FALLBACK_PATTERN_STACK, |left| left / STACK_BUDGET_SHARE));
+                let budget = match stacker::remaining_stack() {
+                    None => FALLBACK_PATTERN_STACK,
+                    Some(left) if left < STEP_RESERVE => {
+                        return Err(into_strider_err(anyhow::anyhow!(
+                            "too little of this thread's stack left to compile a \
+                             pattern ({} KiB, under the {} KiB one lowering step and \
+                             its refusal take); give the thread a larger stack_size",
+                            left / 1024,
+                            STEP_RESERVE / 1024,
+                        )));
+                    }
+                    Some(left) => (left - STEP_RESERVE) / STACK_BUDGET_SHARE,
+                };
+                STACK_BUDGET.set(budget);
                 COMPILE_STEPS.set(0);
             } else {
                 let used = STACK_BASE.get().saturating_sub(here);

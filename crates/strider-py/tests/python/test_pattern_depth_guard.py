@@ -326,3 +326,53 @@ def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, shape):
     out = _on_small_thread_child(kib, setup, loop)
     assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
     assert out.stdout.split() == ["raised", "True"], out.stdout
+
+
+@pytest.mark.parametrize("shape", ["value", "builder", "join", "store"])
+def test_the_stack_refusal_fits_every_small_thread(shape):
+    """What runs past the last check that passed, one lowering step and then
+    the refusal, is a fixed cost rather than a share of the stack left, so a
+    budget alone misses a window of thread sizes, different on each Python.
+    Each size runs fresh threads, deeper each time, until one refuses."""
+    setup = f"""\
+        a = p.Capture("A")
+
+        def build(n):
+            if {shape!r} == "value":
+                pat = p.anything()
+                for _ in range(n):
+                    pat = p.int_add(pat, p.anything())
+                return pat
+            if {shape!r} == "store":
+                pat = p.store()
+                for _ in range(n):
+                    pat = p.store().mem(pat)
+                return pat
+            pat = p.anything().capture(a)
+            for _ in range(n):
+                pat = p.load(pat)
+            return [pat, p.load(p.var(a))] if {shape!r} == "join" else pat
+
+        def run(n, out):
+            try:
+                fn.find_all(build(n))
+            except strider.StriderError as e:
+                out.append(e)
+        """
+    loop = """\
+        refused = []
+        for kib in range(32, 129, 4):
+            threading.stack_size(kib * 1024)
+            for n in range(1, 200):
+                out = []
+                t = threading.Thread(target=run, args=(n, out))
+                t.start()
+                t.join()
+                if out:
+                    refused.append(kib)
+                    break
+        print(len(refused), flush=True)
+        """
+    out = _on_small_thread_child(32, setup, loop)
+    assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
+    assert out.stdout.split() == [str(len(range(32, 129, 4)))], out.stdout
