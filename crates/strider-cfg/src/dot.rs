@@ -63,12 +63,12 @@ impl GraphDotDumper for CfgDotDumper<'_> {
             .node_weight(node_id)
             .ok_or_else(|| anyhow!("invalid region index {node_id:?}"))?;
         let first_insn_index = node.start_addr.insn_index;
-        let start_addr = node.start_addr.machine_addr.addr;
+        let start_addr = node.start_addr.machine();
 
         let head = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
         let lines = node.insns.iter().map(|insn| {
             let pretty = crate::insn_text(&insn.insn, &self.cfg.space_ids, self.names);
-            format!("{:#x}: {pretty}", insn.addr.machine_addr.addr)
+            format!("{:#x}: {pretty}", insn.addr.machine())
         });
         out.node_left_lines(&dot_id, &head, lines, "box", self.center_attrs(node_id));
 

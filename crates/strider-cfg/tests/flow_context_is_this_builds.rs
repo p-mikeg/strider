@@ -69,7 +69,7 @@ fn build_resolved(eng: &mut Engine, addr: u64, size: u64, site: u64, arms: &[u64
         cfg.regions().any(|r| matches!(
             r.terminator,
             strider_cfg::RegionTerminator::Switch { addr, .. }
-                if addr.machine_addr.addr == site
+                if addr.machine() == site
         )),
         "premise: {site:#x} seated as a Switch, so its arms went through \
          `enqueue_resolved`",
@@ -80,7 +80,7 @@ fn build_resolved(eng: &mut Engine, addr: u64, size: u64, site: u64, arms: &[u64
 /// The region starting exactly at `addr`.
 fn region_at(cfg: &Cfg, addr: u64) -> &strider_cfg::Region {
     cfg.regions()
-        .find(|r| r.start_addr.machine_addr.addr == addr)
+        .find(|r| r.start_addr.machine() == addr)
         .unwrap_or_else(|| panic!("a region starts at {addr:#x}"))
 }
 
@@ -88,7 +88,7 @@ fn region_at(cfg: &Cfg, addr: u64) -> &strider_cfg::Region {
 fn opcodes_at(cfg: &Cfg, addr: u64) -> Vec<rsleigh::Opcode> {
     cfg.regions()
         .flat_map(|r| r.insns.iter())
-        .filter(|i| i.addr.machine_addr.addr == addr)
+        .filter(|i| i.addr.machine() == addr)
         .map(|i| i.insn.opcode)
         .collect()
 }
@@ -184,7 +184,7 @@ fn an_edge_into_an_it_block_is_reported_not_silently_decided() {
     let clashes: Vec<u64> = cfg
         .incomplete()
         .of(strider_cfg::Reason::IsaModeConflict)
-        .map(|a| a.machine_addr.addr)
+        .map(|a| a.machine())
         .collect();
     assert!(
         clashes.contains(&0x1010),

@@ -31,6 +31,12 @@ impl PcodeInsnAddr {
             insn_index: 0,
         }
     }
+
+    /// The machine address, as a plain `u64`.
+    #[must_use]
+    pub fn machine(self) -> u64 {
+        self.machine_addr.addr
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,9 +246,9 @@ impl Region {
     /// instruction. It also keeps [`crate::region_index::RegionIndex`]'s
     /// `(start, end)` range non-empty, which `range` would panic on.
     pub(crate) fn end(&self) -> Option<u64> {
-        let start = self.start_addr.machine_addr.addr;
+        let start = self.start_addr.machine();
         let end = match self.insns.last() {
-            Some(last) => last.addr.machine_addr.addr.checked_add(u64::from(last.len)),
+            Some(last) => last.addr.machine().checked_add(u64::from(last.len)),
             None => start.checked_add(u64::from(self.empty_span_len)),
         }?;
         Some(end.max(start.checked_add(1)?))
@@ -250,7 +256,7 @@ impl Region {
 
     /// Byte length of the span [`Self::contains_addr`] accepts, at least 1.
     pub(crate) fn span_len(&self) -> u64 {
-        let start = self.start_addr.machine_addr.addr;
+        let start = self.start_addr.machine();
         self.end()
             .map_or(u64::MAX - start, |end| end - start)
             .max(1)
@@ -266,7 +272,7 @@ impl Region {
     /// zero-pcode-op instruction it was sealed at; those bytes hold no pcode, so
     /// only their machine addresses are owned.
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
-        let below_end = self.end().is_none_or(|end| addr.machine_addr.addr < end);
+        let below_end = self.end().is_none_or(|end| addr.machine() < end);
         match self.insns.last() {
             None => {
                 addr == self.start_addr
@@ -307,7 +313,7 @@ mod tests {
     #[test]
     fn pcode_addr_at_machine_start_zero_index() {
         let a = PcodeInsnAddr::at_machine_start(0x2000);
-        assert_eq!(a.machine_addr.addr, 0x2000);
+        assert_eq!(a.machine(), 0x2000);
         assert_eq!(a.insn_index, 0);
     }
 

@@ -48,18 +48,14 @@ fn a_split_keeps_the_shadowed_half_reachable() {
     // and the interior target 0x100d is recognised as A's, not decoded.
     let no_split = build(bytes(false), 0x1000);
     assert!(
-        !no_split
-            .regions()
-            .any(|r| r.start_addr.machine_addr.addr == 0x100d),
+        !no_split.regions().any(|r| r.start_addr.machine() == 0x100d),
         "control: 0x100d is owned by region A, so no region may start there"
     );
 
     // Subject: the same graph plus an edge that splits A at 0x1004.
     let split = build(bytes(true), 0x1000);
     assert!(
-        !split
-            .regions()
-            .any(|r| r.start_addr.machine_addr.addr == 0x100d),
+        !split.regions().any(|r| r.start_addr.machine() == 0x100d),
         "after the split, 0x100d is owned by the second half; a region starting \
          there means the lookup missed it and decoded inside the movabs immediate"
     );

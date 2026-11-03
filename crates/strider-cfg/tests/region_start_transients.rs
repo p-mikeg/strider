@@ -28,7 +28,7 @@ fn build_arm(words: &[u32]) -> Cfg {
 fn opcodes_at(cfg: &Cfg, addr: u64) -> Vec<rsleigh::Opcode> {
     cfg.regions()
         .flat_map(|r| r.insns.iter())
-        .filter(|i| i.addr.machine_addr.addr == addr)
+        .filter(|i| i.addr.machine() == addr)
         .map(|i| i.insn.opcode)
         .collect()
 }

@@ -204,12 +204,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // paints forward over the caller's own bytes.
         let bit = isa_mode.map(|mode| mode != 0);
         let carried = if !self.engine.tables.flow_commit.is_empty()
-            && self.committed_next.contains(&addr.machine_addr.addr)
+            && self.committed_next.contains(&addr.machine())
         {
             let snapshot = self
                 .engine
                 .flow_vars()
-                .snapshot(&self.engine.sleigh, addr.machine_addr.addr);
+                .snapshot(&self.engine.sleigh, addr.machine());
             self.carry(snapshot, &[], bit)
         } else {
             // The baseline is the entry's pspec defaults, and a FLOWING
@@ -374,7 +374,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let bit = crate::flowing_isa_bit_at(
             &self.engine.arch,
             &self.engine.sleigh,
-            site.machine_addr.addr,
+            site.machine(),
             entry_bit,
         );
         self.report.flowing_isa_bits.insert(site, bit);
@@ -400,7 +400,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 empty_span_len: 0,
                 isa_mode: None,
                 terminator: RegionTerminator::TailCall {
-                    target: addr.machine_addr.addr.into(),
+                    target: addr.machine().into(),
                 },
             })?,
         };
@@ -471,9 +471,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // item, so dropping them all at the first would leave the second
         // nothing to consume and read as the no-arm violation the demote
         // inside `drop_switch_arms_at` exists to avoid.
-        let dropped = region
-            .terminator
-            .drop_switch_arms_at(addr.machine_addr.addr, true);
+        let dropped = region.terminator.drop_switch_arms_at(addr.machine(), true);
         debug_assert!(
             dropped,
             "seated interior target {addr:?} names no arm of the Switch that routed it",
@@ -516,16 +514,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             return false;
         }
         let region = &self.region_graph[owner];
-        let target = addr.machine_addr.addr;
+        let target = addr.machine();
         let Some(insn) = region
             .insns
             .iter()
             .rev()
-            .find(|i| i.addr.machine_addr.addr <= target)
+            .find(|i| i.addr.machine() <= target)
         else {
             return false;
         };
-        let start = insn.addr.machine_addr.addr;
+        let start = insn.addr.machine();
         let full_end = start.saturating_add(u64::from(insn.len));
         if !(start < target && target < full_end) {
             return false;
@@ -538,7 +536,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let full = region
             .insns
             .iter()
-            .filter(|i| i.addr.machine_addr.addr == start)
+            .filter(|i| i.addr.machine() == start)
             .map(|i| &i.insn);
         let Ok(tail) = self.engine.sleigh.lift_one(target) else {
             return false;
@@ -608,11 +606,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // opens with a `lift_one` on this same address, and that repair runs
         // unconditionally where one here would be gated on `pin_at` having
         // written at all.
-        self.engine.flow_vars().pin_at(
-            &mut self.engine.sleigh,
-            addr.machine_addr.addr,
-            &carried,
-        )?;
+        self.engine
+            .flow_vars()
+            .pin_at(&mut self.engine.sleigh, addr.machine(), &carried)?;
         self.descent = seeded_by;
         let built = RegionBuilder::new(self, addr, parent_region, isa_mode).build();
         self.descent = None;
@@ -732,7 +728,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     fn drop_switch_arm(&mut self, site: NodeIndex, target: PcodeInsnAddr) {
         if !self.region_graph[site]
             .terminator
-            .drop_switch_arms_at(target.machine_addr.addr, false)
+            .drop_switch_arms_at(target.machine(), false)
         {
             return;
         }
@@ -811,7 +807,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // whose first instruction does not exist has nothing to analyse,
         // so it stays an `Err`.
         if !is_arm && let Some(parent) = parent_region {
-            let here = decode_failure(&e).filter(|f| f.addr() == address.machine_addr.addr);
+            let here = decode_failure(&e).filter(|f| f.addr() == address.machine());
             let reason = match here {
                 Some(DecodeFailure::Unmapped(_)) => Some(Reason::UnmappedTarget),
                 Some(DecodeFailure::NotCode { .. }) if seeded_by.is_none() => {
@@ -840,7 +836,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let (at, reason) = match decode_failure(&e) {
             // The unmapped byte IS the one asked for: report the pcode
             // address, which carries the insn index the gap address cannot.
-            Some(DecodeFailure::Unmapped(gap)) if gap == address.machine_addr.addr => {
+            Some(DecodeFailure::Unmapped(gap)) if gap == address.machine() => {
                 (address, Reason::UnmappedTarget)
             }
             Some(DecodeFailure::Unmapped(gap)) => {
