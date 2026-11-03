@@ -195,7 +195,7 @@ where
         opts: &AnalyzeOptions<'_>,
         pipeline: Option<strider_opt::OptimizerPipeline>,
     ) -> Result<AnalyzeResult> {
-        self.analyze_with(entry, cc, opts, pipeline, &strider_opt::classify_sites)
+        self.resolve(entry, cc, opts, pipeline, &strider_opt::classify_sites)
     }
 
     /// [`Self::analyze`], classifying every round's dispatch sites with
@@ -213,29 +213,7 @@ where
         pipeline: Option<strider_opt::OptimizerPipeline>,
         classify: Classifier<'_>,
     ) -> Result<AnalyzeResult> {
-        self.analyze_with(entry, cc, opts, pipeline, classify)
-    }
-
-    fn analyze_with(
-        &mut self,
-        entry: u64,
-        cc: &strider_target::BuiltCallingConvention,
-        opts: &AnalyzeOptions<'_>,
-        pipeline: Option<strider_opt::OptimizerPipeline>,
-        classify: resolve::Classifier<'_>,
-    ) -> Result<AnalyzeResult> {
-        anyhow::ensure!(
-            opts.cfg.derived_targets.is_empty(),
-            "analyze keeps its own answers in derived_targets; seed through \
-             known_targets instead"
-        );
-        let pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
-        let mut result =
-            self.resolve(MachineInsnAddr::from(entry), cc, opts, &pipeline, classify)?;
-        if opts.compact {
-            result.function.compact();
-        }
-        Ok(result)
+        self.resolve(entry, cc, opts, pipeline, classify)
     }
 }
 
