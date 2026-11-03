@@ -259,6 +259,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let own_end = (addr.machine_addr.addr).checked_add(lift_res.machine_insn_len as u64);
         if target.insn_index == 0 && own_end == Some(target.machine_addr.addr) {
             self.builder
+                .report
                 .incomplete
                 .insert(target, crate::Reason::PastFunctionEnd);
         }
@@ -273,6 +274,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
         self.finish_current_region(RegionTerminator::NoReturn)?;
         self.builder
+            .report
             .incomplete
             .insert(ret, crate::Reason::PastFunctionEnd);
         Ok(InsnOutcome::RegionClosed)
@@ -417,7 +419,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // seated answer just deleted whatever else the site had.
                 // Record it whichever source that answer came from; during the
                 // resolve loop this map holds the classifier's derivations too.
-                self.builder.link_register_seated.push(addr);
+                self.builder.report.link_register_seated.push(addr);
                 self.finish_current_region(RegionTerminator::Return)?;
                 return Ok(InsnOutcome::RegionClosed);
             }
@@ -428,7 +430,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // (no placeholder, no `Switch` anchor), so a dispatch that
                 // really had more arms leaves no trace. Record it, or the loss
                 // goes unreported.
-                self.builder.tail_call_seated.push(addr);
+                self.builder.report.tail_call_seated.push(addr);
                 self.finish_current_region(RegionTerminator::TailCall { target: t })?;
                 return Ok(InsnOutcome::RegionClosed);
             }
@@ -460,6 +462,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             let a = PcodeInsnAddr::at_machine_start(target.addr);
             if self.builder.addr_is_interior_non_boundary(a) {
                 self.builder
+                    .report
                     .incomplete
                     .insert(a, crate::Reason::InteriorTarget);
                 deferred = true;
@@ -495,7 +498,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 region,
                 PcodeInsnAddr::at_machine_start(target.addr),
                 target.isa_bit.or(flowing_isa),
-                addr,
                 &flowing,
             );
         }
@@ -696,6 +698,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             let r = &self.builder.region_graph[region];
             if !(r.insns.is_empty() && matches!(r.terminator, RegionTerminator::TailCall { .. })) {
                 self.builder
+                    .report
                     .incomplete
                     .insert(start, crate::Reason::InteriorTarget);
             }
@@ -710,7 +713,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         self.note_empty_span_to(cur_addr);
         let region = self.finish_current_region(RegionTerminator::Unconditional)?;
         self.builder.edge_to_stub(region, cur_addr)?;
-        self.builder.incomplete.insert(cur_addr, reason);
+        self.builder.report.incomplete.insert(cur_addr, reason);
         Ok(())
     }
 
@@ -749,7 +752,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         };
         self.insns.truncate(call + 1);
         self.finish_current_region(RegionTerminator::NoReturn)?;
-        self.builder.incomplete.insert(cur_addr, reason);
+        self.builder.report.incomplete.insert(cur_addr, reason);
         Ok(true)
     }
 
@@ -887,7 +890,8 @@ mod tests {
 
         assert_eq!(outcome, InsnOutcome::RegionClosed);
         assert_eq!(
-            b.incomplete
+            b.report
+                .incomplete
                 .of(crate::Reason::IsaModeConflict)
                 .collect::<Vec<_>>(),
             vec![addr_at(0x1000, 3)],
