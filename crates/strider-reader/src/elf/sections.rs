@@ -733,46 +733,21 @@ fn opd_relocations(
     f: &object::read::elf::ElfFile64<'_, object::Endianness>,
     target: usize,
 ) -> Vec<(u64, u32, u32, i64)> {
-    use object::read::elf::{Rel as _, Rela as _, SectionHeader as _};
+    use object::read::elf::SectionHeader as _;
     let endian = f.endian();
-    let data = f.data();
     let symtab = f.elf_symbol_table().section();
-    let mut out = Vec::new();
-    for sh in f.elf_section_table().iter() {
-        let ty = sh.sh_type(endian);
-        if !matches!(
-            ty,
-            object::elf::SHT_REL | object::elf::SHT_RELA | object::elf::SHT_CREL
-        ) || sh.link(endian) != symtab
-            || sh.sh_info(endian) as usize != target
-        {
-            continue;
-        }
-        if let Ok(Some((rela, _))) = sh.rela(endian, data) {
-            out.extend(rela.iter().map(|e| {
-                (
-                    e.r_offset(endian),
-                    e.r_type(endian, false),
-                    e.r_sym(endian, false),
-                    e.r_addend(endian),
-                )
-            }));
-        } else if let Ok(Some((rel, _))) = sh.rel(endian, data) {
-            out.extend(
-                rel.iter()
-                    .map(|e| (e.r_offset(endian), e.r_type(endian), e.r_sym(endian), 0)),
-            );
-        } else if ty == object::elf::SHT_CREL
-            && let Ok(bytes) = sh.data(endian, data)
-            && let Ok(crel) = object::read::elf::CrelIterator::new(bytes)
-        {
-            out.extend(
-                crel.map_while(|e| e.ok())
-                    .map(|e| (e.r_offset, e.r_type, e.r_sym, e.r_addend)),
-            );
-        }
-    }
-    out
+    f.elf_section_table()
+        .iter()
+        .filter(|sh| {
+            matches!(
+                sh.sh_type(endian),
+                object::elf::SHT_REL | object::elf::SHT_RELA | object::elf::SHT_CREL
+            ) && sh.link(endian) == symtab
+                && sh.sh_info(endian) as usize == target
+        })
+        .flat_map(|sh| super::relocations::raw_entries(f, sh))
+        .map(|(offset, r_type, sym, addend)| (offset, r_type, sym, addend.unwrap_or(0)))
+        .collect()
 }
 
 /// ppc64 ELFv1 function descriptors.
