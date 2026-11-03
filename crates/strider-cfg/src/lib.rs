@@ -60,12 +60,19 @@ pub struct Cfg {
     pub(crate) region_graph: RegionGraph,
     pub(crate) entry: NodeIndex,
     pub(crate) index: region_index::RegionIndex,
-    pub(crate) undecodable_seeded: Vec<UndecodableTarget>,
-    pub(crate) incomplete: Incompleteness,
-    pub(crate) link_register_seated: Vec<types::PcodeInsnAddr>,
-    pub(crate) tail_call_seated: Vec<types::PcodeInsnAddr>,
-    pub(crate) flowing_isa_bits: std::collections::BTreeMap<types::PcodeInsnAddr, bool>,
+    pub(crate) report: BuildReport,
     pub(crate) space_ids: rsleigh::SpaceIds,
+}
+
+/// What a build reports beside its graph, each read through its [`Cfg`]
+/// accessor.
+#[derive(Debug, Default)]
+pub(crate) struct BuildReport {
+    pub(crate) incomplete: Incompleteness,
+    pub(crate) undecodable_seeded: Vec<UndecodableTarget>,
+    pub(crate) link_register_seated: Vec<PcodeInsnAddr>,
+    pub(crate) tail_call_seated: Vec<PcodeInsnAddr>,
+    pub(crate) flowing_isa_bits: std::collections::BTreeMap<PcodeInsnAddr, bool>,
 }
 
 impl Cfg {
@@ -106,7 +113,7 @@ impl Cfg {
     /// another site decodes in that site's own committed context, so the
     /// failure is no verdict there.
     pub fn undecodable_seeded_targets(&self) -> &[UndecodableTarget] {
-        &self.undecodable_seeded
+        &self.report.undecodable_seeded
     }
 
     /// What this build cannot vouch for, each address with its [`Reason`].
@@ -115,7 +122,7 @@ impl Cfg {
     /// left without an edge and every answer it seated. The CFG
     /// `Strider::analyze` returns carries that analysis's set instead.
     pub fn incomplete(&self) -> &Incompleteness {
-        &self.incomplete
+        &self.report.incomplete
     }
 
     /// This CFG reporting `incomplete` in place of its own build's: how
@@ -124,7 +131,7 @@ impl Cfg {
     #[doc(hidden)]
     #[must_use]
     pub fn with_incompleteness(mut self, incomplete: Incompleteness) -> Self {
-        self.incomplete = incomplete;
+        self.report.incomplete = incomplete;
         self
     }
 
@@ -133,8 +140,8 @@ impl Cfg {
     /// Seating one consumes the site at CFG-build time: no placeholder and no
     /// `Switch` anchor survive, so nothing later can tell that a caller's seed
     /// replaced whatever the classifier would have derived there.
-    pub fn link_register_seated(&self) -> &[types::PcodeInsnAddr] {
-        &self.link_register_seated
+    pub fn link_register_seated(&self) -> &[PcodeInsnAddr] {
+        &self.report.link_register_seated
     }
 
     /// Sites seated as a `TailCall` because the answer was a single target
@@ -143,8 +150,8 @@ impl Cfg {
     /// Seating one consumes the site at CFG-build time, as
     /// [`Self::link_register_seated`] does, so a dispatch collapsed to its
     /// first derived answer looks like a genuine tail call.
-    pub fn tail_call_seated(&self) -> &[types::PcodeInsnAddr] {
-        &self.tail_call_seated
+    pub fn tail_call_seated(&self) -> &[PcodeInsnAddr] {
+        &self.report.tail_call_seated
     }
 
     /// The ISA-mode bit that flowed into the indirect branch at `site`, sampled
@@ -154,8 +161,8 @@ impl Cfg {
     /// `None` for an address no indirect branch was sealed at, and on an arch
     /// with no ISA-mode var. Where the branch address carries no readable
     /// context, the sample is the function's own mode.
-    pub fn flowing_isa_bit_at_site(&self, site: types::PcodeInsnAddr) -> Option<bool> {
-        self.flowing_isa_bits.get(&site).copied()
+    pub fn flowing_isa_bit_at_site(&self, site: PcodeInsnAddr) -> Option<bool> {
+        self.report.flowing_isa_bits.get(&site).copied()
     }
 }
 
