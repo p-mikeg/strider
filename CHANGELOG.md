@@ -582,10 +582,12 @@
 - A refusal names the value-op constructor called (`int_add()`,
   `int_truncate()`) where it named the family (`int_binary()`, `a cast`).
   The nesting bound counts one level per nested operand, where a nested
-  builder call cost two, and its refusal no longer says so. A rewrite's
-  `find` given something that is no pattern raises a `TypeError` reading
-  `expected a pattern (...)`; `find_all` raises one carrying that text inside
-  pyo3's `PatQuery` extraction message.
+  builder call cost two, and its refusal no longer says so. A builder at a
+  query's root, bare or as its `into_pat()` `Pat`, counts as one of the 512
+  levels, as a `Pat` root does. A rewrite's `find` given something that is
+  no pattern raises a `TypeError` reading `expected a pattern (...)`;
+  `find_all` raises one carrying that text inside pyo3's `PatQuery`
+  extraction message.
 - `Function.rewrite` / `rewrite_all` leave a match alone, uncounted, where
   the replacement has another width than the matched value, or, for a `find`
   matching through a phi or region, would read the matched value or is not
