@@ -285,7 +285,7 @@ pub(super) fn compute_classified(
     }
 
     let got_slot = |ctx: &mut Ctx<'_, '_>| -> Option<u64> {
-        // A GOT exists only for an ET_REL, and a slot holds `S` alone.
+        // A slot holds `S` alone; `got_slot` is `None` off an ET_REL.
         if value_kind_needs_zero(value_kind) && a != 0 {
             return None;
         }
