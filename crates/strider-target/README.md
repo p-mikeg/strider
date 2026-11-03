@@ -42,7 +42,7 @@ layer names the same ABI types.
 - `StackArgs`: the stack-slot geometry (offsets and slot indices) that the
   stack-argument passes read, so every pass agrees on slot order.
 - `ArchPreset`: the roster of presets (`arch_presets!` in `src/arch.rs`), each
-  with its family, byte orders and Ghidra language id.
+  with its family, byte orders, Ghidra language id and ldefs file.
 - `CcPreset` / `CallingConvention::presets()`: the named calling conventions,
   each with the arch presets it is for and the Ghidra prototypes it is held to.
 - `call_other_abi`: the CallOther ABI table below and the `classify` /
@@ -52,40 +52,78 @@ layer names the same ABI types.
 
 Everything one architecture family knows lives in one file under
 `src/family/` (`x86`, `arm32`, `aarch64`, `mips`, `ppc`): a `Family` holding
-its decode facts, CallOther rows (exact, prefix, fallback), rounding / msr
-special ops and calling conventions. `family::FAMILIES` is the roster;
-`classify`, `SleighArch` and `CallingConvention::presets()` all read through
-it. `call_other_abi/common.rs` holds the arch-independent rows.
+its Ghidra ldefs path, decode facts, CallOther rows (exact, prefix, fallback),
+rounding / msr special ops and calling conventions. A preset reaches its
+family through its `arch_presets!` row (`ArchPreset::family()`), which is how
+`classify` and `SleighArch` read it; `family::FAMILIES` is what
+`CallingConvention::presets()` iterates, and
+`every_preset_family_is_registered_once` checks it lists every preset's
+family once. `call_other_abi/common.rs` holds the arch-independent rows.
 
-The data is checked against the vendored sla and Ghidra: `tests/family_facts_against_sla.rs`
-(decode facts, register names), `tests/ghidra_oracle.rs` (each convention against
-its cspec prototype, each preset against its language definition),
-`tests/cc_roster.rs` (convention roster) and `tests/call_other_snapshot.rs`
-(how every user-op of every preset classifies).
+The data is checked against the vendored sla and Ghidra:
+`tests/family_facts_against_sla.rs` (`has_delay_slots` against `delayslot(`
+use), `src/family/tests.rs` (every register name a family carries resolves
+on its presets), `tests/every_committed_context_var_is_covered.rs` (the
+flow-commit lists against every `globalset`), `tests/ghidra_oracle.rs` (each
+convention against its cspec prototype, each preset against its language
+definition), `tests/cc_roster.rs` (convention roster) and
+`tests/call_other_snapshot.rs` (how every user-op of every preset
+classifies).
 
 ## Adding to strider-target
 
-- A CallOther row: add a `Row` to `call_other` in the family file (or to
-  `call_other_abi/common.rs` if arch-independent). The snapshot's
-  `UNCLASSIFIED` lines are the ops still unanswered; re-bless with
-  `UPDATE_EXPECT=1 cargo test -p strider-target --test call_other_snapshot`
-  and review `git diff`.
-- A calling convention: a `CallingConvention` constructor and a `CcPreset`
-  entry (with its `ghidra` pairing) in the family file. Python picks it up
-  through `CC_PRESETS` / `CallingConvention.preset(name)`; the classmethod
-  list in `crates/strider-py/src/cc.rs` and
-  `crates/strider-py/strider/sleigh.pyi` need one line each, guarded by
-  `tests/python/test_cc_presets.py`. To draft one from a Ghidra cspec:
-  `CSPEC=RISCV/data/languages/riscv64-fp.cspec cargo test -p strider-target
-  --test ghidra_oracle -- --ignored draft_preset_from_cspec --nocapture`.
-- A preset in an existing family: one `arch_presets!` row with its Ghidra id.
-  Python needs the constructor in the list in `crates/strider-py/src/arch.rs`
-  and the `.pyi` stub, guarded by `tests/python/test_arch.py`.
-- A family: a new `family/<name>.rs` exporting a `Family`, registered in
-  `FAMILIES`, then its `arch_presets!` and `CcPreset` rows and the cspec
-  draft above. The snapshot's `UNCLASSIFIED` lines are the CallOther to-do
-  list. `ValueType` widths (`strider-ir`) and reader relocations
-  (`strider-reader`) live elsewhere.
+Each place below is pinned: leaving one out fails the named test.
+
+- A CallOther row: a `Row` in the family file's `call_other` (or in
+  `call_other_abi/common.rs` if arch-independent), then re-bless the
+  snapshot with `UPDATE_EXPECT=1 cargo test -p strider-target --test
+  call_other_snapshot` and review `git diff`
+  (`call_other_classification_snapshot`). The snapshot's `UNCLASSIFIED`
+  lines are the ops still unanswered.
+- A calling convention:
+  - a `CallingConvention` constructor in the family file and a `CcPreset`
+    entry in its `CALLING_CONVENTIONS`, with its `ghidra` pairing
+    (`every_calling_convention_preset_agrees_with_its_ghidra_cspec`);
+  - its line in `named()` in `tests/cc_roster.rs`
+    (`preset_names_are_unique_and_are_the_constructors`);
+  - its line in the `forall_preset!` list in `crates/strider-py/src/cc.rs`
+    (`test_cc_presets.py::test_every_rust_cc_preset_is_bound`) and in
+    `crates/strider-py/strider/sleigh.pyi` (`test_stub_parity.py`).
+
+  To draft one from a Ghidra cspec: `CSPEC=RISCV/data/languages/riscv64-fp.cspec
+  cargo test -p strider-target --test ghidra_oracle -- --ignored
+  draft_preset_from_cspec --nocapture`.
+- A preset in an existing family:
+  - its `arch_presets!` row in `src/arch.rs`, with its Ghidra id;
+  - its line in the two spelled-out tables in `src/arch.rs`'s tests
+    (`every_preset_is_in_its_own_family`,
+    `every_preset_pins_its_ghidra_id_and_byte_orders`), in `tests/arch_smoke.rs` (`presets_endianness_matches_arch`) and in
+    `src/arch_names.rs` (`every_preset_has_its_own_name`);
+  - its sla and pspec files in `sla()` / `pspec()` in `tests/ghidra_oracle.rs`
+    if they are new (`every_arch_preset_is_its_ghidra_ldefs_language`);
+  - a `tests/snapshots/call_other/<name>.txt` to bless as above
+    (`call_other_classification_snapshot`);
+  - an `arches` entry in at least one `CcPreset` of its family
+    (`every_arch_has_a_calling_convention`);
+  - its constructor in the list in `crates/strider-py/src/arch.rs`
+    (`test_arch.py::test_every_rust_preset_is_bound`) and in
+    `crates/strider-py/strider/sleigh.pyi` (`test_stub_parity.py`).
+- A family, on top of its presets and conventions:
+  - a `family/<name>.rs` exporting a `Family`, with `mod` and `use` lines in
+    `family/mod.rs` and an entry in `FAMILIES`
+    (`every_preset_family_is_registered_once`);
+  - its `arch_presets!` rows naming it;
+  - its pins in `src/arch.rs`'s tests: the family name in
+    `every_preset_is_in_its_own_family`, its ldefs in
+    `every_preset_pins_its_ghidra_ldefs`, its volatile counters in
+    `volatile_registers_per_preset`, and its ISA-mode presence in
+    `isa_mode_var_matches_entry_mode_context_on_every_preset` if it has a mode;
+  - its language directory's committed context vars in `expected()` in
+    `tests/every_committed_context_var_is_covered.rs`.
+
+  The snapshot's `UNCLASSIFIED` lines are its CallOther to-do list.
+  `ValueType` widths (`strider-ir`) and reader relocations (`strider-reader`)
+  live elsewhere.
 
 ## What the CallOther ABI is
 
