@@ -170,7 +170,7 @@ impl<R: rsleigh::MemReader> super::Lifter<R> {
             addr_off: off,
             size,
         };
-        vn_container::smallest_enclosing(self.declared_reg_vns(), &slot).map(|_| slot)
+        vn_container::smallest_enclosing(&self.tables().declared_reg_vns, &slot).map(|_| slot)
     }
 
     /// Whether `insn` addresses the REGISTER space at all, independent of
