@@ -473,19 +473,6 @@ fn every_calling_convention_preset_agrees_with_its_ghidra_cspec() {
     );
 }
 
-/// The ldefs file and Ghidra language id each preset is.
-fn language(preset: ArchPreset) -> (&'static str, &'static str) {
-    let ldefs = match preset.family_name() {
-        "x86" => "x86/data/languages/x86.ldefs",
-        "arm32" => "ARM/data/languages/ARM.ldefs",
-        "aarch64" => "AARCH64/data/languages/AARCH64.ldefs",
-        "mips" => "MIPS/data/languages/mips.ldefs",
-        "ppc" => "PowerPC/data/languages/ppc.ldefs",
-        other => panic!("{preset:?}: no ldefs for family {other}"),
-    };
-    (ldefs, preset.ghidra_id())
-}
-
 /// The rsleigh constant compiled from an ldefs `slafile`.
 fn sla(file: &str) -> rsleigh::sla_spec::SlaSpec {
     use rsleigh::sla_spec::*;
@@ -532,7 +519,7 @@ fn pspec(file: &str) -> rsleigh::pspec::PSpec {
 fn every_arch_preset_is_its_ghidra_ldefs_language() {
     let mut wrong = Vec::new();
     for &preset in ArchPreset::ALL {
-        let (ldefs, id) = language(preset);
+        let (ldefs, id) = (preset.ghidra_ldefs(), preset.ghidra_id());
         let text = read(ldefs);
         let doc = roxmltree::Document::parse(&text).unwrap_or_else(|e| panic!("{ldefs}: {e}"));
         let rows: Vec<_> = doc

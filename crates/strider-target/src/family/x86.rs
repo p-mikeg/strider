@@ -5,6 +5,7 @@ use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static X86: Family = Family {
     name: "x86",
+    ghidra_ldefs: "x86/data/languages/x86.ldefs",
     facts: DecodeFacts {
         isa_mode_var: None,
         flow_commit_vars: &[],

@@ -226,6 +226,15 @@ macro_rules! arch_presets {
                 self.family().name
             }
 
+            /// The Ghidra language definitions file this preset is a row of,
+            /// under the vendored processors tree, e.g.
+            /// `"x86/data/languages/x86.ldefs"`. Its first component is the
+            /// processor directory.
+            #[must_use]
+            pub const fn ghidra_ldefs(self) -> &'static str {
+                self.family().ghidra_ldefs
+            }
+
             /// The Ghidra language id this preset is.
             #[must_use]
             pub const fn ghidra_id(self) -> &'static str {
@@ -707,6 +716,25 @@ mod tests {
             assert_eq!(preset.ghidra_id(), *id, "{preset:?}");
             assert_eq!(arch.endianness(), *data, "{preset:?} data");
             assert_eq!(arch.register_endianness(), *register, "{preset:?} register");
+        }
+    }
+
+    /// Each family's Ghidra ldefs file, spelled out.
+    #[test]
+    fn every_preset_pins_its_ghidra_ldefs() {
+        use super::ArchPreset;
+        let cases: &[(&str, &str)] = &[
+            ("x86", "x86/data/languages/x86.ldefs"),
+            ("arm32", "ARM/data/languages/ARM.ldefs"),
+            ("aarch64", "AARCH64/data/languages/AARCH64.ldefs"),
+            ("mips", "MIPS/data/languages/mips.ldefs"),
+            ("ppc", "PowerPC/data/languages/ppc.ldefs"),
+        ];
+        for preset in ArchPreset::ALL {
+            let Some((_, ldefs)) = cases.iter().find(|(f, _)| *f == preset.family_name()) else {
+                panic!("{preset:?} has no pinned ldefs");
+            };
+            assert_eq!(preset.ghidra_ldefs(), *ldefs, "{preset:?}");
         }
     }
 
