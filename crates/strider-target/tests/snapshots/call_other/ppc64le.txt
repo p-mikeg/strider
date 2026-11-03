@@ -1,0 +1,879 @@
+AddAndGenerateSixes UNCLASSIFIED
+BitPermuteDoubleword UNCLASSIFIED
+ConvertDecletsToBinaryCodedDecimal UNCLASSIFIED
+DataCacheBlockFlush UNCLASSIFIED
+DataCacheBlockFlushByExternalPID UNCLASSIFIED
+DataCacheBlockSetToZeroByExternalPID UNCLASSIFIED
+DataCacheBlockStoreByExternalPID UNCLASSIFIED
+DataCacheBlockTouch2 UNCLASSIFIED
+DataCacheBlockTouchByExternalPID UNCLASSIFIED
+DataCacheBlockTouchByExternalPID2 UNCLASSIFIED
+DataCacheBlockTouchForStoreByExternalPID UNCLASSIFIED
+DataCacheInvalidate UNCLASSIFIED
+DataCaseBlockSetToZero UNCLASSIFIED
+DivideWordExtended4 UNCLASSIFIED
+FloatingReciprocalSquareRootEstimate1 UNCLASSIFIED
+FloatingRoundToIntegerTowardZero1 UNCLASSIFIED
+InstructionCacheBlockInvalidateByExternalPID UNCLASSIFIED
+InstructionCacheBlockLockSetX UNCLASSIFIED
+InstructionCacheBlockTouch UNCLASSIFIED
+InstructionCacheInvalidate UNCLASSIFIED
+LoadDoublewordByteReverseIndexed call reads=[] writes=[] mem=true noret=false
+LoadFloatingPointAsIntegerWordAlgebraicIndexed UNCLASSIFIED
+LoadFloatingPointAsIntegerWordAndZeroIndexed UNCLASSIFIED
+LoadWordAndZeroCachingInhibited UNCLASSIFIED
+MessageClear call reads=[] writes=[] mem=true noret=false
+MessageSend call reads=[] writes=[] mem=true noret=false
+MoveFromDeviceControlRegisterIndexed UNCLASSIFIED
+MoveFromDeviceControlRegisterUserModeIndexed UNCLASSIFIED
+MoveToDeviceControlRegisterIndexed UNCLASSIFIED
+MoveToFPSCRFieldImmediate call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxvc", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3", "fp_reserve1", "fp_vxsoft", "fp_vxsqrt", "fp_vxcvi", "fp_ve", "fp_oe", "fp_ue", "fp_ze", "fp_xe", "fp_ni", "fp_rn0", "fp_rn1"] mem=false noret=false
+MoveToFPSCRFieldImmediate1 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxvc", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3", "fp_reserve1", "fp_vxsoft", "fp_vxsqrt", "fp_vxcvi", "fp_ve", "fp_oe", "fp_ue", "fp_ze", "fp_xe", "fp_ni", "fp_rn0", "fp_rn1", "cr1"] mem=false noret=false
+MoveToFPSCRFields call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxvc", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3", "fp_reserve1", "fp_vxsoft", "fp_vxsqrt", "fp_vxcvi", "fp_ve", "fp_oe", "fp_ue", "fp_ze", "fp_xe", "fp_ni", "fp_rn0", "fp_rn1"] mem=false noret=false
+MoveToFPSCRFields1 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxvc", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3", "fp_reserve1", "fp_vxsoft", "fp_vxsqrt", "fp_vxcvi", "fp_ve", "fp_oe", "fp_ue", "fp_ze", "fp_xe", "fp_ni", "fp_rn0", "fp_rn1", "cr1"] mem=false noret=false
+ReturnFromGuestInterrupt UNCLASSIFIED
+StoreByteByExternalProcessIDIndexed UNCLASSIFIED
+StoreByteConditionalIndexed UNCLASSIFIED
+StoreDoublewordByteReverseIndexed call reads=[] writes=[] mem=true noret=false
+StoreDoublewordByteReverseIndexed1 UNCLASSIFIED
+StoreHalfwordByExternalProcessIDIndexed UNCLASSIFIED
+StoreWordByExternalProcessIDIndexed UNCLASSIFIED
+TLBInvalidateAll UNCLASSIFIED
+TLBInvalidateEntry call reads=[] writes=[] mem=true noret=false
+TLBInvalidateEntryLocal call reads=[] writes=[] mem=true noret=false
+TLBInvalidateLocalIndexed UNCLASSIFIED
+TLBRead UNCLASSIFIED
+TLBSearchAndReserveIndexedCategory UNCLASSIFIED
+TLBSearchIndexed UNCLASSIFIED
+TLBSynchronize call reads=[] writes=[] mem=true noret=false
+TLBWrite call reads=[] writes=[] mem=true noret=false
+WriteExternalEnable call reads=[] writes=["MSR"] mem=false noret=false
+WriteExternalEnableImmediate call reads=[] writes=["MSR"] mem=false noret=false
+altv207_1 call reads=[] writes=[] mem=false noret=false
+altv207_10 call reads=[] writes=[] mem=false noret=false
+altv207_11 call reads=[] writes=[] mem=false noret=false
+altv207_12 call reads=[] writes=[] mem=false noret=false
+altv207_13 call reads=[] writes=[] mem=false noret=false
+altv207_14 call reads=[] writes=[] mem=false noret=false
+altv207_15 call reads=[] writes=[] mem=false noret=false
+altv207_16 call reads=[] writes=[] mem=false noret=false
+altv207_17 call reads=[] writes=[] mem=false noret=false
+altv207_18 call reads=[] writes=[] mem=false noret=false
+altv207_19 call reads=[] writes=[] mem=false noret=false
+altv207_2 call reads=[] writes=[] mem=false noret=false
+altv207_20 call reads=[] writes=[] mem=false noret=false
+altv207_21 call reads=[] writes=[] mem=false noret=false
+altv207_22 call reads=[] writes=[] mem=false noret=false
+altv207_23 call reads=[] writes=[] mem=false noret=false
+altv207_24 call reads=[] writes=[] mem=false noret=false
+altv207_25 call reads=[] writes=[] mem=false noret=false
+altv207_26 call reads=[] writes=[] mem=false noret=false
+altv207_27 call reads=[] writes=[] mem=false noret=false
+altv207_28 call reads=[] writes=[] mem=false noret=false
+altv207_29 call reads=[] writes=[] mem=false noret=false
+altv207_3 call reads=[] writes=[] mem=false noret=false
+altv207_30 call reads=[] writes=[] mem=false noret=false
+altv207_31 call reads=[] writes=[] mem=false noret=false
+altv207_32 call reads=[] writes=[] mem=false noret=false
+altv207_33 call reads=[] writes=[] mem=false noret=false
+altv207_34 call reads=[] writes=[] mem=false noret=false
+altv207_35 call reads=[] writes=[] mem=false noret=false
+altv207_36 call reads=[] writes=[] mem=false noret=false
+altv207_37 call reads=[] writes=[] mem=false noret=false
+altv207_38 call reads=[] writes=[] mem=false noret=false
+altv207_39 call reads=[] writes=[] mem=false noret=false
+altv207_4 call reads=[] writes=[] mem=false noret=false
+altv207_40 call reads=[] writes=[] mem=false noret=false
+altv207_41 call reads=[] writes=[] mem=false noret=false
+altv207_42 call reads=[] writes=[] mem=false noret=false
+altv207_43 call reads=[] writes=[] mem=false noret=false
+altv207_44 call reads=[] writes=[] mem=false noret=false
+altv207_45 call reads=[] writes=[] mem=false noret=false
+altv207_46 call reads=[] writes=[] mem=false noret=false
+altv207_47 call reads=[] writes=[] mem=false noret=false
+altv207_48 call reads=[] writes=[] mem=false noret=false
+altv207_49 call reads=[] writes=[] mem=false noret=false
+altv207_5 call reads=[] writes=[] mem=false noret=false
+altv207_50 call reads=[] writes=[] mem=false noret=false
+altv207_51 call reads=[] writes=[] mem=false noret=false
+altv207_52 call reads=[] writes=[] mem=false noret=false
+altv207_53 call reads=[] writes=[] mem=false noret=false
+altv207_54 call reads=[] writes=[] mem=false noret=false
+altv207_55 call reads=[] writes=[] mem=false noret=false
+altv207_56 call reads=[] writes=[] mem=false noret=false
+altv207_57 call reads=[] writes=[] mem=false noret=false
+altv207_58 call reads=[] writes=[] mem=false noret=false
+altv207_59 call reads=[] writes=[] mem=false noret=false
+altv207_6 call reads=[] writes=[] mem=false noret=false
+altv207_60 call reads=[] writes=[] mem=false noret=false
+altv207_61 call reads=[] writes=[] mem=false noret=false
+altv207_62 call reads=[] writes=[] mem=false noret=false
+altv207_63 call reads=[] writes=[] mem=false noret=false
+altv207_64 call reads=[] writes=[] mem=false noret=false
+altv207_65 call reads=[] writes=[] mem=false noret=false
+altv207_7 call reads=[] writes=[] mem=false noret=false
+altv207_8 call reads=[] writes=[] mem=false noret=false
+altv207_9 call reads=[] writes=[] mem=false noret=false
+altv300_1 call reads=[] writes=[] mem=false noret=false
+altv300_10 call reads=[] writes=[] mem=false noret=false
+altv300_11 call reads=[] writes=[] mem=false noret=false
+altv300_12 call reads=[] writes=[] mem=false noret=false
+altv300_13 call reads=[] writes=[] mem=false noret=false
+altv300_14 call reads=[] writes=[] mem=false noret=false
+altv300_15 call reads=[] writes=[] mem=false noret=false
+altv300_16 call reads=[] writes=[] mem=false noret=false
+altv300_17 call reads=[] writes=[] mem=false noret=false
+altv300_18 call reads=[] writes=[] mem=false noret=false
+altv300_19 call reads=[] writes=[] mem=false noret=false
+altv300_2 call reads=[] writes=[] mem=false noret=false
+altv300_20 call reads=[] writes=[] mem=false noret=false
+altv300_21 call reads=[] writes=[] mem=false noret=false
+altv300_22 call reads=[] writes=[] mem=false noret=false
+altv300_23 call reads=[] writes=[] mem=false noret=false
+altv300_24 call reads=[] writes=[] mem=false noret=false
+altv300_25 call reads=[] writes=[] mem=false noret=false
+altv300_26 call reads=[] writes=[] mem=false noret=false
+altv300_27 call reads=[] writes=[] mem=false noret=false
+altv300_28 call reads=[] writes=[] mem=false noret=false
+altv300_29 call reads=[] writes=[] mem=false noret=false
+altv300_3 call reads=[] writes=[] mem=false noret=false
+altv300_30 call reads=[] writes=[] mem=false noret=false
+altv300_31 call reads=[] writes=[] mem=false noret=false
+altv300_32 call reads=[] writes=[] mem=false noret=false
+altv300_33 call reads=[] writes=[] mem=false noret=false
+altv300_34 call reads=[] writes=[] mem=false noret=false
+altv300_35 call reads=[] writes=[] mem=false noret=false
+altv300_36 call reads=[] writes=[] mem=false noret=false
+altv300_4 call reads=[] writes=[] mem=false noret=false
+altv300_41 call reads=[] writes=[] mem=false noret=false
+altv300_42 call reads=[] writes=[] mem=false noret=false
+altv300_43 call reads=[] writes=[] mem=false noret=false
+altv300_44 call reads=[] writes=[] mem=false noret=false
+altv300_45 call reads=[] writes=[] mem=false noret=false
+altv300_46 call reads=[] writes=[] mem=false noret=false
+altv300_47 call reads=[] writes=[] mem=false noret=false
+altv300_48 call reads=[] writes=[] mem=false noret=false
+altv300_49 call reads=[] writes=[] mem=false noret=false
+altv300_5 call reads=[] writes=[] mem=false noret=false
+altv300_50 call reads=[] writes=[] mem=false noret=false
+altv300_51 call reads=[] writes=[] mem=false noret=false
+altv300_52 call reads=[] writes=[] mem=false noret=false
+altv300_53 call reads=[] writes=[] mem=false noret=false
+altv300_54 call reads=[] writes=[] mem=false noret=false
+altv300_55 call reads=[] writes=[] mem=false noret=false
+altv300_56 call reads=[] writes=[] mem=false noret=false
+altv300_57 call reads=[] writes=[] mem=false noret=false
+altv300_58 call reads=[] writes=[] mem=false noret=false
+altv300_59 call reads=[] writes=[] mem=false noret=false
+altv300_6 call reads=[] writes=[] mem=false noret=false
+altv300_60 call reads=[] writes=[] mem=false noret=false
+altv300_61 call reads=[] writes=[] mem=false noret=false
+altv300_62 call reads=[] writes=[] mem=false noret=false
+altv300_63 call reads=[] writes=[] mem=false noret=false
+altv300_64 call reads=[] writes=[] mem=false noret=false
+altv300_65 call reads=[] writes=[] mem=false noret=false
+altv300_66 call reads=[] writes=[] mem=false noret=false
+altv300_67 call reads=[] writes=[] mem=false noret=false
+altv300_68 call reads=[] writes=[] mem=false noret=false
+altv300_69 call reads=[] writes=[] mem=false noret=false
+altv300_7 call reads=[] writes=[] mem=false noret=false
+altv300_70 call reads=[] writes=[] mem=false noret=false
+altv300_71 call reads=[] writes=[] mem=false noret=false
+altv300_8 call reads=[] writes=[] mem=false noret=false
+altv300_9 call reads=[] writes=[] mem=false noret=false
+attnOp UNCLASSIFIED
+bcctrOp UNCLASSIFIED
+bcctrlOp UNCLASSIFIED
+brincOp UNCLASSIFIED
+cbcdtdOp UNCLASSIFIED
+clearHistory noop
+copytrans call reads=[] writes=[] mem=true noret=false
+countTrailingZeros UNCLASSIFIED
+daddDotOp UNCLASSIFIED
+daddOp UNCLASSIFIED
+daddqDotOp UNCLASSIFIED
+daddqOp UNCLASSIFIED
+dataCacheBlockAllocate UNCLASSIFIED
+dataCacheBlockClearLock UNCLASSIFIED
+dataCacheBlockClearToZero call reads=[] writes=[] mem=true noret=false
+dataCacheBlockFlush call reads=[] writes=[] mem=true noret=false
+dataCacheBlockInvalidate call reads=[] writes=[] mem=true noret=false
+dataCacheBlockStore call reads=[] writes=[] mem=true noret=false
+dataCacheBlockTouch noop
+dataCacheBlockTouchForStore noop
+dataCacheCongruenceClassInvalidate UNCLASSIFIED
+dataCacheRead UNCLASSIFIED
+dataStreamStop UNCLASSIFIED
+dataStreamStopAll noop
+dataStreamTouch UNCLASSIFIED
+dataStreamTouchForStore UNCLASSIFIED
+dataStreamTouchForStoreTransient UNCLASSIFIED
+dataStreamTouchSoon UNCLASSIFIED
+dcffixDotOp UNCLASSIFIED
+dcffixOp UNCLASSIFIED
+dcffixqDotOp UNCLASSIFIED
+dcffixqOp UNCLASSIFIED
+dcmpoOp UNCLASSIFIED
+dcmpoqOp UNCLASSIFIED
+dcmpuOp UNCLASSIFIED
+dcmpuqOp UNCLASSIFIED
+dctdpDotOp UNCLASSIFIED
+dctdpOp UNCLASSIFIED
+dctfixDotOp UNCLASSIFIED
+dctfixOp UNCLASSIFIED
+dctfixqDotOp UNCLASSIFIED
+dctfixqOp UNCLASSIFIED
+dctqpqDotOp UNCLASSIFIED
+dctqpqOp UNCLASSIFIED
+ddedpdDotOp UNCLASSIFIED
+ddedpdOp UNCLASSIFIED
+ddedpdqDotOp UNCLASSIFIED
+ddedpdqOp UNCLASSIFIED
+ddivDotOp UNCLASSIFIED
+ddivOp UNCLASSIFIED
+ddivqDotOp UNCLASSIFIED
+ddivqOp UNCLASSIFIED
+debuggerNotifyHalt UNCLASSIFIED
+denbcdDotOp UNCLASSIFIED
+denbcdOp UNCLASSIFIED
+denbcdqDotOp UNCLASSIFIED
+denbcdqOp UNCLASSIFIED
+diexDotOp UNCLASSIFIED
+diexOp UNCLASSIFIED
+diexqDotOp UNCLASSIFIED
+diexqOp UNCLASSIFIED
+divdeDotOp UNCLASSIFIED
+divdeOp UNCLASSIFIED
+divdeoDotOp UNCLASSIFIED
+divdeoOp UNCLASSIFIED
+divdeuDotOp UNCLASSIFIED
+divdeuOp UNCLASSIFIED
+divdeuoDotOp UNCLASSIFIED
+dmulDotOp UNCLASSIFIED
+dmulOp UNCLASSIFIED
+dmulqDotOp UNCLASSIFIED
+dmulqOp UNCLASSIFIED
+dozeOp UNCLASSIFIED
+dquaDotOp UNCLASSIFIED
+dquaOp UNCLASSIFIED
+dquaiDotOp UNCLASSIFIED
+dquaiOp UNCLASSIFIED
+dquaiqDotOp UNCLASSIFIED
+dquaiqOp UNCLASSIFIED
+dquaqDotOp UNCLASSIFIED
+dquaqOp UNCLASSIFIED
+drdpqDotOp UNCLASSIFIED
+drdpqOp UNCLASSIFIED
+drintnDotOp UNCLASSIFIED
+drintnOp UNCLASSIFIED
+drintnqDotOp UNCLASSIFIED
+drintnqOp UNCLASSIFIED
+drintxDotOp UNCLASSIFIED
+drintxOp UNCLASSIFIED
+drintxqDotOp UNCLASSIFIED
+drintxqOp UNCLASSIFIED
+drrndDotOp UNCLASSIFIED
+drrndOp UNCLASSIFIED
+drrndqDotOp UNCLASSIFIED
+drrndqOp UNCLASSIFIED
+drspDotOp UNCLASSIFIED
+drspOp UNCLASSIFIED
+dscliDotOp UNCLASSIFIED
+dscliOp UNCLASSIFIED
+dscliqDotOp UNCLASSIFIED
+dscliqOp UNCLASSIFIED
+dscriDotOp UNCLASSIFIED
+dscriOp UNCLASSIFIED
+dscriqDotOp UNCLASSIFIED
+dscriqOp UNCLASSIFIED
+dsnOp UNCLASSIFIED
+dsubDotOp UNCLASSIFIED
+dsubOp UNCLASSIFIED
+dsubqDotOp UNCLASSIFIED
+dsubqOp UNCLASSIFIED
+dtstdcOp UNCLASSIFIED
+dtstdcqOp UNCLASSIFIED
+dtstdgOp UNCLASSIFIED
+dtstdgqOp UNCLASSIFIED
+dtstexOp UNCLASSIFIED
+dtstexqOp UNCLASSIFIED
+dtstsfOp UNCLASSIFIED
+dtstsfqOp UNCLASSIFIED
+dxexDotOp UNCLASSIFIED
+dxexOp UNCLASSIFIED
+dxexqDotOp UNCLASSIFIED
+dxexqOp UNCLASSIFIED
+ehprivOp UNCLASSIFIED
+enforceInOrderExecutionIO call reads=[] writes=[] mem=true noret=false
+eratilxOp UNCLASSIFIED
+erativaxOp UNCLASSIFIED
+eratreOp UNCLASSIFIED
+eratsxOp UNCLASSIFIED
+eratsxXOp UNCLASSIFIED
+eratweOp UNCLASSIFIED
+eventInterrupt UNCLASSIFIED
+externalControlIn UNCLASSIFIED
+externalControlOut UNCLASSIFIED
+floatAddInexact call reads=[] writes=[] mem=false noret=false
+floatAddOverflow call reads=[] writes=[] mem=false noret=false
+floatAddRoundedUp call reads=[] writes=[] mem=false noret=false
+floatAddUnderflow call reads=[] writes=[] mem=false noret=false
+floatDivInexact call reads=[] writes=[] mem=false noret=false
+floatDivOverflow call reads=[] writes=[] mem=false noret=false
+floatDivRoundedUp call reads=[] writes=[] mem=false noret=false
+floatDivUnderflow call reads=[] writes=[] mem=false noret=false
+floatInfinityAdd UNCLASSIFIED
+floatInfinityDivide UNCLASSIFIED
+floatInfinityMulZero UNCLASSIFIED
+floatInfinitySub UNCLASSIFIED
+floatMaddInexact call reads=[] writes=[] mem=false noret=false
+floatMaddOverflow call reads=[] writes=[] mem=false noret=false
+floatMaddRoundedUp call reads=[] writes=[] mem=false noret=false
+floatMaddUnderflow call reads=[] writes=[] mem=false noret=false
+floatMsubInexact UNCLASSIFIED
+floatMsubOverflow UNCLASSIFIED
+floatMsubRoundedUp UNCLASSIFIED
+floatMsubUnderflow UNCLASSIFIED
+floatMulInexact call reads=[] writes=[] mem=false noret=false
+floatMulOverflow call reads=[] writes=[] mem=false noret=false
+floatMulRoundedUp call reads=[] writes=[] mem=false noret=false
+floatMulUnderflow call reads=[] writes=[] mem=false noret=false
+floatSqrtInexact call reads=[] writes=[] mem=false noret=false
+floatSqrtRoundedUp call reads=[] writes=[] mem=false noret=false
+floatSubInexact call reads=[] writes=[] mem=false noret=false
+floatSubOverflow call reads=[] writes=[] mem=false noret=false
+floatSubRoundedUp call reads=[] writes=[] mem=false noret=false
+floatSubUnderflow call reads=[] writes=[] mem=false noret=false
+floatToIntInexact call reads=[] writes=[] mem=false noret=false
+floatToIntRoundedUp call reads=[] writes=[] mem=false noret=false
+fpscrRoundingControl lowered:rounding
+fpscrUndefined call reads=[] writes=[] mem=false noret=false
+hrfidOp UNCLASSIFIED
+icswxDotOp call reads=[] writes=["cr0"] mem=true noret=false
+icswxOp UNCLASSIFIED
+illegal UNCLASSIFIED
+instructionCacheBlockClearLock UNCLASSIFIED
+instructionCacheBlockInvalidate call reads=[] writes=[] mem=true noret=false
+instructionCacheBlockTouch UNCLASSIFIED
+instructionCacheCongruenceClassInvalidate call reads=[] writes=[] mem=true noret=false
+instructionCacheRead UNCLASSIFIED
+instructionSynchronize call reads=[] writes=[] mem=true noret=false
+intToFloatInexact call reads=[] writes=[] mem=false noret=false
+intToFloatRoundedUp call reads=[] writes=[] mem=false noret=false
+invalidFloatToInt UNCLASSIFIED
+invalidateTLB UNCLASSIFIED
+lbarxOp UNCLASSIFIED
+lbdxOp UNCLASSIFIED
+lbzcixOp UNCLASSIFIED
+lddxOp UNCLASSIFIED
+lfddxOp UNCLASSIFIED
+lfdpOp UNCLASSIFIED
+lfdpxOp UNCLASSIFIED
+lharxOp UNCLASSIFIED
+lhdxOp UNCLASSIFIED
+lhzcixOp UNCLASSIFIED
+loadString UNCLASSIFIED
+loadVectorElementByteIndexed UNCLASSIFIED
+loadVectorElementHalfWordIndexed UNCLASSIFIED
+loadVectorElementWordIndexed UNCLASSIFIED
+loadVectorForShiftLeft call reads=[] writes=[] mem=false noret=false
+loadVectorForShiftRight UNCLASSIFIED
+loadVectorIndexed UNCLASSIFIED
+loadVectorIndexedLRU UNCLASSIFIED
+lswxOp UNCLASSIFIED
+lvepxOp UNCLASSIFIED
+lvepxlOp UNCLASSIFIED
+lwdxOp UNCLASSIFIED
+lxvdsxOp UNCLASSIFIED
+macchw UNCLASSIFIED
+macchws UNCLASSIFIED
+macchwsu UNCLASSIFIED
+macchwu UNCLASSIFIED
+machhw UNCLASSIFIED
+machhws UNCLASSIFIED
+machhwsu UNCLASSIFIED
+machhwu UNCLASSIFIED
+maclhw UNCLASSIFIED
+maclhws UNCLASSIFIED
+maclhwsu UNCLASSIFIED
+maclhwu UNCLASSIFIED
+mematom UNCLASSIFIED
+memoryBarrier UNCLASSIFIED
+message call reads=[] writes=[] mem=true noret=false
+mfcrOp UNCLASSIFIED
+mfdcrxDotOp UNCLASSIFIED
+mfdcrxOp UNCLASSIFIED
+moveFromAPIDIndirect UNCLASSIFIED
+moveFromPerformanceMonitorRegister call reads=[] writes=[] mem=false noret=false
+moveFromVectorStatusAndControlRegister UNCLASSIFIED
+moveToPerformanceMonitorRegister call reads=[] writes=[] mem=false noret=false
+moveToVectorStatusAndControlRegister UNCLASSIFIED
+movebuffer UNCLASSIFIED
+mtdcrxDotOp UNCLASSIFIED
+mulchw UNCLASSIFIED
+mulchwu UNCLASSIFIED
+mulhhw UNCLASSIFIED
+mulhhwu UNCLASSIFIED
+mullhw UNCLASSIFIED
+mullhwu UNCLASSIFIED
+napOp UNCLASSIFIED
+nmacchw UNCLASSIFIED
+nmacchws UNCLASSIFIED
+nmachhw UNCLASSIFIED
+nmachhws UNCLASSIFIED
+nmaclhw UNCLASSIFIED
+nmaclhws UNCLASSIFIED
+pastetrans call reads=[] writes=[] mem=true noret=false
+prefetchDataCacheBlockLockSet UNCLASSIFIED
+prefetchDataCacheBlockLockSetX UNCLASSIFIED
+prefetchInstructionCacheBlockLockSetX UNCLASSIFIED
+queryInstructionCacheBlockLock UNCLASSIFIED
+random call reads=[] writes=[] mem=false noret=false
+returnFromCriticalInterrupt UNCLASSIFIED
+returnFromDebugInterrupt UNCLASSIFIED
+returnFromGuestInterrupt UNCLASSIFIED
+returnFromInterrupt call reads=[] writes=[] mem=false noret=true
+returnFromMachineCheckInterrupt UNCLASSIFIED
+rvwinkleOp UNCLASSIFIED
+slbInvalidateAll call reads=[] writes=[] mem=true noret=false
+slbInvalidateEntry UNCLASSIFIED
+slbMoveFromEntryESID call reads=[] writes=[] mem=false noret=false
+slbMoveFromEntryVSID call reads=[] writes=[] mem=false noret=false
+slbMoveToEntry call reads=[] writes=[] mem=true noret=false
+slbfeeDotOp call reads=[] writes=["cr0"] mem=false noret=false
+sleepOp UNCLASSIFIED
+sqrtInvalid UNCLASSIFIED
+stbcixOp UNCLASSIFIED
+stbdxOp UNCLASSIFIED
+stdcixOp UNCLASSIFIED
+stddxOp UNCLASSIFIED
+stfddxOp UNCLASSIFIED
+stfdpOp UNCLASSIFIED
+stfdpxOp UNCLASSIFIED
+sthcixOp UNCLASSIFIED
+sthcxDotOp UNCLASSIFIED
+sthdxOp UNCLASSIFIED
+stopT UNCLASSIFIED
+storeDoubleWordConditionalIndexed call reads=[] writes=[] mem=true noret=false
+storeString UNCLASSIFIED
+storeVectorElementByteIndexed UNCLASSIFIED
+storeVectorElementHalfWordIndexed UNCLASSIFIED
+storeVectorElementWordIndexed UNCLASSIFIED
+storeVectorIndexed UNCLASSIFIED
+storeVectorIndexedLRU UNCLASSIFIED
+storeWordConditionalIndexed call reads=[] writes=[] mem=true noret=false
+stswxOp UNCLASSIFIED
+stvepxOp UNCLASSIFIED
+stvepxlOp UNCLASSIFIED
+stwcixOp UNCLASSIFIED
+stwdxOp UNCLASSIFIED
+stxsdxOp UNCLASSIFIED
+sync call reads=[] writes=[] mem=true noret=false
+syscall call reads=["r0", "r3", "r4", "r5", "r6", "r7", "r8"] writes=["r0", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "cr0", "CTR", "XER", "xer_so", "xer_ov", "xer_ov32", "xer_ca", "xer_ca32", "xer_count"] mem=true noret=false
+transaction UNCLASSIFIED
+trapDoubleWord call reads=[] writes=[] mem=true noret=false
+trapDoubleWordImmediate call reads=[] writes=[] mem=true noret=false
+trapWord call reads=[] writes=[] mem=true noret=false
+vector2RaisedToTheExponentEstimateFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorAddCarryoutUnsignedWord call reads=[] writes=[] mem=false noret=false
+vectorAddFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorAddSignedByteSaturate call reads=[] writes=[] mem=false noret=false
+vectorAddSignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorAddSignedWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorAddUnsignedByteSaturate call reads=[] writes=[] mem=false noret=false
+vectorAddUnsignedHalfWordModulo call reads=[] writes=[] mem=false noret=false
+vectorAddUnsignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorAddUnsignedWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorAverageSignedByte call reads=[] writes=[] mem=false noret=false
+vectorAverageSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorAverageSignedWord call reads=[] writes=[] mem=false noret=false
+vectorAverageUnsignedByte call reads=[] writes=[] mem=false noret=false
+vectorAverageUnsignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorAverageUnsignedWord call reads=[] writes=[] mem=false noret=false
+vectorCompareBoundsFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorCompareEqualToFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorCompareEqualToUnsignedByte call reads=[] writes=[] mem=false noret=false
+vectorCompareEqualToUnsignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorCompareEqualToUnsignedWord call reads=[] writes=[] mem=false noret=false
+vectorCompareGreaterThanConditionRegisterSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorCompareGreaterThanFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorCompareGreaterThanOrEqualToFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorCompareGreaterThanSignedByte call reads=[] writes=[] mem=false noret=false
+vectorCompareGreaterThanSignedWord call reads=[] writes=[] mem=false noret=false
+vectorCompareGreaterThanUnsignedByte call reads=[] writes=[] mem=false noret=false
+vectorCompareGreaterThanUnsignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorCompareGreaterThanUnsignedWord call reads=[] writes=[] mem=false noret=false
+vectorConditionalSelect call reads=[] writes=[] mem=false noret=false
+vectorConvertFromSignedFixedPointWord call reads=[] writes=[] mem=false noret=false
+vectorConvertFromUnsignedFixedPointWord call reads=[] writes=[] mem=false noret=false
+vectorConvertToSignedFixedPointWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorConvertToUnsignedFixedPointWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorLog2EstimateFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorLogicalAnd call reads=[] writes=[] mem=false noret=false
+vectorLogicalAndWithComplement call reads=[] writes=[] mem=false noret=false
+vectorLogicalNOR call reads=[] writes=[] mem=false noret=false
+vectorLogicalOR call reads=[] writes=[] mem=false noret=false
+vectorMaximumFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorMaximumSignedByte call reads=[] writes=[] mem=false noret=false
+vectorMaximumSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMaximumSignedWord call reads=[] writes=[] mem=false noret=false
+vectorMaximumUnsignedByte call reads=[] writes=[] mem=false noret=false
+vectorMaximumUnsignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMaximumUnsignedWord call reads=[] writes=[] mem=false noret=false
+vectorMergeHighByte call reads=[] writes=[] mem=false noret=false
+vectorMergeHighHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMergeHighWord call reads=[] writes=[] mem=false noret=false
+vectorMergeLowByte call reads=[] writes=[] mem=false noret=false
+vectorMergeLowHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMergeLowWord call reads=[] writes=[] mem=false noret=false
+vectorMinimumFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorMinimumSignedByte call reads=[] writes=[] mem=false noret=false
+vectorMinimumSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMinimumSignedWord call reads=[] writes=[] mem=false noret=false
+vectorMinimumUnsignedByte call reads=[] writes=[] mem=false noret=false
+vectorMinimumUnsignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMinimumUnsignedWord call reads=[] writes=[] mem=false noret=false
+vectorMultiplyAddFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorMultiplyEvenSignedByte call reads=[] writes=[] mem=false noret=false
+vectorMultiplyEvenSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMultiplyEvenUnsignedByte call reads=[] writes=[] mem=false noret=false
+vectorMultiplyEvenUnsignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMultiplyHighAndAddSignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorMultiplyHighRoundAndAddSignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorMultiplyLowAndAddUnsignedHalfWordModulo call reads=[] writes=[] mem=false noret=false
+vectorMultiplyOddSignedByte call reads=[] writes=[] mem=false noret=false
+vectorMultiplyOddSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMultiplyOddUnsignedByte call reads=[] writes=[] mem=false noret=false
+vectorMultiplyOddUnsignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorMultiplySumMixedSignByteModulo call reads=[] writes=[] mem=false noret=false
+vectorMultiplySumSignedHalfWordModulo call reads=[] writes=[] mem=false noret=false
+vectorMultiplySumSignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorMultiplySumUnsignedByteModulo call reads=[] writes=[] mem=false noret=false
+vectorMultiplySumUnsignedHalfWordModulo call reads=[] writes=[] mem=false noret=false
+vectorMultiplySumUnsignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorNegativeMultiplySubtractFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorPackPixel32 call reads=[] writes=[] mem=false noret=false
+vectorPackSignedHalfWordSignedSaturate call reads=[] writes=[] mem=false noret=false
+vectorPackSignedHalfWordUnsignedSaturate call reads=[] writes=[] mem=false noret=false
+vectorPackSignedWordSignedSaturate call reads=[] writes=[] mem=false noret=false
+vectorPackSignedWordUnsignedSaturate call reads=[] writes=[] mem=false noret=false
+vectorPackUnsignedHalfWordUnsignedModulo call reads=[] writes=[] mem=false noret=false
+vectorPackUnsignedHalfWordUnsignedSaturate call reads=[] writes=[] mem=false noret=false
+vectorPackUnsignedWordUnsignedModulo call reads=[] writes=[] mem=false noret=false
+vectorPackUnsignedWordUnsignedSaturate call reads=[] writes=[] mem=false noret=false
+vectorPermute call reads=[] writes=[] mem=false noret=false
+vectorReciprocalEstimateFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorReciprocalSquareRootEstimateFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorRotateLeftIntegerByte call reads=[] writes=[] mem=false noret=false
+vectorRotateLeftIntegerHalfWord call reads=[] writes=[] mem=false noret=false
+vectorRotateLeftIntegerWord call reads=[] writes=[] mem=false noret=false
+vectorRoundToFloatingPointIntegerNearest call reads=[] writes=[] mem=false noret=false
+vectorRoundToFloatingPointIntegerTowardMinusInfinity call reads=[] writes=[] mem=false noret=false
+vectorRoundToFloatingPointIntegerTowardPluInfinity call reads=[] writes=[] mem=false noret=false
+vectorRoundToFloatingPointIntegerTowardZero call reads=[] writes=[] mem=false noret=false
+vectorShiftLeft call reads=[] writes=[] mem=false noret=false
+vectorShiftLeftByOctet call reads=[] writes=[] mem=false noret=false
+vectorShiftLeftDoubleByOctetImmediate call reads=[] writes=[] mem=false noret=false
+vectorShiftLeftIntegerByte call reads=[] writes=[] mem=false noret=false
+vectorShiftLeftIntegerHalfWord call reads=[] writes=[] mem=false noret=false
+vectorShiftLeftIntegerWord call reads=[] writes=[] mem=false noret=false
+vectorShiftRight call reads=[] writes=[] mem=false noret=false
+vectorShiftRightAlgebraicByte call reads=[] writes=[] mem=false noret=false
+vectorShiftRightAlgebraicHalfWord call reads=[] writes=[] mem=false noret=false
+vectorShiftRightAlgebraicWord call reads=[] writes=[] mem=false noret=false
+vectorShiftRightByOctet call reads=[] writes=[] mem=false noret=false
+vectorShiftRightByte call reads=[] writes=[] mem=false noret=false
+vectorShiftRightHalfWord call reads=[] writes=[] mem=false noret=false
+vectorShiftRightWord call reads=[] writes=[] mem=false noret=false
+vectorSplatByte call reads=[] writes=[] mem=false noret=false
+vectorSplatHalfWord call reads=[] writes=[] mem=false noret=false
+vectorSplatImmediateSignedByte call reads=[] writes=[] mem=false noret=false
+vectorSplatImmediateSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorSplatImmediateSignedWord call reads=[] writes=[] mem=false noret=false
+vectorSplatWord call reads=[] writes=[] mem=false noret=false
+vectorSubtractCarryoutUnsignedWord call reads=[] writes=[] mem=false noret=false
+vectorSubtractFloatingPoint call reads=[] writes=[] mem=false noret=false
+vectorSubtractSignedByteSaturate call reads=[] writes=[] mem=false noret=false
+vectorSubtractSignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorSubtractSignedWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorSubtractUnsignedByteModulo call reads=[] writes=[] mem=false noret=false
+vectorSubtractUnsignedByteSaturate call reads=[] writes=[] mem=false noret=false
+vectorSubtractUnsignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorSubtractUnsignedWordModulo call reads=[] writes=[] mem=false noret=false
+vectorSubtractUnsignedWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorSumAcrossPartialSignedByteSaturate call reads=[] writes=[] mem=false noret=false
+vectorSumAcrossPartialSignedHalfWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorSumAcrossPartialSignedWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorSumAcrossPartialUnsignedByteSaturate call reads=[] writes=[] mem=false noret=false
+vectorSumAcrossSignedWordSaturate call reads=[] writes=[] mem=false noret=false
+vectorUnpackHighPixel16 call reads=[] writes=[] mem=false noret=false
+vectorUnpackHighSignedByte call reads=[] writes=[] mem=false noret=false
+vectorUnpackHighSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vectorUnpackLowPixel16 call reads=[] writes=[] mem=false noret=false
+vectorUnpackLowSignedByte call reads=[] writes=[] mem=false noret=false
+vectorUnpackLowSignedHalfWord call reads=[] writes=[] mem=false noret=false
+vsx207_1 call reads=[] writes=[] mem=true noret=false
+vsx207_10 call reads=[] writes=[] mem=false noret=false
+vsx207_11 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_12 call reads=[] writes=[] mem=false noret=false
+vsx207_13 call reads=[] writes=[] mem=false noret=false
+vsx207_14 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_15 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_16 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_17 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_18 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_19 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_2 call reads=[] writes=[] mem=true noret=false
+vsx207_20 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_21 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_22 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_23 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_24 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_25 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_26 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_27 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_28 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_29 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_3 call reads=[] writes=[] mem=true noret=false
+vsx207_30 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx207_5 call reads=[] writes=[] mem=false noret=false
+vsx207_8 call reads=[] writes=[] mem=false noret=false
+vsx207_9 call reads=[] writes=[] mem=false noret=false
+vsx300_1 call reads=[] writes=[] mem=false noret=false
+vsx300_10 call reads=[] writes=[] mem=true noret=false
+vsx300_100 call reads=[] writes=[] mem=false noret=false
+vsx300_101 call reads=[] writes=[] mem=false noret=false
+vsx300_102 call reads=[] writes=[] mem=false noret=false
+vsx300_103 call reads=[] writes=[] mem=false noret=false
+vsx300_11 call reads=[] writes=[] mem=true noret=false
+vsx300_12 call reads=[] writes=[] mem=false noret=false
+vsx300_13 call reads=[] writes=[] mem=false noret=false
+vsx300_14 call reads=[] writes=[] mem=false noret=false
+vsx300_15 call reads=[] writes=[] mem=true noret=false
+vsx300_16 call reads=[] writes=[] mem=true noret=false
+vsx300_17 call reads=[] writes=[] mem=true noret=false
+vsx300_18 call reads=[] writes=[] mem=true noret=false
+vsx300_19 call reads=[] writes=[] mem=false noret=false
+vsx300_2 call reads=[] writes=[] mem=true noret=false
+vsx300_20 call reads=[] writes=[] mem=true noret=false
+vsx300_21 call reads=[] writes=[] mem=true noret=false
+vsx300_22 call reads=[] writes=[] mem=true noret=false
+vsx300_23 call reads=[] writes=[] mem=true noret=false
+vsx300_25 call reads=[] writes=[] mem=false noret=false
+vsx300_26 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_27 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_28 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_29 call reads=[] writes=["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_3 call reads=[] writes=[] mem=true noret=false
+vsx300_30 call reads=[] writes=["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_31 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_32 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_33 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_34 call reads=[] writes=["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3", "fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_35 call reads=[] writes=["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3", "fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_36 call reads=[] writes=[] mem=false noret=false
+vsx300_37 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_38 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_39 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_4 call reads=[] writes=[] mem=true noret=false
+vsx300_40 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_41 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_42 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_43 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_44 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_45 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_46 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_47 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_48 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_49 call reads=[] writes=[] mem=false noret=false
+vsx300_5 call reads=[] writes=[] mem=false noret=false
+vsx300_50 call reads=[] writes=[] mem=false noret=false
+vsx300_51 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_52 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_53 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_54 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_55 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_56 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_57 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_58 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_59 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_60 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_61 call reads=[] writes=[] mem=false noret=false
+vsx300_62 call reads=[] writes=[] mem=false noret=false
+vsx300_63 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_64 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_65 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_66 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_67 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_68 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_69 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_7 call reads=[] writes=[] mem=true noret=false
+vsx300_70 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_71 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_72 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_73 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_74 call reads=[] writes=["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_75 call reads=[] writes=["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_76 call reads=[] writes=["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+vsx300_77 call reads=[] writes=[] mem=false noret=false
+vsx300_78 call reads=[] writes=[] mem=false noret=false
+vsx300_79 call reads=[] writes=[] mem=false noret=false
+vsx300_8 call reads=[] writes=[] mem=true noret=false
+vsx300_80 call reads=[] writes=[] mem=false noret=false
+vsx300_81 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_82 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc", "cr6"] mem=false noret=false
+vsx300_83 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"] mem=false noret=false
+vsx300_84 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc", "cr6"] mem=false noret=false
+vsx300_85 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_xx", "fp_vxsnan"] mem=false noret=false
+vsx300_86 call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_xx", "fp_vxsnan"] mem=false noret=false
+vsx300_87 call reads=[] writes=[] mem=false noret=false
+vsx300_88 call reads=[] writes=[] mem=false noret=false
+vsx300_89 call reads=[] writes=[] mem=false noret=false
+vsx300_9 call reads=[] writes=[] mem=true noret=false
+vsx300_90 call reads=[] writes=[] mem=false noret=false
+vsx300_91 call reads=[] writes=[] mem=false noret=false
+vsx300_92 call reads=[] writes=[] mem=false noret=false
+vsx300_93 call reads=[] writes=[] mem=false noret=false
+vsx300_94 call reads=[] writes=[] mem=false noret=false
+vsx300_95 call reads=[] writes=[] mem=false noret=false
+vsx300_96 call reads=[] writes=[] mem=false noret=false
+vsx300_97 call reads=[] writes=[] mem=false noret=false
+vsx300_98 call reads=[] writes=[] mem=false noret=false
+vsx300_99 call reads=[] writes=[] mem=false noret=false
+vsx300_xsdivqp call reads=[] writes=["fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan", "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxsqrt", "fp_vxcvi", "fp_fr", "fp_fi", "fp_c", "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"] mem=false noret=false
+waitOp UNCLASSIFIED
+waitT call reads=[] writes=[] mem=true noret=false
+wchkallOp UNCLASSIFIED
+wclrOp UNCLASSIFIED
+wclrallOp UNCLASSIFIED
+xer_mac_update UNCLASSIFIED
+xsabsdpOp UNCLASSIFIED
+xsadddpOp UNCLASSIFIED
+xscmpodpOp UNCLASSIFIED
+xscmpudpOp UNCLASSIFIED
+xscpsgndpOp UNCLASSIFIED
+xscvdpspOp UNCLASSIFIED
+xscvdpsxdsOp UNCLASSIFIED
+xscvdpsxwsOp UNCLASSIFIED
+xscvdpuxdsOp UNCLASSIFIED
+xscvdpuxwsOp UNCLASSIFIED
+xscvspdpOp UNCLASSIFIED
+xscvsxddpOp UNCLASSIFIED
+xscvuxddpOp UNCLASSIFIED
+xsdivdpOp UNCLASSIFIED
+xsmaddadpOp UNCLASSIFIED
+xsmaddmdpOp UNCLASSIFIED
+xsmaxdpOp UNCLASSIFIED
+xsmindpOp UNCLASSIFIED
+xsmsubadpOp UNCLASSIFIED
+xsmsubmdpOp UNCLASSIFIED
+xsmuldpOp UNCLASSIFIED
+xsnabsdpOp UNCLASSIFIED
+xsnegdpOp UNCLASSIFIED
+xsnmaddadpOp UNCLASSIFIED
+xsnmaddmdpOp UNCLASSIFIED
+xsnmsubadpOp UNCLASSIFIED
+xsnmsubmdpOp UNCLASSIFIED
+xsrdpiOp UNCLASSIFIED
+xsrdpicOp UNCLASSIFIED
+xsrdpimOp UNCLASSIFIED
+xsrdpipOp UNCLASSIFIED
+xsrdpizOp UNCLASSIFIED
+xsredpOp UNCLASSIFIED
+xsrsqrtedpOp UNCLASSIFIED
+xssqrtdpOp UNCLASSIFIED
+xssubdpOp UNCLASSIFIED
+xstdivdpOp UNCLASSIFIED
+xstsqrtdpOp UNCLASSIFIED
+xvabsdpOp UNCLASSIFIED
+xvabsspOp UNCLASSIFIED
+xvadddpOp UNCLASSIFIED
+xvaddspOp UNCLASSIFIED
+xvcmpeqdpDotOp UNCLASSIFIED
+xvcmpeqdpOp UNCLASSIFIED
+xvcmpeqspDotOp UNCLASSIFIED
+xvcmpeqspOp UNCLASSIFIED
+xvcmpgedpDotOp UNCLASSIFIED
+xvcmpgedpOp UNCLASSIFIED
+xvcmpgespDotOp UNCLASSIFIED
+xvcmpgespOp UNCLASSIFIED
+xvcmpgtdpDotOp UNCLASSIFIED
+xvcmpgtdpOp UNCLASSIFIED
+xvcmpgtspDotOp UNCLASSIFIED
+xvcmpgtspOp UNCLASSIFIED
+xvcpsgndpOp UNCLASSIFIED
+xvcpsgnspOp UNCLASSIFIED
+xvcvdpspOp UNCLASSIFIED
+xvcvdpsxdsOp UNCLASSIFIED
+xvcvdpsxwsOp UNCLASSIFIED
+xvcvdpuxdsOp UNCLASSIFIED
+xvcvdpuxwsOp UNCLASSIFIED
+xvcvspdpOp UNCLASSIFIED
+xvcvspsxdsOp UNCLASSIFIED
+xvcvspsxwsOp UNCLASSIFIED
+xvcvspuxdsOp UNCLASSIFIED
+xvcvspuxwsOp UNCLASSIFIED
+xvcvsxddpOp UNCLASSIFIED
+xvcvsxdspOp UNCLASSIFIED
+xvcvsxwdpOp UNCLASSIFIED
+xvcvsxwspOp UNCLASSIFIED
+xvcvuxddpOp UNCLASSIFIED
+xvcvuxdspOp UNCLASSIFIED
+xvcvuxwdpOp UNCLASSIFIED
+xvcvuxwspOp UNCLASSIFIED
+xvdivdpOp UNCLASSIFIED
+xvdivspOp UNCLASSIFIED
+xvmaddadpOp UNCLASSIFIED
+xvmaddaspOp UNCLASSIFIED
+xvmaddmdpOp UNCLASSIFIED
+xvmaddmspOp UNCLASSIFIED
+xvmaxdpOp UNCLASSIFIED
+xvmaxspOp UNCLASSIFIED
+xvmindpOp UNCLASSIFIED
+xvminspOp UNCLASSIFIED
+xvmsubadpOp UNCLASSIFIED
+xvmsubaspOp UNCLASSIFIED
+xvmsubmdpOp UNCLASSIFIED
+xvmsubmspOp UNCLASSIFIED
+xvmuldpOp UNCLASSIFIED
+xvmulspOp UNCLASSIFIED
+xvnabsdpOp UNCLASSIFIED
+xvnabsspOp UNCLASSIFIED
+xvnegdpOp UNCLASSIFIED
+xvnegspOp UNCLASSIFIED
+xvnmaddadpOp UNCLASSIFIED
+xvnmaddaspOp UNCLASSIFIED
+xvnmaddmdpOp UNCLASSIFIED
+xvnmaddmspOp UNCLASSIFIED
+xvnmsubadpOp UNCLASSIFIED
+xvnmsubaspOp UNCLASSIFIED
+xvnmsubmdpOp UNCLASSIFIED
+xvnmsubmspOp UNCLASSIFIED
+xvrdpiOp UNCLASSIFIED
+xvrdpicOp UNCLASSIFIED
+xvrdpimOp UNCLASSIFIED
+xvrdpipOp UNCLASSIFIED
+xvrdpizOp UNCLASSIFIED
+xvredpOp UNCLASSIFIED
+xvrespOp UNCLASSIFIED
+xvrspiOp UNCLASSIFIED
+xvrspicOp UNCLASSIFIED
+xvrspimOp UNCLASSIFIED
+xvrspipOp UNCLASSIFIED
+xvrspizOp UNCLASSIFIED
+xvrsqrtedpOp UNCLASSIFIED
+xvrsqrtespOp UNCLASSIFIED
+xvsqrtdpOp UNCLASSIFIED
+xvsqrtspOp UNCLASSIFIED
+xvsubdpOp UNCLASSIFIED
+xvsubspOp UNCLASSIFIED
+xvtdivdpOp UNCLASSIFIED
+xvtdivspOp UNCLASSIFIED
+xvtsqrtdpOp UNCLASSIFIED
+xvtsqrtspOp UNCLASSIFIED
+xxlnorOp UNCLASSIFIED
+xxmrghwOp UNCLASSIFIED
+xxmrglwOp UNCLASSIFIED
+xxpermdiOp UNCLASSIFIED
+xxselOp UNCLASSIFIED
+xxspltwOp UNCLASSIFIED
