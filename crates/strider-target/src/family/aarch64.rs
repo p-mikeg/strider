@@ -5,6 +5,7 @@ use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static AARCH64: Family = Family {
     name: "aarch64",
+    ghidra_ldefs: "AARCH64/data/languages/AARCH64.ldefs",
     facts: DecodeFacts {
         isa_mode_var: None,
         flow_commit_vars: &[],

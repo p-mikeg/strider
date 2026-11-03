@@ -5,6 +5,7 @@ use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static ARM32: Family = Family {
     name: "arm32",
+    ghidra_ldefs: "ARM/data/languages/ARM.ldefs",
     facts: DecodeFacts {
         isa_mode_var: Some("TMode"),
         flow_commit_vars: &["condit", "TEEMode"],
