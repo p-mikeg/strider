@@ -7,7 +7,7 @@ use strider_cfg::{CfgOptions, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::NodeId;
 use strider_opt::{OptCtx, ReadOnlyMemory};
 
-use crate::{AnalyzeOptions, LiftOutcome, Strider};
+use crate::{AnalyzeOptions, LiftOutcome, LiftSites, Strider};
 
 /// Each dispatch site's `BranchIndirect` p-code address, its anchor, with the
 /// node lifted for it.
@@ -95,9 +95,12 @@ where
         // loop builds again next round, so the clone is unavoidable here.
         let LiftOutcome {
             mut function,
-            unresolved_branches: placeholders,
-            switch_anchors: switches,
-            return_sites,
+            sites:
+                LiftSites {
+                    unresolved_branches: placeholders,
+                    switch_anchors: switches,
+                    return_sites,
+                },
         } = lifter.build_ir_with(
             &cfg,
             cc.clone(),

@@ -8,21 +8,13 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) lifter: &'a Lifter<R>,
     pub(crate) builder: strider_ir::FunctionBuilder,
     pub(crate) cfg: &'a strider_cfg::Cfg,
-    /// Maps each `BranchIndirect`'s pcode address to its `IndirectBranch`
-    /// placeholder node.
-    pub(crate) unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
-    /// Seated `Switch` sites, so the resolver can re-derive and widen one.
-    pub(crate) switch_anchors: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
-    /// See [`super::LiftOutcome::return_sites`].
-    pub(crate) return_sites: Vec<super::ReturnSite>,
+    pub(crate) sites: super::LiftSites,
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// What `per_address_ccs` answers a ppc64 local entry through, from
-    /// [`strider_cfg::CfgOptions`].
-    pub(crate) local_entries: &'a strider_cfg::LocalEntries,
-    /// Caller classifications for user-op names, from
-    /// [`strider_cfg::CfgOptions`]; consulted before the built-in tables.
-    pub(crate) call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
+    /// The options `cfg` was built with: its `local_entries` answer a ppc64
+    /// local entry through `per_address_ccs`, and its `call_other_overrides`
+    /// classify user-op names before the built-in tables.
+    pub(crate) cfg_opts: &'a strider_cfg::CfgOptions<'a>,
     /// O(1) varnode-to-largest-container map, built over the tracked set;
     /// queried with the raw varnodes and every CC register.  Varnodes absent
     /// from it fall through to the scan in `container_of`.
@@ -115,12 +107,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             lifter,
             builder,
             cfg,
-            unresolved_branches: Vec::new(),
-            return_sites: Vec::new(),
-            switch_anchors: Vec::new(),
+            sites: super::LiftSites::default(),
             per_address_ccs,
-            local_entries: cfg_opts.local_entries,
-            call_other_overrides: cfg_opts.call_other_overrides,
+            cfg_opts,
             container_map,
             pcode_consts: super::pcode_consts::PcodeConsts::default(),
             pending_isa_mode: None,
@@ -161,7 +150,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         &self,
         target: u64,
     ) -> Option<&'a strider_target::BuiltCallingConvention> {
-        self.local_entries.get(self.per_address_ccs, target)
+        self.cfg_opts
+            .local_entries
+            .get(self.per_address_ccs, target)
     }
 
     /// The entry region's start: a region's first instruction sits at it, and
