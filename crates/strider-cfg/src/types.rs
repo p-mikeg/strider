@@ -229,57 +229,52 @@ impl Region {
         self.insn_index_at(addr).is_some()
     }
 
-    /// Byte length of the span [`Self::contains_addr`] accepts, at least 1: a
-    /// region always owns its `start_addr`.
-    pub(crate) fn span_len(&self) -> u64 {
-        match self.insns.last() {
-            Some(last) => last
-                .addr
-                .machine_addr
-                .addr
-                // Saturating here is right where `contains_addr` needs
-                // `checked`: a span that runs off the top of the address space
-                // is as long as the space allows, and this is a LENGTH, not a
-                // boundary an ownership test compares against.
-                .saturating_add(u64::from(last.len))
-                .saturating_sub(self.start_addr.machine_addr.addr),
-            None => u64::from(self.empty_span_len),
-        }
-        .max(1)
+    /// One past the last machine byte this region owns, and at least one past
+    /// its start: a region always owns `start_addr`. `None` when that end lies
+    /// past the top of the address space, where the region owns everything at
+    /// or above its start.
+    ///
+    /// `checked`, never saturating: an instruction whose bytes cross the top
+    /// would saturate the end to `u64::MAX` and report the byte AT `u64::MAX`
+    /// unowned, which sends the builder to decode a second region inside that
+    /// instruction. It also keeps [`crate::region_index::RegionIndex`]'s
+    /// `(start, end)` range non-empty, which `range` would panic on.
+    pub(crate) fn end(&self) -> Option<u64> {
+        let start = self.start_addr.machine_addr.addr;
+        let end = match self.insns.last() {
+            Some(last) => last.addr.machine_addr.addr.checked_add(u64::from(last.len)),
+            None => start.checked_add(u64::from(self.empty_span_len)),
+        }?;
+        Some(end.max(start.checked_add(1)?))
     }
 
-    /// `start_addr <= addr < last_insn.addr + last_insn.len`, so a region owns
-    /// its last instruction's BYTES: reporting those unowned makes the builder
-    /// decode a second region mid-instruction.  At the last instruction's own
-    /// machine address the pcode index still bounds the span, a region being
-    /// able to end mid-pcode-sequence.
+    /// Byte length of the span [`Self::contains_addr`] accepts, at least 1.
+    pub(crate) fn span_len(&self) -> u64 {
+        let start = self.start_addr.machine_addr.addr;
+        self.end()
+            .map_or(u64::MAX - start, |end| end - start)
+            .max(1)
+    }
+
+    /// `start_addr <= addr < end()`, so a region owns its last
+    /// instruction's BYTES: reporting those unowned makes the builder decode a
+    /// second region mid-instruction.  At the last instruction's own machine
+    /// address the pcode index still bounds the span, a region being able to
+    /// end mid-pcode-sequence.
     ///
     /// An empty region owns `start_addr` plus the `empty_span_len` bytes of the
     /// zero-pcode-op instruction it was sealed at; those bytes hold no pcode, so
     /// only their machine addresses are owned.
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
-        let Some(last) = self.insns.last() else {
-            let start = self.start_addr.machine_addr.addr;
-            return addr == self.start_addr
-                || (addr.machine_addr.addr > start
-                    && addr.machine_addr.addr
-                        < start.saturating_add(u64::from(self.empty_span_len)));
-        };
-        if addr < self.start_addr {
-            return false;
-        }
-        if addr.machine_addr == last.addr.machine_addr {
-            return addr <= last.addr;
-        }
-        // `checked_add`, not `saturating`: an instruction whose bytes cross the
-        // top of the address space would saturate the end to `u64::MAX` and
-        // then report the byte AT `u64::MAX` unowned, which sends the builder
-        // to decode a second region inside that instruction. Overflow means
-        // the region owns everything at or above its start, which is what
-        // `RegionIndex::insert` already does with `Bound::Unbounded`.
-        match last.addr.machine_addr.addr.checked_add(u64::from(last.len)) {
-            Some(end) => addr.machine_addr.addr < end,
-            None => true,
+        let below_end = self.end().is_none_or(|end| addr.machine_addr.addr < end);
+        match self.insns.last() {
+            None => {
+                addr == self.start_addr
+                    || (addr.machine_addr > self.start_addr.machine_addr && below_end)
+            }
+            Some(_) if addr < self.start_addr => false,
+            Some(last) if addr.machine_addr == last.addr.machine_addr => addr <= last.addr,
+            Some(_) => below_end,
         }
     }
 }
