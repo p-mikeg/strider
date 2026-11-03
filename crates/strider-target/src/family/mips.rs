@@ -5,6 +5,7 @@ use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static MIPS: Family = Family {
     name: "mips",
+    ghidra_ldefs: "MIPS/data/languages/mips.ldefs",
     facts: DecodeFacts {
         // The low bit selects the alternate ISA, which `RELP` fixes: every MIPS
         // pspec here pins it to 1, so that ISA is MIPS16e. rsleigh ships

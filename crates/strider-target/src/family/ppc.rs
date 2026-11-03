@@ -6,6 +6,7 @@ use CallOtherClass::NoOp;
 
 pub(crate) static PPC: Family = Family {
     name: "ppc",
+    ghidra_ldefs: "PowerPC/data/languages/ppc.ldefs",
     facts: DecodeFacts {
         isa_mode_var: None,
         flow_commit_vars: &[],
