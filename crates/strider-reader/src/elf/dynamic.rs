@@ -183,14 +183,24 @@ pub(crate) fn loader_view(obj: &object::File<'_>) -> LoaderView {
     }
 }
 
-/// A table and its relocations.
-struct Walked<'d> {
-    table: Table,
-    /// A plain table's entries: `(file address, bytes)` each.
-    raw: Vec<(u64, &'d [u8])>,
-    /// A CREL table's bytes; an Android table's entries.
-    crel: Option<&'d [u8]>,
-    android: Vec<Entry>,
+/// A placed table, read.
+enum Walked<'d> {
+    /// `SHT_REL` / `SHT_RELA` entries of `ent` bytes: `(file address, bytes)`
+    /// each.
+    Plain {
+        sh_type: u32,
+        addr: u64,
+        ent: u64,
+        entries: Vec<(u64, &'d [u8])>,
+    },
+    /// A CREL stream's bytes, to the end of its mapping.
+    Crel { addr: u64, bytes: &'d [u8] },
+    /// An Android table's entries.
+    Android {
+        rela: bool,
+        addr: u64,
+        entries: Vec<Entry>,
+    },
 }
 
 fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> LoaderView {
@@ -202,85 +212,11 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
     let data = f.data();
     let loads = Loads::of(f);
     let is_64 = f.is_64();
-    let (rel_ent, rela_ent, word) = if is_64 { (16, 24, 8) } else { (8, 12, 4) };
-    let mut tables = Vec::new();
-    let plain = [
-        (elf::DT_RELA, elf::DT_RELASZ, elf::DT_RELAENT, elf::SHT_RELA),
-        (elf::DT_REL, elf::DT_RELSZ, elf::DT_RELENT, elf::SHT_REL),
-    ];
-    for (at, size, ent, sh_type) in plain {
-        let Some(addr) = tags.get(at) else {
-            continue;
-        };
-        let want = if sh_type == elf::SHT_RELA {
-            rela_ent
-        } else {
-            rel_ent
-        };
-        let Some(size) = tags.get(size) else {
-            return LoaderView::Unreadable("a relocation table has no size tag");
-        };
-        if tags.get(ent).is_some_and(|e| e != want) {
-            return LoaderView::Unreadable("a relocation table's entry size is not its type's");
-        }
-        tables.push(Table::Plain {
-            sh_type,
-            addr,
-            size,
-            ent: want,
-        });
-    }
-    if let Some(addr) = tags.get(elf::DT_JMPREL) {
-        let (Some(size), Some(kind)) = (tags.get(elf::DT_PLTRELSZ), tags.get(elf::DT_PLTREL))
-        else {
-            return LoaderView::Unreadable("DT_JMPREL has no DT_PLTRELSZ or DT_PLTREL");
-        };
-        let (sh_type, ent) = match kind {
-            k if k == u64::from(elf::DT_RELA) => (elf::SHT_RELA, rela_ent),
-            k if k == u64::from(elf::DT_REL) => (elf::SHT_REL, rel_ent),
-            _ => return LoaderView::Unreadable("DT_PLTREL names neither DT_REL nor DT_RELA"),
-        };
-        tables.push(Table::Plain {
-            sh_type,
-            addr,
-            size,
-            ent,
-        });
-    }
-    if let Some(addr) = tags.get(DT_CREL) {
-        tables.push(Table::Crel { addr });
-    }
-    for (at, size, rela) in [
-        (DT_ANDROID_RELA, DT_ANDROID_RELASZ, true),
-        (DT_ANDROID_REL, DT_ANDROID_RELSZ, false),
-    ] {
-        let Some(addr) = tags.get(at) else {
-            continue;
-        };
-        let Some(size) = tags.get(size) else {
-            return LoaderView::Unreadable("an Android packed table has no size tag");
-        };
-        tables.push(Table::Android { rela, addr, size });
-    }
-    // RELR words hold `B + A`, `B` modelled 0, as the file has them: a
-    // table is only checked to be there.
-    for (at, size, ent) in [
-        (DT_RELR, DT_RELRSZ, DT_RELRENT),
-        (DT_ANDROID_RELR, DT_ANDROID_RELRSZ, DT_ANDROID_RELRENT),
-    ] {
-        let Some(addr) = tags.get(at) else {
-            continue;
-        };
-        let Some(size) = tags.get(size) else {
-            return LoaderView::Unreadable("a RELR table has no size tag");
-        };
-        if tags.get(ent).is_some_and(|e| e != word) || size % word != 0 {
-            return LoaderView::Unreadable("a RELR table's entry size is not a word");
-        }
-        if loads.bytes(data, addr, size).is_none() {
-            return LoaderView::Unreadable("a RELR table is in no PT_LOAD");
-        }
-    }
+    let (rel_ent, rela_ent) = if is_64 { (16, 24) } else { (8, 12) };
+    let tables = match placed_tables(&tags, &loads, data, is_64) {
+        Ok(tables) => tables,
+        Err(why) => return LoaderView::Unreadable(why),
+    };
     // The entries counted against the budget at the smallest entry size of
     // any table, an Android one's being its plain twin's.
     let smallest = tables
@@ -301,39 +237,34 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
     let budget = super::relocations::RELOCATION_ENTRY_BUDGET * data.len() as u64 / smallest;
     let mut entries = 0u64;
     let mut walked = Vec::new();
-    for &table in &tables {
-        let mut w = Walked {
-            table,
-            raw: Vec::new(),
-            crel: None,
-            android: Vec::new(),
-        };
-        let ok = match table {
+    for table in tables {
+        let read = match table {
             Table::Plain {
-                addr, size, ent, ..
+                sh_type,
+                addr,
+                size,
+                ent,
             } => {
-                if size % ent != 0 {
-                    false
-                } else if size == 0 {
-                    true
-                } else if let Some(bytes) = loads.bytes(data, addr, size) {
+                let bytes = match size {
+                    _ if size % ent != 0 => None,
+                    0 => Some(&[][..]),
+                    _ => loads.bytes(data, addr, size),
+                };
+                bytes.map(|bytes| {
                     entries += size / ent;
-                    for (i, e) in bytes.chunks_exact(ent as usize).enumerate() {
-                        w.raw.push((addr + i as u64 * ent, e));
+                    let entries = bytes.chunks_exact(ent as usize).enumerate();
+                    Walked::Plain {
+                        sh_type,
+                        addr,
+                        ent,
+                        entries: entries.map(|(i, e)| (addr + i as u64 * ent, e)).collect(),
                     }
-                    true
-                } else {
-                    false
-                }
+                })
             }
-            Table::Crel { addr } => match loads.rest(data, addr).and_then(crel_entries) {
-                Some(found) => {
-                    entries += found.len() as u64;
-                    w.crel = loads.rest(data, addr);
-                    true
-                }
-                None => false,
-            },
+            Table::Crel { addr } => loads.rest(data, addr).and_then(|bytes| {
+                entries += crel_count(bytes)?;
+                Some(Walked::Crel { addr, bytes })
+            }),
             Table::Android { rela, addr, size } => {
                 let limit = budget.saturating_sub(entries);
                 match (!f.elf_header().is_mips64el(f.endian()))
@@ -343,8 +274,11 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
                 {
                     Some(Ok(found)) => {
                         entries += found.len() as u64;
-                        w.android = found;
-                        true
+                        Some(Walked::Android {
+                            rela,
+                            addr,
+                            entries: found,
+                        })
                     }
                     Some(Err(count)) => {
                         return LoaderView::OverBudget {
@@ -352,30 +286,120 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
                             budget,
                         };
                     }
-                    None => false,
+                    None => None,
                 }
             }
         };
-        if !ok {
+        let Some(read) = read else {
             return LoaderView::Unreadable("a relocation table cannot be read or decoded");
-        }
+        };
         if entries > budget {
             return LoaderView::OverBudget { entries, budget };
         }
-        walked.push(w);
+        walked.push(read);
     }
     LoaderView::Tables {
         walked: (!walked.is_empty()).then(|| synthesized(f, &walked)),
     }
 }
 
-/// `(r_offset, r_type)` of each entry of the CREL stream at the start of
-/// `data`, `None` when it does not decode.
-fn crel_entries(data: &[u8]) -> Option<Vec<(u64, u32)>> {
+/// The relocation tables `tags` place, or why they cannot be read. A RELR
+/// table is only checked to be there: its words hold `B + A`, `B` modelled
+/// 0, as the file has them.
+fn placed_tables(
+    tags: &DynamicTags,
+    loads: &Loads,
+    data: &[u8],
+    is_64: bool,
+) -> Result<Vec<Table>, &'static str> {
+    let (rel_ent, rela_ent, word) = if is_64 { (16, 24, 8) } else { (8, 12, 4) };
+    let mut tables = Vec::new();
+    for (at, size, ent, sh_type, want) in [
+        (
+            elf::DT_RELA,
+            elf::DT_RELASZ,
+            elf::DT_RELAENT,
+            elf::SHT_RELA,
+            rela_ent,
+        ),
+        (
+            elf::DT_REL,
+            elf::DT_RELSZ,
+            elf::DT_RELENT,
+            elf::SHT_REL,
+            rel_ent,
+        ),
+    ] {
+        let Some(addr) = tags.get(at) else {
+            continue;
+        };
+        let size = tags.get(size).ok_or("a relocation table has no size tag")?;
+        if tags.get(ent).is_some_and(|e| e != want) {
+            return Err("a relocation table's entry size is not its type's");
+        }
+        tables.push(Table::Plain {
+            sh_type,
+            addr,
+            size,
+            ent: want,
+        });
+    }
+    if let Some(addr) = tags.get(elf::DT_JMPREL) {
+        let (Some(size), Some(kind)) = (tags.get(elf::DT_PLTRELSZ), tags.get(elf::DT_PLTREL))
+        else {
+            return Err("DT_JMPREL has no DT_PLTRELSZ or DT_PLTREL");
+        };
+        let (sh_type, ent) = match kind {
+            k if k == u64::from(elf::DT_RELA) => (elf::SHT_RELA, rela_ent),
+            k if k == u64::from(elf::DT_REL) => (elf::SHT_REL, rel_ent),
+            _ => return Err("DT_PLTREL names neither DT_REL nor DT_RELA"),
+        };
+        tables.push(Table::Plain {
+            sh_type,
+            addr,
+            size,
+            ent,
+        });
+    }
+    if let Some(addr) = tags.get(DT_CREL) {
+        tables.push(Table::Crel { addr });
+    }
+    for (at, size, rela) in [
+        (DT_ANDROID_RELA, DT_ANDROID_RELASZ, true),
+        (DT_ANDROID_REL, DT_ANDROID_RELSZ, false),
+    ] {
+        let Some(addr) = tags.get(at) else {
+            continue;
+        };
+        let size = tags
+            .get(size)
+            .ok_or("an Android packed table has no size tag")?;
+        tables.push(Table::Android { rela, addr, size });
+    }
+    for (at, size, ent) in [
+        (DT_RELR, DT_RELRSZ, DT_RELRENT),
+        (DT_ANDROID_RELR, DT_ANDROID_RELRSZ, DT_ANDROID_RELRENT),
+    ] {
+        let Some(addr) = tags.get(at) else {
+            continue;
+        };
+        let size = tags.get(size).ok_or("a RELR table has no size tag")?;
+        if tags.get(ent).is_some_and(|e| e != word) || size % word != 0 {
+            return Err("a RELR table's entry size is not a word");
+        }
+        if loads.bytes(data, addr, size).is_none() {
+            return Err("a RELR table is in no PT_LOAD");
+        }
+    }
+    Ok(tables)
+}
+
+/// How many entries the CREL stream at the start of `data` holds, `None`
+/// when it does not decode.
+fn crel_count(data: &[u8]) -> Option<u64> {
     object::read::elf::CrelIterator::new(data)
         .ok()?
-        .map(|e| e.ok().map(|e| (e.r_offset, e.r_type)))
-        .collect()
+        .try_fold(0, |n, e| e.ok().map(|_| n + 1))
 }
 
 /// One decoded relocation: `(r_offset, r_info, r_addend)`.
@@ -484,43 +508,48 @@ fn synthesized<Elf: FileHeader>(
     let mut sections: Vec<(u32, u64, Vec<u8>, u64)> = vec![(elf::SHT_STRTAB, 0, vec![0], 0)];
     let mut emitted = std::collections::HashSet::new();
     for w in walked {
-        match w.table {
-            Table::Plain {
-                sh_type, addr, ent, ..
+        match w {
+            Walked::Plain {
+                sh_type,
+                addr,
+                ent,
+                entries,
             } => {
                 let mut bytes = Vec::new();
-                for &(at, raw) in &w.raw {
+                for &(at, raw) in entries {
                     if emitted.insert(at) {
                         bytes.extend_from_slice(raw);
                     }
                 }
                 if !bytes.is_empty() {
-                    sections.push((sh_type, addr, bytes, ent));
+                    sections.push((*sh_type, *addr, bytes, *ent));
                 }
             }
-            Table::Crel { addr } => {
-                if let Some(bytes) = w.crel {
-                    sections.push((elf::SHT_CREL, addr, bytes.to_vec(), 1));
-                }
+            Walked::Crel { addr, bytes } => {
+                sections.push((elf::SHT_CREL, *addr, bytes.to_vec(), 1));
             }
-            Table::Android { rela, addr, .. } => {
-                if w.android.is_empty() {
+            Walked::Android {
+                rela,
+                addr,
+                entries,
+            } => {
+                if entries.is_empty() {
                     continue;
                 }
                 let mut bytes = Vec::new();
-                for &(offset, info, addend) in &w.android {
+                for &(offset, info, addend) in entries {
                     put(&mut bytes, offset, word);
                     put(&mut bytes, info, word);
-                    if rela {
+                    if *rela {
                         put(&mut bytes, addend as u64, word);
                     }
                 }
-                let (sh_type, ent) = if rela {
+                let (sh_type, ent) = if *rela {
                     (elf::SHT_RELA, 3 * word as u64)
                 } else {
                     (elf::SHT_REL, 2 * word as u64)
                 };
-                sections.push((sh_type, addr, bytes, ent));
+                sections.push((sh_type, *addr, bytes, ent));
             }
         }
     }
