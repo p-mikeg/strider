@@ -566,3 +566,57 @@ fn every_arch_preset_is_its_ghidra_ldefs_language() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Prints a draft [`CallingConvention`] literal for a Ghidra compiler spec, a
+/// starting point for a new preset, not a finished one: the cspec does not
+/// split integer from float carriers, name the link register or entry address,
+/// or know `reg_args_adjoin_stack_args`, so those are left for the author.
+/// `CSPEC` is a path under the processors tree, `PROTOTYPE` an optional
+/// prototype name (default: the `<default_proto>`).
+///
+/// ```text
+/// CSPEC=RISCV/data/languages/riscv64-fp.cspec cargo test -p strider-target \
+///     --test ghidra_oracle -- --ignored draft_preset_from_cspec --nocapture
+/// ```
+#[test]
+#[ignore = "prints a draft preset; needs CSPEC"]
+fn draft_preset_from_cspec() {
+    let cspec = std::env::var("CSPEC").expect("set CSPEC to a path under the processors tree");
+    let name = std::env::var("PROTOTYPE").ok();
+    let proto = prototype(&cspec, name.as_deref());
+    let list = |names: &[String]| {
+        let items: Vec<String> = names.iter().map(|n| format!("{n:?}")).collect();
+        format!("&[{}]", items.join(", "))
+    };
+    let saved: Vec<String> = proto
+        .unaffected
+        .iter()
+        .filter(|r| **r != proto.stack_pointer)
+        .cloned()
+        .collect();
+    let stack_args = match proto.stack.first() {
+        Some((offset, align)) => {
+            format!("Some(StackArgs {{ base_offset: {offset}, increment: {align} }})")
+        }
+        None => "None".to_owned(),
+    };
+    println!("// {cspec} prototype {name:?}");
+    println!("CallingConvention {{");
+    println!("    stack_ptr: {:?},", proto.stack_pointer);
+    println!(
+        "    arg_passing_regs: {}, // integer and float carriers together; split by hand",
+        list(&proto.inputs)
+    );
+    println!("    arg_passing_regs_float: &[],");
+    println!("    callee_saved_regs: {},", list(&saved));
+    println!("    ret_val_regs: {}, // likewise", list(&proto.outputs));
+    println!("    ret_val_regs_float: &[],");
+    println!("    stack_args: {stack_args},");
+    println!("    ret_stack_pop: {},", proto.extrapop);
+    println!("    link_register: None, // fill in");
+    println!("    preserves_memory: false,");
+    println!("    preserves_all_registers: false,");
+    println!("    entry_address: None,");
+    println!("    reg_args_adjoin_stack_args: false,");
+    println!("}}");
+}
