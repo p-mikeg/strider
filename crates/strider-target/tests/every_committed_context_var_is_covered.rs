@@ -22,19 +22,13 @@ use strider_target::ArchPreset;
 /// The language directory under `externals/rsleigh/sleigh/processors` whose
 /// files back each preset.
 fn language_dir(preset: ArchPreset) -> &'static str {
-    match preset {
-        ArchPreset::X86 | ArchPreset::X86_64 => "x86",
-        ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb => {
-            "ARM"
-        }
-        ArchPreset::Aarch64 | ArchPreset::Aarch64Be => "AARCH64",
-        ArchPreset::MipsBe32
-        | ArchPreset::MipsLe32
-        | ArchPreset::MipsBe64
-        | ArchPreset::MipsLe64 => "MIPS",
-        ArchPreset::Ppc32Be | ArchPreset::Ppc32Le | ArchPreset::Ppc64Be | ArchPreset::Ppc64Le => {
-            "PowerPC"
-        }
+    match preset.family_name() {
+        "x86" => "x86",
+        "arm32" => "ARM",
+        "aarch64" => "AARCH64",
+        "mips" => "MIPS",
+        "ppc" => "PowerPC",
+        other => panic!("{preset:?}: no language directory for family {other}"),
     }
 }
 
