@@ -41,7 +41,7 @@ layer names the same ABI types.
   `-mfloat-abi=soft` / `softfp`.
 - `StackArgs`: the stack-slot geometry (offsets and slot indices) that the
   stack-argument passes read, so every pass agrees on slot order.
-- `ArchPreset`: the roster of presets (`arch_presets!` in `src/arch.rs`), each
+- `ArchPreset`: the roster of presets (`arch_presets!` in `src/arch/mod.rs`), each
   with its family, byte orders, Ghidra language id and ldefs file.
 - `CcPreset` / `CallingConvention::presets()`: the named calling conventions,
   each with the arch presets it is for and the Ghidra prototypes it is held to.
@@ -59,6 +59,9 @@ family through its `arch_presets!` row (`ArchPreset::family()`), which is how
 `CallingConvention::presets()` iterates, and
 `every_preset_family_is_registered_once` checks it lists every preset's
 family once. `call_other_abi/common.rs` holds the arch-independent rows.
+`src/arch/` holds `SleighArch` and its roster (`mod.rs`), the byte orders
+(`endian.rs`), and the two tables a `SleighArch` builds once per preset:
+`names.rs` (`ArchNames`) and `decode_tables.rs` (`DecodeTables`).
 
 The data is checked against the vendored sla and Ghidra:
 `tests/family_facts_against_sla.rs` (`has_delay_slots` against `delayslot(`
@@ -94,11 +97,12 @@ Each place below is pinned: leaving one out fails the named test.
   cargo test -p strider-target --test ghidra_oracle -- --ignored
   draft_preset_from_cspec --nocapture`.
 - A preset in an existing family:
-  - its `arch_presets!` row in `src/arch.rs`, with its Ghidra id;
-  - its line in the two spelled-out tables in `src/arch.rs`'s tests
+  - its `arch_presets!` row in `src/arch/mod.rs`, with its Ghidra id;
+  - its line in the two spelled-out tables in `src/arch/tests.rs`
     (`every_preset_is_in_its_own_family`,
-    `every_preset_pins_its_ghidra_id_and_byte_orders`), in `tests/arch_smoke.rs` (`presets_endianness_matches_arch`) and in
-    `src/arch_names.rs` (`every_preset_has_its_own_name`);
+    `every_preset_pins_its_ghidra_id_and_byte_orders`), in
+    `tests/arch_smoke.rs` (`presets_endianness_matches_arch`) and in
+    `src/arch/names.rs` (`every_preset_has_its_own_name`);
   - its sla and pspec files in `sla()` / `pspec()` in `tests/ghidra_oracle.rs`
     if they are new (`every_arch_preset_is_its_ghidra_ldefs_language`);
   - a `tests/snapshots/call_other/<name>.txt` to bless as above
@@ -113,7 +117,7 @@ Each place below is pinned: leaving one out fails the named test.
     `family/mod.rs` and an entry in `FAMILIES`
     (`every_preset_family_is_registered_once`);
   - its `arch_presets!` rows naming it;
-  - its pins in `src/arch.rs`'s tests: the family name in
+  - its pins in `src/arch/tests.rs`: the family name in
     `every_preset_is_in_its_own_family`, its ldefs in
     `every_preset_pins_its_ghidra_ldefs`, its volatile counters in
     `volatile_registers_per_preset`, and its ISA-mode presence in
