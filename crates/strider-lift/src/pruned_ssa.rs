@@ -184,7 +184,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 // there instead of silently placing no phi.
                 let class = strider_cfg::user_op_of(insn, self.lifter.user_op_names()).and_then(
                     |(_, name)| {
-                        classify_with(self.call_other_overrides, self.lifter.arch().preset(), name)
+                        classify_with(
+                            self.cfg_opts.call_other_overrides,
+                            self.lifter.arch().preset(),
+                            name,
+                        )
                     },
                 );
                 let abi = match class {

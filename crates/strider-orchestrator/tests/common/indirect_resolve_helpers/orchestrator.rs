@@ -76,7 +76,7 @@ pub(crate) fn run_pipeline_x86_64(
         .expect("optimizer pipeline");
 
     assert_eq!(
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
         1,
         "fixture must have exactly one IR-level placeholder",
     );

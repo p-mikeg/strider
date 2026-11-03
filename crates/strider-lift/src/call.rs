@@ -14,7 +14,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     ) -> Result<()> {
         let (user_op_id, name) = decode_user_op(insn, self.lifter.user_op_names())?;
         let preset = self.lifter.arch().preset();
-        if self.call_other_overrides.get(name).is_none() {
+        if self.cfg_opts.call_other_overrides.get(name).is_none() {
             if strider_target::call_other_abi::is_msr_register_mode(preset, name) {
                 return self.lift_msr_register_mode(insn);
             }
@@ -22,17 +22,20 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 return self.lift_rounding_mode_control(insn, name);
             }
         }
-        let class =
-            strider_target::call_other_abi::classify_with(self.call_other_overrides, preset, name)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "unknown CallOther user-op {name:?}; classify it per analysis \
+        let class = strider_target::call_other_abi::classify_with(
+            self.cfg_opts.call_other_overrides,
+            preset,
+            name,
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown CallOther user-op {name:?}; classify it per analysis \
                          (Python: CfgOptions(call_other_abis={{{name:?}: \
                          strider.sleigh.CallOtherAbi.pure()}}), Rust: \
                          CfgOptions::call_other_overrides), or add an entry to \
                          strider_target::call_other_abi::classify"
-                    )
-                })?;
+            )
+        })?;
 
         // `None` is the NoOp class: no IR node, control and memory unchanged,
         // and the pcode-explicit output dropped.  Otherwise the ABI carries the
