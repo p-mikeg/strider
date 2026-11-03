@@ -52,7 +52,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // the resolver re-reads to widen a site that seated early.  A plain
         // branch drops the selector as dead and latches the first answer.
         let node = self.builder.build_switch_with_mode(idx, isa_mode, &arms)?;
-        self.switch_anchors.push((switch_addr, node));
+        self.sites.switch_anchors.push((switch_addr, node));
         Ok(())
     }
 
@@ -110,7 +110,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Lifts a return, recording the address it jumps to against the `Return`
-    /// node in [`super::LiftOutcome::return_sites`].  Nothing in the CFG
+    /// node in [`super::LiftSites::return_sites`].  Nothing in the CFG
     /// checked that address is the caller's.
     ///
     /// The p-code `Return`'s input is a fabricated target, the popped return
@@ -123,7 +123,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ) -> Result<()> {
         let target = self.read_vn(nth_input_or_err(insn, 0)?)?;
         let ret = self.build_cc_return()?;
-        self.return_sites.push((addr, ret, target));
+        self.sites.return_sites.push((addr, ret, target));
         Ok(())
     }
 
@@ -257,7 +257,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let placeholder = self
             .builder
             .build_indirect_branch_with_mode(target_value, isa_mode)?;
-        self.unresolved_branches.push((addr, placeholder));
+        self.sites.unresolved_branches.push((addr, placeholder));
         Ok(())
     }
 }
