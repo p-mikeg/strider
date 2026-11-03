@@ -64,16 +64,6 @@ impl PyCallingConvention {
         }
     }
 
-    fn check_expressible(&self, preserves_all_registers: bool) -> PyResult<()> {
-        if preserves_all_registers {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "CallingConvention.to_dict: a preserves_all() / preserves_regs() \
-                 variant is not expressible through custom(...)"
-            )));
-        }
-        Ok(())
-    }
-
     fn vn_name(&self, arch: strider_target::SleighArch, vn: rsleigh::Vn) -> PyResult<&'static str> {
         arch.names().regs().vn_to_name(vn).ok_or_else(|| {
             crate::errors::into_strider_err(anyhow::anyhow!(
@@ -286,54 +276,13 @@ impl PyCallingConvention {
     /// Raises `StriderError` for a `preserves_all()` / `preserves_regs()`
     /// variant: `custom` cannot express `preserves_all_registers`.
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
-        use pyo3::types::PyDict;
-        let d = PyDict::new_bound(py);
         match &self.inner {
-            CcImpl::Preset(cc) => {
-                self.check_expressible(cc.preserves_all_registers)?;
-                d.set_item("arg_passing_regs", cc.arg_passing_regs.to_vec())?;
-                d.set_item("callee_saved_regs", cc.callee_saved_regs.to_vec())?;
-                d.set_item("ret_val_regs", cc.ret_val_regs.to_vec())?;
-                d.set_item("ret_val_regs_float", cc.ret_val_regs_float.to_vec())?;
-                d.set_item("stack_pointer", cc.stack_ptr)?;
-                d.set_item("stack_arg_base", cc.stack_args.map(|s| s.base_offset))?;
-                d.set_item(
-                    "stack_arg_increment",
-                    cc.stack_args.map_or(0, |s| s.increment),
-                )?;
-                d.set_item("ret_stack_pop", cc.ret_stack_pop)?;
-                d.set_item("link_register", cc.link_register)?;
-                d.set_item("preserves_memory", cc.preserves_memory)?;
-                d.set_item("arg_passing_regs_float", cc.arg_passing_regs_float.to_vec())?;
-                d.set_item("reg_args_adjoin_stack_args", cc.reg_args_adjoin_stack_args)?;
-                d.set_item("entry_address", cc.entry_address)?;
-            }
+            CcImpl::Preset(cc) => dict(py, cc, Ok),
             CcImpl::Custom(cc) => {
-                self.check_expressible(cc.preserves_all_registers)?;
                 let arch = self.source_arch.expect("custom has a source arch");
-                let one = |vn| self.vn_name(arch, vn);
-                let names = |vns: &[rsleigh::Vn]| {
-                    vns.iter().map(|&vn| one(vn)).collect::<PyResult<Vec<_>>>()
-                };
-                d.set_item("arg_passing_regs", names(&cc.arg_passing_regs)?)?;
-                d.set_item("callee_saved_regs", names(&cc.callee_saved_regs)?)?;
-                d.set_item("ret_val_regs", names(&cc.ret_val_regs)?)?;
-                d.set_item("ret_val_regs_float", names(&cc.ret_val_regs_float)?)?;
-                d.set_item("stack_pointer", one(cc.stack_ptr)?)?;
-                d.set_item("stack_arg_base", cc.stack_args.map(|s| s.base_offset))?;
-                d.set_item(
-                    "stack_arg_increment",
-                    cc.stack_args.map_or(0, |s| s.increment),
-                )?;
-                d.set_item("ret_stack_pop", cc.ret_stack_pop)?;
-                d.set_item("link_register", cc.link_register.map(one).transpose()?)?;
-                d.set_item("preserves_memory", cc.preserves_memory)?;
-                d.set_item("arg_passing_regs_float", names(&cc.arg_passing_regs_float)?)?;
-                d.set_item("reg_args_adjoin_stack_args", cc.reg_args_adjoin_stack_args)?;
-                d.set_item("entry_address", cc.entry_address.map(one).transpose()?)?;
+                dict(py, cc, |vn| self.vn_name(arch, vn))
             }
         }
-        Ok(d)
     }
 
     /// The preset name this convention was constructed from (e.g.
@@ -366,6 +315,54 @@ impl PyCallingConvention {
     }
 }
 
-pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyCallingConvention>()
+/// `to_dict` over either form, `name` spelling each register.
+fn dict<'py, R: Copy, L: AsRef<[R]>>(
+    py: Python<'py>,
+    cc: &strider_target::calling_convention::Cc<R, L>,
+    name: impl Fn(R) -> PyResult<&'static str>,
+) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    if cc.preserves_all_registers {
+        return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+            "CallingConvention.to_dict: a preserves_all() / preserves_regs() \
+             variant is not expressible through custom(...)"
+        )));
+    }
+    let names = |regs: &L| {
+        regs.as_ref()
+            .iter()
+            .map(|&r| name(r))
+            .collect::<PyResult<Vec<_>>>()
+    };
+    let d = pyo3::types::PyDict::new_bound(py);
+    d.set_item("arg_passing_regs", names(&cc.arg_passing_regs)?)?;
+    d.set_item("callee_saved_regs", names(&cc.callee_saved_regs)?)?;
+    d.set_item("ret_val_regs", names(&cc.ret_val_regs)?)?;
+    d.set_item("ret_val_regs_float", names(&cc.ret_val_regs_float)?)?;
+    d.set_item("stack_pointer", name(cc.stack_ptr)?)?;
+    d.set_item("stack_arg_base", cc.stack_args.map(|s| s.base_offset))?;
+    d.set_item(
+        "stack_arg_increment",
+        cc.stack_args.map_or(0, |s| s.increment),
+    )?;
+    d.set_item("ret_stack_pop", cc.ret_stack_pop)?;
+    d.set_item("link_register", cc.link_register.map(&name).transpose()?)?;
+    d.set_item("preserves_memory", cc.preserves_memory)?;
+    d.set_item("arg_passing_regs_float", names(&cc.arg_passing_regs_float)?)?;
+    d.set_item("reg_args_adjoin_stack_args", cc.reg_args_adjoin_stack_args)?;
+    d.set_item("entry_address", cc.entry_address.map(&name).transpose()?)?;
+    Ok(d)
+}
+
+pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyCallingConvention>()?;
+    // Every calling-convention preset name, in roster order.
+    m.add(
+        "CC_PRESETS",
+        pyo3::types::PyTuple::new_bound(
+            py,
+            strider_target::CallingConvention::presets()
+                .map(|p| p.name)
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
