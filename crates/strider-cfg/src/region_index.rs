@@ -51,11 +51,7 @@ impl RegionIndex {
             self.max_shadowed_span = self.max_shadowed_span.max(shadowed.span_len());
             self.shadowed.insert(shadowed.start_addr);
         }
-        // Saturating here would make `end` compare equal to (or below) `start`
-        // for a region at the top of the address space, and `range` panics on an
-        // empty exclusive pair. Overflow means "to the end of memory", so the
-        // shadow check still runs rather than being skipped.
-        let end = match start.machine_addr.addr.checked_add(span) {
+        let end = match g[id].end() {
             Some(end) => Bound::Excluded(PcodeInsnAddr::at_machine_start(end)),
             None => Bound::Unbounded,
         };
@@ -185,6 +181,21 @@ mod tests {
         assert_eq!(cfg.region_containing(addr(u64::MAX - 2, 0)), Some(wide));
         assert_eq!(cfg.region_containing(addr(u64::MAX - 1, 0)), Some(inner));
         assert_eq!(cfg.region_containing(addr(u64::MAX, 0)), Some(top));
+    }
+
+    /// A region whose last instruction crosses the top of the address space,
+    /// indexed AFTER the region at `u64::MAX`, still shadows it: past that
+    /// region's own last p-code op, the byte is the crossing region's.
+    #[test]
+    fn a_region_crossing_the_top_shadows_one_indexed_before_it() {
+        let mut g = RegionGraph::new();
+        let top = g.add_node(make_region(&[(u64::MAX, 0)]));
+        let mut wide = make_region(&[(u64::MAX - 3, 0)]);
+        wide.insns[0].len = 10;
+        let wide = g.add_node(wide);
+        let cfg = make_cfg(g, top);
+        assert_eq!(cfg.region_containing(addr(u64::MAX, 0)), Some(top));
+        assert_eq!(cfg.region_containing(addr(u64::MAX, 5)), Some(wide));
     }
 
     /// A region the graph no longer holds leaves no start behind.
