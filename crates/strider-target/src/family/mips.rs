@@ -1,4 +1,5 @@
 use super::{DecodeFacts, Family};
+use crate::call_other_abi::{CallOtherAbi, CallOtherClass, Row};
 
 pub(crate) static MIPS: Family = Family {
     name: "mips",
@@ -36,4 +37,66 @@ pub(crate) static MIPS: Family = Family {
     rounding_ops: &["fcsrRoundingControl"],
     msr_mode_op: None,
     rounding_register: None,
+    call_other: CALL_OTHER,
+    call_other_prefixes: &[],
+    call_other_fallback: None,
 };
+
+const CALL_OTHER: &[Row] = &[
+    // MIPS `break` is `{ tmp=breakcode; trap(tmp); }` and the conditional
+    // `teq`/`tne`/`tge`/`tgeu`/`tlt`/`tltu` are the same `trap(tmp)` behind an
+    // `if (!cond) goto <done>` guard.  Both terminate: Linux MIPS spells
+    // `BUG()` as `break BRK_BUG` and `BUG_ON(c)` as `tne $0,c,BRK_BUG`, and
+    // `BUG()` is `__noreturn`.  The guarded form keeps its non-trapping path
+    // through the sla's own branch to `<done>`, so terminating at the
+    // CallOther costs it nothing.
+    //
+    // Unlike the other arches emitting `trap`, MIPS does not route `WARN_ON`
+    // through it: no `__bug_table` accompanies these traps, and `__warn` /
+    // `warn_slowpath_fmt` are called, so nothing that resumes reaches `trap`.
+    Row {
+        names: &["trap"],
+        only: None,
+        class: CallOtherClass::NO_RETURN,
+    },
+    // Linux MIPS o32 SYSCALL: v0 = number, a0..a3 = args, v0 = return value,
+    // a3 = error flag, v1 = the second half of a two-value return (`pipe`).
+    // Sleigh's `:syscall is ... breakcode { tmp:4=breakcode; syscall(tmp); }`
+    // passes only the encoded code field, so the whole register ABI is
+    // implicit here.  The caller-saved temporaries are listed as written
+    // because the ABI does not preserve them across the kernel entry.
+    Row {
+        names: &["syscall"],
+        only: Some(MIPS32_BOTH),
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["v0", "a0", "a1", "a2", "a3"],
+            implicit_writes: &[
+                "v0", "v1", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9",
+            ],
+            // A kernel entry can read or write any user memory, the user stack
+            // frame included.
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
+    // The same op under n64, which passes eight argument registers.  GHIDRA's
+    // MIPS spec has no `a4`..`a7` names: those are `t0`..`t3` in `mips.sinc`'s
+    // one register list, so the extra four arguments are read from there.
+    Row {
+        names: &["syscall"],
+        only: Some(MIPS64_BOTH),
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["v0", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
+            implicit_writes: &[
+                "v0", "v1", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9",
+            ],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
+];
+
+const MIPS32_BOTH: &[crate::ArchPreset] =
+    &[crate::ArchPreset::MipsBe32, crate::ArchPreset::MipsLe32];
+const MIPS64_BOTH: &[crate::ArchPreset] =
+    &[crate::ArchPreset::MipsBe64, crate::ArchPreset::MipsLe64];
