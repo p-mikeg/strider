@@ -212,7 +212,7 @@ fn check(net: &Net, expected: Expect) {
         text,
         "a clone prints differently"
     );
-    backward.compact().unwrap();
+    backward.compact();
     assert_eq!(backward.to_text(true), text, "compact changed the text");
     let bare: String = text
         .lines()

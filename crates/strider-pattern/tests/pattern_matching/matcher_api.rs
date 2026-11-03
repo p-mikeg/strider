@@ -882,7 +882,7 @@ fn a_match_used_after_compact_reports_stale_instead_of_indexing() {
     assert!(hit.node(c, function.graph()).is_some());
     assert!(!hit.is_stale(function.graph()));
 
-    function.compact().unwrap();
+    function.compact();
     assert!(hit.is_stale(function.graph()));
     assert_eq!(hit.node(c, function.graph()), None);
     assert!(hit.asm_fingerprint(c, &function).is_empty());

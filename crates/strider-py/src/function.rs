@@ -244,7 +244,10 @@ impl PyFunction {
     /// Drop every node unreachable from `entry`. Mutates in place, and
     /// invalidates all pre-compaction node ids.
     fn compact(&self) -> PyResult<()> {
-        self.edit(|f| f.compact().map(drop))
+        self.edit(|f| {
+            f.compact();
+            Ok(())
+        })
     }
 
     /// Deep-copy into an independent `Function`, leaving this one untouched.
