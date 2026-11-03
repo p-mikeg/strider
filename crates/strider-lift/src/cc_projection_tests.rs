@@ -36,12 +36,12 @@ fn sub_register_ret_reg_routes_to_container() {
     let cc = make_cc(vec![eax], Vec::new(), sp);
     with_test_lifter_cc(cc.clone(), all_vns, |d, _rid| {
         assert_eq!(
-            d.call_ret_vals_for(&cc),
+            d.call_ret_and_clobber_vns(Some(&cc)).0,
             vec![rax],
             "eax ret reg must resolve to its tracked rax container"
         );
         assert!(
-            !d.call_clobbered_for(&cc).contains(&rax),
+            !d.call_ret_and_clobber_vns(Some(&cc)).1.contains(&rax),
             "rax is the ret container and must not appear in the clobber list"
         );
     });
@@ -56,8 +56,12 @@ fn ret_and_clobber_split_full_width() {
     let all_vns = vec![rax, rcx, rbx, sp];
     let cc = make_cc(vec![rax], vec![rbx], sp);
     with_test_lifter_cc(cc.clone(), all_vns, |d, _rid| {
-        assert_eq!(d.call_ret_vals_for(&cc), vec![rax], "rax is the ret reg");
-        let clobbered = d.call_clobbered_for(&cc);
+        assert_eq!(
+            d.call_ret_and_clobber_vns(Some(&cc)).0,
+            vec![rax],
+            "rax is the ret reg"
+        );
+        let clobbered = d.call_ret_and_clobber_vns(Some(&cc)).1;
         assert!(!clobbered.contains(&rax), "rax is ret, not a clobber");
         assert!(clobbered.contains(&rcx), "rcx is caller-saved, a clobber");
         assert!(!clobbered.contains(&rbx), "rbx is callee-saved, excluded");
@@ -81,14 +85,16 @@ fn override_cc_yields_smaller_clobber_set() {
     let cc_b = make_cc(Vec::new(), vec![r1, r2], sp);
 
     with_test_lifter_cc(cc_a.clone(), all_vns, |d, _rid| {
-        assert_eq!(d.call_ret_vals_for(&cc_a), vec![r0]);
-        assert_eq!(d.call_clobbered_for(&cc_a), vec![r1]);
+        assert_eq!(d.call_ret_and_clobber_vns(Some(&cc_a)).0, vec![r0]);
+        assert_eq!(d.call_ret_and_clobber_vns(Some(&cc_a)).1, vec![r1]);
 
-        assert_eq!(d.call_ret_vals_for(&cc_b), Vec::<Vn>::new());
-        assert_eq!(d.call_clobbered_for(&cc_b), vec![r0]);
+        assert_eq!(d.call_ret_and_clobber_vns(Some(&cc_b)).0, Vec::<Vn>::new());
+        assert_eq!(d.call_ret_and_clobber_vns(Some(&cc_b)).1, vec![r0]);
 
-        let combined_a = d.call_ret_vals_for(&cc_a).len() + d.call_clobbered_for(&cc_a).len();
-        let combined_b = d.call_ret_vals_for(&cc_b).len() + d.call_clobbered_for(&cc_b).len();
+        let combined_a = d.call_ret_and_clobber_vns(Some(&cc_a)).0.len()
+            + d.call_ret_and_clobber_vns(Some(&cc_a)).1.len();
+        let combined_b = d.call_ret_and_clobber_vns(Some(&cc_b)).0.len()
+            + d.call_ret_and_clobber_vns(Some(&cc_b)).1.len();
         assert!(
             combined_b < combined_a,
             "override cc_B combined ret+clobber ({combined_b}) must be smaller than cc_A ({combined_a})"
@@ -106,7 +112,11 @@ fn call_outputs_are_tracked_containers() {
     let all_vns = vec![rax, rcx, sp];
     let cc = make_cc(vec![rax], Vec::new(), sp);
     with_test_lifter_cc(cc.clone(), all_vns.clone(), |d, _rid| {
-        let outputs = [d.call_ret_vals_for(&cc), d.call_clobbered_for(&cc)].concat();
+        let outputs = [
+            d.call_ret_and_clobber_vns(Some(&cc)).0,
+            d.call_ret_and_clobber_vns(Some(&cc)).1,
+        ]
+        .concat();
         assert!(
             !outputs.is_empty(),
             "the fixture has a ret val and a clobber"
