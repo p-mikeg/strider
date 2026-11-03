@@ -10,7 +10,7 @@ pub(crate) mod family;
 pub use arch::{ArchPreset, ByteOrder, Endianness, SleighArch};
 pub use arch_names::ArchNames;
 pub use call_other_abi::BuiltCallOtherAbi;
-pub use calling_convention::{BuiltCallingConvention, CallingConvention, StackArgs};
+pub use calling_convention::{BuiltCallingConvention, CallingConvention, CcPreset, StackArgs};
 pub use decode_tables::{DecodeTables, FlowCommit};
 
 pub type Result<T> = anyhow::Result<T>;
