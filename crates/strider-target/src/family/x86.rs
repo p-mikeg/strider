@@ -20,10 +20,10 @@ pub(crate) static X86: Family = Family {
     msr_mode_op: None,
     rounding_register: None,
     call_other: CALL_OTHER,
-    // * `vp*_avx` / `*_avx2` / `*_avx512*` (x86): NOT homogeneous.  The same
-    //   prefixes cover gather / scatter / compress / expand / maskmov / MXCSR ops
-    //   that reach memory the p-code does not spell out, so the SIMD members are
-    //   individual rows in `CALL_OTHER`.
+    // No prefixes: `vp*_avx` / `*_avx2` / `*_avx512*` are NOT homogeneous.
+    // The same prefixes cover gather / scatter / compress / expand / maskmov /
+    // MXCSR ops that reach memory the p-code does not spell out, so the SIMD
+    // members are individual rows in `CALL_OTHER`.
     call_other_prefixes: &[],
     call_other_fallback: None,
     calling_conventions: CALLING_CONVENTIONS,

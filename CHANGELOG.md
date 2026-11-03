@@ -794,8 +794,6 @@
 
 - strider-target is laid out per family: `family/<name>.rs` holds a family's
   decode facts, CallOther rows and calling conventions.
-  `CallingConvention::presets()`, `SleighArch::calling_conventions()` and
-  `ArchPreset::ghidra_id()` are added.
 - A `.filter()` node predicate also runs in the operand gate before each
   match attempt, so it runs more often per candidate, and an operand's
   predicate may run before its root's.
@@ -1720,6 +1718,11 @@
 
 ### Added, Rust
 
+- `CcPreset`, a named calling convention with the arch presets it is for and
+  the Ghidra prototypes it is held to; `CallingConvention::presets()`, every
+  one in roster order, and `SleighArch::calling_conventions()`, an arch's.
+  `ArchPreset::family_name()`, `ghidra_id()` and `ghidra_ldefs()`: a preset's
+  family, Ghidra language id and the Ghidra ldefs file that defines it.
 - `strider_graph::Graph::add_node_output`, which adds an output to an
   existing node, and `Graph::value_kind_mut`.
 - `IRViewer::phi_region`, the `Region` a phi joins at, `phi_arms`, its
