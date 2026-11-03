@@ -20,9 +20,9 @@ fn aarch64_ret_lifts_to_cc_return_not_indirect() {
     let outcome = lifter.build_ir(&cfg, cc).expect("build_ir");
 
     assert!(
-        outcome.unresolved_branches.is_empty(),
+        outcome.sites.unresolved_branches.is_empty(),
         "`ret` must NOT defer an indirect branch; got {} unresolved",
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
     );
     let function = &outcome.function;
     assert!(
