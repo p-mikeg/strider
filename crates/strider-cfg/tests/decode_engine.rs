@@ -15,7 +15,7 @@ fn shape(cfg: &Cfg) -> Shape {
         .regions()
         .map(|r| {
             (
-                r.start_addr.machine_addr.addr,
+                r.start_addr.machine(),
                 r.insns.iter().map(|i| (i.insn.opcode, i.len)).collect(),
                 r.terminator.clone(),
             )

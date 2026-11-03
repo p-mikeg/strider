@@ -114,11 +114,8 @@ impl RegionIndex {
         if let Some(owner) = owning(g, greatest_id, addr) {
             return Some(owner);
         }
-        let floor = PcodeInsnAddr::at_machine_start(
-            addr.machine_addr
-                .addr
-                .saturating_sub(self.max_shadowed_span),
-        );
+        let floor =
+            PcodeInsnAddr::at_machine_start(addr.machine().saturating_sub(self.max_shadowed_span));
         if floor >= greatest {
             return None;
         }

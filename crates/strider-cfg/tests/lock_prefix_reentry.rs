@@ -19,7 +19,7 @@ fn build_x86(bytes: Vec<u8>) -> Cfg {
 fn interior(cfg: &Cfg) -> Vec<u64> {
     cfg.incomplete()
         .of(strider_cfg::Reason::InteriorTarget)
-        .map(|a| a.machine_addr.addr)
+        .map(|a| a.machine())
         .collect()
 }
 
@@ -44,7 +44,7 @@ fn a_branch_over_a_lock_prefix_its_own_region_starts_at_is_not_interior() {
         .if_true_region
         .expect("taken arm");
     assert_eq!(
-        cfg.region_graph()[taken].start_addr.machine_addr.addr,
+        cfg.region_graph()[taken].start_addr.machine(),
         0x1002,
         "the taken edge lands on the region the `lock` instruction starts",
     );

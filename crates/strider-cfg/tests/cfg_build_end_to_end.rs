@@ -106,9 +106,9 @@ fn split_both_halves_unconditional() {
     let mut first_half = None;
     let mut second_half = None;
     for r in cfg.region_graph().node_weights() {
-        if r.start_addr.machine_addr.addr == 0x1000 {
+        if r.start_addr.machine() == 0x1000 {
             first_half = Some(r);
-        } else if r.start_addr.machine_addr.addr == 0x1002 {
+        } else if r.start_addr.machine() == 0x1002 {
             second_half = Some(r);
         }
     }
@@ -309,7 +309,7 @@ fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
     let fallthrough = cfg
         .region_graph()
         .node_weights()
-        .find(|r| r.start_addr.machine_addr.addr == 0x1004)
+        .find(|r| r.start_addr.machine() == 0x1004)
         .expect("fall-through region at 0x1004 must be decoded");
     assert_eq!(fallthrough.terminator, RegionTerminator::Return);
     // A branch out of range is a tail call, not a fall-through.
@@ -389,7 +389,7 @@ fn cond_branches_to_same_oob_target_share_one_stub() {
 fn incomplete_of(cfg: &Cfg) -> Vec<(u64, strider_cfg::Reason)> {
     cfg.incomplete()
         .iter()
-        .map(|(addr, reason)| (addr.machine_addr.addr, reason))
+        .map(|(addr, reason)| (addr.machine(), reason))
         .collect()
 }
 
@@ -402,7 +402,7 @@ fn successor_starts(cfg: &Cfg, from: u64) -> Vec<u64> {
         .unwrap_or_else(|| panic!("no region at {from:#x}"));
     graph
         .neighbors(id)
-        .map(|succ| graph[succ].start_addr.machine_addr.addr)
+        .map(|succ| graph[succ].start_addr.machine())
         .collect()
 }
 
@@ -656,10 +656,7 @@ fn jump_to_entry_address_forms_single_region_self_loop() {
         cfg.region_graph()[cfg.entry()].terminator,
         RegionTerminator::Unconditional
     );
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].start_addr.machine_addr.addr,
-        0x1000
-    );
+    assert_eq!(cfg.region_graph()[cfg.entry()].start_addr.machine(), 0x1000);
 }
 
 #[test]
@@ -718,7 +715,7 @@ fn ppc_trap_run(trap_word: u32, opts: &CfgOptions) -> (bool, Vec<u64>) {
     let mut decoded: Vec<u64> = cfg
         .region_graph()
         .node_weights()
-        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine_addr.addr))
+        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine()))
         .collect();
     decoded.sort_unstable();
     decoded.dedup();
@@ -981,10 +978,7 @@ fn a_switch_arm_interior_to_a_sibling_arm_is_dropped() {
         .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm");
 
-    let starts: Vec<u64> = cfg
-        .regions()
-        .map(|r| r.start_addr.machine_addr.addr)
-        .collect();
+    let starts: Vec<u64> = cfg.regions().map(|r| r.start_addr.machine()).collect();
     assert!(
         !starts.contains(&0x1005),
         "0x1005 is inside the immediate of the instruction at 0x1002, so it must \
@@ -1042,10 +1036,7 @@ fn a_switch_arm_shadowed_by_an_overlapping_region_is_dropped() {
         .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm shadowed by an overlapping region");
 
-    let starts: Vec<u64> = cfg
-        .regions()
-        .map(|r| r.start_addr.machine_addr.addr)
-        .collect();
+    let starts: Vec<u64> = cfg.regions().map(|r| r.start_addr.machine()).collect();
     assert!(
         !starts.contains(&0x1008),
         "0x1008 is inside the immediate of the instruction at 0x1002, so it must \
@@ -1090,10 +1081,7 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
         .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm inside a zero-pcode-op instruction");
 
-    let starts: Vec<u64> = cfg
-        .regions()
-        .map(|r| r.start_addr.machine_addr.addr)
-        .collect();
+    let starts: Vec<u64> = cfg.regions().map(|r| r.start_addr.machine()).collect();
     assert!(
         !starts.contains(&0x1005),
         "0x1005 is the last byte of the endbr64 at 0x1002, so it must not decode \
@@ -1106,7 +1094,7 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
                 "0x1005 is interior to the endbr64 at 0x1002 and must be dropped",
             );
         }
-        if region.start_addr.machine_addr.addr == 0x1002 {
+        if region.start_addr.machine() == 0x1002 {
             assert_eq!(
                 (region.insns.len(), region.empty_span_len),
                 (0, 4),
@@ -1152,8 +1140,7 @@ fn re_imposing_a_context_over_an_it_block_builds() {
         // A rejected pin does not fail the build: it reports the arm.
         assert_eq!(cfg.undecodable_seeded_targets(), [], "seating {target:#x}");
         assert!(
-            cfg.regions()
-                .any(|r| r.start_addr.machine_addr.addr == target),
+            cfg.regions().any(|r| r.start_addr.machine() == target),
             "a region starts at the seated {target:#x}",
         );
     };
@@ -1224,8 +1211,7 @@ fn oob_taken_target_inside_the_fallthrough_overhang_keeps_its_polarity() {
         let start_of = |id: Option<petgraph::graph::NodeIndex>| {
             cfg.region_graph()[id.expect("both arms are wired")]
                 .start_addr
-                .machine_addr
-                .addr
+                .machine()
         };
         assert_eq!(
             start_of(succ.if_true_region),

@@ -279,8 +279,7 @@ fn switch_target_interior_to_a_regions_last_instruction_is_dropped() {
         .expect("a table target off an instruction boundary must not fail the build");
     assert_every_switch_target_has_an_arm(&cfg);
     assert!(
-        !cfg.regions()
-            .any(|r| r.start_addr.machine_addr.addr == 0x1005),
+        !cfg.regions().any(|r| r.start_addr.machine() == 0x1005),
         "a region was decoded inside the movabs immediate: {:?}",
         cfg.regions()
             .map(|r| (r.start_addr, r.terminator.clone()))
@@ -782,13 +781,13 @@ fn a_later_thumb_region_repaints_the_dispatch_a_site_already_sampled() {
         "the dispatch's own region decoded as ARM",
     );
     assert!(
-        crate::flowing_isa_bit_at(&arch, engine.sleigh(), dispatch.machine_addr.addr, false),
+        crate::flowing_isa_bit_at(&arch, engine.sleigh(), dispatch.machine(), false),
         "premise: a read after the build must see the Thumb arm's paint, or \
          the seal-time sample is proving nothing",
     );
     let insn_len = |start: u64| {
         cfg.regions()
-            .find(|r| r.start_addr.machine_addr.addr == start)
+            .find(|r| r.start_addr.machine() == start)
             .and_then(|r| r.insns.first())
             .map(|i| i.len)
     };
@@ -1466,7 +1465,7 @@ fn re_deriving_committed_context_bars_the_reentry_probe() {
             .expect("build")
             .incomplete()
             .of(crate::Reason::InteriorTarget)
-            .map(|a| a.machine_addr.addr)
+            .map(|a| a.machine())
             .collect::<Vec<_>>()
     };
     assert!(
