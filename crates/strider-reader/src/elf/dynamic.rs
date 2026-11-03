@@ -121,15 +121,7 @@ fn dynamic_tags_of<Elf: FileHeader>(
     };
     let le = f.is_little_endian();
     let word = if f.is_64() { 8 } else { 4 };
-    let read = |b: &[u8]| -> u64 {
-        b.iter().enumerate().fold(0, |acc, (i, &x)| {
-            if le {
-                acc | (u64::from(x) << (8 * i))
-            } else {
-                (acc << 8) | u64::from(x)
-            }
-        })
-    };
+    let read = |b: &[u8]| crate::bytes::read_uint(b, le);
     let entries: Vec<(u64, u64)> = bytes
         .chunks_exact(2 * word)
         .map(|d| (read(&d[..word]), read(&d[word..])))
@@ -480,9 +472,9 @@ fn synthesized<Elf: FileHeader>(
     let le = f.is_little_endian();
     let is_64 = f.is_64();
     let put = |out: &mut Vec<u8>, v: u64, n: usize| {
-        let mut b = vec![0u8; n];
-        crate::bytes::write_uint(&mut b, v, le);
-        out.extend_from_slice(&b);
+        let at = out.len();
+        out.resize(at + n, 0);
+        crate::bytes::write_uint(&mut out[at..], v, le);
     };
     let word = if is_64 { 8 } else { 4 };
     let (ehsize, shentsize) = if is_64 { (64, 64) } else { (52, 40) };
