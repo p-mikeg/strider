@@ -1002,7 +1002,7 @@ fn compute_classified(
 
     let got_slot = |ctx: &mut Ctx<'_, '_>| -> Option<u64> {
         // A GOT exists only for an ET_REL, and a slot holds `S` alone.
-        if !layout.is_rebased() || (value_kind_needs_zero(value_kind) && a != 0) {
+        if value_kind_needs_zero(value_kind) && a != 0 {
             return None;
         }
         let t = target?;
@@ -1015,7 +1015,7 @@ fn compute_classified(
         }
         Some(slot)
     };
-    let got_base = layout.is_rebased().then(|| layout.got_base());
+    let got_base = layout.got_base();
     let isa = target.map_or(Isa::Same, |t| t.isa);
     // A branch enters the instruction, not the symbol's ISA bit.
     let branch_s = match field {
