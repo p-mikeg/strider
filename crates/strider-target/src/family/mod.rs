@@ -10,7 +10,11 @@ pub(crate) use mips::MIPS;
 pub(crate) use ppc::PPC;
 pub(crate) use x86::X86;
 
+/// Every family, in roster order.
+pub(crate) static FAMILIES: [&Family; 5] = [&X86, &ARM32, &AARCH64, &MIPS, &PPC];
+
 use crate::call_other_abi::{CallOtherClass, Prefix, Row};
+use crate::calling_convention::CcPreset;
 
 /// What strider knows about one architecture family, shared by its presets.
 /// No `Default`: a new family answers every field.
@@ -40,6 +44,8 @@ pub(crate) struct Family {
     pub(crate) call_other_prefixes: &'static [Prefix],
     /// Classification by rule, for a family whose names no stem separates.
     pub(crate) call_other_fallback: Option<fn(&str) -> Option<CallOtherClass>>,
+    /// This family's rows of [`crate::CallingConvention::presets`].
+    pub(crate) calling_conventions: &'static [CcPreset],
 }
 
 /// One family per name.
