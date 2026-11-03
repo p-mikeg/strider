@@ -92,7 +92,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &'s self,
         cfg: &'s strider_cfg::Cfg,
     ) -> impl Iterator<Item = rsleigh::Vn> + 's {
-        let declared = self.declared_reg_vns();
+        let declared = &self.tables().declared_reg_vns;
         cfg.regions().flat_map(move |region| {
             let mut consts = pcode_consts::PcodeConsts::default();
             region.insns.iter().filter_map(move |wrapped| {
