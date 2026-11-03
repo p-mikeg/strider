@@ -221,7 +221,7 @@ pub fn seated_in(
 ) -> Option<&ResolvedTargets> {
     // At index 0 the fallback repeats the exact probe's miss.
     map.get(&addr)
-        .or_else(|| map.get(&PcodeInsnAddr::at_machine_start(addr.machine_addr.addr)))
+        .or_else(|| map.get(&PcodeInsnAddr::at_machine_start(addr.machine())))
 }
 
 #[cfg(test)]

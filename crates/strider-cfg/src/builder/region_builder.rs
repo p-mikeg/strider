@@ -176,7 +176,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Whether `branch_target_addr` lies outside the function's bound.
     fn is_branch_tail_call(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         crate::is_addr_tail_call(
-            branch_target_addr.machine_addr.addr,
+            branch_target_addr.machine(),
             self.builder.start_addr,
             self.builder.options.bound,
         )
@@ -256,8 +256,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) {
-        let own_end = (addr.machine_addr.addr).checked_add(lift_res.machine_insn_len as u64);
-        if target.insn_index == 0 && own_end == Some(target.machine_addr.addr) {
+        let own_end = addr.machine().checked_add(lift_res.machine_insn_len as u64);
+        if target.insn_index == 0 && own_end == Some(target.machine()) {
             self.builder
                 .report
                 .incomplete
@@ -291,7 +291,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         if self.is_branch_tail_call(target) {
             // A direct `b <oob>` stays in the current ISA mode; no switch.
             self.finish_current_region(RegionTerminator::TailCall {
-                target: target.machine_addr.addr.into(),
+                target: target.machine().into(),
             })?;
         } else {
             let region = self.finish_current_region(RegionTerminator::Unconditional)?;
@@ -577,15 +577,14 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 !self.is_branch_tail_call(cur_addr),
                 "decoding {cur_addr:?} outside the function bound"
             );
-            let lift_res = match self.lift_code(cur_addr.machine_addr.addr) {
+            let lift_res = match self.lift_code(cur_addr.machine()) {
                 Ok(lift_res) => lift_res,
                 Err(e) if cur_addr.machine_addr != self.start_addr.machine_addr => {
                     // Off a seeded arm, falling into data or unmapped bytes
                     // drops the arm, as running past the end does, unless a
                     // call before them seals it.
                     let off_arm = self.builder.descent.is_some();
-                    let here =
-                        decode_failure(&e).filter(|f| f.addr() == cur_addr.machine_addr.addr);
+                    let here = decode_failure(&e).filter(|f| f.addr() == cur_addr.machine());
                     let (marked_data, reason) = match here {
                         Some(DecodeFailure::Unmapped(_)) if !off_arm => {
                             return self.seal_and_report(cur_addr, crate::Reason::UnmappedTarget);
@@ -685,7 +684,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         cur_addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) {
-        let base = cur_addr.machine_addr.addr;
+        let base = cur_addr.machine();
         let len = lift_res.machine_insn_len as u64;
         let (Some(lo), Some(hi)) = (base.checked_add(1), base.checked_add(len)) else {
             return;
@@ -723,13 +722,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// derive its extent from. A no-op once anything has been decoded.
     fn note_empty_span_to(&mut self, cur_addr: PcodeInsnAddr) {
         if self.insns.is_empty() {
-            self.empty_span_len = u32::try_from(
-                cur_addr
-                    .machine_addr
-                    .addr
-                    .saturating_sub(self.start_addr.machine_addr.addr),
-            )
-            .unwrap_or(0);
+            self.empty_span_len =
+                u32::try_from(cur_addr.machine().saturating_sub(self.start_addr.machine()))
+                    .unwrap_or(0);
         }
     }
 
@@ -1379,7 +1374,7 @@ mod tests {
         assert_eq!(regions.len(), 1);
         match &regions[0].terminator {
             RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
-                assert_eq!(addr.machine_addr.addr, base);
+                assert_eq!(addr.machine(), base);
             }
             other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
         }

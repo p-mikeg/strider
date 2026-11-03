@@ -42,7 +42,7 @@ fn switch_arms(cfg: &Cfg) -> Vec<u64> {
 fn undecodable(cfg: &Cfg) -> Vec<u64> {
     cfg.undecodable_seeded_targets()
         .iter()
-        .map(|t| t.target.machine_addr.addr)
+        .map(|t| t.target.machine())
         .collect()
 }
 
@@ -50,7 +50,7 @@ fn undecodable(cfg: &Cfg) -> Vec<u64> {
 fn undecodable_bytes(cfg: &Cfg) -> Vec<u64> {
     cfg.incomplete()
         .of(strider_cfg::Reason::UndecodableTarget)
-        .map(|a| a.machine_addr.addr)
+        .map(|a| a.machine())
         .collect()
 }
 
@@ -215,7 +215,7 @@ fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Resu
 fn arms_at(cfg: &Cfg, site: u64) -> Vec<u64> {
     cfg.regions()
         .find_map(|r| match &r.terminator {
-            RegionTerminator::Switch { targets, addr, .. } if addr.machine_addr.addr == site => {
+            RegionTerminator::Switch { targets, addr, .. } if addr.machine() == site => {
                 Some(targets.iter().map(|t| t.addr).collect())
             }
             _ => None,
@@ -352,7 +352,7 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
     );
     let thumb = cfg
         .regions()
-        .find(|r| r.start_addr.machine_addr.addr == 0x10004)
+        .find(|r| r.start_addr.machine() == 0x10004)
         .expect("region at 0x10004");
     assert_eq!(thumb.insns.first().map(|i| i.len), Some(2));
 }
@@ -396,10 +396,7 @@ fn an_arm_falling_through_into_data_is_dropped() {
     assert_eq!(switch_arms(&cfg), [0x1002]);
     assert_eq!(undecodable(&cfg), [0x1010]);
     assert_eq!(undecodable_bytes(&cfg), [0x1012]);
-    assert!(
-        cfg.regions()
-            .all(|r| r.start_addr.machine_addr.addr != 0x1012)
-    );
+    assert!(cfg.regions().all(|r| r.start_addr.machine() != 0x1012));
     assert_no_dangling_successor(&cfg);
 }
 
@@ -411,14 +408,11 @@ fn an_arm_falling_through_into_unmapped_bytes_is_dropped() {
     assert_eq!(
         cfg.incomplete()
             .of(strider_cfg::Reason::UnmappedTarget)
-            .map(|a| a.machine_addr.addr)
+            .map(|a| a.machine())
             .collect::<Vec<_>>(),
         [0x1012],
     );
-    assert!(
-        cfg.regions()
-            .all(|r| r.start_addr.machine_addr.addr != 0x1012)
-    );
+    assert!(cfg.regions().all(|r| r.start_addr.machine() != 0x1012));
     assert_no_dangling_successor(&cfg);
 }
 
@@ -429,13 +423,13 @@ fn assert_arm_sealed_at_its_call(cfg: &Cfg, bytes: strider_cfg::Reason) {
     assert_eq!(undecodable(cfg), Vec::<u64>::new());
     let arm = cfg
         .regions()
-        .find(|r| r.start_addr.machine_addr.addr == 0x1010)
+        .find(|r| r.start_addr.machine() == 0x1010)
         .expect("the arm's region");
     assert_eq!(arm.terminator, RegionTerminator::NoReturn);
     assert_eq!(
         cfg.incomplete()
             .of(bytes)
-            .map(|a| a.machine_addr.addr)
+            .map(|a| a.machine())
             .collect::<Vec<_>>(),
         [0x1015],
     );
@@ -497,9 +491,7 @@ fn an_arm_onto_a_stub_a_direct_edge_reported_keeps_it() {
         assert_eq!(arms_at(&cfg, 0x1002), [0x1004, target], "arm {target:#x}");
         assert_eq!(undecodable(&cfg), Vec::<u64>::new(), "arm {target:#x}");
         assert!(
-            cfg.incomplete()
-                .of(reason)
-                .any(|a| a.machine_addr.addr == target),
+            cfg.incomplete().of(reason).any(|a| a.machine() == target),
             "arm {target:#x}"
         );
         assert_no_dangling_successor(&cfg);
