@@ -22,14 +22,8 @@ use strider_target::ArchPreset;
 /// The language directory under `externals/rsleigh/sleigh/processors` whose
 /// files back each preset.
 fn language_dir(preset: ArchPreset) -> &'static str {
-    match preset.family_name() {
-        "x86" => "x86",
-        "arm32" => "ARM",
-        "aarch64" => "AARCH64",
-        "mips" => "MIPS",
-        "ppc" => "PowerPC",
-        other => panic!("{preset:?}: no language directory for family {other}"),
-    }
+    let ldefs = preset.ghidra_ldefs();
+    ldefs.split_once('/').map_or(ldefs, |(dir, _)| dir)
 }
 
 /// What each directory commits today. Pinned so an extractor that stops
