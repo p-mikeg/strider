@@ -41,8 +41,51 @@ layer names the same ABI types.
   `-mfloat-abi=soft` / `softfp`.
 - `StackArgs`: the stack-slot geometry (offsets and slot indices) that the
   stack-argument passes read, so every pass agrees on slot order.
+- `ArchPreset`: the roster of presets (`arch_presets!` in `src/arch.rs`), each
+  with its family, byte orders and Ghidra language id.
+- `CcPreset` / `CallingConvention::presets()`: the named calling conventions,
+  each with the arch presets it is for and the Ghidra prototypes it is held to.
 - `call_other_abi`: the CallOther ABI table below and the `classify` /
   `classify_with` lookups over it.
+
+## Layout
+
+Everything one architecture family knows lives in one file under
+`src/family/` (`x86`, `arm32`, `aarch64`, `mips`, `ppc`): a `Family` holding
+its decode facts, CallOther rows (exact, prefix, fallback), rounding / msr
+special ops and calling conventions. `family::FAMILIES` is the roster;
+`classify`, `SleighArch` and `CallingConvention::presets()` all read through
+it. `call_other_abi/common.rs` holds the arch-independent rows.
+
+The data is checked against the vendored sla and Ghidra: `tests/family_facts_against_sla.rs`
+(decode facts, register names), `tests/ghidra_oracle.rs` (each convention against
+its cspec prototype, each preset against its language definition),
+`tests/cc_roster.rs` (convention roster) and `tests/call_other_snapshot.rs`
+(how every user-op of every preset classifies).
+
+## Adding to strider-target
+
+- A CallOther row: add a `Row` to `call_other` in the family file (or to
+  `call_other_abi/common.rs` if arch-independent). The snapshot's
+  `UNCLASSIFIED` lines are the ops still unanswered; re-bless with
+  `UPDATE_EXPECT=1 cargo test -p strider-target --test call_other_snapshot`
+  and review `git diff`.
+- A calling convention: a `CallingConvention` constructor and a `CcPreset`
+  entry (with its `ghidra` pairing) in the family file. Python picks it up
+  through `CC_PRESETS` / `CallingConvention.preset(name)`; the classmethod
+  list in `crates/strider-py/src/cc.rs` and
+  `crates/strider-py/strider/sleigh.pyi` need one line each, guarded by
+  `tests/python/test_cc_presets.py`. To draft one from a Ghidra cspec:
+  `CSPEC=RISCV/data/languages/riscv64-fp.cspec cargo test -p strider-target
+  --test ghidra_oracle -- --ignored draft_preset_from_cspec --nocapture`.
+- A preset in an existing family: one `arch_presets!` row with its Ghidra id.
+  Python needs the constructor in the list in `crates/strider-py/src/arch.rs`
+  and the `.pyi` stub, guarded by `tests/python/test_arch.py`.
+- A family: a new `family/<name>.rs` exporting a `Family`, registered in
+  `FAMILIES`, then its `arch_presets!` and `CcPreset` rows and the cspec
+  draft above. The snapshot's `UNCLASSIFIED` lines are the CallOther to-do
+  list. `ValueType` widths (`strider-ir`) and reader relocations
+  (`strider-reader`) live elsewhere.
 
 ## What the CallOther ABI is
 
