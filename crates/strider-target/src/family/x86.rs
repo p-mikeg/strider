@@ -1,5 +1,7 @@
 use super::{DecodeFacts, Family};
+use crate::ArchPreset;
 use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Row};
+use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static X86: Family = Family {
     name: "x86",
@@ -23,6 +25,7 @@ pub(crate) static X86: Family = Family {
     //   individual rows in `CALL_OTHER`.
     call_other_prefixes: &[],
     call_other_fallback: None,
+    calling_conventions: CALLING_CONVENTIONS,
 };
 
 const CALL_OTHER: &[Row] = &[
@@ -486,3 +489,164 @@ const X86_EXTENDED_STATE: &[&str] = &[
     "FPUPointerSelector",
     "FPUDataSelector",
 ];
+
+const CALLING_CONVENTIONS: &[CcPreset] = &[
+    CcPreset {
+        name: "x86_64_systemv",
+        cc: CallingConvention::x86_64_systemv(),
+        arches: &[ArchPreset::X86_64],
+        ghidra: &[(
+            "x86/data/languages/x86-64-gcc.cspec",
+            None,
+            &[ArchPreset::X86_64],
+        )],
+    },
+    CcPreset {
+        name: "x86_cdecl",
+        cc: CallingConvention::x86_cdecl(),
+        arches: &[ArchPreset::X86],
+        ghidra: &[("x86/data/languages/x86gcc.cspec", None, &[ArchPreset::X86])],
+    },
+    // `-mregparm=3` is Ghidra's `__regparm3`.
+    CcPreset {
+        name: "x86_linux_kernel",
+        cc: CallingConvention::x86_linux_kernel(),
+        arches: &[ArchPreset::X86],
+        ghidra: &[(
+            "x86/data/languages/x86gcc.cspec",
+            Some("__regparm3"),
+            &[ArchPreset::X86],
+        )],
+    },
+];
+
+/// Base for `x86_cdecl` and `x86_linux_kernel`, which differ only in
+/// `arg_passing_regs`.
+const X86_CDECL_BASE: CallingConvention = CallingConvention {
+    stack_ptr: "ESP",
+    arg_passing_regs: &[],
+    // Intel386 psABI: scalar floats go on the stack like every other cdecl
+    // argument.  Its SSE class (`__m128`) is NOT modelled, though the psABI
+    // passes the first three such arguments in XMM0-XMM2:
+    // naming them here would renumber `arg(n)` on an arch whose arguments are
+    // otherwise all stack-passed.  A callee still reads its own XMM0-2
+    // correctly; only a caller's vector argument setup goes unrooted.
+    arg_passing_regs_float: &[],
+    callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
+    ret_val_regs: &["EAX", "EDX"],
+    // cdecl returns scalar float / double / long double in ST0, the x87 80-bit
+    // top-of-stack, and a COMPLEX_X87 value in ST0/ST1 (Intel386 psABI).  XMM0
+    // is the return register only for the `__m128` / vector classes.
+    // `FunctionBuilder::new` seeds all three on EVERY function, so ST0 (10
+    // bytes at register offset 0x1100) subsumes MM0 (8 bytes, same offset) in
+    // `dedup_overlapping_largest` and MMX accesses slice out of ST0.
+    ret_val_regs_float: &["ST0", "ST1", "XMM0"],
+    // +4 because `call` pushes a 4-byte return address: SP-at-call points at
+    // that address, so arg 0 sits one slot above it.
+    stack_args: Some(StackArgs {
+        base_offset: 4,
+        increment: 4,
+    }),
+    // The plain `ret`; see `x86_cdecl` for callees that pop more.
+    ret_stack_pop: 4,
+    // `call` pushes the return address.
+    link_register: None,
+    preserves_memory: false,
+    preserves_all_registers: false,
+    entry_address: None,
+    reg_args_adjoin_stack_args: false,
+};
+
+impl CallingConvention {
+    /// Returns the x86-64 System V ABI calling convention.
+    #[must_use]
+    pub const fn x86_64_systemv() -> Self {
+        // x86-64 System V.  RSP is not listed callee-saved: `ret` pops the return
+        // address, so the caller observes SP shifted by `ret_stack_pop`.
+        CallingConvention {
+            stack_ptr: "RSP",
+            arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
+            // psABI 3.2.3: SSE-class arguments in XMM0..XMM7.  X87-class
+            // (`long double`) arguments go on the stack, so ST0/ST1 are
+            // return-only here.
+            arg_passing_regs_float: &[
+                "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5", "XMM6", "XMM7",
+            ],
+            callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
+            ret_val_regs: &["RAX", "RDX"],
+            // SSE class in XMM0/XMM1; X87 class (`long double`) in ST0; the
+            // COMPLEX_X87 class puts the real part in ST0 and the imaginary
+            // part in ST1 (psABI 3.2.3).  Without ST1 nothing roots the
+            // imaginary half's cone and DCE deletes it.
+            //
+            // `FunctionBuilder::new` tracks every `ret_val_regs_float` entry on
+            // EVERY function, so listing ST0 (10 bytes at register offset
+            // 0x1100) makes it subsume MM0 (8 bytes, same offset) in
+            // `dedup_overlapping_largest`, and MMX accesses slice out of ST0.
+            ret_val_regs_float: &["XMM0", "XMM1", "ST0", "ST1"],
+            // +8 because `call` pushes an 8-byte return address: SP-at-call
+            // points at it, so the first stack arg (arg 7) is one slot above.
+            stack_args: Some(StackArgs {
+                base_offset: 8,
+                increment: 8,
+            }),
+            ret_stack_pop: 8,
+            // `call` pushes the return address.
+            link_register: None,
+            preserves_memory: false,
+            preserves_all_registers: false,
+            entry_address: None,
+            reg_args_adjoin_stack_args: false,
+        }
+    }
+
+    /// Returns the x86 cdecl calling convention.
+    ///
+    /// Its `ret_stack_pop` of 4 is a plain `ret`. A callee that also pops
+    /// its caller's stack (`ret $imm16`: a struct return's hidden pointer,
+    /// stdcall, fastcall, thiscall) needs a per-address convention with
+    /// `ret_stack_pop` of `4 + imm16`; without one, SP-relative accesses after
+    /// the call are off by `imm16`. A PC thunk (`__x86.get_pc_thunk.bx`) needs
+    /// one that does not preserve its register; without one, the register
+    /// keeps the caller's value across the call.
+    #[must_use]
+    pub const fn x86_cdecl() -> Self {
+        // x86 cdecl: all arguments on the stack, so `arg_passing_regs` is empty.
+        // ESP is not listed callee-saved: `ret` pops the 4-byte return address, so
+        // the caller observes SP shifted by `ret_stack_pop`.
+        X86_CDECL_BASE
+    }
+
+    /// Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
+    ///
+    /// A variadic callee (`printk`) and an `asmlinkage` one (`regparm(0)`)
+    /// take every argument on the stack, yet a call to one under this
+    /// convention still lists EAX, EDX and ECX as arguments 0-2, so its first
+    /// argument reads as `arg(3)`.  Map such callees to [`Self::x86_cdecl`] in
+    /// `AnalyzeOptions::per_address_ccs`.  To analyse one of them, pass
+    /// `x86_cdecl` as its own convention and map its regparm callees to this
+    /// one.
+    #[must_use]
+    pub const fn x86_linux_kernel() -> Self {
+        // Kernel-internal presets exist for x86 32-bit and PowerPC; every
+        // other supported arch's kernel CC has the same register SET as its
+        // userland preset, so callers pick that directly.  A role can differ
+        // without the set doing so, which is part of why PowerPC has its own:
+        // ppc64 r13 is the per-CPU `paca` pointer there, not the userland TLS
+        // pointer (`POWERPC64_ELF_BASE`).
+        //
+        // A register-level syscall footprint lives in `call_other_abi` only
+        // where the sla leaves the trap opaque (`syscall`, `svc`, `sc`).  x86
+        // `int 0x80` is NOT one: its `swi` row carries no registers, and the
+        // sla's trailing `call [intloc]` (`ia.sinc:3694`) is what clobbers
+        // EAX/ECX/EDX, as an ordinary `Call` under the function's default
+        // convention.
+        //
+        // x86 32-bit `-mregparm=3`: first three integer args in EAX, EDX, ECX, the
+        // rest on the stack at the same cdecl offsets.
+        CallingConvention {
+            arg_passing_regs: &["EAX", "EDX", "ECX"],
+            ..X86_CDECL_BASE
+        }
+    }
+}

@@ -1,5 +1,7 @@
 use super::{DecodeFacts, Family};
+use crate::ArchPreset;
 use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Prefix, Row};
+use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static ARM32: Family = Family {
     name: "arm32",
@@ -31,6 +33,7 @@ pub(crate) static ARM32: Family = Family {
     call_other: CALL_OTHER,
     call_other_prefixes: PREFIXES,
     call_other_fallback: Some(coproc),
+    calling_conventions: CALLING_CONVENTIONS,
 };
 
 const CALL_OTHER: &[Row] = &[
@@ -224,4 +227,121 @@ fn coproc(name: &str) -> Option<CallOtherClass> {
         return Some(MEM_CLOBBER);
     }
     None
+}
+
+/// Every ARM32 preset; AAPCS is byte-order independent.
+const ARM32_PRESETS: &[ArchPreset] = &[
+    ArchPreset::Arm,
+    ArchPreset::ArmBe,
+    ArchPreset::ArmBeKernel,
+    ArchPreset::ArmThumb,
+];
+
+const CALLING_CONVENTIONS: &[CcPreset] = &[
+    CcPreset {
+        name: "arm_aapcs",
+        cc: CallingConvention::arm_aapcs(),
+        arches: ARM32_PRESETS,
+        ghidra: &[("ARM/data/languages/ARM.cspec", None, ARM32_PRESETS)],
+    },
+    // Soft-float is Ghidra's `__stdcall_softfp`.
+    CcPreset {
+        name: "arm_aapcs_soft",
+        cc: CallingConvention::arm_aapcs_soft(),
+        arches: ARM32_PRESETS,
+        ghidra: &[(
+            "ARM/data/languages/ARM.cspec",
+            Some("__stdcall_softfp"),
+            &[ArchPreset::Arm],
+        )],
+    },
+];
+
+/// Base for `arm_aapcs` and `arm_aapcs_soft`, which differ only in the VFP
+/// argument and return lists.  `bl` stores the return address in `lr` rather
+/// than pushing it, so the first stack arg sits at SP+0 and `ret_stack_pop` is
+/// 0.  Byte-order independent: pairs with `arm`, `arm_be`, `arm_be_kernel`,
+/// and `arm_thumb`.  r0/r1 double as the pair for 64-bit returns.
+const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
+    stack_ptr: "sp",
+    arg_passing_regs: &["r0", "r1", "r2", "r3"],
+    // AAPCS-VFP (IHI 0042 6.1.2.1) allocates ONE bank of 16 single-precision
+    // slots s0..s15, aliased as d0..d7. A `double` at float position j lands in
+    // dj, a `float` in sj: `sf(1.f, 2.f)` puts the second argument in s1, the
+    // upper half of d0. Which rule applies depends on the callee's signature,
+    // which the IR does not carry, so this lists the double carriers. Float
+    // argument n is in `s_n`, inside container `d_{n/2}`, while slot n names
+    // `d_n`: they coincide only at n = 0, and positions 8..15 have no entry.
+    // Same approximation as MIPS o32 below, and the reason
+    // `function_arg_float` is a candidate rather than an answer past the first
+    // position on this arch.
+    arg_passing_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
+    callee_saved_regs: &[
+        "r4",
+        "r5",
+        "r6",
+        "r7",
+        "r8",
+        "r9",
+        "r10",
+        "r11",
+        "lr",
+        // AAPCS 5.1.2.1: d8-d15 (= s16-s31) are callee-saved.
+        "d8",
+        "d9",
+        "d10",
+        "d11",
+        "d12",
+        "d13",
+        "d14",
+        "d15",
+        // CPSR.M, the fork's own register. `sp` and `lr` are banked per mode
+        // (Arm ARM B1.3.2) and AAPCS keeps `sp`, so a conforming callee
+        // returns in its caller's mode. The flags and masks stay clobbered.
+        "cpsr_mode",
+    ],
+    ret_val_regs: &["r0", "r1"],
+    // d0..d3, also accessed as s0..s7: a homogeneous float aggregate returns
+    // up to four members.
+    ret_val_regs_float: &["d0", "d1", "d2", "d3"],
+    stack_args: Some(StackArgs {
+        base_offset: 0,
+        increment: 4,
+    }),
+    ret_stack_pop: 0,
+    // `bl` writes the return address to `lr` (= `r14`); Sleigh registers it
+    // lowercase.
+    link_register: Some("lr"),
+    preserves_memory: false,
+    preserves_all_registers: false,
+    entry_address: None,
+    reg_args_adjoin_stack_args: true,
+};
+
+impl CallingConvention {
+    /// Returns the ARM 32-bit AAPCS hard-float (VFP) calling convention.
+    #[must_use]
+    pub const fn arm_aapcs() -> Self {
+        // ARM 32-bit AAPCS, hard-float (VFP) argument variant.  A binary built
+        // `-mfloat-abi=soft` / `softfp` wants `arm_aapcs_soft`; EABI `e_flags`
+        // records which, and the Python `load_elf` wrapper reads it.  A Rust caller
+        // picks the preset itself.  A relocatable object carries no float-ABI bit,
+        // and an image setting neither falls to this one.
+        ARM_AAPCS_VFP_BASE
+    }
+
+    /// Returns the ARM 32-bit AAPCS calling convention for a
+    /// `-mfloat-abi=soft` / `softfp` binary.
+    #[must_use]
+    pub const fn arm_aapcs_soft() -> Self {
+        // ARM 32-bit AAPCS base standard: floats pass and return in the core
+        // registers (`-mfloat-abi=soft` and `softfp` alike), so the VFP bank
+        // carries no arguments.  d8-d15 stay callee-saved, which is a property of
+        // the register file rather than of the float variant.
+        CallingConvention {
+            arg_passing_regs_float: &[],
+            ret_val_regs_float: &[],
+            ..ARM_AAPCS_VFP_BASE
+        }
+    }
 }

@@ -22,7 +22,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use strider_target::{ArchPreset, CallingConvention, Endianness, SleighArch};
+use strider_target::{ArchPreset, CallingConvention, CcPreset, Endianness, SleighArch};
 
 /// `rel` under the vendored Ghidra processor tree.
 fn read(rel: &str) -> String {
@@ -52,166 +52,6 @@ fn number<T: std::str::FromStr>(file: &str, node: roxmltree::Node<'_, '_>, name:
     text.parse()
         .unwrap_or_else(|_| panic!("{file}: {name}=\"{text}\" is not a number"))
 }
-
-/// One preset held to one cspec prototype, on every arch it pairs with.
-struct Pairing {
-    preset: &'static str,
-    cc: fn() -> CallingConvention,
-    cspec: &'static str,
-    /// `None` is the cspec's `<default_proto>`.
-    prototype: Option<&'static str>,
-    arches: &'static [fn() -> SleighArch],
-}
-
-const X86_64_GCC: &str = "x86/data/languages/x86-64-gcc.cspec";
-const X86_GCC: &str = "x86/data/languages/x86gcc.cspec";
-const AARCH64: &str = "AARCH64/data/languages/AARCH64.cspec";
-const ARM: &str = "ARM/data/languages/ARM.cspec";
-const MIPS32_BE: &str = "MIPS/data/languages/mips32be.cspec";
-const MIPS32_LE: &str = "MIPS/data/languages/mips32le.cspec";
-const MIPS64_BE: &str = "MIPS/data/languages/mips64be.cspec";
-const MIPS64_LE: &str = "MIPS/data/languages/mips64le.cspec";
-const PPC32: &str = "PowerPC/data/languages/ppc_32.cspec";
-const PPC64_BE: &str = "PowerPC/data/languages/ppc_64_be.cspec";
-const PPC64_LE: &str = "PowerPC/data/languages/ppc_64_le.cspec";
-
-/// Every preset, with the cspec Ghidra's ldefs gives its arch. A kernel
-/// flavour takes its userland prototype; x86's `-mregparm=3` takes
-/// `__regparm3`, ARM soft-float `__stdcall_softfp`. Ghidra gives a big-endian
-/// ELFv2 image `ppc_64_be.cspec`, so ELFv2 is held to both ppc64 files.
-const PAIRINGS: &[Pairing] = &[
-    Pairing {
-        preset: "x86_64_systemv",
-        cc: CallingConvention::x86_64_systemv,
-        cspec: X86_64_GCC,
-        prototype: None,
-        arches: &[SleighArch::x86_64],
-    },
-    Pairing {
-        preset: "x86_cdecl",
-        cc: CallingConvention::x86_cdecl,
-        cspec: X86_GCC,
-        prototype: None,
-        arches: &[SleighArch::x86],
-    },
-    Pairing {
-        preset: "x86_linux_kernel",
-        cc: CallingConvention::x86_linux_kernel,
-        cspec: X86_GCC,
-        prototype: Some("__regparm3"),
-        arches: &[SleighArch::x86],
-    },
-    Pairing {
-        preset: "aarch64_aapcs64",
-        cc: CallingConvention::aarch64_aapcs64,
-        cspec: AARCH64,
-        prototype: None,
-        arches: &[SleighArch::aarch64, SleighArch::aarch64be],
-    },
-    Pairing {
-        preset: "arm_aapcs",
-        cc: CallingConvention::arm_aapcs,
-        cspec: ARM,
-        prototype: None,
-        arches: &[
-            SleighArch::arm,
-            SleighArch::arm_be,
-            SleighArch::arm_be_kernel,
-            SleighArch::arm_thumb,
-        ],
-    },
-    Pairing {
-        preset: "arm_aapcs_soft",
-        cc: CallingConvention::arm_aapcs_soft,
-        cspec: ARM,
-        prototype: Some("__stdcall_softfp"),
-        arches: &[SleighArch::arm],
-    },
-    Pairing {
-        preset: "mips_o32",
-        cc: CallingConvention::mips_o32,
-        cspec: MIPS32_BE,
-        prototype: None,
-        arches: &[SleighArch::mipsbe32],
-    },
-    Pairing {
-        preset: "mips_o32",
-        cc: CallingConvention::mips_o32,
-        cspec: MIPS32_LE,
-        prototype: None,
-        arches: &[SleighArch::mipsle32],
-    },
-    Pairing {
-        preset: "mips_n64",
-        cc: CallingConvention::mips_n64,
-        cspec: MIPS64_BE,
-        prototype: None,
-        arches: &[SleighArch::mipsbe64],
-    },
-    Pairing {
-        preset: "mips_n64",
-        cc: CallingConvention::mips_n64,
-        cspec: MIPS64_LE,
-        prototype: None,
-        arches: &[SleighArch::mipsle64],
-    },
-    Pairing {
-        preset: "powerpc_sysv32",
-        cc: CallingConvention::powerpc_sysv32,
-        cspec: PPC32,
-        prototype: None,
-        arches: &[SleighArch::ppc32be, SleighArch::ppc32le],
-    },
-    Pairing {
-        preset: "powerpc_sysv32_linux_kernel",
-        cc: CallingConvention::powerpc_sysv32_linux_kernel,
-        cspec: PPC32,
-        prototype: None,
-        arches: &[SleighArch::ppc32be, SleighArch::ppc32le],
-    },
-    Pairing {
-        preset: "powerpc64_elf_v1",
-        cc: CallingConvention::powerpc64_elf_v1,
-        cspec: PPC64_BE,
-        prototype: None,
-        arches: &[SleighArch::ppc64be],
-    },
-    Pairing {
-        preset: "powerpc64_elf_v1_linux_kernel",
-        cc: CallingConvention::powerpc64_elf_v1_linux_kernel,
-        cspec: PPC64_BE,
-        prototype: None,
-        arches: &[SleighArch::ppc64be],
-    },
-    Pairing {
-        preset: "powerpc64_elf_v2",
-        cc: CallingConvention::powerpc64_elf_v2,
-        cspec: PPC64_LE,
-        prototype: None,
-        arches: &[SleighArch::ppc64le],
-    },
-    Pairing {
-        preset: "powerpc64_elf_v2",
-        cc: CallingConvention::powerpc64_elf_v2,
-        cspec: PPC64_BE,
-        prototype: None,
-        arches: &[SleighArch::ppc64be],
-    },
-    Pairing {
-        preset: "powerpc64_elf_v2_linux_kernel",
-        cc: CallingConvention::powerpc64_elf_v2_linux_kernel,
-        cspec: PPC64_LE,
-        prototype: None,
-        arches: &[SleighArch::ppc64le],
-    },
-    Pairing {
-        preset: "powerpc64_elf_v2_linux_kernel",
-        cc: CallingConvention::powerpc64_elf_v2_linux_kernel,
-        cspec: PPC64_BE,
-        prototype: None,
-        arches: &[SleighArch::ppc64be],
-    },
-];
 
 /// A deliberate difference, and why it stays.
 struct Divergence {
@@ -499,17 +339,19 @@ fn holding(named: &[(String, rsleigh::Vn)], diff: &BTreeSet<u64>) -> Vec<String>
         .collect()
 }
 
-/// Adds `pairing`'s divergences on one arch to `seen`, and every register
-/// both killed and callee-saved to `killed_and_saved`.
+/// Adds `cc`'s divergences from `cspec`'s `proto` on one arch to `seen`, and
+/// every register both killed and callee-saved to `killed_and_saved`.
 fn check(
-    pairing: &Pairing,
+    cc: &CcPreset,
+    cspec: &str,
     regs: &rsleigh::SleighRegs,
     proto: &Prototype,
     seen: &mut BTreeSet<String>,
     killed_and_saved: &mut BTreeSet<String>,
 ) {
-    let preset = pairing.preset;
-    let cc = (pairing.cc)()
+    let preset = cc.name;
+    let cc = cc
+        .cc
         .build(regs)
         .unwrap_or_else(|e| panic!("{preset}: {e:#}"));
     let mut note = |what: String| {
@@ -538,7 +380,7 @@ fn check(
         }
     }
 
-    let unaffected: Vec<(String, rsleigh::Vn)> = resolve(regs, pairing.cspec, &proto.unaffected)
+    let unaffected: Vec<(String, rsleigh::Vn)> = resolve(regs, cspec, &proto.unaffected)
         .into_iter()
         .filter(|(_, vn)| *vn != cc.stack_ptr)
         .collect();
@@ -567,35 +409,17 @@ fn check(
         ("argument", &proto.inputs, &args),
         ("return", &proto.outputs, &rets),
     ] {
-        let theirs = resolve(regs, pairing.cspec, cspec_list);
+        let theirs = resolve(regs, cspec, cspec_list);
         let covered = byte_set(&named(regs, ours));
         for r in holding(&theirs, &(&byte_set(&theirs) - &covered)) {
             note(format!("{what} only in the cspec: {r}"));
         }
     }
 
-    let killed = resolve(regs, pairing.cspec, &proto.killed);
+    let killed = resolve(regs, cspec, &proto.killed);
     for r in holding(&killed, &byte_set(&saved)) {
         killed_and_saved.insert(format!("{preset}: {r}"));
     }
-}
-
-/// Every preset constructor `CallingConvention` defines has a `PAIRINGS` row.
-#[test]
-fn every_calling_convention_preset_is_paired() {
-    let defined: BTreeSet<&str> = include_str!("../src/calling_convention/mod.rs")
-        .lines()
-        .filter_map(|line| {
-            line.trim()
-                .strip_prefix("pub const fn ")?
-                .strip_suffix("() -> Self {")
-        })
-        .collect();
-    let paired: BTreeSet<&str> = PAIRINGS.iter().map(|p| p.preset).collect();
-    assert_eq!(
-        defined, paired,
-        "CallingConvention presets against PAIRINGS"
-    );
 }
 
 #[test]
@@ -603,12 +427,15 @@ fn every_calling_convention_preset_agrees_with_its_ghidra_cspec() {
     let mut tables: HashMap<SleighArch, rsleigh::SleighRegs> = HashMap::new();
     let mut seen = BTreeSet::new();
     let mut killed_and_saved = BTreeSet::new();
-    for pairing in PAIRINGS {
-        let proto = prototype(pairing.cspec, pairing.prototype);
-        for arch in pairing.arches {
-            let arch = arch();
-            let regs = tables.entry(arch).or_insert_with(|| arch.probe_regs());
-            check(pairing, regs, &proto, &mut seen, &mut killed_and_saved);
+    for cc in CallingConvention::presets() {
+        assert!(!cc.ghidra.is_empty(), "{} has no Ghidra prototype", cc.name);
+        for &(cspec, name, arches) in cc.ghidra {
+            let proto = prototype(cspec, name);
+            for preset in arches {
+                let arch = preset.arch();
+                let regs = tables.entry(arch).or_insert_with(|| arch.probe_regs());
+                check(cc, cspec, regs, &proto, &mut seen, &mut killed_and_saved);
+            }
         }
     }
     assert!(
