@@ -44,7 +44,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 
     pub(super) fn read_input(&mut self, insn: &rsleigh::Insn, n: usize) -> Result<ValueId> {
-        let vn = crate::lift::pcode_util::nth_input_or_err(insn, n)?;
+        let vn = crate::pcode_util::nth_input_or_err(insn, n)?;
         self.read_vn(vn)
     }
 

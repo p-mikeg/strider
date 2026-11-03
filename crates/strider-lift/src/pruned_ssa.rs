@@ -12,7 +12,7 @@
 //! [`strider_ir::FunctionBuilder::build_call`]'s post-call SP rebind is the
 //! one production write outside that funnel, made in strider-ir, which cannot
 //! reach the guard. [`FunctionLifter::record_cc_call_effects`] records SP for every call, and
-//! [`crate::lift::Lifter::check_override_cc`] pins an override's stack pointer
+//! [`crate::Lifter::check_override_cc`] pins an override's stack pointer
 //! to the function's, so the varnode the rebind writes is always one the
 //! mirror recorded.
 //!

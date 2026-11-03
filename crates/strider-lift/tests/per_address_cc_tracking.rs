@@ -17,7 +17,7 @@ fn lift_sp_join(
     shape: impl FnOnce(&'static rsleigh::SleighRegs, &mut strider_target::BuiltCallingConvention),
 ) -> anyhow::Result<strider_ir::Function> {
     let arch = strider_target::SleighArch::x86_64();
-    let mut lifter = strider_lift::lift::Lifter::new(
+    let mut lifter = strider_lift::Lifter::new(
         arch,
         rsleigh::mem_readers::BufMemReader::new(SP_JOIN.to_vec(), 0x1000),
     )?;
@@ -129,11 +129,9 @@ fn per_address_cc_integer_arg_registers_are_seeded() {
     // call g ; ret ; g: ret
     let bytes = vec![0xe8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xc3];
     let arch = strider_target::SleighArch::x86();
-    let mut lifter = strider_lift::lift::Lifter::new(
-        arch,
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))
+            .expect("lifter");
     let cc = strider_target::CallingConvention::x86_cdecl()
         .build(lifter.sleigh_regs())
         .expect("cdecl");
@@ -177,11 +175,9 @@ fn an_override_this_function_never_calls_seeds_nothing() {
     // call g ; ret ; g: ret
     let bytes = vec![0xe8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xc3];
     let arch = strider_target::SleighArch::x86();
-    let mut lifter = strider_lift::lift::Lifter::new(
-        arch,
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))
+            .expect("lifter");
     let cc = strider_target::CallingConvention::x86_cdecl()
         .build(lifter.sleigh_regs())
         .expect("cdecl");
@@ -224,11 +220,9 @@ fn a_tail_calls_override_argument_registers_are_seeded() {
     // jmp g ; ret ; g: ret, under a 2-byte bound, so the `jmp` is a tail call.
     let bytes = vec![0xeb, 0x01, 0xc3, 0xc3];
     let arch = strider_target::SleighArch::x86();
-    let mut lifter = strider_lift::lift::Lifter::new(
-        arch,
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))
+            .expect("lifter");
     let cc = strider_target::CallingConvention::x86_cdecl()
         .build(lifter.sleigh_regs())
         .expect("cdecl");

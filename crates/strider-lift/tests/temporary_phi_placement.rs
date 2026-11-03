@@ -8,11 +8,9 @@ use strider_ir::IRViewer;
 /// control walk: a phi nothing consumes is still placed.
 fn temporary_phis(bytes: Vec<u8>) -> Vec<rsleigh::Vn> {
     let arch = strider_target::SleighArch::x86_64();
-    let mut lifter = strider_lift::lift::Lifter::new(
-        arch,
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))
+            .expect("lifter");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(lifter.sleigh_regs())
         .expect("systemv");
