@@ -104,9 +104,9 @@ use crate::{MemRegion, Patch, RegionIndex, Result};
 ///
 /// # Errors
 ///
-/// When the relocation tables
-/// walked name more entries than [`RELOCATION_ENTRY_BUDGET`] times what the
-/// file holds (see `without_repeated_tables` and
+/// When the relocation tables walked name more entries than
+/// [`RELOCATION_ENTRY_BUDGET`] times what the file holds (see
+/// `without_repeated_tables` and
 /// [`loader_view`](crate::elf::dynamic::loader_view)); and when a table the
 /// dynamic tags place cannot be read or decoded and the loader may relocate
 /// code (see `relocates_code`).
