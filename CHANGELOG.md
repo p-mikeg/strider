@@ -181,8 +181,9 @@ Matching and rewriting:
 - A `StriderError` raised on a small thread, and a query compiled on one, no
   longer crash the process.
 - `f.optimize()` keeps the `noalias_allocators` `analyze` ran under.
-- `int_sub(x, K)` and `float_sub(x, K)` with a constant `K` also match the
-  folded `x + (-K)`.
+- `int_sub(x, K)` and `float_sub(x, K)` with an uncaptured constant `K`
+  (a value, a list, `int_const_any_width`, bare or under one `of_width`)
+  also match the folded `x + (-K)`.
 
 Analysis:
 
