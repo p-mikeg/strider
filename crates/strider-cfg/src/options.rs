@@ -3,8 +3,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
 
-// What `Default` lends: it hands out a `&'a`, which it cannot borrow from a
-// temporary.
+// Statics, so `Default` can lend a `&'a`.
 
 /// An empty target table, for a `CfgOptions` literal naming every field.
 pub static NO_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
@@ -54,17 +53,12 @@ pub struct CfgOptions<'a> {
     /// How far the function extends; a branch or fall-through leaving it is a
     /// tail call.
     pub bound: FunctionBound,
-    /// A `BranchIndirect` listed here seats its cached terminator directly;
-    /// every other site defers via `UnresolvedIndirectBranch`.  Read through
-    /// [`CfgOptions::seated`], never indexed directly.
-    ///
-    /// Borrowed: a caller seeds a binary-wide table once and analyses one
-    /// function per call, so owning it is the whole table per call.
+    /// Caller-seeded answers per `BranchIndirect`; an unlisted site defers.
+    /// Read through [`CfgOptions::seated`].
     pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// A resolver's own answers, keyed by the `BranchIndirect`'s exact p-code
     /// address: one beats `known_targets` at that site, and
-    /// [`ResolvedTargets::Withdrawn`] defers it. The orchestrator's `analyze`
-    /// owns this layer and refuses a caller's.
+    /// [`ResolvedTargets::Withdrawn`] defers it.
     pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// Direct-call targets that never return (`exit`, `abort`); a call to one
     /// ends its region `NoReturn`. Each is matched against the address the
@@ -74,13 +68,10 @@ pub struct CfgOptions<'a> {
     /// `no_return_targets` or per-address convention entry keyed by the
     /// callee's global entry matches that call too.
     pub local_entries: &'a LocalEntries,
-    /// Caller classifications for user-op names, consulted before the built-in
-    /// tables.  One override governs both the region terminator and the
-    /// emitted node.
+    /// Caller classifications for user-op names, ahead of the built-in tables.
     pub call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
-    /// Bytes the image marks as data (ELF `$d` mapping symbols), which the
-    /// builder decodes only for the instruction at the start address; see
-    /// [`crate::Reason::UndecodableTarget`].
+    /// Bytes the image marks as data (ELF `$d`), never decoded except at the
+    /// start address.
     pub data_ranges: DataRanges,
 }
 
@@ -104,9 +95,7 @@ impl DataRanges {
         Self(merged.into())
     }
 
-    /// [`Self::new`] over `(start, end)` pairs, refusing an empty range where
-    /// `new` drops it: a caller naming one meant a range, and the bytes it
-    /// marks would decode as code.
+    /// [`Self::new`] over `(start, end)` pairs, refusing an empty range.
     ///
     /// # Errors
     ///
@@ -210,11 +199,7 @@ pub fn seated_from<'m>(
 /// The entry for `addr` in `map`: its exact key, else the key of its
 /// instruction's p-code index 0.
 ///
-/// An entry at p-code index 0 seats any `BranchIndirect` in that machine
-/// instruction, so a caller holding only a machine address can spell a key;
-/// a Python one only ever holds that, the bindings flattening every
-/// reported site to its machine address. An exact key wins: it is the only
-/// way to tell two `BranchIndirect`s in one instruction apart.
+/// An index-0 key thus seats every `BranchIndirect` of its instruction.
 pub fn seated_in(
     map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     addr: PcodeInsnAddr,

@@ -5,12 +5,8 @@ use std::collections::VecDeque;
 
 use crate::Cfg;
 
-/// Walks BOTH edge directions, so predecessors and successors alike.  BFS
-/// visits in level order, so the `max_nodes` budget keeps the nearest regions.
-///
-/// `center` is in the set before the budget is consulted, so the result holds
-/// at least it however small `max_nodes` is, and at most `max(1, max_nodes)`
-/// regions.
+/// BFS over both edge directions, keeping the nearest `max(1, max_nodes)`
+/// regions, `center` always among them.
 pub(crate) fn neighborhood_regions(
     cfg: &Cfg,
     center: NodeIndex,
@@ -57,8 +53,6 @@ impl Cfg {
             anyhow::bail!("invalid region id {}", center.index());
         }
         let set = neighborhood_regions(self, center, depth, max_nodes);
-        // The full-CFG dumper restricted to `set`: same labels, and the
-        // if-true / if-false edge polarity a second emitter here did not carry.
         let view = ::dot::View::new(set, center);
         let dumper = self.dot_dumper(names).restricted(view);
         ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark_cfg()).as_dot()
