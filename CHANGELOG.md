@@ -76,6 +76,8 @@ These raise:
   raises `TypeError` where it read as 0 or 1.
 - `of_width`, `value_of_width` and `inputs_of_width` raise `StriderError` for
   a width no value type has; they matched nothing.
+- A constant `int_sub` / `float_sub` costs 5 pattern nodes against the
+  256-node cap, not 3.
 
 Output that reads differently:
 
