@@ -3,8 +3,8 @@
 //!
 //! A pat node's inputs are matched as an injective assignment of pattern inputs to IR input
 //! slots ([`match_assignments`]): a fixed operand draws from its own slot, a commutative pair from
-//! `{0, 1}`, an `any_input` from every slot. Backtracking rolls back via [`Bindings::mark`] /
-//! [`Bindings::restore`].
+//! `{0, 1}`, an `any_input` from every slot no fixed operand pins (every slot on a commutative
+//! node). Backtracking rolls back via [`Bindings::mark`] / [`Bindings::restore`].
 //!
 //! The engine is continuation-passing: [`try_match_at`] calls `k` per configuration, so a guard
 //! that rejects one re-drives the commutative orderings below it. `k` returning `true` stops the
