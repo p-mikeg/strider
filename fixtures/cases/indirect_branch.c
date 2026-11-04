@@ -1,16 +1,10 @@
 // fixtures/cases/indirect_branch.c
 //
-// Computed-goto fixture for the tier-2 indirect-branch resolver.
-// At -O0 GCC and clang lower the indirect goto to either:
-//   - a simple `mov reg, K; jmp *reg` (single target each time;
-//     resolves at tier 1 once the array element is folded), or
-//   - a load+jmp from a local array (tier 2 resolves via
-//     LoadReadOnly + StackLoadForward), or
-//   - a true jump table in .rodata (tier 2 resolves via the
-//     R4 jump-table arm).
-//
-// Whichever shape lifters produce, the resolved IR must reach
-// L0 / L1 cleanly with `Branch` / `TailCall` edges.
+// A computed goto through a local array of two labels, lowered to a load
+// from a stack copy of the array or from a label table in a data section.
+// The resolved IR must reach L0 and L1. It does not resolve on aarch64be,
+// arm_be8, mips64, ppc32le and ppc64: see `GAPS` in
+// crates/strider-orchestrator/tests/golden.rs.
 int indirect_branch_resolved(int x) {
     void *targets[] = {&&L0, &&L1};
     goto *targets[(unsigned)x & 1];
