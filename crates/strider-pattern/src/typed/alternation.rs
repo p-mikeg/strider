@@ -1,7 +1,5 @@
-//! `one_of` is a union: every matching arm yields its own match. Results dedup on bindings, so
-//! arms that bind identically collapse to one, keeping the first listed arm's
-//! `Match::matched_nodes`. [`OneOf::first`] is the ordered variant. Captures under an arm that did
-//! not fire stay unbound.
+//! `one_of` is a union: every matching arm yields its own match, deduplicated on bindings.
+//! [`OneOf::first`] is the ordered variant. Captures under an arm that did not fire stay unbound.
 
 use crate::expr::{Expr, IntoExpr};
 use crate::matcher::match_pat::MatchPat;
@@ -27,28 +25,16 @@ pub struct BoxedAlt(Expr);
 pub struct OneOf(Expr);
 
 impl OneOf {
-    /// A union over the alternatives. An empty list matches nothing.
-    ///
-    /// # Cost
-    ///
-    /// Under [`find_all`](crate::Matcher::find_all), `k` alternations of `m` matching arms each
-    /// (siblings or nested) run the continuation `m^k` times per root candidate.
-    /// [`match_at`](crate::Matcher::match_at) stops at the first match unless the pattern holds a
-    /// [`OneOf::first`] or a cast mask.
+    /// A union over the alternatives. An empty list matches nothing. `k` alternations of `m`
+    /// matching arms run up to `m^k` configurations per root candidate.
     pub fn new(alts: Vec<BoxedAlt>) -> Self {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), false))
     }
 
     /// An ordered choice: at each read of a value, keep only the matches through the first-listed
-    /// arm that yields one, with every binding that arm produces. Each read settles on its own
-    /// (`float_le` reads its operands twice), in pattern order, inner before outer. An arm a guard
-    /// above rejects falls through to the next.
-    ///
-    /// # Cost
-    ///
-    /// Runs every configuration before answering, [`match_at`](crate::Matcher::match_at)
-    /// included, unless the query wants one match and finds it through every `first_of`'s first
-    /// arm without walking a cast.
+    /// arm that yields one. Each read settles on its own (`float_le` reads its operands twice).
+    /// An arm a guard above rejects falls through to the next. Runs every configuration before
+    /// answering unless the first arms everywhere give the one match wanted.
     pub fn first(alts: Vec<BoxedAlt>) -> Self {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), true))
     }

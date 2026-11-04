@@ -1,17 +1,9 @@
-//! Recursive bipartite match engine with commutative-operand retry and cast
-//! walk-through.
+//! Backtracking, continuation-passing match engine.
 //!
-//! A pat node's inputs are matched as an injective assignment of pattern inputs to IR input
-//! slots ([`match_assignments`]): a fixed operand draws from its own slot, a commutative pair from
-//! `{0, 1}`, an `any_input` from every slot no fixed operand pins (every slot on a commutative
-//! node). Backtracking rolls back via [`Bindings::mark`] / [`Bindings::restore`].
-//!
-//! The engine is continuation-passing: [`try_match_at`] calls `k` per configuration, so a guard
-//! that rejects one re-drives the commutative orderings below it. `k` returning `true` stops the
-//! search; `false` (as in `find_all`) enumerates the rest.
-//!
-//! Under a non-empty [`CastMask`](crate::matcher::CastMask), an operand that is a masked cast is
-//! also tried at the cast's value input, outermost level first.
+//! A pat node's inputs are an injective assignment to IR input slots ([`match_assignments`]).
+//! [`try_match_at`] calls `k` per configuration, so a guard rejecting one re-drives the orderings
+//! below it; `k` returning `true` stops the search. Under a [`CastMask`](crate::matcher::CastMask)
+//! an operand is also tried through each masked cast, outermost first.
 
 use std::cell::{Cell, RefCell};
 
@@ -76,9 +68,8 @@ impl Ctx<'_> {
 /// Attempts `pat`'s root at `node`, once per output of any kind (less [`anchor_repeats`]), or
 /// node-rooted when `node` has no outputs.
 ///
-/// `k` runs per guard-satisfying configuration, `trail` holding the arms it took; `true` stops,
-/// `false` drives the next. Each output gets its own [`Ctx`], so a `first_of` cut does not carry
-/// over.
+/// `k` runs per configuration, `trail` holding the arms it took. Each output gets its own
+/// [`Ctx`], so a `first_of` cut does not carry over.
 pub(crate) fn anchor(
     matcher: &Matcher,
     pat: &Pattern,
@@ -183,12 +174,9 @@ pub(crate) fn root_output_vertex_for(
         .find(|&out_vertex| pat.graph.value_kind_ref(out_vertex).slot as u32 == ir_slot)
 }
 
-/// Whether anchoring `pat`'s root at `out_id` re-runs the attempt made at `anchored`.
-///
-/// Distinct per-slot vertices impose one constraint set whichever anchors, since
-/// [`bind_sibling_outputs`] checks the rest at their slots. A shared vertex, a
-/// [`SlotMode::Enumerated`] one, or a differing anchor value type (read by post-match guards)
-/// tells the attempts apart.
+/// Whether anchoring `pat`'s root at `out_id` re-runs the attempt made at `anchored`: only
+/// distinct per-slot vertices over one anchor value type do, since [`bind_sibling_outputs`]
+/// checks the rest at their slots.
 pub(crate) fn anchor_repeats(
     matcher: &Matcher,
     pat: &Pattern,
@@ -363,10 +351,9 @@ fn try_alternation(
     false
 }
 
-/// Finishes `site` after its inputs matched: its non-anchoring output vertices from `idx` on, its
-/// post-match predicates, its footprint entry, then `k`. A [`SlotMode::Enumerated`] vertex tries
-/// each output in turn; any other is checked at its own slot. A rejection leaves `b` to the
-/// caller's mark.
+/// Finishes `site` after its inputs matched: its non-anchoring output vertices from `idx` on
+/// (a [`SlotMode::Enumerated`] one tries each output), its post-match predicates, its footprint
+/// entry, then `k`. A rejection leaves `b` to the caller's mark.
 fn bind_sibling_outputs(
     ctx: &Ctx,
     site: Site,
@@ -432,11 +419,7 @@ fn bind_sibling_outputs(
 }
 
 /// Tries `edge`'s sub-pattern at `value`, then at each masked cast's value input below it,
-/// outermost first; `k` continues the enclosing match.
-///
-/// Failure restores `bindings` to entry. A skipped cast is recorded into the footprint before
-/// the retry, so it is kept only on success. The caller keeps the outermost level that matched,
-/// so a cast never adds a second binding beside a direct one.
+/// outermost first; `k` continues the enclosing match. Failure restores `bindings` to entry.
 fn try_operand(
     ctx: &Ctx,
     edge: &InputEdge,

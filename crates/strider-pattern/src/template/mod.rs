@@ -54,19 +54,16 @@ pub(crate) enum TemplateTy {
     Fixed(ValueType),
 }
 
-/// Materialises `template` as an IR sub-graph rooted at the returned output.
+/// Materialises `template` as an IR sub-graph and returns the root node's first value output.
 ///
-/// `root_ty` types the value the root replaces. `lhs_root` is [`TemplateCtx::root`] for
-/// [`TemplateKind::Fn`] closures. `proof_nodes` is unioned into every created node's
-/// asm-fingerprint. Returns the root node's first value output. Each node is checked against its
-/// `expected_signature`; [`strider_ir::validate`] is not run.
+/// `root_ty` types the value the root replaces, `lhs_root` is [`TemplateCtx::root`] for
+/// [`TemplateKind::Fn`] closures, and `proof_nodes` join every created node's asm-fingerprint.
+/// Each node is checked against its `expected_signature`, not by [`strider_ir::validate`].
 ///
 /// # Errors
 ///
-/// If the template is rootless, references an unbound capture, has a closure that errors, has
-/// gapped or duplicate slots, has an `IntConst` built from a `NodeKind`, has a node no width
-/// reaches, or gives a node something its signature refuses. Only a signature or wiring refusal
-/// comes mid-build, leaving the nodes created before it dead in `builder`'s function.
+/// If the template is malformed, a capture is unbound, a closure errors, or no width reaches a
+/// node. A signature or wiring refusal comes mid-build, leaving dead nodes in `builder`.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
@@ -335,16 +332,12 @@ fn tie(
     }
 }
 
-/// Each value output's type. A [`TemplateTy::InheritRoot`] node takes its
-/// width group's type (so a comparison's constant operand gets the operand
-/// width, not `I1`); the root's group takes `root_ty`; an untyped shift count
-/// takes the shift's.
+/// Each value output's type: an [`TemplateTy::InheritRoot`] node takes its width group's type,
+/// the root's group `root_ty`, an untyped shift count the shift's.
 ///
 /// # Errors
 ///
-/// If an output's width comes from nowhere: a group with no typed member, an
-/// untyped output no node consumes, or an output typed from a capture that
-/// bound no typed value.
+/// If an output's width comes from nowhere.
 fn resolve_value_tys(
     template: &Template,
     order: &[NodeId],

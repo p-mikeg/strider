@@ -81,17 +81,11 @@ impl<'f> Matcher<'f> {
         self.function
     }
 
-    /// Every match for `pat`, lazily per candidate, so `.next()` walks no
-    /// further than the first matching node.
+    /// Every match for `pat`, lazily per candidate node.
     ///
-    /// # Several matches per root
-    ///
-    /// Every distinct capture-to-binding map is yielded once:
-    /// `int_add(var(x), var(x))` is one match, `int_add(anything().capture(k),
-    /// anything())` two. `n` commutative nodes whose operands each satisfy both
-    /// sub-patterns yield up to 2^n; pin them with `.ordered()`. Natural operand
-    /// order comes before swapped. The work, not only the result count, can be
-    /// 2^depth over nested commutative nodes, even when nothing matches.
+    /// Each distinct capture-to-binding map is yielded once, natural operand order before
+    /// swapped. `n` commutative nodes can yield, and cost, up to 2^n even when nothing matches;
+    /// `.ordered()` pins them.
     ///
     /// # Errors
     /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
@@ -191,10 +185,8 @@ impl<'f> Matcher<'f> {
 
     /// [`Self::matches_at_node`] for a pattern holding a `first_of` or a cast mask.
     ///
-    /// Collects every match, then at each choice point (a `first_of`, or a cast-mask
-    /// read) keeps only the matches that took the lowest arm there. Choice points are settled in a
-    /// fixed order, so the answer does not depend on the walk's order; it is never emptied.
-    /// With `first_only`, the first match taking arm 0 everywhere ends the search.
+    /// Keeps, at each choice point (a `first_of` or a cast-mask read), only the matches that took
+    /// the lowest arm there, settled in a fixed order so the walk order does not matter.
     #[inline(never)]
     fn lowest_arm_matches(
         &self,
@@ -246,13 +238,8 @@ impl<'f> Matcher<'f> {
             .collect()
     }
 
-    /// The first match of `pat` at `node`, if any. Under a `first_of` or a
-    /// cast mask, that is the first found through the first arm of every
-    /// choice, else the first the filter keeps.
-    ///
-    /// `node` is taken as given, so a node unreachable from the entry answers
-    /// here while [`find_all`](Self::find_all), which seeds from
-    /// [`IRWalker::walk`], never offers it.
+    /// The first match of `pat` at `node`, if any. `node` need not be reachable, unlike every
+    /// [`find_all`](Self::find_all) root.
     ///
     /// # Errors
     /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
@@ -267,17 +254,13 @@ impl<'f> Matcher<'f> {
             .next())
     }
 
-    /// The tuples (one [`Match`] per pattern, in input order) where every [`crate::Capture`]
-    /// shared between patterns binds the same node, or the same value where both bind values,
-    /// and every [`JoinConstraint`] holds. An unanswerable constraint drops the tuple, negated or
-    /// not. A capture-free pattern joins as a cross-product; tuples are deduplicated by their
-    /// capture bindings. Worst case O(N1 * ... * NM) in the per-pattern match counts.
+    /// The tuples (one [`Match`] per pattern) whose shared captures agree and where every
+    /// [`JoinConstraint`] holds; an unanswerable constraint drops the tuple, negated or not.
+    /// Deduplicated by capture bindings. Worst case O(N1 * ... * NM).
     ///
     /// # Errors
-    /// If any pattern is not a single-rooted, acyclic graph (see
-    /// [`Pattern::root`]), if a capture-bearing pattern is connected to the
-    /// rest by neither a shared capture nor a constraint, or if a constraint
-    /// mentions a capture no pattern binds.
+    /// If a pattern has no root (see [`Pattern::root`]), a capture-bearing pattern shares
+    /// neither a capture nor a constraint with the rest, or a constraint names an unbound capture.
     pub fn find_joined_constrained(
         &self,
         pats: &[&Pattern],
@@ -461,12 +444,9 @@ fn join_level(
 /// to a `CtrlKey::Edge`, anything else to a `CtrlKey::Node` (a value's producer).
 #[derive(Clone)]
 pub enum JoinConstraint {
-    /// `dominator` dominates `dominated` in the control subgraph; an edge dominates on the
-    /// edge-split graph, so `dominates(true_edge, c)` means `c` is in the true block (not merely
-    /// dominated by the edge's target, which for an empty arm is the join).
-    ///
-    /// A capture with no vertex in the dominator tree (a `Load`, `Store`, arithmetic) leaves it
-    /// unanswerable: the tuple drops, negated or not.
+    /// `dominator` dominates `dominated` in the control subgraph, an edge on the edge-split graph
+    /// (so `dominates(true_edge, c)` puts `c` in the true block). A capture outside the dominator
+    /// tree is unanswerable.
     Dominates {
         dominator: crate::Capture,
         dominated: crate::Capture,

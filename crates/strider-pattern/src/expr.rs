@@ -1,10 +1,8 @@
-//! Every pattern is an [`Expr`] tree, lowered once into the builder of the side it is used on.
-//! The consumer slot is passed down at lowering, so a node picks per slot the output it nests
-//! through.
+//! Every pattern is an [`Expr`] tree, lowered once into the builder of the side it is used on,
+//! with the consumer slot passed down so a node picks the output it nests through.
 //!
-//! `.ordered()` pins the operand order of the node holding the written pair: an [`Op`] itself, or
-//! its `ordered_at` operand (`int_ne` pins its `int_eq`). On an alternation it is refused;
-//! [`Inner::Shared`] has no pair to pin.
+//! `.ordered()` pins the node holding the written pair: an [`Op`] or its `ordered_at` operand
+//! (`int_ne` pins its `int_eq`). It is refused on an alternation.
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntUnaryOp};
