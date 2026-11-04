@@ -12,7 +12,7 @@ import pytest
 
 import strider
 from strider import pattern as p
-from .conftest import fixture_path
+from .conftest import fixture_path, lift_bytes
 
 
 @pytest.fixture(scope="module")
@@ -92,3 +92,12 @@ def test_any_output_yields_one_match_per_output():
     assert all(a != b for i, a in enumerate(bound) for b in bound[i + 1:])
     with pytest.raises(strider.StriderError):
         fn.find_unique(p.call().any_output().capture(c))
+
+
+def test_join_rows_differing_only_in_an_all_shared_root_collapse():
+    # lea rax, [rdi+1]; lea rdx, [rdi+2]; ret: two adds over one argument.
+    fn = lift_bytes(bytes([0x48, 0x8D, 0x47, 0x01, 0x48, 0x8D, 0x57, 0x02, 0xC3]))
+    a, k = p.Capture("a"), p.Capture("k")
+    arg = p.function_arg(0).capture(a)
+    assert len(fn.find_all([arg, p.int_add(p.var(a), p.int_const())])) == 1
+    assert len(fn.find_all([arg, p.int_add(p.var(a), p.int_const(k))])) == 2
