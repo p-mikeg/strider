@@ -46,9 +46,16 @@ impl Policy {
         Self::with_calls(function, Calls::Block)
     }
 
-    /// `LoadForward`'s forwarding verdict.
+    /// `LoadForward`'s forwarding verdict: [`Self::strict`] where no call
+    /// relaxation can fire, so the two share their memo.
     pub(crate) fn forward(function: &Function) -> Self {
-        Self::with_calls(function, Calls::Forward)
+        let a = function.assumptions();
+        let calls = if a.escape_analysis || !a.noalias_allocators.is_empty() {
+            Calls::Forward
+        } else {
+            Calls::Block
+        };
+        Self::with_calls(function, calls)
     }
 
     /// `FunctionArgDetect`'s incoming stack-argument probe.
