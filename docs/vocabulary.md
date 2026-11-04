@@ -33,7 +33,8 @@ and the IR.
 **CFG (control flow graph).** The regions and the jumps between them.
 
 **Dominator.** Region A *dominates* B if every path from entry to B goes
-through A. It decides where phi nodes are needed.
+through A. A phi goes where the dominance of a region writing the value ends
+(its *dominance frontier*).
 
 ## The IR
 
@@ -99,8 +100,8 @@ a call; `node.call_other_name()` reads its name.
 removal, store-to-load forwarding, ...) before you query.
 
 **Canonicalization.** Rewriting equivalent shapes into one form so one pattern
-matches all of them: `a - b` is always `a + (-b)`. The
-[python guide](python-guide.md) lists the surprising ones.
+matches all of them: `a - b` is always `a + (-b)`.
+[optimizations.md](optimizations.md) lists what each pass rewrites.
 
 **Assumption.** A claim about the code the IR cannot prove. Seven help the
 optimizer tell memory accesses apart (the stack and globals do not overlap, a
