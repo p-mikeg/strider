@@ -147,6 +147,52 @@ fn sub_of_a_constant_matches_the_folded_add() {
     assert_eq!(count(|| sub(6), &fx), 0);
 }
 
+/// `Add(x, k):I32`.
+fn add_const_i32(k: u32) -> strider_ir::Function {
+    strider_ir_test_utils::make_fn_with_var(reg_vn(0, 4), |b, base| {
+        let k = b.build_int_const(u64::from(k), T::int(32))?;
+        b.build_int_binary_operation(base, k, IntBinaryOp::Add, T::int(32))
+    })
+    .unwrap()
+    .0
+}
+
+/// Every concrete constant form folds: a width, a set, any width.
+#[test]
+fn sub_of_each_constant_form_matches_the_folded_add() {
+    let x = || var(Capture::new());
+    let minus_16 = add_const_i32(-16i32 as u32);
+    let at_width = |w| int_sub(x(), int_const(16u128).of_width(w)).into_pattern();
+    assert_eq!(count(|| at_width(32), &minus_16), 1);
+    assert_eq!(count(|| at_width(64), &minus_16), 0);
+    let set = |vs: Vec<i64>| int_sub(x(), int_const(vs)).into_pattern();
+    assert_eq!(count(|| set(vec![15, 16]), &minus_16), 1);
+    assert_eq!(count(|| set(vec![15, 17]), &minus_16), 0);
+    let any = |v: i64| int_sub(x(), int_const_any_width(v)).into_pattern();
+    assert_eq!(count(|| any(16), &minus_16), 1);
+    assert_eq!(count(|| any(17), &minus_16), 0);
+    // `-16` at `I8` zero-extended is no negation of a 16 at any width.
+    assert_eq!(count(|| any(16), &add_const_i32(0xF0)), 0);
+    // `-128` sign-extended from `I8` is `-(128)` at `I32`.
+    assert_eq!(count(|| any(128), &add_const_i32(-128i32 as u32)), 1);
+    let any_set = |vs: Vec<i64>| int_sub(x(), int_const_any_width(vs)).into_pattern();
+    assert_eq!(count(|| any_set(vec![15, 16]), &minus_16), 1);
+    assert_eq!(count(|| any_set(vec![15, 17]), &minus_16), 0);
+}
+
+/// A captured constant would bind `-K`, so it matches only the unfolded `Neg` shape.
+#[test]
+fn sub_of_a_captured_constant_keeps_the_neg_shape() {
+    let minus_16 = add_const_i32(-16i32 as u32);
+    let pat = || {
+        int_sub(
+            var(Capture::new()),
+            int_const(16u128).capture(Capture::new()),
+        )
+    };
+    assert_eq!(count(|| pat().into_pattern(), &minus_16), 0);
+}
+
 #[test]
 fn int_unary_family() {
     let v = reg_vn(0, 8);

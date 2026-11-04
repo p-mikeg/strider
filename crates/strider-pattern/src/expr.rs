@@ -218,7 +218,7 @@ pub(crate) enum Deco {
     TyOf(Capture),
 }
 
-const MATCH_SIDE: &str = "a match-only pattern (a wildcard, a predicate, a variant-agnostic \
+pub(crate) const MATCH_SIDE: &str = "a match-only pattern (a wildcard, a predicate, a variant-agnostic \
      op, an alternation or a node builder) sits in a template";
 const BUILD_SIDE: &str = "a build-only pattern (a constant computed at rewrite time, or a \
      `capture_typed`) sits in a match pattern";
@@ -577,41 +577,52 @@ impl Expr {
         Self::op(KindSpec::Exact(kind), operands, Some(ValueType::I1))
     }
 
-    /// `int_add(l, int_neg(r))`; when matching a constant `r`, also `int_add(l, -r)`, the shape
-    /// `ConstantFold` leaves.
-    pub(crate) fn int_sub(l: Expr, mut r: Expr) -> Self {
+    /// `int_add(l, int_neg(r))`; when matching an uncaptured constant `r` (under an `of_width`
+    /// or not), also `int_add(l, -r)`, the shape `ConstantFold` leaves.
+    pub(crate) fn int_sub(l: Expr, r: Expr) -> Self {
         let neg = |e: Expr| Self::exact(NodeKind::IntUnaryOp(IntUnaryOp::Neg), [e]);
-        let r = match r.take() {
-            Inner::Const(c) => match c.negated() {
-                Some(folded) => Self::sided(
-                    Self::alt(vec![neg(c.clone().into()), folded.into()], false),
-                    neg(c.into()),
-                ),
-                None => neg(c.into()),
-            },
-            other => neg(Self(other)),
+        let r = match r.under_width() {
+            (Inner::Const(c), w) => Self::sided(
+                Self::alt(vec![neg(w.over(c.clone())), w.over(c.negated())], false),
+                neg(w.over(c)),
+            ),
+            (other, w) => neg(w.over(Self(other))),
         };
         Self::exact(NodeKind::IntBinaryOp(IntBinaryOp::Add), [l, r])
     }
 
-    /// `float_add(l, float_neg(r))`; when matching a `float_const(bits)` `r`, also
-    /// `float_add(l, -r)`, `r`'s sign flipped at the matched constant's width.
-    pub(crate) fn float_sub(l: Expr, mut r: Expr) -> Self {
+    /// `float_add(l, float_neg(r))`; when matching a `float_const(bits)` `r` (under an
+    /// `of_width` or not), also `float_add(l, -r)`, `r`'s sign flipped at the matched
+    /// constant's width.
+    pub(crate) fn float_sub(l: Expr, r: Expr) -> Self {
         let neg = |e: Expr| Self::exact(NodeKind::FloatUnaryOp(FloatUnaryOp::Neg), [e]);
-        let r = match r.take() {
-            Inner::Leaf(leaf) => match leaf.float_const_bits() {
+        let r = match r.under_width() {
+            (Inner::Leaf(leaf), w) => match leaf.float_const_bits() {
                 Some(bits) => {
-                    let folded = crate::typed::consts::negated_float_const(bits).into();
+                    let folded = crate::typed::consts::negated_float_const(bits);
                     Self::sided(
-                        Self::alt(vec![neg(leaf.into()), folded], false),
-                        neg(crate::float_const(bits).into_expr()),
+                        Self::alt(vec![neg(w.over(leaf)), w.over(folded)], false),
+                        neg(w.over(crate::float_const(bits).into_expr())),
                     )
                 }
-                None => neg(leaf.into()),
+                None => neg(w.over(leaf)),
             },
-            other => neg(Self(other)),
+            (other, w) => neg(w.over(Self(other))),
         };
         Self::exact(NodeKind::FloatBinaryOp(FloatBinaryOp::Add), [l, r])
+    }
+
+    /// `self` with one outer `of_width` taken off.
+    fn under_width(mut self) -> (Inner, OfWidth) {
+        match self.take() {
+            Inner::Deco(d) if matches!(d.1, Deco::Width(_)) => {
+                let (mut e, Deco::Width(w)) = *d else {
+                    unreachable!("matched above")
+                };
+                (e.take(), OfWidth(Some(w)))
+            }
+            other => (other, OfWidth(None)),
+        }
     }
 
     /// `int_xor(cmp, 1)`, the lifter's `!=` / `<=`; `.ordered()` pins `cmp`.
@@ -628,6 +639,18 @@ impl Expr {
     pub(crate) fn bool_not(x: Expr) -> Self {
         let xor = NodeKind::IntBinaryOp(IntBinaryOp::Xor);
         Self::exact_i1(xor, [x, Const::Bool(true).into()])
+    }
+}
+
+/// An `of_width` taken off an operand, to put back on each form built from it.
+struct OfWidth(Option<u32>);
+
+impl OfWidth {
+    fn over(&self, e: impl Into<Expr>) -> Expr {
+        match self.0 {
+            Some(w) => e.into().deco(Deco::Width(w)),
+            None => e.into(),
+        }
     }
 }
 

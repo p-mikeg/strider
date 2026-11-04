@@ -186,8 +186,8 @@ pub(crate) mod ops {
     bin! { int_sshr, exact, NodeKind::IntBinaryOp(IntBinaryOp::SShiftRight),
     "Arithmetic right-shift `(signed)lhs >> rhs`." }
 
-    /// Subtraction `lhs - rhs`: `Add(lhs, Neg(rhs))`, and for an `int_const(K)` `rhs` also the
-    /// folded `Add(lhs, -K)`.
+    /// Subtraction `lhs - rhs`: `Add(lhs, Neg(rhs))`, and for an uncaptured constant `rhs`
+    /// (bare or under one `of_width`) also the folded `Add(lhs, -K)`.
     pub fn int_sub<L: IntoExpr + 'static, R: IntoExpr + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
         Op::new(Expr::int_sub(lhs.into_expr(), rhs.into_expr()))
     }
@@ -270,7 +270,7 @@ pub(crate) mod ops {
     "Float division `lhs / rhs`." }
 
     /// Float subtraction `lhs - rhs`: `Add(lhs, Neg(rhs))`, and for a `float_const(K)` `rhs`
-    /// also the folded `Add(lhs, -K)`.
+    /// (bare or under one `of_width`) also the folded `Add(lhs, -K)`.
     pub fn float_sub<L: IntoExpr + 'static, R: IntoExpr + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
         Op::new(Expr::float_sub(lhs.into_expr(), rhs.into_expr()))
     }

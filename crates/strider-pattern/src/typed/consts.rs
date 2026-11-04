@@ -66,8 +66,11 @@ pub(crate) enum Const {
     Int(IBig),
     /// An `I1` constant.
     Bool(bool),
-    /// `v` however it was width-extended into the constant's own type.
-    AnyWidth(i64),
+    /// Any member, each masked to the matched node's output width. Match-only.
+    Set(Vec<IBig>),
+    /// Any of the values however it was width-extended into the constant's own type. Buildable
+    /// with one value.
+    AnyWidth(Vec<i64>),
     /// All-ones at the constant's own integer width. On the build side a float root skips the
     /// rewrite.
     AllOnes,
@@ -83,7 +86,8 @@ impl Const {
                 let expected = UBig::from(u8::from(b));
                 int_const_leaf(Some(ValueType::I1), move |v, _ty| *v == expected)
             }
-            Const::AnyWidth(v) => any_width_leaf(vec![i128::from(v) as u128]),
+            Const::Set(set) => int_const_set(set),
+            Const::AnyWidth(vs) => any_width_leaf(vs),
             Const::AllOnes => int_const_leaf(None, |stored, ty| {
                 ty.is_integer() && *stored == eval::all_ones(ty)
             }),
@@ -97,7 +101,10 @@ impl Const {
             Const::Bool(v) => {
                 const_template(IBig::from(u8::from(v)), TemplateTy::Fixed(ValueType::I1))
             }
-            Const::AnyWidth(v) => const_template(IBig::from(v), TemplateTy::InheritRoot),
+            Const::AnyWidth(vs) if vs.len() == 1 => {
+                const_template(IBig::from(vs[0]), TemplateTy::InheritRoot)
+            }
+            Const::Set(_) | Const::AnyWidth(_) => return b.refuse(crate::expr::MATCH_SIDE),
             Const::AllOnes => int_const_with_fn(|ctx| {
                 ctx.root_ty
                     .is_integer()
@@ -108,14 +115,22 @@ impl Const {
         built.lower(b)
     }
 
-    /// `-self`, where it is a constant of this kind.
-    pub(crate) fn negated(&self) -> Option<Self> {
+    /// Matches exactly the negations of what `self` matches. Match-only.
+    pub(crate) fn negated(&self) -> Expr {
         match self {
-            Const::Int(v) => Some(Const::Int(-v.clone())),
+            Const::Int(v) => Const::Int(-v.clone()).into(),
             // `-1` is `1` at `I1`.
-            Const::Bool(v) => Some(Const::Bool(*v)),
-            Const::AllOnes => Some(Const::Int(IBig::from(1))),
-            Const::AnyWidth(_) => None,
+            Const::Bool(v) => Const::Bool(*v).into(),
+            Const::AllOnes => Const::Int(IBig::from(1)).into(),
+            Const::Set(set) => Const::Set(set.iter().map(|v| -v.clone()).collect()).into(),
+            Const::AnyWidth(vs) => {
+                let vs = vs.clone();
+                int_const_leaf(None, move |stored, ty| {
+                    let neg = eval::unsigned(-IBig::from(stored.clone()), ty);
+                    any_width_holds(&vs, &neg, ty)
+                })
+                .into()
+            }
         }
     }
 }
@@ -226,11 +241,18 @@ fn past_the_carrier(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
 
 /// Matches any of `values`, exact or zero- / sign-extended into the constant's output type (e.g.
 /// `128` as `0xFFFF_FFFF_FFFF_FF80` from `I8`, which [`int_const`] misses).
-fn any_width_leaf(values: Vec<u128>) -> Leaf {
-    int_const_leaf(None, move |stored, out_ty| match u128::try_from(stored) {
-        Ok(s) => values.iter().any(|&v| narrow_at_some_width(s, out_ty, v)),
-        Err(_) => values.iter().any(|&v| past_the_carrier(stored, out_ty, v)),
+fn any_width_leaf(values: Vec<i64>) -> Leaf {
+    int_const_leaf(None, move |stored, out_ty| {
+        any_width_holds(&values, stored, out_ty)
     })
+}
+
+fn any_width_holds(values: &[i64], stored: &UBig, out_ty: ValueType) -> bool {
+    let mut values = values.iter().map(|&v| i128::from(v) as u128);
+    match u128::try_from(stored) {
+        Ok(s) => values.any(|v| narrow_at_some_width(s, out_ty, v)),
+        Err(_) => values.any(|v| past_the_carrier(stored, out_ty, v)),
+    }
 }
 
 /// The [`int_const_any_width`] argument: one value, or a collection of them.
@@ -242,16 +264,12 @@ pub trait IntConstAnyWidthArg {
 impl IntConstAnyWidthArg for i64 {
     type Pat = Op<()>;
     fn into_int_const_any_width(self) -> Op<()> {
-        Op::new(Const::AnyWidth(self).into())
+        Op::new(Const::AnyWidth(vec![self]).into())
     }
 }
 
 fn any_width_set<T: Into<i64>>(values: impl IntoIterator<Item = T>) -> MatchOnly {
-    let values = values
-        .into_iter()
-        .map(|v| i128::from(v.into()) as u128)
-        .collect();
-    MatchOnly(any_width_leaf(values).into())
+    MatchOnly(Const::AnyWidth(values.into_iter().map(Into::into).collect()).into())
 }
 
 impl<T: Into<i64>> IntConstAnyWidthArg for Vec<T> {
@@ -353,27 +371,24 @@ pub fn any_float_const() -> MatchOnly {
 }
 
 /// Any member of `set`, both sides masked to the output width as in the single-value form.
-fn int_const_set(set: Vec<IBig>) -> MatchOnly {
+fn int_const_set(set: Vec<IBig>) -> Leaf {
     // The masked set, built once per width met.
     let by_width: RefCell<Vec<(usize, FxHashSet<UBig>)>> = RefCell::new(Vec::new());
-    MatchOnly(
-        int_const_leaf(None, move |stored, ty| {
-            let bits = ty.bit_width();
-            let mut cache = by_width.borrow_mut();
-            let masked = match cache.iter().find(|(w, _)| *w == bits) {
-                Some((_, s)) => s,
-                None => {
-                    cache.push((
-                        bits,
-                        set.iter().map(|v| eval::unsigned(v.clone(), ty)).collect(),
-                    ));
-                    &cache[cache.len() - 1].1
-                }
-            };
-            masked.contains(&eval::mask(stored, ty))
-        })
-        .into(),
-    )
+    int_const_leaf(None, move |stored, ty| {
+        let bits = ty.bit_width();
+        let mut cache = by_width.borrow_mut();
+        let masked = match cache.iter().find(|(w, _)| *w == bits) {
+            Some((_, s)) => s,
+            None => {
+                cache.push((
+                    bits,
+                    set.iter().map(|v| eval::unsigned(v.clone(), ty)).collect(),
+                ));
+                &cache[cache.len() - 1].1
+            }
+        };
+        masked.contains(&eval::mask(stored, ty))
+    })
 }
 
 /// The [`int_const`] argument: one value, or a collection of them.
@@ -395,7 +410,7 @@ macro_rules! int_const_scalar {
 int_const_scalar!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, UBig, IBig);
 
 fn const_set<T: Into<IBig>>(values: impl IntoIterator<Item = T>) -> MatchOnly {
-    int_const_set(values.into_iter().map(Into::into).collect())
+    MatchOnly(Const::Set(values.into_iter().map(Into::into).collect()).into())
 }
 
 impl<T: Into<IBig>> IntConstArg for Vec<T> {

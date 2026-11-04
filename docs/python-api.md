@@ -397,8 +397,8 @@ A raw int operand is `int_const(that int)`: `p.int_add(c, 8)` is
 
 Every operator is a free function (the `.pyi` lists them). They match the
 canonical IR ([optimizations](optimizations.md)); the aliases build it for you:
-`int_sub(a, b)` is `int_add(a, int_neg(b))` (with a constant `b`, also the
-folded `int_add(a, -b)`), and `int_le` / `int_ne` are their lowered comparisons.
+`int_sub(a, b)` is `int_add(a, int_neg(b))` (with an uncaptured constant `b`,
+also the folded `int_add(a, -b)`), and `int_le` / `int_ne` are their lowered comparisons.
 
 ```python
 p.int_add(a, b); p.int_mul(a, b); p.int_neg(a); p.int_and(a, b); p.int_xor(a, b)
