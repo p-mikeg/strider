@@ -28,10 +28,8 @@ pub(crate) static X86: Family = Family {
 };
 
 const CALL_OTHER: &[Row] = &[
-    // `swi` is every INT vector (0x80, INT3, ...), so it names no registers.
-    // A stack address passed to `int 0x80` in EBX is therefore invisible to
-    // the frame-escape scans; only a pointer the kernel keeps and writes
-    // during a later call is affected.
+    // `swi` is every INT vector (0x80, INT3, ...), so it names no registers:
+    // a stack address passed to `int 0x80` in EBX escapes unseen.
     Row {
         names: &["swi"],
         only: None,
@@ -447,23 +445,18 @@ impl CallingConvention {
         }
     }
 
-    /// Returns the x86 cdecl calling convention.
-    ///
-    /// `ret_stack_pop` is a plain `ret`'s 4. A callee ending in `ret $imm16`
-    /// (stdcall, a struct return's hidden pointer) needs a per-address
-    /// convention popping `4 + imm16`, and a PC thunk one that does not
-    /// preserve its register.
+    /// Returns the x86 cdecl calling convention. A callee ending in
+    /// `ret $imm16` (stdcall, a hidden struct-return pointer) needs a
+    /// per-address convention popping `4 + imm16`, and a PC thunk one that
+    /// does not preserve its register.
     #[must_use]
     pub const fn x86_cdecl() -> Self {
         X86_CDECL_BASE
     }
 
     /// Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
-    ///
-    /// A variadic (`printk`) or `asmlinkage` callee takes every argument on
-    /// the stack; map it to [`Self::x86_cdecl`] in
-    /// `AnalyzeOptions::per_address_ccs`, or its first argument reads as
-    /// `arg(3)`.
+    /// Map a variadic (`printk`) or `asmlinkage` callee, which takes every
+    /// argument on the stack, to [`Self::x86_cdecl`] in `per_address_ccs`.
     #[must_use]
     pub const fn x86_linux_kernel() -> Self {
         // `int 0x80` clobbers EAX/ECX/EDX through the sla's trailing
