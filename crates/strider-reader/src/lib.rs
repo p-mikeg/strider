@@ -14,11 +14,8 @@ pub use region::MemRegion;
 pub(crate) use region::{MAX_PATCH_LEN, Patch, collapse_equal_starts};
 pub use table::MemRegionsLookupTable;
 
-/// Error type for every [`rsleigh::MemReader`] impl in the strider crates.
-///
-/// `rsleigh::MemReader` requires `Err: std::error::Error + 'static`, which
-/// `anyhow::Error` does not implement. This wrapper satisfies the
-/// bound while keeping `anyhow!` / `?` usable at call sites.
+/// Error type for every [`rsleigh::MemReader`] impl: an `anyhow::Error`
+/// satisfying `std::error::Error + 'static`.
 #[derive(Debug)]
 pub struct MemReadError(pub(crate) anyhow::Error);
 
