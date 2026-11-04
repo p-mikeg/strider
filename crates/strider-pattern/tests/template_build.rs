@@ -701,12 +701,8 @@ fn a_gapped_template_output_slot_is_refused() {
     );
 }
 
-/// A build-side capture replaces what it wraps, so only a leaf may carry one.
-/// The composite form is compile-fail:
-///
-///     template::int_add(var(a), var(b)).capture(c).into_template();
-///     // error[E0599]: no method named `into_template` found for struct
-///     //              `Captured<IntBinaryFixed<Var, Var>>`
+/// A build-side capture replaces what it wraps, so only a leaf may carry one;
+/// the composite form fails to compile (the `TemplatePat` doctest).
 #[test]
 fn leaf_capture_is_the_binding_it_names() {
     let (a, c) = (Capture::new(), Capture::new());

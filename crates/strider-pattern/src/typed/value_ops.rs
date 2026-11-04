@@ -281,11 +281,11 @@ pub(crate) mod ops {
     un! { float_abs, NodeKind::FloatUnaryOp(FloatUnaryOp::Abs),
     "Float absolute value `|x|`." }
     un! { float_sqrt, NodeKind::FloatUnaryOp(FloatUnaryOp::Sqrt),
-    "Float square root `√x`." }
+    "Float square root `sqrt(x)`." }
     un! { float_ceil, NodeKind::FloatUnaryOp(FloatUnaryOp::Ceil),
-    "Float ceiling `⌈x⌉`." }
+    "Float ceiling `ceil(x)`." }
     un! { float_floor, NodeKind::FloatUnaryOp(FloatUnaryOp::Floor),
-    "Float floor `⌊x⌋`." }
+    "Float floor `floor(x)`." }
     un! { float_round, NodeKind::FloatUnaryOp(FloatUnaryOp::Round),
     "Float round to nearest, ties away from zero." }
 
