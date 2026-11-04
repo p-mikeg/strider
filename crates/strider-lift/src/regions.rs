@@ -89,14 +89,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 self.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, region_map)?;
             }
             // Fingerprint contributor for the terminator handlers: the region's
-            // last pcode insn.  A region with zero pcode insns is a synthetic
-            // tail-call stub, whose `Call + Return` is proven by the
-            // predecessor's branch or fall-through, so fall back to that or its
-            // nodes carry no fingerprint and fail the validator's non-empty
-            // check.  A predecessor with no pcode insn is a zero-pcode-op
-            // instruction falling through, which starts at its region's start.
-            // `max` picks one deterministic contributor when several branches
-            // share a deduped stub.
+            // last pcode insn. A region with none (a synthetic tail-call stub,
+            // or a run of zero-op instructions) falls back to its predecessor's
+            // branch or fall-through, or its nodes carry no fingerprint and fail
+            // the validator. A predecessor with no pcode insn contributes its
+            // region start. `max` picks one when several branches share a stub.
             let term_addr = region
                 .insns
                 .last()
