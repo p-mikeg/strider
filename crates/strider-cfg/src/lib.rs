@@ -14,27 +14,6 @@ mod types;
 
 pub type Result<T> = anyhow::Result<T>;
 
-/// The ISA-mode bit flowing into `addr`, falling back to `entry_bit`.
-///
-/// Only meaningful while the region owning `addr` is decoding, and
-/// `Builder::sample_flowing_isa_bit` is the one place that reads it there.
-/// Sleigh context flows forward and both re-imposers write only on drift, so a
-/// region explored later and starting below `addr` paints its own mode over it;
-/// a read after the build answers for that later region.
-/// [`Cfg::flowing_isa_bit_at_site`] carries the seal-time answer out instead.
-pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
-    arch: &strider_target::SleighArch,
-    sleigh: &rsleigh::Sleigh<R>,
-    addr: u64,
-    entry_bit: bool,
-) -> bool {
-    arch.isa_mode_var().map_or(entry_bit, |var| {
-        sleigh
-            .get_context_at(addr, var)
-            .map_or(entry_bit, |mode| mode != 0)
-    })
-}
-
 pub use engine::DecodeEngine;
 pub use incomplete::{Incompleteness, Reason};
 pub use indirect_resolver::{Arms, ResolvedTarget, ResolvedTargets};
