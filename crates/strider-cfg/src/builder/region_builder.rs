@@ -1,5 +1,4 @@
 use petgraph::graph::NodeIndex;
-use petgraph::visit::EdgeRef;
 
 mod decode;
 
@@ -14,7 +13,7 @@ use crate::Result;
 
 /// Whether `seal_at_call_not_returning` may end a region here.  Not the only
 /// `NoReturn` emitter: see [`RegionTerminator::NoReturn`].
-fn is_call(insn: &RegionInstruction) -> bool {
+pub(super) fn is_call(insn: &RegionInstruction) -> bool {
     matches!(
         insn.insn.opcode,
         rsleigh::Opcode::Call | rsleigh::Opcode::CallIndirect
@@ -598,6 +597,22 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     if self.seal_at_call_not_returning(cur_addr, reason)? {
                         return Ok(());
                     }
+                    // A zero-pcode-op run loses no code. Whether a call falls
+                    // into it is settled in `Builder::finish`, once every
+                    // predecessor exists.
+                    if self.insns.is_empty()
+                        && (!off_arm
+                            || !self.builder.calls_falling_into(self.parent_edge).is_empty())
+                    {
+                        self.seal_and_report(cur_addr, reason)?;
+                        let nop = self
+                            .builder
+                            .index
+                            .get(self.start_addr)
+                            .expect("just sealed");
+                        self.builder.nops_into_no_code.push(nop);
+                        return Ok(());
+                    }
                     if marked_data && !off_arm {
                         return self.seal_and_report(cur_addr, reason);
                     }
@@ -743,73 +758,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         reason: crate::Reason,
     ) -> Result<bool> {
         let Some(call) = self.insns.iter().rposition(is_call) else {
-            return self.seal_at_preceding_call_not_returning(cur_addr, reason);
+            return Ok(false);
         };
         self.insns.truncate(call + 1);
         self.finish_current_region(RegionTerminator::NoReturn)?;
         self.builder.report.incomplete.insert(cur_addr, reason);
         Ok(true)
-    }
-
-    /// [`Self::seal_at_call_not_returning`] for a region holding only
-    /// zero-pcode-op instructions, which carries no call of its own: `build`
-    /// segments at every one of them, so `call; nop; <not code>` reaches the
-    /// seal from the nop's region.
-    ///
-    /// Walks back over the run (each nop an empty `Unconditional` region with
-    /// one predecessor) to the region whose LAST instruction is the call,
-    /// re-seals it as `NoReturn` and drops its fall-through edge.  Last, not
-    /// anywhere: an instruction after the call means the region was sealed
-    /// somewhere other than the nop, so the fall-through is not the call's
-    /// return.
-    ///
-    /// The nops keep their own regions, sealed onto a stub, so a branch
-    /// landing on one still has a successor; orphaned otherwise, they go with
-    /// `Builder::remove_unreachable_regions`.
-    fn seal_at_preceding_call_not_returning(
-        &mut self,
-        cur_addr: PcodeInsnAddr,
-        reason: crate::Reason,
-    ) -> Result<bool> {
-        if !self.insns.is_empty() {
-            return Ok(false);
-        }
-        let mut current = self.parent_edge;
-        while let Some(region_id) = current {
-            let region = &self.builder.region_graph[region_id];
-            if region.terminator != RegionTerminator::Unconditional {
-                return Ok(false);
-            }
-            match region.insns.last() {
-                Some(last) if is_call(last) => {
-                    self.seal_and_report(cur_addr, reason)?;
-                    let outgoing: Vec<_> = self
-                        .builder
-                        .region_graph
-                        .edges_directed(region_id, petgraph::Outgoing)
-                        .map(|e| e.id())
-                        .collect();
-                    for edge in outgoing {
-                        self.builder.region_graph.remove_edge(edge);
-                        self.builder.non_boundary_seats.remove(&edge);
-                    }
-                    self.builder.region_graph[region_id].terminator = RegionTerminator::NoReturn;
-                    return Ok(true);
-                }
-                Some(_) => return Ok(false),
-                // Another zero-pcode-op instruction: keep walking while its
-                // single predecessor makes the fall-through chain unambiguous.
-                None => {
-                    let mut preds = self
-                        .builder
-                        .region_graph
-                        .neighbors_directed(region_id, petgraph::Incoming);
-                    let pred = preds.next();
-                    current = preds.next().is_none().then_some(pred).flatten();
-                }
-            }
-        }
-        Ok(false)
     }
 
     /// Sequential decoding running off the recorded function extent: the
