@@ -100,9 +100,9 @@ pub(super) fn seed_still_covers(sites: &SiteTable<'_>, site: PcodeInsnAddr) -> b
         .is_none_or(|settled| visit(settled.arms()).all(|t| seeded.contains(&t.addr)))
 }
 
-/// Sites seated from the caller's answer alone: an unclassified `Switch`
+/// Sites seated with an answer nothing verified: an unclassified `Switch`
 /// still within its seed, a caller-seeded `LinkRegister` return, and every
-/// `TailCall` seat.
+/// `TailCall` seat, whoever derived it.
 pub(super) fn unverified_seeded_sites(
     cfg: &Cfg,
     switches: &Anchors,
