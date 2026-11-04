@@ -153,7 +153,7 @@ pub(crate) fn aliasable_vns(cfg: &strider_cfg::Cfg) -> impl Iterator<Item = rsle
 
 /// Each direct call's and tail call's target in `cfg`: the keys a `Call`
 /// selects its `per_address_ccs` override by. Mirrors
-/// [`FunctionLifter::call_override`] and `handle_tail_call`.
+/// [`crate::FunctionLifter::call_override`] and `handle_tail_call`.
 fn override_call_targets(
     cfg: &strider_cfg::Cfg,
     code_space: rsleigh::VnSpace,
