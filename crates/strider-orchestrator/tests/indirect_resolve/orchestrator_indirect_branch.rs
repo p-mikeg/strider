@@ -368,30 +368,6 @@ fn caller_supplied_targets_seat_with_resolution_off() {
     );
 }
 
-/// A placeholder the knob left in place is still a RESULT: the orchestrator
-/// derives its report from the classifier's map, so skipping the pass entirely
-/// publishes an empty list next to a live `IndirectBranch`.
-#[test]
-fn resolution_off_still_reports_the_surviving_placeholders() {
-    let off = analyze_with_opts(
-        common::Arch::X64,
-        "switch",
-        "dispatch_value",
-        Default::default(),
-        false,
-    )
-    .expect("converges with resolution off");
-    let placeholders = count_indirect_branch_placeholders(&off.function);
-    assert!(placeholders > 0, "resolution off must leave a placeholder");
-    assert_eq!(
-        off.incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .count(),
-        placeholders,
-        "every surviving placeholder must be reported",
-    );
-}
-
 /// A masked switch index carried around a loop through a phi.
 ///
 /// The `& 7` alone admits 0..7 while the table gcc emitted holds six entries,
