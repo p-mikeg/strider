@@ -164,7 +164,8 @@ impl Pattern {
         use strider_ir::node::NodeKind;
         self.graph.all_node_ids().any(|n| {
             let node = self.graph.node_kind(n);
-            !node.input_slots.is_empty()
+            !node.is_alternation()
+                && !node.input_slots.is_empty()
                 && [NodeKind::Phi, NodeKind::MemPhi, NodeKind::Region]
                     .iter()
                     .any(|k| node.kind.matches(k))
@@ -321,6 +322,14 @@ mod tests {
             load()
                 .mem(call().ctrl(region().any_input(anything())))
                 .into_pattern()
+        ));
+        // An alternation's inputs are arms, not operands.
+        let (a, b) = (Capture::new(), Capture::new());
+        assert!(!shape(
+            crate::one_of![int_add(var(a), var(b)), crate::int_mul(var(a), var(b))].into_pattern()
+        ));
+        assert!(shape(
+            crate::one_of![phi().phi_input(0, var(a)), var(b)].into_pattern()
         ));
     }
 
