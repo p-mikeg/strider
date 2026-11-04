@@ -87,12 +87,9 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Appends one operand per `region` phi, taken from `variables`. Operand
-    /// order follows the call order, pairing `phi.operand[i]` with `region`'s
-    /// i-th control predecessor.
-    ///
-    /// `variables` is read raw, an absent entry yielding `ValueId(0)`, so the
-    /// callers pass the entry region's complete `InitialVar` seed.
+    /// Appends one operand per `region` phi, taken from `variables`; the i-th call
+    /// pairs with `region`'s i-th control predecessor. An absent entry reads as
+    /// `ValueId(0)`, so `variables` must be complete.
     pub(crate) fn link_region_variables(
         &mut self,
         region: RegionId,

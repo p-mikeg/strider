@@ -27,12 +27,9 @@ fn producers(f: &Function, node: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-/// BFS around `center` over both input and output edges, capped at
-/// `max_nodes`.  A node is a hub when its consumer fan-out (plus its producers
-/// when `count_producers`) exceeds `hub_cap`: it is included and its producers
-/// (inputs) are still followed, but its consumer fan-out is not, so a
-/// widely-used value doesn't drag in most of the function. `center` always
-/// expands both directions.
+/// BFS around `center` over input and output edges, capped at `max_nodes`. A
+/// hub (consumer fan-out, plus producers when `count_producers`, over `hub_cap`)
+/// is included but its consumers are not followed, except at `center`.
 pub(super) fn neighborhood_nodes(
     f: &Function,
     center: NodeId,
