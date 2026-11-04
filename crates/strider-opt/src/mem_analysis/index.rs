@@ -1,12 +1,8 @@
-//! The defs of a [`MemLayout`] grouped by what they can clobber, so a climb asks
-//! for the highest possible clobber of a location in a position range without
-//! visiting the range.
-//!
-//! Every answer is a superset: [`super::walker::MemWalker`] still
-//! decides each candidate.  A store is classified once, when the index is
-//! built; a store whose address a later rewrite can still change is one whose
-//! address depended on a load, which classifies as an `Anchor` and is a
-//! candidate for every location.
+//! The defs of a [`MemLayout`] grouped by what they can clobber, so a climb
+//! finds the highest possible clobber in a position range without visiting
+//! it.  Answers are supersets; [`super::walker::MemWalker`] decides each.
+//! A store is classified once: one whose address a later rewrite can change
+//! read a load, so it is an `Anchor`, a candidate for every location.
 
 use std::collections::BTreeMap;
 
@@ -84,9 +80,8 @@ impl Offsets {
         self.starts.entry((start, size)).or_default().push(pos);
     }
 
-    /// The highest store in `lo..=hi` whose verdict against `[offset, offset +
-    /// size)` at `bits` can be anything but `Disjoint`: the stores starting in
-    /// a probe window that wraps with the offsets, each tested on the ring.
+    /// The highest store in `lo..=hi` that may overlap `[offset, offset +
+    /// size)` at `bits`.
     fn highest(&self, offset: i128, size: i128, bits: u32, lo: u32, hi: u32) -> Option<u32> {
         let all = || highest_in(&self.all, lo, hi);
         // At 128 bits a ring window does not fit `i128`.
@@ -120,11 +115,10 @@ struct SpaceStores {
     heap_opaque: Vec<u32>,
     heap_any: Vec<u32>,
     stack_any: Keyed<ValueId>,
-    /// Per base, at the base's own width, which every address rooted there
-    /// shares.
+    /// Per base, at the base's width.
     stack: FxHashMap<ValueId, Offsets>,
     heap: FxHashMap<ValueId, Offsets>,
-    /// Per address width: offsets at another width are never comparable.
+    /// Per address width.
     constant: FxHashMap<u32, Offsets>,
 }
 
