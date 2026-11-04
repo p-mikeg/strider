@@ -116,7 +116,6 @@ impl Function {
         self.call_register_frame_reach
     }
 
-    /// Sets [`Self::call_register_frame_reach`].
     #[inline]
     pub(crate) fn set_call_register_frame_reach(&mut self, reach: Option<i128>) {
         self.call_register_frame_reach = reach;
