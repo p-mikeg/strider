@@ -20,6 +20,10 @@ use strider_ir::IntBinaryOp;
 use strider_ir::eval;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 
+/// A constant address term below this is a field offset, never a table base:
+/// what an image maps in its first page is a PIE's headers or ARM's vectors.
+const FIRST_PAGE_END: u64 = 0x1000;
+
 /// The value the enumeration pins: `index` takes `x - rebase` for each `x` in
 /// `range`.  A non-zero `rebase` means the bound is on a guarded sibling
 /// `Add(index, rebase)`, in whose coordinate `range` is.
@@ -285,7 +289,7 @@ impl SiteClassifier<'_> {
 
     /// Whether `v` is a load through a pointer: a non-constant address none of
     /// whose added terms is bounded at `site` like a table index or is a
-    /// constant the ROM serves, a table base.
+    /// constant the ROM serves at or past [`FIRST_PAGE_END`], a table base.
     fn loads_a_field(&mut self, site: NodeId, v: ValueId) -> bool {
         let function = self.function();
         if !matches!(function.kind_of_value(v), NodeKind::Load(_)) {
@@ -305,6 +309,7 @@ impl SiteClassifier<'_> {
             if let Some(c) = function.int_const_u128(term) {
                 let served = u64::try_from(c)
                     .ok()
+                    .filter(|&c| c >= FIRST_PAGE_END)
                     .zip(self.eval.rom())
                     .is_some_and(|(c, rom)| rom.try_read(c, &mut [0u8]));
                 if served {

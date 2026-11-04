@@ -388,6 +388,17 @@ fn a_width_bounded_byte_of_a_rom_table_is_excluded_as_the_index() {
 /// read through a pointer: any of its 256 values may pick the target.
 /// Mutation: take every term of the address for a bounded index, or read
 /// every constant term as ROM.
+/// A byte at an unbounded register plus a first-page offset a ROM serves (a
+/// PIE's headers) is still a field read through a pointer.
+/// Mutation: read a first-page constant term as a table base.
+#[test]
+fn a_width_bounded_byte_at_a_mapped_first_page_offset_is_the_index() {
+    let (g, _) = build_with_target(|fb| byte_at(fb, false, 8));
+    let rom = MockRom::raw_bytes(0, vec![0; 0x1000]);
+    let want: Vec<u64> = (0..256).map(|i| 0x5000 + 4 * i).collect();
+    assert_eq!(arms(classify(&g, Some(&rom))), Some(want));
+}
+
 #[test]
 fn a_width_bounded_byte_through_a_pointer_is_the_index() {
     let (g, _) = build_with_target(|fb| byte_at(fb, false, 0xcb));

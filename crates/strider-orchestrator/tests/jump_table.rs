@@ -12,6 +12,9 @@ mod chained_tables_resolve_one_level_per_round;
 #[path = "jump_table/direct_edge_outranks_a_seeded_arm.rs"]
 mod direct_edge_outranks_a_seeded_arm;
 
+#[path = "jump_table/field_offset_in_a_mapped_first_page.rs"]
+mod field_offset_in_a_mapped_first_page;
+
 #[path = "jump_table/interworking_table_widens_in_arm_mode.rs"]
 mod interworking_table_widens_in_arm_mode;
 
