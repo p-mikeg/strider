@@ -113,7 +113,7 @@ impl PyVn {
         self.inner.size
     }
 
-    /// rsleigh's `Display` form, e.g. `%[0x20]:8` for a register varnode.
+    /// The space, offset and size, e.g. `%[0x20]:8` for a register varnode.
     fn __repr__(&self) -> String {
         format!("{}", self.inner)
     }
