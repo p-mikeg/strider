@@ -3,7 +3,6 @@ use cranelift_entity::{EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap
 use rustc_hash::FxHashSet;
 use std::hash::Hash;
 
-/// Never exposed; callers address the DAG by their own external key `N`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct UnionId(u32);
 entity_impl!(UnionId);
@@ -22,9 +21,9 @@ pub struct UnionDag<N: EntityRef, V: Copy + Eq + Hash> {
     roots: SecondaryMap<N, PackedOption<UnionId>>,
     nodes: PrimaryMap<UnionId, Node<V>>,
     links: ListPool<UnionId>,
-    /// The `(dst, src)` pairs already linked, one entry per DISTINCT link.
+    /// The `(dst, src)` pairs already linked.
     linked: FxHashSet<(UnionId, UnionId)>,
-    /// The `(root, value)` pairs already extended, one entry per DISTINCT value.
+    /// The `(root, value)` pairs already extended.
     held: FxHashSet<(UnionId, V)>,
 }
 
