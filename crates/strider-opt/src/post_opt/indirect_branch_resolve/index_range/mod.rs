@@ -207,17 +207,14 @@ impl<'f> RangeMap<'f> {
     }
 
     /// `region` applies only to a guard on the phi's own output; each arm is
-    /// queried in its own effective region.
-    ///
-    /// `value` is the phi's one output and `mask` its width mask, both already
-    /// in hand in the [`Self::range_of`] frame below which this runs.
+    /// queried at the producer of the edge it arrives on.
     fn resolve_phi(&mut self, value: ValueId, mask: u128, region: NodeId) -> Interval {
         let top = Interval::top(mask);
         let phi_node = self.function.producer(value);
         debug_assert_eq!(self.function.node_outputs(phi_node).first(), Some(&value));
-        // Each arm is queried in its own effective region: a guard holding on
-        // one incoming path must never apply to an arm bypassing it.
-        let Some((joining, arms)) = self.phi_arms(phi_node) else {
+        // A guard dominating an arm's edge holds on that edge; one holding on
+        // another incoming path must not apply.
+        let Some((_, arms)) = self.phi_arms(phi_node) else {
             return top;
         };
 
@@ -225,7 +222,7 @@ impl<'f> RangeMap<'f> {
         // so far must not survive it, their stride being one only they obey.
         let mut union: Option<Interval> = None;
         for (edge, arm_val) in arms {
-            let arm_range = self.range_of(arm_val, self.arm_query_region(edge, joining));
+            let arm_range = self.range_of(arm_val, self.function.graph().producer(edge));
             if arm_range.is_top(mask) {
                 union = None;
                 break;
@@ -428,34 +425,6 @@ impl<'f> RangeMap<'f> {
         let f = self.function;
         let arms: Vec<(ValueId, ValueId)> = f.phi_arms(phi_node).collect();
         (arms.len() >= 2).then(|| (f.phi_region(phi_node), arms))
-    }
-
-    /// The effective query region for the arm arriving on `edge`: the joining
-    /// region itself for an If's TRUE edge, else the arm's own source Region.
-    fn arm_query_region(&self, edge: ValueId, joining_region: NodeId) -> NodeId {
-        let g = self.function.graph();
-        let producer = g.producer(edge);
-        if matches!(g.node_kind(producer), NodeKind::If)
-            && g.node_outputs(producer).get(NodeKind::IF_TRUE_OUT_SLOT) == Some(&edge)
-        {
-            return joining_region;
-        }
-        self.ctrl_source_region(edge)
-    }
-
-    /// Walks control producers back past `If` / `Call` / `CallOther` to the
-    /// node the control originates at.
-    fn ctrl_source_region(&self, ctrl_val: ValueId) -> NodeId {
-        let f = self.function;
-        let mut curr = f.producer(ctrl_val);
-        while matches!(
-            f.node_kind(curr),
-            NodeKind::If | NodeKind::Call { .. } | NodeKind::CallOther { .. }
-        ) && let Some(pred_ctrl) = f.nth_input(curr, NodeKind::CTRL_SLOT)
-        {
-            curr = f.producer(pred_ctrl);
-        }
-        curr
     }
 
     /// Whether `sum`, an `Add` output, can range narrower than its type at
