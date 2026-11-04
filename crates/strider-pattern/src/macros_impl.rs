@@ -56,11 +56,12 @@ macro_rules! __const_with {
 macro_rules! __const_with_bindings {
     ($ctx:ident;) => {};
     ($ctx:ident; $name:ident : $kind:ident ? $(, $($rest:tt)*)?) => {
-        let $name = $crate::__const_with_extract!($ctx, $name, $kind).ok();
+        let $name = $crate::__const_with_extract!($ctx, $name, $kind);
         $( $crate::__const_with_bindings!($ctx; $($rest)*); )?
     };
     ($ctx:ident; $name:ident : $kind:ident $(, $($rest:tt)*)?) => {
-        let $name = $crate::__const_with_extract!($ctx, $name, $kind)?;
+        let $name = $crate::__const_with_extract!($ctx, $name, $kind)
+            .ok_or_else(|| $crate::missing_binding(stringify!($kind)))?;
         $( $crate::__const_with_bindings!($ctx; $($rest)*); )?
     };
     // Bare `ty` / `in_ty`, dispatched by spelling in `__const_with_bind_one`.
@@ -103,33 +104,25 @@ macro_rules! __const_with_bind_one {
     };
 }
 
-/// Maps a `kind` token to its `Bindings` extractor, as `anyhow::Result<T>`.
+/// Maps a `kind` token to its `Bindings` extractor, as `Option<T>`.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __const_with_extract {
     ($ctx:ident, $cap:ident, uint) => {
-        $ctx.bindings
-            .get_uint($cap, $ctx.function)
-            .ok_or_else(|| $crate::missing_binding("uint"))
+        $ctx.bindings.get_uint($cap, $ctx.function)
     };
     ($ctx:ident, $cap:ident, float_bits) => {
-        $ctx.bindings
-            .get_float_bits($cap, $ctx.function.graph())
-            .ok_or_else(|| $crate::missing_binding("float_bits"))
+        $ctx.bindings.get_float_bits($cap, $ctx.function.graph())
     };
     ($ctx:ident, $cap:ident, float_binary_op) => {
         $ctx.bindings
             .get_float_binary_op($cap, $ctx.function.graph())
-            .ok_or_else(|| $crate::missing_binding("float_binary_op"))
     };
     ($ctx:ident, $cap:ident, float_unary_op) => {
         $ctx.bindings
             .get_float_unary_op($cap, $ctx.function.graph())
-            .ok_or_else(|| $crate::missing_binding("float_unary_op"))
     };
     ($ctx:ident, $cap:ident, float_cmp_op) => {
-        $ctx.bindings
-            .get_float_cmp_op($cap, $ctx.function.graph())
-            .ok_or_else(|| $crate::missing_binding("float_cmp_op"))
+        $ctx.bindings.get_float_cmp_op($cap, $ctx.function.graph())
     };
 }
