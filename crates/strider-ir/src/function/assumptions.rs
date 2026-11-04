@@ -181,48 +181,30 @@ claims! {
         /// since the save. Read by the lift only (`AnalyzeOptions::assumptions`); added to a
         /// lifted function it changes nothing. Default on.
         pub msr_register_keeps_mode: bool = true,
-        /// The dynamic rounding mode a float-to-integer, narrowing or
-        /// integer-to-float conversion rounds by is round to nearest even: x86
-        /// MXCSR.RC (bits 13-14) at every SSE and VEX conversion that reads it
-        /// (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
-        /// `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
-        /// `cvtsi2ss`, the 64-bit `cvtsi2sd` and the scalar VEX forms), the x87
-        /// control word's RC (bits 10-11) at `fst` and `fstp` to a single or a
-        /// double, PowerPC FPSCR.RN at `fctid`, `fctiw`, `fctidu`, `fctiwu`,
-        /// `fcfid`, `fcfids`, `fcfidu`, `fcfidus` and `frsp`, ARM
-        /// FPSCR.RMode (bits 22-23) at `vcvtr`, `vcvt.f32.f64`, `vcvt.f32.s32`,
-        /// `vcvt.f32.u32` and `vcvtb` and `vcvtt` to half, AArch64 FPCR.RMode
-        /// (bits 22-23) at `fcvt` to a narrower float, `fcvtn`, `scvtf` and
-        /// `ucvtf` from a general register and `scvtf` from an FP one, and
-        /// `bfcvt` and `bfcvtn`, and MIPS FCSR.RM (bits 0-1) at `cvt.w`, `cvt.l`,
-        /// `cvt.s.d`, `cvt.s.w`, `cvt.s.l` and `cvt.d.l`.  The forms whose
-        /// rounding is fixed (`cvtt*`, `fcti*z`, ARM `vcvt` to an integer, MIPS
-        /// `round`, `trunc`, `floor` and `ceil`, and AArch64
-        /// `fcvt{n,a,m,p,z}{s,u}` and `fcvtxn`) read no mode, and x87 `fist`,
-        /// `fistp` and `frndint` read the control word whatever this says.  Off,
-        /// each conversion reads the mode and selects among its four, so a mode
-        /// the function sets (`ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr`, `ctc1`) folds
-        /// and an unknown one stays a select; an AArch64 FPCR read is volatile,
-        /// so there even one `msr fpcr` sets stays a select.
+        /// The dynamic rounding mode a float-to-integer, narrowing or integer-to-float
+        /// conversion reads is round to nearest even: x86 MXCSR.RC at the SSE and scalar
+        /// VEX conversions that read it (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`,
+        /// `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
+        /// `cvtsi2ss`, the 64-bit `cvtsi2sd`), x87 RC at `fst` / `fstp` to a single or
+        /// double, PowerPC FPSCR.RN at `fctid`, `fctiw`, `fctidu`, `fctiwu`, `fcfid`,
+        /// `fcfids`, `fcfidu`, `fcfidus` and `frsp`, ARM FPSCR.RMode at `vcvtr`,
+        /// `vcvt.f32.f64`, `vcvt.f32.s32`, `vcvt.f32.u32` and `vcvtb` / `vcvtt` to half,
+        /// AArch64 FPCR.RMode at `fcvt` to a narrower float, `fcvtn`, `scvtf` / `ucvtf`
+        /// from a general register, `scvtf` from an FP one, `bfcvt` and `bfcvtn`, and MIPS
+        /// FCSR.RM at `cvt.w`, `cvt.l`, `cvt.s.d`, `cvt.s.w`, `cvt.s.l` and `cvt.d.l`.
+        /// Fixed-mode forms (`cvtt*`, `fcti*z`, ARM `vcvt` to an integer, MIPS `round` /
+        /// `trunc` / `floor` / `ceil`, AArch64 `fcvt{n,a,m,p,z}{s,u}` and `fcvtxn`) read no
+        /// mode, and x87 `fist`, `fistp` and `frndint` always read RC.
         ///
-        /// Wrong where the code runs under another mode: after `fesetround`, or
-        /// a mode a caller set or this analysis cannot place.  Outside it: the
-        /// float arithmetic, taken to round to nearest either way
-        /// ([`AssumptionOptions::none`]), and the conversions lifted as opaque
-        /// user ops (the packed VEX and EVEX forms, `roundss` and its kin, the
-        /// AArch64 vector and FP-register `#fbits` forms and `ucvtf` from an FP
-        /// register, the ARM NEON and
-        /// fixed-point `vcvt`, `vrint*` and `frint*`), whose results nothing
-        /// folds.  MXCSR.FTZ and DAZ are taken as 0 either way, so under
-        /// `-ffast-math`, which sets them at startup, even
-        /// [`AssumptionOptions::none`] narrows a denormal wrongly;
-        /// so are PowerPC FPSCR.NI, OE and UE, ARM FPSCR.FZ, AArch64 FPCR.FZ and
-        /// MIPS FCSR.FS, so code that sets them (non-IEEE mode, flush to zero,
-        /// enabled overflow or underflow traps) has no floor here either.
+        /// Off, each listed conversion selects among the four modes, so a mode the function
+        /// sets (`ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr`, `ctc1`) folds and an unknown one
+        /// stays a select; an AArch64 FPCR read is volatile, so there it always stays one.
+        /// Wrong after `fesetround` or under a mode a caller set. Float arithmetic and the
+        /// conversions lifted as opaque user ops are outside it; the rest of the float
+        /// environment is [`AssumptionOptions::none`]'s premise.
         ///
-        /// Read by the lifter, so it counts only when the lift is given it
-        /// (`AnalyzeOptions::assumptions`); added to a lifted function it changes
-        /// nothing.  Default ON.
+        /// Read by the lift only (`AnalyzeOptions::assumptions`); added to a lifted
+        /// function it changes nothing. Default on.
         pub fp_rounding_mode_is_nearest: bool = true,
     }
 
