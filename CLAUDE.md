@@ -235,7 +235,7 @@ operands accept the same pairs with the same bindings.
   - Every closure a pattern lowers to is `Send`, so a `.when()` predicate
     captures an `Arc<AtomicUsize>`, not an `Rc<Cell<_>>`.
   - `strider-py` has no `unsendable` pyclass. `analyze`, `build_cfg` and
-    `add_elf` borrow the handle's `PyCell` exclusively, so a concurrent call
+    `add_elf` borrow the handle mutably (`PyRefMut`), so a concurrent call
     on it raises `StriderError`; read-only calls may overlap. Only `analyze`
     releases the GIL, and not over a Python reader. A daemon thread inside
     `analyze` at interpreter shutdown aborts the process.
