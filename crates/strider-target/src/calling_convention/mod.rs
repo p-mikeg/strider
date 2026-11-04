@@ -260,9 +260,11 @@ impl BuiltCallingConvention {
         )
     }
 
-    /// Checks the ABI invariants: byte disjointness of the register lists
-    /// and stack pointer, no duplicates, a callee-saved link register, sane
-    /// stack geometry. Advisory, since every field is `pub`.
+    /// Checks the ABI invariants: no return registers under
+    /// `preserves_all_registers`; callee-saved bytes disjoint from argument and
+    /// return registers, int from float within each, SP from every list; no
+    /// duplicates; a callee-saved link register; sane stack geometry.
+    /// Advisory, since every field is `pub`.
     ///
     /// # Errors
     /// The first violation, naming the offending varnodes.
