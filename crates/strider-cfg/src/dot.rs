@@ -28,8 +28,7 @@ pub struct CfgDotDumper<'a> {
 }
 
 impl CfgDotDumper<'_> {
-    /// Renders only `view`, so a neighborhood goes through the same label and
-    /// edge rules as a whole CFG rather than a second emitter.
+    /// Renders only `view`.
     pub(crate) fn restricted(self, view: dot::View<NodeIndex>) -> Self {
         Self {
             view: Some(view),
@@ -72,14 +71,9 @@ impl GraphDotDumper for CfgDotDumper<'_> {
         });
         out.node_left_lines(&dot_id, &head, lines, "box", self.center_attrs(node_id));
 
-        // Edges are unweighted, so label and style come from the SOURCE
-        // region's terminator.  A `CondBranch` source defers to `region_if`
-        // rather than re-implementing the containment rule here.
-        //
-        // The set tracks which sources already labelled their one if-true
-        // edge.  In the degenerate `if (c) goto L else goto L` case a source
-        // has two parallel edges here and `region_if` names the same region
-        // for both arms; without the guard both would render "if-true".
+        // Labels come from the source's terminator. The set keeps
+        // `if (c) goto L else goto L`'s two parallel edges from both reading
+        // "if-true".
         let mut cond_true_labelled = rustc_hash::FxHashSet::default();
         for edge in self
             .cfg
@@ -102,9 +96,7 @@ impl GraphDotDumper for CfgDotDumper<'_> {
                 }
                 RegionTerminator::Switch { .. } => ("switch", "solid"),
                 RegionTerminator::Unconditional => ("unconditional", "solid"),
-                // These have no outgoing edge, so an edge from one is a
-                // construction bug.  Render it visibly rather than failing the
-                // whole dump.
+                // No outgoing edge exists here; render a bug visibly.
                 RegionTerminator::Return
                 | RegionTerminator::NoReturn
                 | RegionTerminator::TailCall { .. }
