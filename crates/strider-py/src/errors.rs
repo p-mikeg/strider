@@ -9,19 +9,14 @@ create_exception!(
     strider,
     StriderError,
     PyException,
-    "Raised when an analysis fails, when a pattern is built into an invalid \
-     shape, and for a bad argument. The exceptions are a wrong type \
-     (`TypeError`), an int out of range (`OverflowError`, though an `entry` \
-     out of range raises `StriderError`), a range-checked option \
-     (`ValueError`, such as `CfgOptions(function_max_size=0)`, an unknown \
-     `known_targets` string, an empty `data_ranges` range or a \
-     `BufferReader` region past the address space), an ELF `load_elf` cannot \
-     lift (`ValueError`), and a missing `load_elf` path \
-     (`FileNotFoundError`). The message carries the error and its causes; \
-     `.backtrace` carries the error and its causes followed by the Rust \
-     backtrace, resolved when first read (empty on a `StriderError` raised \
-     from Python), and `STRIDER_BACKTRACE=1` folds the backtrace into the \
-     message too."
+    "Raised when an analysis fails, a pattern is malformed, or an argument \
+     has a bad value, a malformed ELF included. A wrong type raises \
+     `TypeError`, an int out of range `OverflowError` (an `entry` raises \
+     `StriderError`), a range-checked option `ValueError`, a file \
+     `load_elf` finds is not an ELF or targets an unsupported arch or ABI \
+     `ValueError`, and a missing path `FileNotFoundError`.\n\n\
+     `.backtrace` is the message followed by the Rust backtrace (empty when \
+     raised from Python); `STRIDER_BACKTRACE=1` appends it to the message."
 );
 
 thread_local! {
