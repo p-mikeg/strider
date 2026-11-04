@@ -17,3 +17,6 @@ mod mips_narrowing_rounding;
 
 #[path = "arch_mips/semantics_mips64_n64.rs"]
 mod semantics_mips64_n64;
+
+#[path = "arch_mips/mips_cop0.rs"]
+mod mips_cop0;
