@@ -795,7 +795,9 @@ impl PyLifter {
     ///
     /// A stand-alone sweep, so it works for an `addr` outside any analysed
     /// CFG.  `addr` must be reachable through the linear instruction stream
-    /// from `entry`; raises `StriderError` otherwise.
+    /// from `entry`; raises `StriderError` otherwise. On an ISA-mode arch
+    /// `entry`'s low bit selects the mode, as for `analyze`, and the sweep
+    /// starts at `entry & ~1`.
     ///
     /// Also raises once this `Lifter` has committed more decode modes than the
     /// sweep engine can carry over, which on an ISA-mode arch is the only
@@ -807,7 +809,14 @@ impl PyLifter {
         // A mapping shortened under us takes a SIGBUS on the read, which no
         // Python `except` can catch.
         crate::reader::check_mem_unchanged(py, &[&this.mem_obj])?;
-        if addr < entry {
+        // The entry's ISA bit selects the mode, as in `DecodeEngine::build_cfg`.
+        let entry_mode = this.target()?.entry_mode_context(entry);
+        let start = if entry_mode.is_some() {
+            entry & !1
+        } else {
+            entry
+        };
+        if addr < start {
             return Err(into_strider_err(anyhow::anyhow!(
                 "pcode_at: addr {addr:#x} is before entry {entry:#x}"
             )));
@@ -845,14 +854,19 @@ impl PyLifter {
                          fresh Lifter to sweep from"
                     )));
                 }
-                let sleigh = sleigh.clone();
+                let mut sleigh = sleigh.clone();
+                if let Some((var, value)) = entry_mode {
+                    sleigh
+                        .set_context_at(start, var, value)
+                        .map_err(|e| into_strider_err(anyhow::anyhow!("pcode_at: {e:#}")))?;
+                }
                 SweepSleigh {
                     context_gen,
                     entry,
                     space_ids: sleigh.space_ids(),
                     sleigh,
                     answers: std::collections::HashMap::new(),
-                    cursor: entry,
+                    cursor: start,
                 }
             }
         };
