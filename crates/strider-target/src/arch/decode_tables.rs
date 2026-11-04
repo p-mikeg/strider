@@ -2,11 +2,10 @@
 //! decode engine and a lift engine read, built and checked once per process.
 
 use std::ops::Range;
-use std::sync::OnceLock;
 
 use rsleigh::{MemReader, Sleigh, SleighRegs, Vn, VnSpace};
 
-use crate::arch::{ArchPreset, SleighArch};
+use crate::arch::SleighArch;
 
 /// Whether the sla declares a committed context var flowing, which decides
 /// what a re-derive erases it to.
@@ -54,7 +53,7 @@ impl DecodeTables {
     /// sla does not flow the ISA-mode var, does not declare a var the arch
     /// re-derives, pairs `ISAModeSwitch` differently, or its `ram` space is
     /// missing, misnamed or not byte-addressed.
-    fn from_sleigh<R: MemReader>(
+    pub(super) fn from_sleigh<R: MemReader>(
         arch: SleighArch,
         sleigh: &Sleigh<R>,
         regs: &SleighRegs,
@@ -139,7 +138,7 @@ impl DecodeTables {
             transient_defaults,
             declared_reg_vns: regs.vns().collect(),
             isa_mode_switch_vn,
-            volatile_ranges: arch.volatile_register_ranges()?,
+            volatile_ranges: arch.volatile_register_ranges(regs)?,
             internal_register_vns: arch
                 .internal_registers()
                 .iter()
@@ -150,8 +149,7 @@ impl DecodeTables {
 }
 
 impl SleighArch {
-    /// This arch's [`DecodeTables`], built once per preset per process from a
-    /// Sleigh over an empty image.
+    /// This arch's [`DecodeTables`], built once per preset per process.
     ///
     /// # Panics
     ///
@@ -160,16 +158,7 @@ impl SleighArch {
     /// `every_preset_has_a_user_op_table_and_an_ram_named_ram` sweeps.
     #[must_use]
     pub fn decode_tables(self) -> &'static DecodeTables {
-        static TABLES: [OnceLock<DecodeTables>; ArchPreset::ALL.len()] =
-            [const { OnceLock::new() }; ArchPreset::ALL.len()];
-        TABLES[self.preset() as usize].get_or_init(|| {
-            let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
-            let sleigh = self
-                .sleigh(probe)
-                .unwrap_or_else(|e| panic!("the compiled-in sla does not load: {e:#}"));
-            DecodeTables::from_sleigh(self, &sleigh, self.names().regs())
-                .unwrap_or_else(|e| panic!("{e:#}"))
-        })
+        &self.probe().1
     }
 }
 
