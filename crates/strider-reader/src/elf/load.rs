@@ -98,7 +98,12 @@ impl OwnedElf {
             !backing.as_slice().starts_with(LFS_POINTER_MAGIC),
             "a Git LFS pointer, not an ELF: run `git lfs pull`"
         );
-        object::File::parse(backing.as_slice()).context("failed to parse ELF")?;
+        let file = object::File::parse(backing.as_slice()).context("failed to parse ELF")?;
+        anyhow::ensure!(
+            matches!(file, object::File::Elf32(_) | object::File::Elf64(_)),
+            "a {:?} object, not an ELF",
+            file.format()
+        );
         Ok(Self { backing })
     }
 
