@@ -387,35 +387,23 @@ fn frsp_rounds_by_fpscr_rn() {
     }
 }
 
-/// `xscvdpspn` reads RN exactly when the claim is off (its value is checked
-/// in `ppc_vsx_and_rounding.rs`).
+/// `xscvdpspn` reads no RN, the claim off too: it rounds nothing.
 #[test]
-fn xscvdpspn_reads_fpscr_rn_only_without_the_claim() {
+fn xscvdpspn_reads_no_fpscr_rn() {
     // xscvdpspn vs34, vs34; blr, vs34 the vector return register
     let words = [0xf040_142f_u32, 0x4e80_0020];
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    for (claims, reads) in [
-        (AssumptionOptions::none(), true),
-        (AssumptionOptions::default(), false),
-    ] {
-        let (mut strider, cc) =
-            common::strider_over_bytes(Arch::Ppc64le, bytes.clone(), BASE, None);
-        let rn1 = strider.sleigh_regs().name_to_vn("fp_rn1").expect("fp_rn1");
-        let opts = strider_orchestrator::AnalyzeOptions {
-            assumptions: claims,
-            ..Default::default()
-        };
-        let f = strider
-            .analyze(BASE, &cc, &opts, None)
-            .expect("analyze")
-            .function;
-        assert_eq!(
-            f.initial_var_value(&rn1).is_some(),
-            reads,
-            "{}",
-            f.to_text(false)
-        );
-    }
+    let (mut strider, cc) = common::strider_over_bytes(Arch::Ppc64le, bytes, BASE, None);
+    let rn1 = strider.sleigh_regs().name_to_vn("fp_rn1").expect("fp_rn1");
+    let opts = strider_orchestrator::AnalyzeOptions {
+        assumptions: AssumptionOptions::none(),
+        ..Default::default()
+    };
+    let f = strider
+        .analyze(BASE, &cc, &opts, None)
+        .expect("analyze")
+        .function;
+    assert!(f.initial_var_value(&rn1).is_none(), "{}", f.to_text(false));
 }
 
 /// `mtfsfi 0, U` sets FX and OX from U, and FEX and VX from the bits they
