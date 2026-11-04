@@ -27,10 +27,8 @@ impl FunctionBuilder {
         self.write_variable_from_id(var_id, value)
     }
 
-    /// Wires `region_id` as the function entry, taking the freshly built
-    /// `InitialVar`s as its current variable values.
-    ///
-    /// Errors when a tracked variable's byte size has no matching
+    /// Wires `region_id` as the entry, its current values the new
+    /// `InitialVar`s. Errors on a variable size with no
     /// [`crate::node::ValueType`].
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
         let initial_variables = self.wire_entry_and_build_initial_vars(region_id)?;
@@ -38,9 +36,8 @@ impl FunctionBuilder {
         for (var_id, &value) in initial_variables.iter() {
             packed[var_id] = value.into();
         }
-        // The entry carries phis when it is also a join (a loop header). Each
-        // `InitialVar` is then that phi's entry-edge operand, appended by
-        // `link_region_variables` below.
+        // An entry that is also a loop header gets each `InitialVar` as its
+        // phis' entry-edge operand.
         self.seed_variables(region_id, packed);
         self.link_region_variables(region_id, &initial_variables)
     }
@@ -56,8 +53,7 @@ impl FunctionBuilder {
         let entry_memory = self.entry_memory;
         self.link_edges(region_id, entry_control, entry_memory);
 
-        // A `vn_id` doubles as SSA-variable key and `InitialVar` payload, so
-        // no index translation is needed.
+        // A `vn_id` is both the variable key and the `InitialVar` payload.
         let vn_ids: Vec<_> = self.function().vn_ids().collect();
         let mut initial_variables = SecondaryMap::new();
         for vn_id in vn_ids {

@@ -1,27 +1,19 @@
-//! Integer evaluation at a declared width, over the [`UBig`] the interner
-//! stores.
+//! Two's-complement integer evaluation at a declared width, over unbounded
+//! [`UBig`]. Total at every integer width; `None` means the operation is
+//! undefined (divide by zero, `INT_MIN / -1`) or `ty` is a float.
 //!
-//! `UBig` is unbounded, so two's-complement-at-a-declared-width is strider's
-//! rule, and it lives here: every function below is total at every declared
-//! integer width. `None` means only that the operation is undefined (divide
-//! by zero, `INT_MIN / -1`) or that `ty` is a float, which has no integer
-//! bits.
-//!
-//! [`bit`], [`mask_below`] and [`sign_bit`] are the exception: they are the
-//! `u128`-carrier width helpers [`ValueType`]'s own accessors are built from.
+//! [`bit`], [`mask_below`] and [`sign_bit`] are `u128` helpers instead.
 
 use dashu_int::ops::BitTest;
 use dashu_int::{IBig, UBig};
 
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 
-/// `v` with every bit above `ty`'s width cleared. A float has no integer
-/// bits: 0.
+/// `v` with every bit above `ty`'s width cleared; 0 for a float.
 #[must_use]
 pub fn mask(v: &UBig, ty: ValueType) -> UBig {
     match ty {
-        // A width the carrier holds masks without touching the heap: `&` with
-        // a carrier mask reads only the low dword of a wider `v`.
+        // Up to 128 bits, mask without allocating.
         ValueType::Int(w) if w <= 128 => match u128::try_from(v) {
             Ok(n) => UBig::from(n & mask_below(w.into())),
             Err(_) => v & UBig::from(mask_below(w.into())),
@@ -35,7 +27,7 @@ pub fn mask(v: &UBig, ty: ValueType) -> UBig {
     }
 }
 
-/// Every bit of `ty` set, 0 for a float.
+/// 0 for a float.
 #[must_use]
 pub fn all_ones(ty: ValueType) -> UBig {
     match ty {
@@ -51,17 +43,14 @@ pub fn complement(v: &UBig, ty: ValueType) -> UBig {
     all_ones(ty) ^ mask(v, ty)
 }
 
-/// A run of `bits` ones at `[shift, shift + bits)`, 0 at `bits == 0`.
-///
-/// Unbounded: a caller wanting it inside a type masks with [`mask`] or
-/// [`complement`].
+/// A run of `bits` ones at `[shift, shift + bits)`. Not masked to any type.
 #[must_use]
 pub fn ones_at(bits: usize, shift: usize) -> UBig {
     ((UBig::ONE << bits) - UBig::ONE) << shift
 }
 
-/// `v`'s little-endian bytes, zero-extended to the bytes `ty` spans:
-/// `UBig::to_le_bytes` drops its own trailing zero bytes.
+/// `v`'s little-endian bytes, zero-padded to `ty`'s byte size (which
+/// `UBig::to_le_bytes` trims).
 #[cfg(any(test, feature = "test-util"))]
 #[must_use]
 pub fn le_bytes(v: &UBig, ty: ValueType) -> Vec<u8> {
@@ -70,31 +59,28 @@ pub fn le_bytes(v: &UBig, ty: ValueType) -> Vec<u8> {
     out
 }
 
-/// Bit `n` of the `u128` carrier, 0 at and past its top: the saturating form
-/// of `1u128 << n`, which panics there.
+/// `1u128 << n`, but 0 for `n >= 128`.
 #[inline]
 #[must_use]
 pub const fn bit(n: u32) -> u128 {
     if n >= 128 { 0 } else { 1u128 << n }
 }
 
-/// The low `bits` bits set, saturating to `u128::MAX` at and past the
-/// carrier. A type's own mask is [`ValueType::int_mask_u128`].
+/// The low `bits` bits set, saturating to `u128::MAX` at 128 and past.
 #[inline]
 #[must_use]
 pub const fn mask_below(bits: u32) -> u128 {
     bit(bits).wrapping_sub(1)
 }
 
-/// The top bit of a `bits`-wide integer: 0 at width 0, and past the carrier,
-/// where the carrier does not hold it.
+/// The top bit of a `bits`-wide integer; 0 at width 0 and past 128.
 #[inline]
 #[must_use]
 pub const fn sign_bit(bits: u32) -> u128 {
     bit(bits.wrapping_sub(1))
 }
 
-/// `ty`'s width; `None` for a float, which has no integer bits.
+/// `None` for a float.
 fn int_bits(ty: ValueType) -> Option<usize> {
     match ty {
         ValueType::Int(w) => Some(w.into()),
@@ -102,7 +88,7 @@ fn int_bits(ty: ValueType) -> Option<usize> {
     }
 }
 
-/// `v` read as two's complement at `ty`'s width; `None` for a float.
+/// `v` read as two's complement at `ty`; `None` for a float.
 #[must_use]
 pub fn signed(v: &UBig, ty: ValueType) -> Option<IBig> {
     let bits = int_bits(ty)?;
@@ -115,44 +101,35 @@ pub fn signed(v: &UBig, ty: ValueType) -> Option<IBig> {
     })
 }
 
-/// `v` wrapped into `ty`'s two's-complement ring. A float has no integer
-/// bits: 0.
+/// `v` wrapped to `ty`'s width; 0 for a float.
 #[must_use]
 pub fn unsigned(v: IBig, ty: ValueType) -> UBig {
     v & all_ones(ty)
 }
 
-/// The least value `ty` holds in two's complement.
 fn signed_min(ty: ValueType) -> IBig {
     -(IBig::ONE << ty.bit_width().saturating_sub(1))
 }
 
-/// The greatest value `ty` holds in two's complement.
 fn signed_max(ty: ValueType) -> IBig {
     (IBig::ONE << ty.bit_width().saturating_sub(1)) - IBig::ONE
 }
 
 /// Whether a shift by `amount` is at or past `ty`'s width, where Sleigh
-/// (opbehavior.cc:411) answers 0, or the sign fill for IntSright. Takes the
-/// raw amount: reducing or masking it first would wrap it back into range.
-///
-/// At `I1` the width is 1 bit, not Sleigh's byte; the lifter emits `I1` only
-/// from compares and boolean ops and widens it before reuse, so no shift sees one.
+/// (opbehavior.cc:411) answers 0, or the sign fill for `IntSright`. Takes the
+/// raw amount: masking it first would wrap it back into range. At `I1` the
+/// width is 1 bit, not Sleigh's byte; the lifter never shifts an `I1`.
 #[inline]
 #[must_use]
 pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
     amount >= ty.bit_width() as u128
 }
 
-/// Result masked to `ty`, or `None` when the operation is undefined (division
-/// by zero, `INT_MIN / -1`) or `ty` is a float.
-///
-/// Both operands are masked to `ty` at entry, the shift amount only after it
-/// is clamped to the width.
+/// Result masked to `ty`. Operands are masked first, except a shift amount,
+/// which is clamped to the width before masking.
 #[inline]
 pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<UBig> {
     let bits = int_bits(ty)?;
-    // Sleigh answers a count at or past the width as one exactly at it.
     let shift = usize::try_from(r).map_or(bits, |a| a.min(bits));
     let l = mask(l, ty);
     let r = mask(r, ty);
@@ -175,21 +152,18 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
         IntBinaryOp::Sdiv => {
             let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
             if sr == IBig::ZERO || (sl == signed_min(ty) && sr == IBig::NEG_ONE) {
-                // INT_MIN / -1 is undefined at every signed width: the
-                // mathematical result is one past the top of `ty`.
                 return None;
             }
-            // `IBig` division truncates toward zero, as Sleigh's Sdiv does.
+            // Truncates toward zero, as Sleigh does.
             unsigned(sl / sr, ty)
         }
         IntBinaryOp::Srem => {
             let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
-            // INT_MIN % -1 is mathematically 0, but hardware idiv raises #DE.
-            // Treat it as undefined, matching the Sdiv arm.
+            // INT_MIN % -1 is 0, but hardware idiv faults; undefined, as Sdiv.
             if sr == IBig::ZERO || (sl == signed_min(ty) && sr == IBig::NEG_ONE) {
                 return None;
             }
-            // The remainder takes the dividend's sign, as Sleigh's Srem does.
+            // Takes the dividend's sign, as Sleigh does.
             unsigned(sl % sr, ty)
         }
     };
@@ -200,9 +174,6 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
 #[inline]
 pub fn int_cmp(op: IntCmpOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<bool> {
     int_bits(ty)?;
-    // A narrow IntConst carrying high bits beyond the type width would compare
-    // wrong unmasked. The signed arms re-mask via `signed`, so the double-mask
-    // is idempotent there.
     let l = mask(l, ty);
     let r = mask(r, ty);
 
@@ -210,8 +181,6 @@ pub fn int_cmp(op: IntCmpOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<bool> 
         IntCmpOp::Equal => l == r,
         IntCmpOp::Less => l < r,
         IntCmpOp::Sless => signed(&l, ty)? < signed(&r, ty)?,
-        // The exact sum / difference against `ty`'s range: an overflow is a
-        // result the width cannot hold.
         IntCmpOp::Carry => l + r > all_ones(ty),
         IntCmpOp::Scarry => {
             let sum = signed(&l, ty)? + signed(&r, ty)?;
@@ -224,7 +193,7 @@ pub fn int_cmp(op: IntCmpOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<bool> 
     })
 }
 
-/// `op` applied to `v` at `ty`'s width; `None` for a float.
+/// `None` for a float.
 #[inline]
 pub fn int_unary(op: IntUnaryOp, v: &UBig, ty: ValueType) -> Option<UBig> {
     int_bits(ty)?;
@@ -241,19 +210,15 @@ pub fn sign_extend(v: &UBig, in_ty: ValueType, out_ty: ValueType) -> Option<UBig
     Some(unsigned(s, out_ty))
 }
 
-/// The set bits of `v` within `in_ty`'s width; `None` for a float.
+/// `None` for a float.
 #[inline]
 pub fn popcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
     int_bits(in_ty)?;
     Some(UBig::from(mask(v, in_ty).count_ones()))
 }
 
-/// Leading-zero count within `in_ty`'s width, not the host's; `None` for a
-/// float.
-///
-/// Counts over `8 * byte_size`, which is what `opbehavior.cc:791` does
-/// (`count_leading_zeros(in1) - 8*(sizeof(uintb) - sizein)`). Only `I1`
-/// separates that from `bit_width`.
+/// Leading zeros over `8 * byte_size` bits, as `opbehavior.cc:791` counts
+/// (differs from `bit_width` only at `I1`); `None` for a float.
 #[inline]
 pub fn lzcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
     int_bits(in_ty)?;
@@ -339,14 +304,9 @@ mod tests {
         }
     }
 
-    /// Pins the invariant that makes preserve-then-let-Sleigh-zero exact: the
-    /// scalar write's positioned mask and the zero-writes' positioned masks
-    /// are disjoint and together tile the container, so after all of them the
-    /// container is fully determined with no stale bits and no gaps.
-    ///
-    /// Over the container the lifter really builds masks for: the AArch64
-    /// register table puts `s0` in the 32-byte `z0` (`SIMD_SIZE = 32`), not a
-    /// 16-byte `V0`, so this exercises the multi-limb path.
+    /// The scalar write's mask and the zero-writes' masks are disjoint and
+    /// tile the container, so no stale bits survive. `s0` lives in the 32-byte
+    /// `z0`, exercising the multi-limb path.
     #[test]
     fn aarch64_scalar_fp_write_then_upper_zero_tiles_the_container() {
         // `fmov s0,w0` lifts to `s0 = Copy(w0)` plus zero-writes tiling the
@@ -753,10 +713,8 @@ mod tests {
         }
     }
 
-    /// `I1` is the one type whose `bit_width` is not its byte size times 8, so the
-    /// shift guard reads 1 where Sleigh's `8 * sizeout` reads 8, and
-    /// `get_signed_int` reads the low bit as the sign.  Neither shape is producible
-    /// by the lifter; the rows pin what the guard's comment names as its exception.
+    /// At `I1` the shift guard reads width 1 where Sleigh reads 8, and the low
+    /// bit is the sign. The lifter never produces either shape.
     #[test]
     fn int_shift_guard_at_i1_diverges_from_sleigh() {
         // Sleigh: `1 < 8` and `signbit_negative(1, 1 byte) == false`, so `1 >> 1`

@@ -25,9 +25,8 @@ fn require_reg_or_unique(vn: &rsleigh::Vn) -> Result<()> {
 }
 
 impl FunctionBuilder {
-    /// Outputs are `[Control, Memory]` then one `Typed` slot per output vn,
-    /// each tagged with its varnode. `inputs` must already be fully
-    /// assembled; the caller does all control/memory advancing.
+    /// Outputs `[Control, Memory]` then one value per output vn, tagged with
+    /// it. The caller advances control and memory.
     fn emit_call_node(
         &mut self,
         kind: NodeKind,
@@ -50,10 +49,8 @@ impl FunctionBuilder {
         Ok((node, outputs))
     }
 
-    /// `output_vns` is ret-vals then clobbers; the returned values come back
-    /// in that same order. Writeback is the caller's job.
-    ///
-    /// Advances both control and memory, then rebinds SP to
+    /// `output_vns` is ret-vals then clobbers, returned in that order for the
+    /// caller to write back. Advances control and memory, then rebinds SP to
     /// `pre_call_SP + ret_stack_pop`.
     pub fn build_call(
         &mut self,
@@ -69,9 +66,8 @@ impl FunctionBuilder {
         let sp_vn = self.function.default_cc().stack_ptr;
         let sp_value = self.read_variable(&sp_vn)?;
         // A callee can read a register its convention neither passes nor
-        // preserves (i386 `regparm`, a static chain, AArch64's indirect-result
-        // register), and the call node carries no such value.  A Sleigh
-        // temporary and an sla-internal register are scratch no callee sees.
+        // preserves (i386 `regparm`, a static chain); temporaries and
+        // sla-internal registers it cannot.
         let internal = &self.internal_registers;
         let reaches_callee = |vn: &&rsleigh::Vn| {
             vn.addr_space == rsleigh::VnSpace::REGISTER
@@ -108,8 +104,7 @@ impl FunctionBuilder {
         Ok((node, outputs[kind.output_head_len()..].to_vec()))
     }
 
-    /// Every varnode must be REGISTER / UNIQUE space, and none may appear
-    /// twice. Does NOT check that a vn is its own container.
+    /// REGISTER / UNIQUE space, no duplicates. Does not check containers.
     fn validate_call_output_vns(&self, output_vns: &[rsleigh::Vn]) -> Result<()> {
         for (i, vn) in output_vns.iter().enumerate() {
             require_reg_or_unique(vn)?;
@@ -120,13 +115,9 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Inputs are `[ctrl, mem]` then `args`: an intrinsic has no call target
-    /// and no SP anchor. Outputs are `[Control, Memory]`, then the optional
-    /// ret-val, then the clobbers, matching `output_vns` order.
-    ///
-    /// `terminate` closes the region here and ignores `advance_memory`;
-    /// otherwise control advances and the region stays open. The
-    /// caller stamps the user-op name and writes the outputs back.
+    /// Inputs `[ctrl, mem, args...]`; outputs `[Control, Memory]` then the
+    /// `output_vns`. `terminate` closes the region and ignores
+    /// `advance_memory`. The caller writes the outputs back.
     pub fn build_call_other(
         &mut self,
         user_op_id: u64,
@@ -144,10 +135,8 @@ impl FunctionBuilder {
         let kind = NodeKind::CallOther { user_op_id };
         let (node, outputs) = self.emit_call_node(kind, inputs, output_vns)?;
 
-        // Sinking control into `Unreachable` leaves the memory edge dangling,
-        // so a terminating op advances neither: the region is closed and has no
-        // successor to read either edge. A memory-clobbering op that also never
-        // returns (a PowerPC `BUG()` trap) reaches exactly this.
+        // A terminating op advances neither edge: the closed region has no
+        // successor to read them (e.g. a PowerPC `BUG()` trap).
         if terminate {
             self.create_node(
                 NodeKind::Unreachable,
@@ -165,11 +154,7 @@ impl FunctionBuilder {
         Ok((node, outputs[kind.output_head_len()..].to_vec()))
     }
 
-    /// Test-only: the CC-aware `Call` construction the lifter performs in
-    /// prod.
-    ///
-    /// # Errors
-    /// Propagates the variable reads and [`Self::build_call`] unchanged.
+    /// The lifter's CC-aware `Call` construction.
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_call_cc(
         &mut self,
@@ -182,12 +167,9 @@ impl FunctionBuilder {
         let (ret_val_vars, clobber_vars) = crate::cc_ret_and_clobber_vns(self.function(), cc);
 
         let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
-        // Float argument registers come from a register file the integer list
-        // never names, and are APPENDED so an integer argument keeps its slot.
-        // By ABI POSITION, truncated at the first untracked one, so float
-        // position `j` lands at `arg_vns.len() + j`; registers sharing a
-        // container (AAPCS-VFP `d0`/`d1` inside `q0`) each pass their own
-        // slice of it.
+        // Float argument registers are appended (float position `j` at
+        // `arg_vns.len() + j`), truncated at the first untracked one; registers
+        // sharing a container (`d0`/`d1` in `q0`) each pass their own slice.
         let float_arg_vns = cc.float_arg_prefix(self.function().all_vns(), |v| {
             vn_container::largest_container_in(self.function().all_vns(), v)
         });
@@ -216,8 +198,7 @@ impl FunctionBuilder {
         Ok(call)
     }
 
-    /// The lifter's sub-register read: shift the slice out of its container
-    /// and truncate, in the register byte order.
+    /// The lifter's sub-register read: shift out of the container, truncate.
     #[cfg(any(test, feature = "test-util"))]
     fn read_arg_slice(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let container = vn_container::largest_container_in(self.function().all_vns(), vn);
@@ -237,8 +218,8 @@ impl FunctionBuilder {
         self.truncate_if_needed(shifted, vn.int_type()?)
     }
 
-    /// Test-only: terminates the region with a `Return` reading exactly the
-    /// convention's return-value registers.
+    /// Terminates the region with a `Return` of the convention's return
+    /// registers.
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_function_return(&mut self) -> Result<()> {
         let ret_vars: SmallVec<[rsleigh::Vn; 4]> =
