@@ -12,8 +12,7 @@ static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash:
 /// No local entries, for a `CfgOptions` literal naming every field.
 pub static NO_LOCAL_ENTRIES: LocalEntries = LocalEntries(Vec::new());
 
-/// The extent of the function being built, which decides when a branch leaves
-/// it, together with [`CfgOptions::fragment_ranges`].
+/// The extent of the function being built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FunctionBound {
     /// `[start, start + n)`: a branch outside it and every fragment is a tail
@@ -50,24 +49,22 @@ impl FunctionBound {
 
 #[derive(Clone, Debug)]
 pub struct CfgOptions<'a> {
-    /// How far the function extends; a branch or fall-through leaving it and
-    /// every [`Self::fragment_ranges`] range is a tail call.
     pub bound: FunctionBound,
     /// More of this function's code outside `bound`, such as GCC's
     /// `<name>.cold` partitions: a branch into one is an edge, and a
     /// fall-through past one's end is [`crate::Reason::PastFunctionEnd`]
     /// under either bound.
     pub fragment_ranges: DataRanges,
-    /// Caller-seeded answers per `BranchIndirect`; an unlisted site defers.
-    /// Read through [`CfgOptions::seated`].
+    /// Caller-seeded answers per `BranchIndirect`, read through
+    /// [`CfgOptions::seated`]; an unlisted site defers.
     pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// A resolver's own answers, keyed by the `BranchIndirect`'s exact p-code
     /// address: one beats `known_targets` at that site, and
     /// [`ResolvedTargets::Withdrawn`] defers it.
     pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-    /// Direct-call targets that never return (`exit`, `abort`); a call to one
-    /// ends its region `NoReturn`. Each is matched against the address the
-    /// call names, an ISA bit masked off, through [`Self::local_entries`].
+    /// Direct-call targets that never return (`exit`, `abort`), matched
+    /// through [`Self::local_entries`]; a call to one ends its region
+    /// `NoReturn`.
     pub no_return_targets: &'a FxHashSet<u64>,
     /// Where a call sharing a ppc64 ELFv2 callee's TOC enters it, so a
     /// `no_return_targets` or per-address convention entry keyed by the
@@ -186,8 +183,7 @@ impl Default for CfgOptions<'_> {
 }
 
 impl CfgOptions<'_> {
-    /// The answer the builder seats at `addr`: [`seated_from`] over
-    /// `derived_targets` and `known_targets`.
+    /// [`seated_from`] over `derived_targets` and `known_targets`.
     pub fn seated(&self, addr: PcodeInsnAddr) -> Option<&ResolvedTargets> {
         seated_from(self.derived_targets, self.known_targets, addr)
     }
@@ -205,8 +201,6 @@ pub fn seated_from<'m>(
 
 /// The entry for `addr` in `map`: its exact key, else the key of its
 /// instruction's p-code index 0.
-///
-/// An index-0 key thus seats every `BranchIndirect` of its instruction.
 pub fn seated_in(
     map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     addr: PcodeInsnAddr,

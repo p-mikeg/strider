@@ -30,10 +30,9 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         if split_index == 0 {
             return Ok(region_id);
         }
-        // The smaller half moves to a fresh allocation. `drain` still shifts
-        // the tail, so repeated lowest-first splits of one region are O(n^2):
-        // `process_branch_indirect` enqueues arms highest first, so the LIFO
-        // explores them lowest first.
+        // The smaller half moves to a fresh allocation, but `drain` still
+        // shifts the tail: repeated lowest-first splits of one region (arm
+        // order) are O(n^2).
         let insns = &mut second_region.insns;
         let first_region_insns: Vec<_> = if split_index <= insns.len() / 2 {
             insns.drain(..split_index).collect()
