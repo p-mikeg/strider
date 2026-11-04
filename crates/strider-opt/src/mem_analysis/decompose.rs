@@ -1,12 +1,7 @@
-//! `decompose` reduces an address to one `MemExpr { base, offset, kind }` by
-//! walking `Add`-of-constant steps (and an alignment-mask anchor) down to a
-//! memory terminal: `InitialVar(sp)` for a stack base, or a pure allocator's
-//! return pointer for a heap base.
-//!
-//! A `Phi` is a terminal of its own: when every value it can hold is derived
-//! from some allocation it names heap memory of unknown identity
-//! ([`MemKind::HeapOpaque`]), and otherwise it decomposes to `None`, read
-//! conservatively as "not a provable terminal".
+//! An address as `base + offset`, down `Add`-of-constant steps and alignment
+//! masks to `InitialVar(sp)` (stack) or a pure allocator's return (heap).  A
+//! `Phi` all of whose values derive from allocations is
+//! [`MemKind::HeapOpaque`]; any other `Phi` is `None`.
 
 use rustc_hash::FxHashMap;
 use strider_ir::eval::mask_below;
@@ -16,17 +11,8 @@ use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 use super::ring::wrap_to_addr_width;
 use super::{MemExpr, MemKind};
 
-/// Memoized: a hit is O(1), a miss walks the address spine and caches the result.
-/// [`super::stamp`] states when the memo is drained.
-///
-/// The memo is keyed by `ValueId` alone, so every walk reads the one
-/// allocator set the function holds ([`Function::assumptions`]), which only
-/// grows.  The memo is also the verdict `strider-pattern`'s region filters
-/// read.
-///
-/// The walk descends the spine to its terminal, then unwinds, deriving and
-/// committing each node's verdict from the one below it, so a later query
-/// of any node it passed is a hit.
+/// Memoised per `ValueId` on the function, for every node the walk passes;
+/// [`super::stamp`] says when the memo is drained.
 pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> {
     if let Some(verdict) = memoised(function, value) {
         return verdict;
@@ -71,12 +57,8 @@ enum End {
 }
 
 /// The spine below `value`, each node with its step, down to the first node
-/// whose verdict needs no operand.  O(spine depth), not O(cone): only the
-/// single base-bearing operand is followed at each step.
-///
-/// Termination: each step follows one input edge toward a terminal, and
-/// revisiting a node needs a data cycle, which in valid SSA passes through a
-/// `Phi`, where the walk stops.
+/// whose verdict needs no operand.  Ends because every data cycle passes a
+/// `Phi`, where it stops.
 fn descend(function: &Function, value: ValueId) -> (Vec<(ValueId, Step)>, End) {
     let mut spine = Vec::new();
     let mut cur = value;
@@ -101,16 +83,12 @@ fn descend(function: &Function, value: ValueId) -> (Vec<(ValueId, Step)>, End) {
                     End::Known(commit(function, cur, root(MemKind::Stack))),
                 );
             }
-            // A pure allocator's return pointer is a fresh heap base, bottomed
-            // out exactly like the SP terminal.
             NodeKind::Call { .. } if allocator_return_base(function, node) == Some(cur) => {
                 return (
                     spine,
                     End::Known(commit(function, cur, root(MemKind::Heap))),
                 );
             }
-            // The arms decide, which is the caller's walk, not this one: it
-            // would have to fan out, and an arm can lead back here.
             NodeKind::Phi => return (spine, End::Phi(cur)),
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
                 match crate::const_eval::const_addend(function, node) {
@@ -118,8 +96,6 @@ fn descend(function: &Function, value: ValueId) -> (Vec<(ValueId, Step)>, End) {
                     None => return (spine, End::Known(commit(function, cur, None))),
                 }
             }
-            // Alignment-masked SP is a fresh opaque base, since its value
-            // depends on entry-SP alignment.
             NodeKind::IntBinaryOp(IntBinaryOp::And) => {
                 match alignment_masked_operand(function, node) {
                     Some((operand, _)) => (operand, Step::Align),
@@ -138,9 +114,8 @@ fn aligned(spine: &[(ValueId, Step)]) -> bool {
     spine.iter().any(|(_, step)| matches!(step, Step::Align))
 }
 
-/// Commits the verdict of each node of `spine` from the bottom up, `below`
-/// being that of the node under the last; `None` while unknown, which a mask
-/// ends.  The top node's verdict.
+/// Commits each node's verdict of `spine` bottom up from `below` (`None`
+/// while unknown, which a mask ends), returning the top node's.
 fn unwind(
     function: &Function,
     spine: &[(ValueId, Step)],
@@ -155,10 +130,9 @@ fn unwind(
                         ..e
                     })
                 }),
-                // Over a stack base the mask is the conservative base; over a heap
-                // one it leaves the offset to the object unknown, and heap
-                // disjointness is exact, so a Stack-kinded mask would call an
-                // aligned heap pointer Disjoint from its own object.
+                // A mask over a heap base is opaque: heap disjointness is
+                // exact, so a stack-kinded mask would call an aligned heap
+                // pointer disjoint from its own object.
                 Step::Align => Some(below.flatten().filter(|e| e.kind == MemKind::Stack).map(
                     |_| MemExpr {
                         base: v,
@@ -181,17 +155,9 @@ fn commit(function: &Function, v: ValueId, verdict: Option<MemExpr>) -> Option<M
     verdict
 }
 
-/// Does every value `root` can hold derive from an allocation?  Then the
-/// pointer names heap memory, though not which allocation.
-///
-/// The frontier is `root` plus every `Phi` its arms reach, expanded through an
-/// index rather than by recursion, so an arm cycling back to a phi already on
-/// it is a revisit and the walk terminates.  Each arm's own spine walk stops at
-/// the next phi, so no walk re-enters this one.
-///
-/// A verdict is exact per frontier node (each decides on the terminals IT
-/// reaches, propagated along the arm edges) and is committed for all of them,
-/// so a nested chain costs one frontier walk in total, not one per query.
+/// Whether every value `root` can hold derives from an allocation.  Walks
+/// `root` and every `Phi` its arms reach once, and commits the verdict of
+/// each.
 fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
     let mut frontier = vec![Frontier::new(root)];
     let mut index: FxHashMap<ValueId, usize> = FxHashMap::default();
@@ -235,15 +201,13 @@ fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
 
 /// A non-heap arm: the phi can hold something that is not an allocation.
 const OPAQUE: u8 = 1;
-/// An allocation arm: there is something to name.  A frontier of nothing but
-/// phis has no definition at all and names nothing.
+/// An allocation arm.  A frontier of nothing but phis names nothing.
 const ALLOCATED: u8 = 2;
 
 /// One phi of [`phi_names_an_allocation`]'s frontier.
 struct Frontier {
     phi: ValueId,
-    /// The frontier phis holding this one as an arm: the edge both verdicts
-    /// propagate along.
+    /// The frontier phis holding this one as an arm.
     holders: Vec<usize>,
     /// What its arms hold, [`OPAQUE`] and [`ALLOCATED`] bits.
     holds: u8,
@@ -259,8 +223,7 @@ impl Frontier {
     }
 }
 
-/// Reverse-reachability closure over the holders: an arm's bits are set on
-/// every phi holding it.
+/// Sets an arm's bits on every phi holding it, transitively.
 fn propagate(frontier: &mut [Frontier]) {
     let mut work: Vec<usize> = (0..frontier.len())
         .filter(|&i| frontier[i].holds != 0)
@@ -277,9 +240,7 @@ fn propagate(frontier: &mut [Frontier]) {
     }
 }
 
-/// A `Call`'s SP as `(stack base, offset)`, `None` when it decomposes to no
-/// stack base: then no argument slot of the call is placed in a coordinate
-/// system a stack probe shares.
+/// A `Call`'s SP as `(stack base, offset)`.
 pub(crate) fn call_sp(function: &Function, call: NodeId) -> Option<(ValueId, i128)> {
     match decompose(function, function.node_inputs(call)[NodeKind::CALL_SP_SLOT])? {
         MemExpr {
@@ -291,10 +252,8 @@ pub(crate) fn call_sp(function: &Function, call: NodeId) -> Option<(ValueId, i12
     }
 }
 
-/// The heap base a `Call` returns if it is a known pure allocator, else
-/// `None`.  `build_call` emits ret-vals before clobbers, so the return pointer
-/// is the first `Call` value output; only that output is a base, never a
-/// clobbered register.
+/// The heap base a `Call` returns if it is a listed pure allocator: its first
+/// value output.
 pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option<ValueId> {
     debug_assert!(
         matches!(function.node_kind(call), NodeKind::Call { .. }),
@@ -307,16 +266,11 @@ pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option
         .int_const_u128(target)
         .and_then(|a| u64::try_from(a).ok())
         .is_some_and(|a| function.assumptions().noalias_allocators.contains(&a));
-    // A cheap gate before the tracked-varnode scan below: the allocator set is
-    // empty by default.
     if !is_alloc {
         return None;
     }
-    // The first value output is the return pointer only when it is the first
-    // declared return register.  A declaration is not enough:
-    // `ret_and_clobber_vns` drops one this function does not track, sliding
-    // the next return register or the first clobber into that slot, and
-    // neither holds the fresh pointer.
+    // Only if it is the first declared return register: an untracked one is
+    // dropped, sliding another register into the slot.
     let all = function.all_vns();
     let container = |v: &rsleigh::Vn| vn_container::largest_container_in(all, v);
     let cc = function.get_cc(call);
@@ -326,10 +280,6 @@ pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option
 }
 
 /// The memoised verdict for `value`, `None` while not yet computed.
-///
-/// The memo tags the region, not the identity: a heap base that is a `Phi` is
-/// the set of allocations its arms hold, which is what
-/// [`phi_names_an_allocation`] commits.
 fn memoised(function: &Function, value: ValueId) -> Option<Option<MemExpr>> {
     let (class, slot) = function.memory_decomp(value);
     let resolved = || slot.expect("a region class is set with the slot it resolves to");
@@ -355,32 +305,23 @@ fn memoised(function: &Function, value: ValueId) -> Option<Option<MemExpr>> {
     })
 }
 
-/// A contiguous run of 1-bits over a low 0-bit run of a plausible alignment,
-/// e.g. `0xFFFF_FFF0`.  A low-bit mask like `0xF` is a bit-extraction, not a
-/// base, and zero / all-ones have no alignment effect, so all are rejected.
+/// Whether `m` is 1s from the top of the width down to a low 0-run of at
+/// most `MAX_ALIGN_BITS`, e.g. `0xFFFF_FFF0`.
 pub(super) fn is_alignment_mask(m: u128, width_bits: usize) -> bool {
-    /// Largest alignment a frame demands, `alignas(4096)`.  Past it the mask
-    /// clears more of the address than any ABI aligns: `sp & 0x8000_0000` at
-    /// I32 is 0 or 0x8000_0000, which is not `sp` rounded down in any useful
-    /// sense, the same reason `sp & 0x10` is rejected below.
+    /// Largest alignment a frame demands, `alignas(4096)`.
     const MAX_ALIGN_BITS: u32 = 12;
     let tz = m.trailing_zeros();
-    // A width past the `u128` carrier has no mask this can compare against.
     if tz == 0 || tz > MAX_ALIGN_BITS || (tz as usize) >= width_bits || width_bits > 128 {
         return false;
     }
-    // Past the low zero run the rest must be a contiguous block of 1s that
-    // reaches the TOP of the address width. `sp & 0x10` is 0 or 16 and
-    // `sp & 0xFFFF_FFF0` at I64 truncates to the low 4 GiB; neither is `sp`
-    // rounded down, and treating either as a stack base lets
-    // `stack_global_disjoint` call it disjoint from a constant it may equal.
+    // Short of the top, `sp & 0xFFFF_FFF0` at I64 is not `sp` rounded down,
+    // and as a stack base `stack_global_disjoint` would misjudge it.
     let width_mask = mask_below(width_bits as u32);
     m & width_mask == width_mask & !mask_below(tz)
 }
 
 /// The masked operand of an alignment-`And` and the alignment it rounds down
-/// to, `None` when `node` is anything else.  The one reading of the anchor
-/// shape [`decompose`] roots a base at.
+/// to.
 pub(crate) fn alignment_masked_operand(
     function: &Function,
     node: NodeId,
@@ -390,7 +331,6 @@ pub(crate) fn alignment_masked_operand(
         node,
         NodeKind::IntBinaryOp(IntBinaryOp::And),
     )?;
-    // The mask only names a stack base relative to the width it is applied at.
     let width = function
         .value_type(function.node_outputs(node)[0])
         .ok()?

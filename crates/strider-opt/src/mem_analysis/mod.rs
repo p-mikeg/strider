@@ -30,9 +30,8 @@ pub(crate) enum MemKind {
     Stack,
     /// A pure allocator's fresh return pointer.
     Heap,
-    /// Some allocation, which one unknown: a `Phi` whose every arm is heap.
-    /// Carries no usable identity, so it is may-alias against every heap base
-    /// including itself.
+    /// A `Phi` whose every arm is heap: may-alias against every heap base,
+    /// itself included.
     HeapOpaque,
 }
 
@@ -44,27 +43,21 @@ pub(crate) struct MemExpr {
     pub kind: MemKind,
 }
 
-/// Coarse Load / Store address class; [`alias::alias_verdict`] is keyed on the
-/// `(load_class, store_class)` pair.
+/// Coarse Load / Store address class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AddrClass {
-    /// Offsets are only comparable within one `base`.  Distinct bases (say
-    /// `InitialVar(sp)` vs `sp & -16`) differ by the caller-dependent
-    /// `sp mod align`, so their offsets live in different coordinate systems
-    /// and must be treated as may-alias.
+    /// Offsets are comparable only within one `base`: distinct bases (say
+    /// `sp` and `sp & -16`) differ by the caller-dependent `sp mod align`.
     StackRooted { base: ValueId, offset: i128 },
-    /// Rooted at a pure allocator's return pointer. Two distinct allocation
-    /// bases never overlap (noalias), unlike SP bases, and no allocation ever
-    /// coincides with the stack or a global.
+    /// Rooted at a pure allocator's return pointer.  Distinct allocations
+    /// are disjoint from each other, the stack and globals.
     HeapRooted { base: ValueId, offset: i128 },
-    /// Rooted at a `Phi` of heap bases: provably an allocation, but the base
-    /// is one of several, so it may be any of them and offsets from it are not
-    /// comparable with anything.
+    /// Rooted at a `Phi` of heap bases: an allocation, but which one is
+    /// unknown, so its offsets compare with nothing.
     HeapOpaque,
     /// Literal `.data` / `.rodata` / `.bss` / MMIO pointer.
     Constant { addr: i128 },
-    /// Anything else.  Only `ValueId` equality proves two of these equal;
-    /// distinct ids can still compute the same runtime address.
+    /// Anything else.  Only `ValueId` equality proves two equal.
     Anchor { value: ValueId },
 }
 
@@ -79,10 +72,8 @@ pub(crate) enum AliasVerdict {
     MayAlias,
 }
 
-/// Collapses region phis to the bare `InitialVar(sp) + k` terminals
-/// `decompose` recognises, the post-`PhiCollapse` state in which
-/// `LoadForward` runs the analysis.  `ConstantFold` is left out so the
-/// deep-chain and memo tests keep their un-flattened structure.
+/// Collapses region phis to the `InitialVar(sp) + k` terminals `decompose`
+/// recognises, without `ConstantFold`, so test chains stay unflattened.
 #[cfg(test)]
 fn collapse_phis(fg: &mut strider_ir::Function) {
     crate::test_support::run_passes(fg, crate::test_support::COLLAPSE).expect("phi collapse");
