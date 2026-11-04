@@ -954,8 +954,10 @@ given.
 
 ## Errors
 
-Analysis failures are `strider.StriderError`. A wrongly typed argument raises
-the usual builtin (`TypeError`, `OverflowError`). `load_elf` raises
+Analysis failures are `strider.StriderError`, as is an address, node id or
+operand index outside its unsigned range. A wrongly typed argument raises the
+usual builtin (`TypeError`, a `bool` address or index included, or
+`OverflowError` for another out-of-range int). `load_elf` raises
 `FileNotFoundError` for a missing path, `ValueError` for a non-ELF file or an
 unsupported arch or ABI (microMIPS included, as does `add_elf`), and
 `StriderError` for a malformed ELF. Range-checked constructor arguments

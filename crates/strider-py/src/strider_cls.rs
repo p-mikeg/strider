@@ -100,8 +100,9 @@ fn reentrant_lifter_err() -> PyErr {
 }
 
 fn entry_addr(entry: &Bound<'_, PyAny>) -> PyResult<u64> {
-    entry.extract().map_err(|_| {
-        if entry.is_instance_of::<pyo3::types::PyInt>() {
+    let int = !entry.is_instance_of::<pyo3::types::PyBool>();
+    int.then(|| entry.extract().ok()).flatten().ok_or_else(|| {
+        if int && entry.is_instance_of::<pyo3::types::PyInt>() {
             into_strider_err(anyhow::anyhow!(
                 "`entry` is out of range for an address: it must fit an \
                  unsigned 64-bit integer"
@@ -684,8 +685,12 @@ impl PyLifter {
     /// `entry`, or once this `Lifter` has pinned more decode modes than a
     /// sweep can carry over. On an ISA-mode arch `entry`'s low bit selects the
     /// mode and the sweep starts at `entry & ~1`.
-    fn pcode_at(slf: &Bound<'_, Self>, entry: &Bound<'_, PyAny>, addr: u64) -> PyResult<String> {
-        let entry = entry_addr(entry)?;
+    fn pcode_at(
+        slf: &Bound<'_, Self>,
+        entry: &Bound<'_, PyAny>,
+        addr: crate::bigint::Addr,
+    ) -> PyResult<String> {
+        let (entry, addr) = (entry_addr(entry)?, addr.0);
         let py = slf.py();
         let this = try_borrow_lifter(slf)?;
         crate::reader::check_mem_unchanged(py, &[&this.mem_obj])?;
