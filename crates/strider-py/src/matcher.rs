@@ -86,7 +86,7 @@ impl PyMatch {
             // First node seen per capture id wins.
             let mut seen = std::collections::BTreeMap::new();
             for m in &self.inner {
-                for (cap_id, node_id) in m.capture_signature(function.graph()) {
+                for (cap_id, node_id, _) in m.capture_signature(function.graph()) {
                     seen.entry(cap_id).or_insert(node_id);
                 }
             }
@@ -108,7 +108,7 @@ impl PyMatch {
 }
 
 /// Dedup key of `inner`: per sub-match, its root unless `ignore_root`, then
-/// its length-prefixed `(capture-id, node-id)` signature.
+/// its length-prefixed capture signature.
 pub(crate) fn dedup_key(
     inner: &[strider_pattern::Match],
     function: &strider_ir::Function,
@@ -121,7 +121,10 @@ pub(crate) fn dedup_key(
         }
         let sig = m.capture_signature(function.graph());
         key.push(sig.len() as u32);
-        key.extend(sig.into_iter().flat_map(|(cap, node)| [cap, node]));
+        key.extend(
+            sig.into_iter()
+                .flat_map(|(cap, node, value)| [cap, node, value]),
+        );
     }
     key
 }
@@ -259,7 +262,7 @@ match_getters! {
     #[doc = "The operation variant, or `None`."]
     "op_opt" op_opt : String = op;
 
-    #[doc = "The value-output type (`\"I1\"`, `\"I64\"`, `\"F64\"`); raises if unbound or the node has none."]
+    #[doc = "The value-output type of the bound node (`\"I1\"`, `\"I64\"`, `\"F64\"`), its first value output whichever output was captured; raises if unbound or the node has none."]
     "value_type" value_type,
     #[doc = "The value-output type, or `None`."]
     "value_type_opt" value_type_opt : String = value_type;

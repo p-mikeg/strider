@@ -152,8 +152,8 @@ class Match:
         ...
     def value_type(self, key: CaptureKey) -> str:
         """The value-output type of the node bound to `key` (`"I1"`, `"I64"`,
-        `"F64"`). Raises when `key` is unbound or its node has no value
-        output."""
+        `"F64"`): its first value output, whichever output `key` captured.
+        Raises when `key` is unbound or its node has no value output."""
         ...
     def value_type_opt(self, key: CaptureKey) -> Optional[str]:
         """`value_type`, or `None` instead of raising."""
