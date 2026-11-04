@@ -1276,21 +1276,78 @@ mod scaling {
         assert_near_linear("spill call chain", shapes::spill_call_chain)
     }
 
-    /// The slow climb, not the fast one: an irreducible memory graph has no
-    /// position index, so this is the layout-free climb's own scaling.
+    /// Four slots behind a two-entry loop.
     #[test]
     fn an_irreducible_store_chain_costs_near_linear_work() -> crate::Result<()> {
         let fg = shapes::irreducible_store_chain(8)?;
         assert!(
-            crate::mem_ssa::MemLayout::build(&fg).positions().is_none(),
-            "the shape must stay irreducible, or it measures the fast climb"
-        );
-        work(fg)?;
-        assert!(
-            crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get) > 0,
-            "a pass over the shape must reach the slow climb, not the walk"
+            !crate::mem_ssa::MemLayout::build(&fg).is_reducible(),
+            "the shape must stay irreducible"
         );
         assert_near_linear("irreducible store chain", shapes::irreducible_store_chain)
+    }
+
+    /// A two-entry loop, then `n` stores to distinct slots and `n` reloads of
+    /// distinct slots never written, so no reload's memo serves another.
+    fn irreducible_then_distinct_slots(n: usize) -> crate::Result<strider_ir::Function> {
+        use strider_ir::IRBuilderExt;
+        use strider_ir::node::ValueType;
+        let ty = ValueType::int(64);
+        let store = |b: &mut strider_ir::FunctionBuilder, slot: u64| -> crate::Result<()> {
+            let addr = b.build_int_const(0x10_0000 + 8 * slot, ty)?;
+            let v = b.build_int_const(slot, ty)?;
+            b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+            Ok(())
+        };
+        let mut b =
+            strider_ir_test_utils::sp_frame(strider_ir_test_utils::stack_vn_x86_64()).build_fn()?;
+        let entry = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
+        b.set_region(entry);
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let (top, mid, exit) = (
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+        );
+        let enter_mid = b.build_boolean_const(true);
+        b.build_if(enter_mid, mid, top)?;
+        b.set_region(top);
+        store(&mut b, 0)?;
+        b.build_branch(mid)?;
+        b.set_region(mid);
+        store(&mut b, 1)?;
+        let again = b.build_boolean_const(true);
+        b.build_if(again, top, exit)?;
+        b.set_region(exit);
+        let n = n as u64;
+        for i in 0..n {
+            store(&mut b, 10 + i)?;
+        }
+        let sink = b.build_int_const(0x20_0000u64, ty)?;
+        for i in 0..n {
+            let addr = b.build_int_const(0x10_0000 + 8 * (10 + n + i), ty)?;
+            let v = b.build_load(addr, rsleigh::VnSpace::RAM, ty)?;
+            b.build_store(sink, v, rsleigh::VnSpace::RAM)?;
+        }
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        b.build()
+    }
+
+    /// An irreducible loop above the stores leaves the reloads below it on the
+    /// indexed climb.
+    #[test]
+    fn reloads_below_an_irreducible_loop_cost_near_linear_work() -> crate::Result<()> {
+        let fg = irreducible_then_distinct_slots(8)?;
+        assert!(
+            !crate::mem_ssa::MemLayout::build(&fg).is_reducible(),
+            "the shape must stay irreducible"
+        );
+        assert_near_linear(
+            "reloads below an irreducible loop",
+            irreducible_then_distinct_slots,
+        )
     }
 }
 
