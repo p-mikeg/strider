@@ -21,9 +21,11 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 2. **Lift** each machine instruction into p-code, GHIDRA's Sleigh engine's
    CPU-independent form. An instruction Sleigh leaves opaque, like a syscall or
    a trap, is classified by a built-in ABI table saying whether it returns and
-   what it clobbers; `CfgOptions(call_other_abis=...)` overrides an entry, and
+   what it clobbers; `user_op_names()` / `call_other_abi(name)` show the table,
+   `CfgOptions(call_other_abis=...)` overrides an entry, and
    `CallOtherAbi.custom(sleigh, ...)` names the registers one reads and writes.
-   A callee's own convention comes from the ELF header unless
+   A float conversion rounds and saturates as the ISA does. A callee's own
+   convention comes from the ELF header unless
    `LifterOptions(per_address_ccs=...)` names one for its address.
 3. Build a **CFG**, the map of which regions (straight runs of instructions)
    can jump to which. Each address decodes once, in the ISA mode carried by the
@@ -47,18 +49,22 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    `AssumptionOptions.none()` makes no unchecked claim. Two claims,
    `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest`, are read by
    the lift: change them by analysing again.
-   `LifterOptions(pipeline=...)` replaces the pass list outright.
+   `function.optimize(assumptions=...)` re-runs the pipeline with more claims,
+   and `LifterOptions(pipeline=...)` replaces the pass list outright.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
-   changing. `cfg.incomplete` lists what is left over, a return whose target
-   is not provably the caller's included;
+   changing. `CfgOptions(known_targets=..., no_return_targets=...)` seats your
+   own answers; `LifterOptions(resolve_indirect_branches=False)` skips the
+   step. `cfg.incomplete` lists what is left over, a return whose target is
+   not provably the caller's included;
    [python-api.md](python-api.md#12-the-cfg-stridercfg) describes each reason.
    `analyze` returns even when it cannot vouch for every path, so check
    `cfg.incomplete` before trusting an absence ("no store to X"): code behind
    a listed address may be missing.
 7. **Query** it, or **rewrite** it if you want the graph changed rather than
    read. `field`, `code_ptr`, `first_of` and `PhiPat.input_from` cover common
-   shapes, and `JoinPredicate` relates matches by your own rule.
+   shapes, `find_unique_value` reads the one constant a capture binds, and
+   `JoinPredicate` relates matches by your own rule.
    [python-api.md](python-api.md#4-patterns) is the reference for both sides
    and [python-guide.md](python-guide.md) the walkthrough.
 
@@ -107,5 +113,5 @@ folds that backtrace into the message too.
 
 ## Upgrading
 
-The README's [Upgrading](../README.md#upgrading) section lists the changes
+The README's [Upgrading](../README.md#upgrading) section points to the changes
 that alter an answer silently; [CHANGELOG.md](../CHANGELOG.md) has the rest.
