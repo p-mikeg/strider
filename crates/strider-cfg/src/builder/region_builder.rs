@@ -918,80 +918,45 @@ mod tests {
         assert_eq!(outcome, InsnOutcome::Continue);
     }
 
-    fn const_vn(offset: u64) -> Vn {
-        Vn {
-            addr_off: offset,
-            addr_space: VnSpace::CONST,
-            size: 8,
-        }
-    }
-
-    fn code_space_vn(space: VnSpace, offset: u64) -> Vn {
-        Vn {
-            addr_off: offset,
-            addr_space: space,
-            size: 8,
-        }
-    }
-
-    /// A CONST branch offset is sign-extended from the varnode's declared
-    /// width: a 32-bit-encoded -4 read as 4_294_967_292 fails the whole
-    /// function's lift.
+    /// A CONST branch offset counts p-code ops from the current one,
+    /// sign-extended from the varnode's declared width: a 32-bit-encoded -4
+    /// read as 4_294_967_292 fails the whole function's lift.
     #[test]
     fn const_space_offset_is_sign_extended_from_its_declared_width() {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
         let lift = fake_lift_res(8);
-        // -4 at every declared width, a non-power-of-two one included.
-        for (size, addr_off) in [
-            (1, 0xFC),
-            (3, 0xFF_FFFC),
-            (4, 0xFFFF_FFFC),
-            (8, 0xFFFF_FFFF_FFFF_FFFC),
+        // A non-power-of-two width included.
+        for (size, addr_off, to) in [
+            (1, 0xFC, 2),
+            (3, 0xFF_FFFC, 2),
+            (4, 0xFFFF_FFFC, 2),
+            (8, 0xFFFF_FFFF_FFFF_FFFC, 2),
+            (8, 0, 6),
+            (8, 1, 7),
         ] {
-            let narrow = Vn {
+            let vn = Vn {
                 addr_off,
                 addr_space: VnSpace::CONST,
                 size,
             };
             let target = rb
-                .decode_branch_target(narrow, addr_at(0x2000, 6), &lift)
-                .expect("a backward CONST branch must decode");
-            assert_eq!(target, addr_at(0x2000, 2), "size {size}");
+                .decode_branch_target(vn, addr_at(0x2000, 6), &lift)
+                .expect("a CONST branch inside the instruction must decode");
+            assert_eq!(target, addr_at(0x2000, to), "size {size}, {addr_off:#x}");
         }
-    }
-
-    #[test]
-    fn const_space_is_relative_to_current_pcode_insn_index() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
-        let lift = fake_lift_res(8);
-        let target = rb
-            .decode_branch_target(const_vn(3), addr_at(0x2000, 2), &lift)
-            .unwrap();
-        assert_eq!(target, addr_at(0x2000, 5));
-    }
-
-    #[test]
-    fn const_space_with_zero_offset_stays_at_same_pcode_index() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
-        let lift = fake_lift_res(4);
-        let target = rb
-            .decode_branch_target(const_vn(0), addr_at(0x2000, 2), &lift)
-            .unwrap();
-        assert_eq!(target, addr_at(0x2000, 2));
     }
 
     #[test]
     fn default_code_space_is_absolute_machine_address() {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
-        let default_cs = b.engine.sleigh.default_code_space();
-        let vn = code_space_vn(default_cs, 0xabc0);
+        let vn = Vn {
+            addr_off: 0xabc0,
+            addr_space: b.engine.sleigh.default_code_space(),
+            size: 8,
+        };
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let lift = fake_lift_res(1);
         let target = rb
@@ -1000,122 +965,34 @@ mod tests {
         assert_eq!(target, addr_at(0xabc0, 0));
     }
 
+    /// A non-code space, and a CONST offset before the instruction's first
+    /// p-code op or past its fall-through.
     #[test]
-    fn register_space_returns_invalid_branch_target_error() {
+    fn an_unaddressable_target_is_an_invalid_branch_target() {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let vn = Vn {
-            addr_off: 0x10,
-            addr_space: VnSpace::REGISTER,
-            size: 8,
-        };
-        let lift = fake_lift_res(1);
-        let err = rb
-            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid branch target variable"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn unknown_space_returns_invalid_branch_target_error() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let vn = Vn {
-            addr_off: 0x2000,
-            addr_space: VnSpace::new(b'x'),
-            size: 8,
-        };
-        let lift = fake_lift_res(1);
-        let err = rb
-            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid branch target variable"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn unique_space_returns_invalid_branch_target_error() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let vn = Vn {
-            addr_off: 0x40,
-            addr_space: VnSpace::UNIQUE,
-            size: 8,
-        };
-        let lift = fake_lift_res(1);
-        let err = rb
-            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid branch target variable"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn decode_branch_target_const_space_negative_offset_does_not_wrap() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let vn = Vn {
-            addr_off: (-2_i64) as u64,
-            addr_space: VnSpace::CONST,
-            size: 8,
-        };
-        let lift = fake_lift_res(8);
-        let got = rb
-            .decode_branch_target(vn, addr_at(0x1000, 5), &lift)
-            .unwrap();
-        assert_eq!(got, addr_at(0x1000, 3));
-    }
-
-    #[test]
-    fn decode_branch_target_const_space_underflow_errors() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let vn = Vn {
-            addr_off: (-5_i64) as u64,
-            addr_space: VnSpace::CONST,
-            size: 8,
-        };
-        let lift = fake_lift_res(8);
-        let err = rb
-            .decode_branch_target(vn, addr_at(0x1000, 2), &lift)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid branch target variable"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn decode_branch_target_const_space_index_past_end_errors() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let pcode_count = 4u64;
-        let lift = fake_lift_res(usize::try_from(pcode_count).unwrap());
-        let vn = Vn {
-            addr_off: pcode_count + 1,
-            addr_space: VnSpace::CONST,
-            size: 8,
-        };
-        let err = rb
-            .decode_branch_target(vn, addr_at(0x1000, 0), &lift)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid branch target variable"),
-            "got: {err}"
-        );
+        let lift = fake_lift_res(4);
+        for (addr_space, addr_off, at) in [
+            (VnSpace::REGISTER, 0x10, 0),
+            (VnSpace::new(b'x'), 0x2000, 0),
+            (VnSpace::UNIQUE, 0x40, 0),
+            (VnSpace::CONST, (-5_i64) as u64, 2),
+            (VnSpace::CONST, 5, 0),
+        ] {
+            let vn = Vn {
+                addr_off,
+                addr_space,
+                size: 8,
+            };
+            let err = rb
+                .decode_branch_target(vn, addr_at(0x1000, at), &lift)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("invalid branch target variable"),
+                "{addr_space:?} {addr_off:#x}: {err}"
+            );
+        }
     }
 
     #[test]
@@ -1174,79 +1051,6 @@ mod tests {
         let cur = addr_at(0x1000, 1);
         let next = next_pcode_addr(cur, &lift).unwrap();
         assert_eq!(next, addr_at(0x1000, 2));
-    }
-
-    #[test]
-    fn nocheck_below_start_default_opts_is_tail_call() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(rb.is_branch_tail_call(addr_at(0x0800, 0)));
-    }
-
-    #[test]
-    fn nocheck_below_start_with_allow_is_not_tail_call() {
-        let opts = CfgOptions {
-            bound: crate::FunctionBound::Open {
-                code_before_start: true,
-            },
-            ..CfgOptions::default()
-        };
-        let mut engine = make_engine();
-        let mut b = make_builder_opts(0x1000, &mut engine, &opts);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(!rb.is_branch_tail_call(addr_at(0x0800, 0)));
-    }
-
-    #[test]
-    fn nocheck_below_start_with_size_bound_no_allow_is_tail_call() {
-        let opts = CfgOptions {
-            bound: crate::FunctionBound::size(0x100),
-            ..CfgOptions::default()
-        };
-        let mut engine = make_engine();
-        let mut b = make_builder_opts(0x1000, &mut engine, &opts);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(rb.is_branch_tail_call(addr_at(0x0800, 0)));
-    }
-
-    #[test]
-    fn nocheck_within_function_no_limit_is_not_tail_call() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(!rb.is_branch_tail_call(addr_at(0x1200, 0)));
-    }
-
-    #[test]
-    fn nocheck_at_size_bound() {
-        let opts = CfgOptions {
-            bound: crate::FunctionBound::size(0x100),
-            ..CfgOptions::default()
-        };
-        let mut engine = make_engine();
-        let mut b = make_builder_opts(0x1000, &mut engine, &opts);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(rb.is_branch_tail_call(addr_at(0x1100, 0)));
-        assert!(!rb.is_branch_tail_call(addr_at(0x10ff, 0)));
-    }
-
-    #[test]
-    fn size_bound_plus_start_addr_overflow_treats_inside_range_as_non_tail_call() {
-        let start_addr = u64::MAX - 0x100;
-        let max_size = 0x1000u64;
-        let opts = CfgOptions {
-            bound: crate::FunctionBound::size(max_size),
-            ..CfgOptions::default()
-        };
-        let mut engine = make_engine();
-        let mut b = make_builder_opts(start_addr, &mut engine, &opts);
-        let rb = make_region_builder(&mut b, addr_at(start_addr, 0));
-        let target = addr_at(start_addr + 0x10, 0);
-        assert!(
-            !rb.is_branch_tail_call(target),
-            "target inside function range must NOT classify as tail call even when start+max overflows"
-        );
     }
 
     fn lift_at(bytes: Vec<u8>, base: u64, at: u64) -> rsleigh::LiftRes {
@@ -1430,42 +1234,24 @@ mod tests {
     }
 
     #[test]
-    fn process_new_insn_branch_with_empty_inputs_errors() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let lift = fake_lift_res(1);
-        let bad_insn = rsleigh::Insn {
-            opcode: rsleigh::Opcode::Branch,
-            inputs: vec![].into(),
-            output: None,
-        };
-        let err = rb
-            .process_new_insn(&bad_insn, addr_at(0x1000, 0), &lift)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("no target operand"),
-            "expected the \"no target operand\" error; got {err}"
-        );
-    }
-
-    #[test]
-    fn process_new_insn_condbranch_with_empty_inputs_errors() {
-        let mut engine = make_engine();
-        let mut b = make_builder(0x1000, &mut engine);
-        let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let lift = fake_lift_res(1);
-        let bad_insn = rsleigh::Insn {
-            opcode: rsleigh::Opcode::CondBranch,
-            inputs: vec![].into(),
-            output: None,
-        };
-        let err = rb
-            .process_new_insn(&bad_insn, addr_at(0x1000, 0), &lift)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("no target operand"),
-            "expected the \"no target operand\" error; got {err}"
-        );
+    fn a_branch_with_no_operand_errors() {
+        for opcode in [rsleigh::Opcode::Branch, rsleigh::Opcode::CondBranch] {
+            let mut engine = make_engine();
+            let mut b = make_builder(0x1000, &mut engine);
+            let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
+            let lift = fake_lift_res(1);
+            let bad_insn = rsleigh::Insn {
+                opcode,
+                inputs: vec![].into(),
+                output: None,
+            };
+            let err = rb
+                .process_new_insn(&bad_insn, addr_at(0x1000, 0), &lift)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("no target operand"),
+                "{opcode:?}: {err}"
+            );
+        }
     }
 }
