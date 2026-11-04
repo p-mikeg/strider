@@ -463,7 +463,7 @@ impl BuiltCallingConvention {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: link_register {lr:?} must also \
                  be present in callee_saved_regs, the deliberate tradeoff \
-                 that makes InitialVar(lr) propagate through call sites)",
+                 that makes InitialVar(lr) propagate through call sites",
             ));
         }
         // A negative pop would mean the callee's `ret` grew the stack, which
