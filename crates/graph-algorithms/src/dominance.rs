@@ -194,14 +194,10 @@ where
     }
 }
 
-/// Lengauer-Tarjan over a depth-first preorder numbering: `parent[w]` is `w`'s
-/// spanning-tree parent and `preds(w)` yields the preorder numbers of `w`'s
-/// predecessors, asked at most once for each `w` and never for the root, so a
-/// destructive closure (`std::mem::take`) is a valid one. The result is indexed
-/// by preorder number, the root at 0 and its own immediate dominator.
-///
-/// Every vertex must be numbered, i.e. reachable from the root, and every
-/// number `preds` yields must be in range.
+/// Lengauer-Tarjan over a DFS preorder numbering: `parent[w]` is `w`'s tree
+/// parent; `preds(w)` yields `w`'s predecessors' numbers, in range, and is asked
+/// at most once per `w`, never for the root. Indexed by preorder number; the
+/// root is 0 and its own immediate dominator. Every vertex must be reachable.
 #[must_use]
 pub fn immediate_dominators<I>(parent: &[u32], mut preds: impl FnMut(u32) -> I) -> Vec<u32>
 where
