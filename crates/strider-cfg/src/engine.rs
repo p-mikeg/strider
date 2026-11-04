@@ -44,6 +44,11 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     /// low bit selects the mode (Thumb, MIPS16e) and decoding starts at
     /// `entry & !1`. Incompleteness is reported in [`Cfg::incomplete`], not
     /// as an error.
+    ///
+    /// # Errors
+    ///
+    /// An unmapped entry, or a fall-through into bytes Sleigh rejects that no
+    /// call explains.
     pub fn build_cfg(&mut self, entry: MachineInsnAddr, opts: &CfgOptions) -> Result<Cfg> {
         self.builder(entry, opts)?.build()
     }
