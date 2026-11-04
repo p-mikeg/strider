@@ -373,8 +373,10 @@ impl SleighArch {
     ///
     /// A volatile range outside the REGISTER space, or a name this arch's
     /// register table does not declare.
-    pub fn volatile_register_ranges(&self) -> crate::Result<Vec<core::ops::Range<u64>>> {
-        let regs = self.names().regs();
+    pub fn volatile_register_ranges(
+        &self,
+        regs: &rsleigh::SleighRegs,
+    ) -> crate::Result<Vec<core::ops::Range<u64>>> {
         let pspec = self.pspec();
         let mut ranges = Vec::new();
         for range in pspec.volatile_ranges {
@@ -414,6 +416,24 @@ impl SleighArch {
     pub fn entry_mode_context(&self, entry_addr: u64) -> Option<(&'static str, u32)> {
         self.isa_mode_var()
             .map(|var| (var, u32::from(entry_addr & 1 == 1)))
+    }
+
+    /// [`Self::names`] and [`Self::decode_tables`], read off one Sleigh over
+    /// an empty image once per preset per process.
+    fn probe(self) -> &'static (ArchNames, DecodeTables) {
+        static PROBE: [std::sync::OnceLock<(ArchNames, DecodeTables)>; ArchPreset::ALL.len()] =
+            [const { std::sync::OnceLock::new() }; ArchPreset::ALL.len()];
+        PROBE[self.preset() as usize].get_or_init(|| {
+            let empty = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
+            let sleigh = self
+                .sleigh(empty)
+                .unwrap_or_else(|e| panic!("the compiled-in sla does not load: {e:#}"));
+            let names = ArchNames::from_sleigh(&sleigh)
+                .unwrap_or_else(|e| panic!("{:?}: {e:#}", self.preset()));
+            let tables = DecodeTables::from_sleigh(self, &sleigh, names.regs())
+                .unwrap_or_else(|e| panic!("{e:#}"));
+            (names, tables)
+        })
     }
 
     /// This arch's register table, a copy of [`SleighArch::names`]'s.
