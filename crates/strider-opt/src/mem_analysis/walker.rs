@@ -37,7 +37,7 @@ thread_local! {
 impl ClobberProbe for MemWalker<'_> {
     fn candidate(&mut self, lo: u32, hi: u32) -> Option<u32> {
         self.stores
-            .expect("only a positioned layout asks for a candidate")
+            .expect("a climbing walker has a store index")
             .candidate(&self.loc, self.policy, lo, hi)
     }
 

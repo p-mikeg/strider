@@ -40,10 +40,7 @@ fn climb(
     start_mem: ValueId,
 ) -> NodeId {
     let layout = MemLayout::build(fg);
-    assert!(
-        layout.positions().is_some(),
-        "a reducible graph is laid out"
-    );
+    assert!(layout.is_reducible(), "the graph is reducible");
     let start = fg.producer(start_mem);
     layout
         .nearest_clobber(fg, start, &mut EveryDef(clobbers), &mut Answers::default())
@@ -547,7 +544,7 @@ fn the_climb_resolves_a_query_at_an_inner_loop_header_through_the_outer_loop() {
 
 /// Two loops entered at each other's bodies: no header dominates the cycle.
 #[test]
-fn an_irreducible_loop_is_not_laid_out() {
+fn an_irreducible_loop_is_flagged() {
     let (mut fg, im, _store, phi_token) = base_with_store();
     let (a, d) = (mk_const(&mut fg, 0x20), mk_const(&mut fg, 0x21));
     let left_in = mk_store(&mut fg, im, a, d);
@@ -556,7 +553,7 @@ fn an_irreducible_loop_is_not_laid_out() {
     let right = mk_mem_phi(&mut fg, phi_token, &[right_in, left]);
     let use_id = fg.node_input_id_at(fg.producer(left), 2).unwrap();
     fg.graph_mut().update_input(use_id, right);
-    assert!(MemLayout::build(&fg).positions().is_none());
+    assert!(!MemLayout::build(&fg).is_reducible());
 }
 
 /// Random structured memory graphs: sequences of stores, merges of two or
@@ -881,60 +878,14 @@ fn assert_sound(
     }
 }
 
-/// The climb names what its definition names on the graphs that have no
-/// position index, from every def and for every slot, asked through the
-/// [`MemLayout::nearest_clobber`] production calls rather than the slow climb
-/// itself.  [`ByDefinition`]'s dominators are the textbook iteration, which
-/// converges on an irreducible graph too; every equality here rests on that,
-/// so it is checked against the brute-force ones rather than assumed.
-#[test]
-fn the_climb_matches_its_definition_on_random_irreducible_graphs() {
-    use strider_ir_test_utils::graph_oracle;
-    let mut irreducible = 0;
-    for seed in 0..300 {
-        let (mut shape, im) = ShapeGen::new(seed, true);
-        shape.body(im, 0);
-        shape.rewire_every_third_merge();
-        let ShapeGen {
-            fg, slots, values, ..
-        } = shape;
-        let layout = MemLayout::build(&fg);
-        if layout.positions().is_some() {
-            continue;
-        }
-        irreducible += 1;
-        let definition = ByDefinition::new(&fg, &values);
-        let (nodes, succs) = succ_graph(&fg, &values);
-        let oracle = graph_oracle::idoms(&graph_oracle::dom_matrix(&succs, 0), 0);
-        for (i, &n) in nodes.iter().enumerate() {
-            let want = oracle[i].map_or(nodes[0], |d| nodes[d as usize]);
-            assert_eq!(definition.idom[&n], want, "seed {seed}: the idom of {n:?}");
-        }
-        for &slot in &slots {
-            let mut answers = Answers::default();
-            for &v in &values {
-                let start = fg.producer(v);
-                let mut clobbers = store_at(slot);
-                let got = layout
-                    .nearest_clobber(&fg, start, &mut EveryDef(&mut clobbers), &mut answers)
-                    .expect("every generated def is laid out");
-                let want = definition.nearest(&fg, start, &mut store_at(slot));
-                assert_eq!(got, want, "seed {seed}: from {start:?}");
-                assert_sound(&fg, start, got, &mut store_at(slot), seed);
-            }
-        }
-    }
-    assert!(
-        irreducible > 150,
-        "{irreducible} of 300 graphs have no position index, too few to pin the slow climb"
-    );
-}
-
 /// The climb names what its definition names, from every def and for every
-/// slot, over every random graph a layout covers, rewired shapes included.
+/// slot, over random graphs, rewired and irreducible ones included.
+/// [`ByDefinition`]'s dominators are the textbook iteration, checked against
+/// the brute-force ones on the irreducible graphs.
 #[test]
 fn the_climb_matches_its_definition_on_random_graphs() {
-    let (mut laid_out, mut rewired_laid_out) = (0, 0);
+    use strider_ir_test_utils::graph_oracle;
+    let (mut laid_out, mut rewired_laid_out, mut irreducible) = (0, 0, 0);
     let (mut store_free_loops, mut empty_merges) = (0, 0);
     for seed in 0..300 {
         let allow_loops = seed % 3 != 0;
@@ -947,16 +898,21 @@ fn the_climb_matches_its_definition_on_random_graphs() {
         let ShapeGen {
             fg, slots, values, ..
         } = shape;
-        // A rewired merge can enter a loop away from its header, which has no
-        // position index; the irreducible corpus covers those.
         let layout = MemLayout::build(&fg);
-        if layout.positions().is_none() {
-            assert!(rewired, "seed {seed}: a structured graph is reducible");
-            continue;
-        }
-        laid_out += 1;
-        rewired_laid_out += u32::from(rewired);
         let definition = ByDefinition::new(&fg, &values);
+        if layout.is_reducible() {
+            laid_out += 1;
+            rewired_laid_out += u32::from(rewired);
+        } else {
+            assert!(rewired, "seed {seed}: a structured graph is reducible");
+            irreducible += 1;
+            let (nodes, succs) = succ_graph(&fg, &values);
+            let oracle = graph_oracle::idoms(&graph_oracle::dom_matrix(&succs, 0), 0);
+            for (i, &n) in nodes.iter().enumerate() {
+                let want = oracle[i].map_or(nodes[0], |d| nodes[d as usize]);
+                assert_eq!(definition.idom[&n], want, "seed {seed}: the idom of {n:?}");
+            }
+        }
         for &v in &values {
             let phi = fg.producer(v);
             if !matches!(fg.node_kind(phi), NodeKind::MemPhi) {
@@ -998,8 +954,9 @@ fn the_climb_matches_its_definition_on_random_graphs() {
         }
     }
     assert!(
-        laid_out > 200 && rewired_laid_out > 50,
-        "{laid_out} graphs laid out, {rewired_laid_out} of them rewired"
+        laid_out > 200 && rewired_laid_out > 50 && irreducible > 50,
+        "{laid_out} reducible graphs, {rewired_laid_out} of them rewired, \
+         {irreducible} irreducible"
     );
     assert!(
         store_free_loops > 20 && empty_merges > 20,
@@ -1008,11 +965,11 @@ fn the_climb_matches_its_definition_on_random_graphs() {
     );
 }
 
-/// `build` lays out exactly the reducible memory graphs. The edges come from
+/// `build` flags exactly the irreducible memory graphs. The edges come from
 /// `memory_input_of` and `phi_data_inputs`, as in production; reducibility
 /// over them is by definition.
 #[test]
-fn a_layout_exists_iff_the_memory_graph_is_reducible() {
+fn the_layout_flags_exactly_the_irreducible_memory_graphs() {
     use strider_ir_test_utils::graph_oracle;
     let seeds = if cfg!(debug_assertions) { 60 } else { 2_000 };
     let (mut irreducible, mut rewired_reducible_loops, mut reducible_loops, mut acyclic) =
@@ -1026,7 +983,7 @@ fn a_layout_exists_iff_the_memory_graph_is_reducible() {
         let (nodes, succs) = succ_graph(&shape.fg, &shape.values);
         let want = graph_oracle::is_reducible(&succs, 0);
         assert_eq!(
-            MemLayout::build(&shape.fg).positions().is_some(),
+            MemLayout::build(&shape.fg).is_reducible(),
             want,
             "seed {seed}"
         );
@@ -1117,10 +1074,7 @@ fn a_guarded_store_decides_its_merge_without_climbing_above_it() {
         let steps = |n: usize| {
             let (fg, p, merge) = guarded_store_after_merges(n, other_arm);
             let layout = MemLayout::build(&fg);
-            assert!(
-                layout.positions().is_some(),
-                "a reducible graph is laid out"
-            );
+            assert!(layout.is_reducible(), "the graph is reducible");
             let mut probe = SlotProbe::new(&fg, &layout, p);
             CLIMB_STEPS.with(|c| c.set(0));
             let got = layout
