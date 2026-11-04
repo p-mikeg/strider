@@ -80,9 +80,11 @@ class AssumptionOptions:
     @property
     def fp_rounding_mode_is_nearest(self) -> bool:
         """Float conversions that read the dynamic rounding mode (x86 MXCSR.RC,
-        x87 RC, PowerPC FPSCR.RN, ARM FPSCR.RMode, AArch64 FPCR.RMode, MIPS
-        FCSR.RM) round to nearest even, so they fold. Off, each selects among
-        the four modes. Wrong after `fesetround` or a caller's mode change."""
+        x87 RC at `fst` / `fstp`, PowerPC FPSCR.RN, ARM FPSCR.RMode, AArch64
+        FPCR.RMode, MIPS FCSR.RM) round to nearest even, so they fold.
+        Fixed-mode forms (`cvtt*`, `fcti*z`, ...) read no mode, and x87 `fist`,
+        `fistp` and `frndint` always read RC. Off, each selects among the four
+        modes. Wrong after `fesetround` or a caller's mode change."""
         ...
     def __init__(
         self,
@@ -124,9 +126,9 @@ class AssumptionOptions:
         Two premises remain, and no option lifts them. Memory is RAM: a load
         reads back the last value the analysed code stored there (a polled
         MMIO register reads as the value written). Float arithmetic rounds to
-        nearest with flush-to-zero and denormals-are-zero off (x86 MXCSR.FTZ
-        and DAZ, PowerPC FPSCR.NI, OE and UE, ARM FPSCR.FZ, AArch64 FPCR.FZ,
-        MIPS FCSR.FS), so `-ffast-math` code has no floor here.
+        nearest, and x86 MXCSR.FTZ and DAZ, PowerPC FPSCR.NI, OE and UE, ARM
+        FPSCR.FZ, AArch64 FPCR.FZ and MIPS FCSR.FS are clear, so `-ffast-math`
+        code has no floor here.
         """
         ...
     def union(self, other: AssumptionOptions) -> AssumptionOptions:

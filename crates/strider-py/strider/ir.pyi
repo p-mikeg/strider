@@ -127,8 +127,8 @@ class Function:
         assumptions: Optional[AssumptionOptions] = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None:
-        """Run an optimizer pipeline (default: the default pipeline) over this
-        function in place. `assumptions` join `self.assumptions`; none is
+        """Run an optimizer pipeline (the default pipeline when `None`) over
+        this function in place. `assumptions` join `self.assumptions`; none is
         withdrawn. Raises `StriderError` before running if `assumptions`
         leaves out a claim in force or adds `msr_register_keeps_mode` /
         `fp_rounding_mode_is_nearest` (lift-time claims: analyse again). Add
@@ -151,10 +151,10 @@ class Function:
         """Render the IR graph to DOT. Returns the string when `path` is
         `None`, else writes it to `path` and returns `None`.
 
-        `pretty=False` renders the graph exactly as stored (every node
-        reachable from entry, one edge per input). `pretty=True` inlines
-        constants, adds virtual nodes and names registers; a `DotStyle` name in
-        place of `True` picks the theme, and an unknown name raises
+        `pretty=False` (default) renders the graph exactly as stored (every
+        node reachable from entry, one edge per input). `pretty=True` inlines
+        constants, adds virtual nodes and names registers; a `DotStyle` name
+        in place of `True` picks the theme, and an unknown name raises
         `StriderError`.
         """
         ...
@@ -168,10 +168,11 @@ class Function:
         ...
     def to_text(self, fingerprints: bool = ...) -> str:
         """The canonical text form: a header (endianness, tracked varnodes,
-        default convention, the claims on, a `frame_address_in_call_register`
-        line if one applies, argument carriers), then one line per node
-        reachable from entry, `outs = op[payload] ins`. `fingerprints=True`
-        appends each node's sorted asm address set `  @{..}`.
+        default convention, the claims in force, a
+        `frame_address_in_call_register` line if one applies, argument
+        carriers), then one line per node reachable from entry,
+        `outs = op[payload] ins`. `fingerprints=True` appends each node's
+        sorted asm address set `  @{..}`.
 
         Values are named `%v0`, `%v1`, ... in print order, so equal graphs
         print equal text; diff two runs to see what changed.
@@ -298,8 +299,8 @@ class Function:
         """Apply one `find` to `replace` rewrite across the graph, returning
         how many times it fired. `replace` is a `strider.template.Template`,
         a `Capture` or a capture name; a `strider.pattern.Pat` raises
-        `TypeError`, one nested in a `Template` `StriderError`. A `.when()`
-        guard on `find` raises. A `replace` that builds nodes raises
+        `TypeError`, and one nested in a `Template` raises `StriderError`. A
+        `.when()` guard on `find` raises. A `replace` that builds nodes raises
         `StriderError` where the match holds no instruction-produced node (an
         `initial_var` or `phi` root), as the new nodes would carry no address.
 
