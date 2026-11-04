@@ -21,26 +21,23 @@ pub(crate) struct Patch {
 pub(crate) const MAX_PATCH_LEN: u64 = 8;
 
 impl Patch {
-    /// The low `size_bytes` (at most 8) of `value` at `addr`, in the
-    /// target's endianness.
-    pub(crate) fn new(addr: u64, value: u64, size_bytes: usize, endian_le: bool) -> Option<Self> {
-        // No-op in release rather than an opaque slice panic.
-        if size_bytes > 8 {
-            debug_assert!(
-                false,
-                "Patch::new: size_bytes={size_bytes} exceeds u64 width; every ELF \
-                 relocation kind must select size_bytes in {{1, 2, 4, 8}}"
-            );
-            return None;
-        }
+    /// The low `size_bytes` of `value` at `addr`, in the target's
+    /// endianness.
+    ///
+    /// # Panics
+    ///
+    /// When `size_bytes > 8`: every relocation kind classifies a field of
+    /// 1 to 8 bytes.
+    pub(crate) fn new(addr: u64, value: u64, size_bytes: usize, endian_le: bool) -> Self {
+        assert!(size_bytes <= 8, "a {size_bytes}-byte relocation field");
         let mut bytes = [0u8; 8];
         bytes::write_uint(&mut bytes[..size_bytes], value, endian_le);
-        Some(Self {
+        Self {
             addr,
             len: size_bytes as u8,
             value: bytes,
             unmodelled: None,
-        })
+        }
     }
 
     /// `size_bytes` at `addr` that no read may serve: a relocation of type
