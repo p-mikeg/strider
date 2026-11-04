@@ -212,7 +212,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
     /// Lifts `cfg`, which must have been built with `cfg_opts`. `cc` is the
     /// default convention; a direct Call to a key of `per_address_ccs` uses
-    /// that override. The function holds `claims`
+    /// that override. `cc` and every override must be built against this
+    /// engine's registers and fit its arch. The function holds `claims`
     /// ([`strider_ir::Function::assumptions`]); the lift itself reads
     /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`] and
     /// [`strider_ir::AssumptionOptions::fp_rounding_mode_is_nearest`].
