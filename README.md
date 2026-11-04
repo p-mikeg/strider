@@ -39,11 +39,8 @@ pattern = load(addr=int_add(base, int_const(off)))
 for hit in function.find_all(pattern, ignore_casts=True):
     print("offset =", hit.uint(off))   # 4 and 8: the two stack arguments
 
-# The explorer draws the whole graph, pannable and zoomable;
-# visualize(whole=False) opens on the neighborhood around the entry instead,
-# which stays usable on large functions. It prints a local URL and serves
-# until Ctrl-C; background=True serves on a thread and returns the port, so
-# you can keep querying:
+# A pannable graph explorer at a local URL; whole=False opens on the entry's
+# neighborhood (for large functions). background=True returns the port:
 port = strider.explore.visualize(function, background=True)
 strider.explore.shutdown(port)
 ```
@@ -98,21 +95,19 @@ The guides in [`docs/`](docs/):
   pipeline fits together.
 - [Vocabulary](docs/vocabulary.md): the terms (region, phi, dominator, varnode,
   value types, ...) in plain language.
-- [Python guide](docs/python-guide.md): the practical walkthrough of analyzing
-  functions, writing queries, constraints, rewrites, and custom memory readers.
+- [Python guide](docs/python-guide.md): a walkthrough of analyzing functions,
+  queries, constraints, rewrites and custom memory readers.
 - [Python API reference](docs/python-api.md): the Python API by topic, with
   runnable examples.
-- [Optimizations](docs/optimizations.md): what each pass does, which is usually
-  why a pattern's shape differs from the source.
-- [Changelog](CHANGELOG.md): every release's changes, breaking entries first.
+- [Optimizations](docs/optimizations.md): what each pass does, usually why a
+  pattern's shape differs from the source.
 
 [`crates/strider-py/examples/python/`](crates/strider-py/examples/python/) has
 seventeen runnable scripts, from a quickstart to custom target ABIs.
 
 ## Install
 
-The Sleigh fork strider lifts through is a submodule, and every crate that
-touches machine state depends on it, so clone with it:
+The Sleigh fork is a submodule, so clone with it:
 
 ```bash
 git clone --recursive https://github.com/p-mikeg/strider
@@ -120,8 +115,8 @@ git clone --recursive https://github.com/p-mikeg/strider
 git submodule update --init --recursive
 ```
 
-The fixture binaries under `fixtures/out/` are stored in Git LFS, so fetch them
-too and the examples and tests run without a cross-compiler:
+The fixture binaries under `fixtures/out/` are in Git LFS; fetch them to run
+the examples and tests without a cross-compiler:
 
 ```bash
 git lfs install && git lfs pull
@@ -161,17 +156,16 @@ utility crates (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
 
 ## Rust API
 
-The crates are usable without the bindings.
+The crates work without the bindings:
 `strider_orchestrator::Strider::new(...)` builds a handle and `.analyze(...)`
 runs the whole pipeline.
-[`examples/orchestrator_demo.rs`](crates/strider-orchestrator/examples/orchestrator_demo.rs)
-runs against the committed fixtures (`cargo run -p strider-orchestrator
---example orchestrator_demo`), driving the stages by hand (`Lifter::new`,
-`build_cfg`, `build_ir`, `pipeline.run`) and dumping each one.
-[`examples/analyze_kernel.rs`](crates/strider-orchestrator/examples/analyze_kernel.rs)
-is the one-call form, but it is a profiling harness: it takes the image path in
-`argv[1]` (or `$STRIDER_KERNEL`), and the symbol and the architecture are
-constants at the top of the file that you edit.
+[`orchestrator_demo.rs`](crates/strider-orchestrator/examples/orchestrator_demo.rs)
+drives the stages by hand (`Lifter::new`, `build_cfg`, `build_ir`,
+`pipeline.run`) over the committed fixtures and dumps each one (`cargo run -p
+strider-orchestrator --example orchestrator_demo`).
+[`analyze_kernel.rs`](crates/strider-orchestrator/examples/analyze_kernel.rs)
+is the one-call form, a profiling harness: the image path is `argv[1]` (or
+`$STRIDER_KERNEL`); the symbol and architecture are hard-coded.
 
 ## Build & test
 
@@ -180,7 +174,7 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
-cargo test --workspace --release   # a debug_assert hides from the debug run
+cargo test --workspace --release   # overflow-checks on, debug-assertions off
 RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
 cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
 ```
