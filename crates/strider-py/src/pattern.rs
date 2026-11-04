@@ -663,8 +663,9 @@ impl TemplateLike<'_> {
 }
 
 // A raising `.when()` predicate stashes its error here so the matcher can
-// finish its walk. The first error wins; later predicates do not run and
-// answer no-match; the outer find boundary re-raises.
+// finish its walk, as a reader does a `KeyboardInterrupt` / `SystemExit` or
+// its own failure. The first error wins; later predicates do not run and
+// answer no-match; the outer boundary re-raises.
 thread_local! {
     static PENDING_QUERY_ERROR: std::cell::Cell<Option<PyErr>> =
         const { std::cell::Cell::new(None) };
