@@ -16,8 +16,8 @@ These change an answer without an error:
   the builder changes what the `Pat` matches, and it answers every query.
 - `BoundCapture.__eq__` compares at full width: `m[c] == 2**300` can be
   `True`.
-- `find_all` returns one match per bound output: `call().any_output()` on a
-  call with 14 outputs gives 14 matches, and `find_unique` raises there.
+- `find_all` returns one match per bound output: `call().any_output()` on an
+  n-output call gives n matches, and `find_unique` raises there.
 - `ElfLifter.analyze` / `build_cfg` follow a function's GCC `<name>.cold` and
   `<name>.cold.N` fragments instead of ending at a tail call.
 
@@ -64,7 +64,10 @@ These raise:
   as `__cause__`) at any address; it was reported as `unmapped_target` past
   the entry.
 - A buffer whose items are wider than a byte (`array('H')`,
-  `memoryview.cast('I')`) raises `TypeError`; it was read one item per byte.
+  `memoryview.cast('I')`) is refused where it was read one item per byte:
+  `BufferReader(base, data)` raises `TypeError`, a `MemReader.read`
+  returning one fails the lift, a `ReadOnlyMemory.read` returning one
+  reads as unmapped.
 - `Lifter.call_other_abi` raises for an entry built against another arch.
 - `ElfLifter.arch` and `reader()` raise while the handle is in use;
   `reader()` returns the handle's own `BufferReader`.
@@ -92,7 +95,8 @@ the rest.
 - `CfgOptions(fragment_ranges=[(start, end)])`: address ranges that also
   belong to the function; `ElfLifter` fills it from `.cold` symbols.
 - `"past_function_end"` in `INCOMPLETE_REASONS`: code fell through past
-  `function_max_size`, now a tail call where it was an error.
+  `function_max_size` or a `fragment_ranges` end, now a tail call where it
+  was an error.
 - `AssumptionOptions.fp_rounding_mode_is_nearest` and
   `msr_register_keeps_mode` (both default on, read by the lift);
   `AssumptionOptions.none(...)` takes keywords; `a | b` / `union`;
@@ -220,16 +224,21 @@ Lifting (vendored Sleigh):
 - ppc64 ELFv1 and ppc32 SysV conventions return floats in `f1`-`f4`.
 - CFG decoding of a run of `nop`s is deterministic.
 - `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb), as `analyze`
-  does, and survives repeated Thumb builds on one handle.
+  does, and keeps the Thumb mode after many builds on one handle.
 - AArch64 `ldpsw` (second word), `stlrb` / `stlrh` and `ldar` W (access
   width), LSE atomics and `ldlar` into W (upper half), byte and half
   `ld{s,u}{max,min}` (compare width); MIPS64 `ins` / `ext` / `wsbh`
-  (sign extension); ARM NEON `vcvt` f16 vectors, modified immediates with
-  imm8 0, `sdiv` / `udiv` by 0; x86 66/F2/F3 conversion prefixes, `0x67`
+  (sign extension); ARM NEON `vcvt` f16 vectors and modified immediates with
+  imm8 0, ARM `sdiv` / `udiv` by 0; x86 66/F2/F3 conversion prefixes, `0x67`
   `rep` and `lea`; PowerPC VSX double FMAs and `divwe[u]`; plus 21 fixes
   taken from Ghidra master (listed in `externals/rsleigh/sleigh/FORK.md`).
-- A branch into `lock cmpxchg` or a `rep` string op lands on the
-  instruction's first op; the glibc `lock` re-entry is not reported.
+- AArch64 by-element `sdot`, `udot`, `usdot`, `sudot`, `bfdot`, `fcmla`
+  and `sm3tt*` lift: their lane read, `SIMD_PIECE`, is a pure user-op
+  where it failed the lift as unclassified.
+- A branch into the middle of an instruction with internal p-code branches
+  (`lock cmpxchg`, `rep movs`) edges to its first op, not its last p-code
+  slice, and is still `"interior_target"`; glibc's `je 0f; lock; 0:`
+  re-entry is not reported whichever edge decodes first.
 - A Thumb byte table whose index range is not proven defers instead of
   resolving to every byte value.
 
@@ -1228,8 +1237,19 @@ Python and the explorer:
 
 ### Fixed, decoder and sla
 
-The vendored Sleigh engine and specs under `externals/rsleigh`: see
-`externals/rsleigh/sleigh/FORK.md`, "What the patches change".
+The vendored Sleigh specs and parser: `externals/rsleigh/sleigh/FORK.md`,
+"What the patches change", lists every fix in force, including those 0.3.0
+adds. Outside the patches:
+
+- A memory reader overstating its read is an error rather than a panic
+  across the FFI boundary, a reader that panics is caught rather than
+  unwinding out of the callback, and `setOutOfBandState` checks its operand
+  index rather than reading uninitialised state. A region at the top of
+  the address space no longer overflows the read callback.
+- `Sleigh::clone` replays the pinned context the original held, so a
+  cloned engine decodes as its source does, up to `MAX_CONTEXT_COMMITS`
+  (4096) commits; past that the log is dropped and
+  `Sleigh::clone_would_replay_context` says which of the two a clone gets.
 
 ## 0.1.0
 
