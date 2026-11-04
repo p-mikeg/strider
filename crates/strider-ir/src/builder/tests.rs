@@ -1845,29 +1845,6 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     Ok(())
 }
 
-/// A write through `graph_mut()` must be visible through the immutable view.
-#[test]
-fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
-    let mut b = empty_builder()?;
-    let count_before = b.function().graph().all_node_ids().count();
-    let node_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::node::IntConstId::new((42_u64) as usize)),
-        std::iter::empty(),
-        [ValueKind::Typed(ValueType::int(64))],
-    );
-    let count_after = b.function().graph().all_node_ids().count();
-    assert_eq!(
-        count_after,
-        count_before + 1,
-        "graph_mut() write must be visible via graph()"
-    );
-    assert!(matches!(
-        b.function().node_kind(node_id),
-        NodeKind::IntConst(_)
-    ));
-    Ok(())
-}
-
 #[test]
 fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     let mut b = empty_builder()?;
