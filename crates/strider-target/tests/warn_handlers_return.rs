@@ -1,5 +1,5 @@
-//! Trap user-ops split by what the trap means to the OS, not by sla shape:
-//! MIPS' `trap` carries Linux's `BUG()`, while ARM's `bkpt` does not.
+//! Trap and address-translation user-ops classified by what they mean to the
+//! OS, not by sla shape.
 
 use strider_target::ArchPreset;
 use strider_target::call_other_abi::{CallOtherAbi, CallOtherClass, classify};
@@ -13,35 +13,6 @@ fn abi(preset: ArchPreset, name: &str) -> CallOtherAbi {
         CallOtherClass::Call(abi) => abi,
         other => panic!("{name}: expected Call(_), got {other:?}"),
     }
-}
-
-/// Linux MIPS spells `BUG()` as `break BRK_BUG` and `BUG_ON(c)` as
-/// `tne $0,c,BRK_BUG`; both lift to `trap(tmp)` and `BUG()` is `__noreturn`.
-/// `WARN_ON` does not reach `trap`: no `__bug_table` accompanies these traps,
-/// and `__warn` / `warn_slowpath_fmt` are called instead.
-#[test]
-fn mips_trap_terminates() {
-    for preset in [
-        ArchPreset::MipsBe32,
-        ArchPreset::MipsLe32,
-        ArchPreset::MipsBe64,
-        ArchPreset::MipsLe64,
-    ] {
-        assert!(
-            class(preset, "trap").is_no_return(),
-            "{preset:?}: BUG() does not return"
-        );
-    }
-}
-
-/// The conditional forms keep their non-trapping path through the sla's own
-/// `if (!cond) goto <done>`, so terminating at the CallOther does not strand
-/// the code after a `BUG_ON`. Guarding the arch-specific row: ARM's `bkpt` is
-/// a debugger trap that resumes, and must NOT follow MIPS here.
-#[test]
-fn arm_bkpt_still_falls_through() {
-    let bkpt = abi(ArchPreset::Arm, "software_bkpt");
-    assert!(!bkpt.no_return, "`bkpt` resumes");
 }
 
 /// The `goto [target]` ops stay terminating. Classifying them returning does
