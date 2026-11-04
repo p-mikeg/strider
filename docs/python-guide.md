@@ -327,7 +327,8 @@ Usually optimization rewrote the shape ([optimizations.md](optimizations.md)):
 
 - **Subtraction and "not equal" are not primitives**: `a - b` is `a + (-b)`,
   `a != b` is `not (a == b)`. Use the aliases (`int_sub`, `int_le`, `float_ne`,
-  ...).
+  ...). `int_sub(x, 16)` also matches the folded `x + (-16)`; with a captured
+  constant, write `int_add(x, int_const(c))`, which binds `-16`.
 - **Commutative ops try both orders**; the rest keep yours
   ([python-api.md](python-api.md#operators)).
 - **`phi()` matches any phi**; `phi_for(vn)` narrows to one register's.
