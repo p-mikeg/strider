@@ -28,6 +28,23 @@ pub(crate) fn is_addr_tail_call(
     outside && !fragments.overlaps(target, target.saturating_add(1))
 }
 
+/// Whether falling through from the instruction at `from` to `to` leaves the
+/// function. An `Open` bound has no end, but a fragment's end still ends it.
+pub(crate) fn is_fall_through_past_end(
+    from: u64,
+    to: u64,
+    start_addr: u64,
+    bound: FunctionBound,
+    fragments: &DataRanges,
+) -> bool {
+    let in_fragment = |a: u64| fragments.overlaps(a, a.saturating_add(1));
+    is_addr_tail_call(to, start_addr, bound, fragments)
+        || (matches!(bound, FunctionBound::Open { .. })
+            && in_fragment(from)
+            && !in_fragment(to)
+            && to != start_addr)
+}
+
 /// The user-op a `CallOther` names: its CONST input 0, as an index into
 /// `names`. `None` for any other operand shape.
 #[must_use]

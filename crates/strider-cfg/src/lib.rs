@@ -23,8 +23,8 @@ pub use options::{
 };
 pub use pcode_text::{insn_plain_text, insn_text};
 
-pub(crate) use query::is_addr_tail_call;
 pub use query::{IfRegionSuccessors, direct_call_target, user_op_of};
+pub(crate) use query::{is_addr_tail_call, is_fall_through_past_end};
 pub use types::{
     MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator, UndecodableTarget,
 };
