@@ -819,7 +819,7 @@ def int_xor(l: ValueLike, r: ValueLike) -> Pat:
     """Match a bitwise XOR. Commutative."""
 def int_cmp(op: IntCmpOpName, l: ValueLike, r: ValueLike) -> Pat:
     """Match a named integer comparison, e.g. `"Equal"`, `"Less"`,
-    `"Sless"`, `"Carry"`."""
+    `"Sless"`, `"Carry"`, `"Scarry"`, `"Sborrow"`."""
 def int_eq(l: ValueLike, r: ValueLike) -> Pat:
     """Match an integer equality test. Commutative."""
 def int_ne(l: ValueLike, r: ValueLike) -> Pat:
@@ -899,7 +899,7 @@ def float_bits_to_int(operand: ValueLike) -> Pat:
     """Match a same-width reinterpretation of float bits as an integer."""
 
 def int_truncate(operand: ValueLike) -> Pat:
-    """Match a narrowing that keeps the low bits."""
+    """Match a narrowing to the output width, keeping the low bits."""
 def int_popcount(operand: ValueLike) -> Pat:
     """Match a set-bit count."""
 def int_lzcount(operand: ValueLike) -> Pat:

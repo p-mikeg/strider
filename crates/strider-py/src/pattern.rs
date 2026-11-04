@@ -1412,16 +1412,16 @@ pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
     })
 }
 
-value_ops!(PyPat, "Pattern", " Commutative.");
+value_ops!(PyPat, "Match", pattern);
 
-/// Pattern: `x` is NaN, the IEEE 754 self-inequality `x != x`.
+/// Match a NaN test, the IEEE 754 self-inequality `x != x`.
 #[pyfunction]
 pub fn float_is_nan(operand: Py<PyAny>) -> PyPat {
     let make = |x| ex(sp::float_is_nan(x));
     PyPat::from(un("float_is_nan()", Kind::Pair, Box::new(make), operand))
 }
 
-/// Pattern: float `a <= b`, NaN-aware.
+/// Match a float less-or-equal test, NaN-aware.
 #[pyfunction]
 pub fn float_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
     let make = |l, r| ex(sp::float_le(l, r));
