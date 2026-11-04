@@ -888,8 +888,8 @@ fn every_spelling_reaches_one_interned_value() -> Result<()> {
         "a `from_words` spelling reaches the same node past the carrier"
     );
 
-    // Limbs that fit u128 collapse to `Bits` too, though the differing width
-    // keeps this a distinct node.
+    // Limbs that fit u128 share the scalar's `IntConstId`, though the
+    // differing width keeps this a distinct node.
     let small2 = b.build_int_const(UBig::from_words(&[5, 0, 0, 0]), ValueType::int(256))?;
     let small2_node = b.function().producer(small2);
     let NodeKind::IntConst(small2_id) = *b.function().node_kind(small2_node) else {
@@ -1174,9 +1174,7 @@ fn build_call_other_terminate_true_closes_region() -> Result<()> {
 }
 
 /// An op that both clobbers memory and never returns (a PowerPC `BUG()` trap)
-/// closes the region, so neither edge may be advanced afterwards. The memory
-/// advance used to run unconditionally and errored on the closed region; the
-/// combination was unreachable while no ABI entry set both flags.
+/// closes the region, so neither edge may be advanced afterwards.
 #[test]
 fn build_call_other_terminating_and_memory_clobbering_closes_region() -> Result<()> {
     let mut b = builder_with_region()?;
@@ -1946,8 +1944,7 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     Ok(())
 }
 
-/// A value genuinely past `u128` interns as `Wide` and reads back as the
-/// original limbs.
+/// A value past `u128` reads back as the original limbs.
 #[test]
 fn a_wide_const_round_trips_through_graph() -> Result<()> {
     let cases: [(&str, Vec<u64>, ValueType); 2] = [
@@ -2359,7 +2356,7 @@ mod build_call_with_cc {
         );
     }
 
-    /// Float argument registers are APPENDED to the integer ones, so an
+    /// Float argument registers are appended to the integer ones, so an
     /// existing `call().arg(N)` query over integer arguments keeps its index.
     #[test]
     fn float_args_follow_integer_args_in_call_inputs() {
@@ -3056,9 +3053,9 @@ fn switch_targets_survive_compact() -> Result<()> {
     Ok(())
 }
 
-/// x86-64 declares `GDTR`/`IDTR` at 12 bytes and `LDTR`/`TR` at 14, and
-/// `wire_entry_and_build_initial_vars` maps EVERY tracked varnode, so one
-/// unmappable width fails the whole function.
+/// x86-64 declares `GDTR`/`IDTR` at 12 bytes and `LDTR`/`TR` at 14; every
+/// tracked varnode gets an `InitialVar`, so one unmappable width fails the
+/// whole function.
 #[test]
 fn twelve_and_fourteen_byte_tracked_varnodes_build_initial_vars() -> Result<()> {
     for size in [12u32, 14] {
