@@ -1,25 +1,11 @@
 //! Store-to-load forwarding.
 //!
-//! Forwards a store's value to a later load only when the nearest
-//! may-aliasing memory definition is an exact-match store: same address
-//! class, base and offset, with stored bytes fully covering the load's
-//! range (a wider store is reshaped via `Truncate` / `ShiftRight`).
-//! Anything else blocks: a non-exact overlapping store, a `MemPhi` whose arms
-//! reach different definitions, or `InitialMemory`.  A `MemPhi` whose arms
-//! agree is transparent.
-//!
-//! A `Call` blocks unless its convention declares `preserves_memory`; a
-//! `CallOther` always blocks, since only a user-op its ABI row declares
-//! `clobbers_memory` reaches the chain.  A `Call` also steps through when
-//! `escape_analysis`
-//! proves the frame private and the slot is outside the call's
-//! outgoing-argument window, and when it is a listed `noalias_allocators`
-//! callee and the probed location is a PRIVATE-frame stack slot outside that
-//! same window, or a different allocation.
-//!
-//! The pass never synthesizes a value-`Phi`, so no merge of two stored values
-//! forwards.  A stack address decomposes only once `PhiCollapse` has folded the
-//! region phis over SP.
+//! Forwards a store's value to a later load when the nearest may-aliasing
+//! memory def is a store at the same address whose bytes cover the load (a
+//! wider store is sliced with `ShiftRight` / `Truncate`).  Anything else
+//! blocks, including a `MemPhi` whose arms reach different defs; no value
+//! `Phi` is synthesized.  Which calls a load passes is
+//! [`crate::mem_analysis::Policy`]'s.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer};
@@ -30,14 +16,9 @@ use crate::mem_analysis::{MemQuery, Policy, ReachingDef};
 
 pub struct LoadForward;
 
-// Not `PROPAGATE`: a fresh forward reaches a consumer only through an address
-// edge, which the next pipeline iteration picks up; re-enqueueing every
-// consumer to catch it costs more than the deferral.
-//
-// One query per sweep: the pass only rewires `Load` memory edges and
-// redirects `Load` outputs, so every memory def keeps its inputs and the
-// index stands; `try_forward_load` drops the answers when a redirect moves a
-// store's address.
+// Not `PROPAGATE`: a forward reaches a consumer only through an address
+// edge, which the next pipeline iteration picks up.  One query per sweep: the
+// pass changes only `Load` edges and outputs, so every memory def stands.
 impl crate::peephole::PeepholePass for LoadForward {
     type Sweep = MemQuery;
 
@@ -57,11 +38,7 @@ impl crate::peephole::PeepholePass for LoadForward {
     }
 }
 
-/// Two nearest-clobber queries per load, each a climb of the memory dominator
-/// tree over the query's index, one dominator at a time where the memory
-/// graph is irreducible and the index carries no position order.
-/// [`MemQuery::reach_and_narrow`] moves the load's edge onto the structural clobber,
-/// which later sweeps start from.
+/// Narrows `load`'s memory edge, then forwards an exact-match store's value.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,
@@ -69,12 +46,8 @@ fn try_forward_load(
 ) -> Result<()> {
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
-    // Shortens the load's memory edge so future walks skip the proven-disjoint
-    // run.  A moved edge is a change: the load may now be a structural twin
-    // of another, and the fixed point must not exit before that merge is seen.
     let reaching = query.reach_and_narrow(edit, load, Policy::forward(edit.function()));
 
-    // Exact match: same location, stored bytes covering the load's range.
     let ReachingDef::Match(clobber_node) = reaching else {
         return Ok(());
     };
@@ -95,9 +68,8 @@ fn try_forward_load(
         None => return Ok(()),
     };
 
-    // A redirected address slot reads its new value's class, which no
-    // memoised answer has seen.  Through any other use the classes hold: a
-    // value the redirect feeds keeps its own, already read, class.
+    // A store address redirected onto a new value has a class no memoised
+    // answer has seen.
     if edit
         .function()
         .graph()
@@ -109,10 +81,7 @@ fn try_forward_load(
     {
         query.forget_answers();
     }
-    // The store and the load's address are the forward's proof, and the
-    // automatic cull takes the Load once the redirect leaves it dead, so the
-    // replacement absorbs the store and the address's producer first. The
-    // nodes below that producer keep their addresses only where they survive.
+    // The store and the load's address are the forward's proof.
     let forwarded_node = edit.producer(forwarded);
     edit.absorb_node_fingerprint(forwarded_node, clobber_node);
     let addr = edit.load_addr(load);
@@ -121,9 +90,8 @@ fn try_forward_load(
     Ok(())
 }
 
-/// Reshapes a wider store's value down to the load width: shifted right
-/// `shift` bits, the slice [`crate::const_eval::load_slice`] names, then
-/// truncated.
+/// A wider store's value shifted right `shift` bits and truncated to the
+/// load.
 fn slice_to_load(
     edit: &mut crate::EditFunction<'_>,
     store_data: ValueId,
@@ -136,8 +104,7 @@ fn slice_to_load(
         store_data
     } else {
         let shift_const = edit.build_int_const(u128::from(shift), store_data_ty)?;
-        // `build_int_const` carries no contributor stamp, so attribute the
-        // const by hand; every reachable node needs a fingerprint.
+        // `build_int_const` stamps no fingerprint.
         let shift_const_node = edit.producer(shift_const);
         edit.absorb_node_fingerprint(shift_const_node, load);
         let shr = edit.create_node_attributed(
