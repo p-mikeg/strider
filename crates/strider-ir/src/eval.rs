@@ -132,19 +132,12 @@ fn signed_max(ty: ValueType) -> IBig {
     (IBig::ONE << ty.bit_width().saturating_sub(1)) - IBig::ONE
 }
 
-/// Whether a shift by `amount` is at or past `ty`'s declared width, where
-/// Sleigh (opbehavior.cc:411) returns 0 for IntLeft / IntRight and
-/// `signbit ? calc_mask : 0` for IntSright.
+/// Whether a shift by `amount` is at or past `ty`'s width, where Sleigh
+/// (opbehavior.cc:411) answers 0, or the sign fill for IntSright. Takes the
+/// raw amount: reducing or masking it first would wrap it back into range.
 ///
-/// The DECLARED bit width matches Sleigh's `8 * sizeout` at every type except
-/// `I1`, whose width is 1 while its varnode is a byte; this module reads `I1`
-/// as 1-bit signed for the same reason, so an `I1` shift or signed compare
-/// answers off strider's boolean width, not Sleigh's. The lifter emits `I1` only from compares and
-/// `Truncate(..):I1`, so no shift ever reaches it.
-///
-/// Do NOT reduce `amount` modulo the width, nor mask it to `ty` before this
-/// test: either wraps an out-of-range literal back into range, diverging from
-/// Sleigh by the full shift output.
+/// At `I1` the width is 1 bit, not Sleigh's byte; the lifter emits `I1` only
+/// from compares and boolean ops and widens it before reuse, so no shift sees one.
 #[inline]
 #[must_use]
 pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
@@ -155,9 +148,7 @@ pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
 /// by zero, `INT_MIN / -1`) or `ty` is a float.
 ///
 /// Both operands are masked to `ty` at entry, the shift amount only after it
-/// is clamped to the width. Div, Rem and ShiftRight are not safe under
-/// masking-commutativity, so they need the inputs already narrowed to give the
-/// right answer on a caller that passed raw bits.
+/// is clamped to the width.
 #[inline]
 pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<UBig> {
     let bits = int_bits(ty)?;
@@ -273,9 +264,8 @@ pub fn lzcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
 
 #[cfg(test)]
 mod tests {
-    /// The variants are public and only the CONSTRUCTORS check the width, so
-    /// `Int(0)` reaches these `pub fn`s. Both answered 0 before the carrier
-    /// fast paths; a `128 - bits` shift there overflows instead.
+    /// The variants are public and only the constructors check the width, so
+    /// `Int(0)` reaches these `pub fn`s.
     #[test]
     fn the_width_primitives_are_total_at_both_ends_of_the_carrier() {
         use super::{all_ones, mask};
@@ -632,8 +622,7 @@ mod tests {
         }
     }
 
-    /// Total past the `u128` carrier: the width arm that used to refuse here
-    /// is gone, so each answers at the declared width.
+    /// Each answers at the declared width past the `u128` carrier.
     #[test]
     fn width_past_the_u128_carrier_folds() {
         let i256 = ValueType::int(256);
@@ -861,8 +850,7 @@ mod tests {
         }
     }
 
-    /// The `bits >= 128` arms, which use wrapping add/sub plus sign-bit logic
-    /// rather than the narrow range check.
+    /// Overflow at the I128 boundary.
     #[test]
     fn int_cmp_i128_overflow_arms_cases() {
         struct Case {
@@ -877,7 +865,7 @@ mod tests {
         let cases = [
             Case { case: "scarry_i128_max_plus_one", op: IntCmpOp::Scarry, l: i128::MAX as u128, r: 1, expected: true, why: "i128::MAX + 1 signed-overflows" },
             Case { case: "sborrow_i128_min_minus_one", op: IntCmpOp::Sborrow, l: i128::MIN as u128, r: 1, expected: true, why: "i128::MIN - 1 signed-overflows" },
-            Case { case: "carry_u128_max_plus_one", op: IntCmpOp::Carry, l: u128::MAX, r: 1, expected: true, why: "u128::MAX + 1 unsigned-overflows (sum wraps below l)" },
+            Case { case: "carry_u128_max_plus_one", op: IntCmpOp::Carry, l: u128::MAX, r: 1, expected: true, why: "u128::MAX + 1 unsigned-overflows" },
             // Controls: no overflow on the same arms.
             Case { case: "scarry_i128_zero_no_overflow", op: IntCmpOp::Scarry, l: 0, r: 1, expected: false, why: "0 + 1 does not signed-overflow at I128" },
             Case { case: "sborrow_i128_zero_no_overflow", op: IntCmpOp::Sborrow, l: 0, r: 1, expected: false, why: "0 - 1 = -1 does not signed-overflow at I128 (both operands non-negative)" },
@@ -925,10 +913,6 @@ mod tests {
             );
         }
     }
-
-    // Shifting by the full bit width or beyond zeroes the value in Sleigh
-    // (opbehavior.cc:411), and sign-fills for INT_SRIGHT. Reducing the amount
-    // modulo the width instead diverges by a factor of 2^bits.
 
     /// Out-of-range (>= bit-width) shift semantics; each `why` names the Sleigh
     /// rule the row pins.
