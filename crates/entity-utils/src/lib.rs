@@ -1,5 +1,5 @@
 pub(crate) mod interner;
-pub mod set;
+pub(crate) mod set;
 pub(crate) mod union_dag;
 pub(crate) mod worklist;
 

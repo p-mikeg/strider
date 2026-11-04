@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use cranelift_entity::SecondaryMap;
 use dashu_int::UBig;
-use entity_utils::set::DenseEntitySet;
+use entity_utils::DenseEntitySet;
 
 use crate::IRViewer;
 use crate::function::Function;
