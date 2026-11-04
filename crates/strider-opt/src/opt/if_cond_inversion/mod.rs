@@ -9,7 +9,8 @@ use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 pub struct IfCondInversion;
 
 thread_local! {
-    /// Built once per thread; held outside the pass to keep it `Send`.
+    /// Built once per thread; held outside the pass so it stays
+    /// `Sync`, as `Optimizer` requires.
     static PATTERN: (Pattern, Capture) = {
         let capture = Capture::new();
         (bool_not(var(capture)).into_pattern(), capture)

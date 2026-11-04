@@ -34,8 +34,9 @@ pub(crate) enum Calls {
     Pass,
     /// The claims' relaxations: a listed allocator passes a private-frame
     /// slot outside its argument window and an allocation it does not return;
-    /// under `escape_analysis` any call and any `Anchor` store pass that
-    /// slot; `callee_preserves_stack_args` empties the window.
+    /// under `escape_analysis` any call passes that slot, and with
+    /// `stack_global_disjoint` too any `Anchor` store;
+    /// `callee_preserves_stack_args` empties the window.
     Forward,
 }
 
@@ -82,7 +83,10 @@ impl Policy {
 /// every memory def and the values in its address and SP slots.  Moving a
 /// store's address onto another value needs [`Self::forget_answers`]; the
 /// index and windows survive it, since the moved-from value was a `Load`'s,
-/// which the index treats as an `Anchor` and which places no window.
+/// which the index treats as an `Anchor` and which places no window.  A
+/// call's SP moved off a `Load` needs nothing: a stack address reloaded from
+/// memory was stored, so the frame escapes and no call steps through a stack
+/// probe whatever its window.
 #[derive(Default)]
 pub(crate) struct MemQuery {
     /// Built on the first query; policy-free.
