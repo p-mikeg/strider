@@ -16,22 +16,6 @@ impl<'mem> OptCtx<'mem> {
 /// A single IR optimization pass. A run that moves a use or kills a node
 /// ([`EditFunction::generation`](crate::EditFunction::generation)) makes the
 /// pipeline run another iteration.
-///
-/// ```
-/// # use strider_opt::{OptCtx, Optimizer};
-/// # use strider_opt::EditFunction;
-/// struct MyPass;
-/// impl Optimizer for MyPass {
-///     fn apply(
-///         &self,
-///         _edit: &mut EditFunction<'_>,
-///         _ctx: &OptCtx<'_>,
-///     ) -> anyhow::Result<()> {
-///         // ... pass body operating on `_edit` ...
-///         Ok(())
-///     }
-/// }
-/// ```
 pub trait Optimizer: Sync {
     /// `edit` wraps a built function, so its entry is a valid `NodeId`.
     ///
