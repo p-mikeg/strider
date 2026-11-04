@@ -110,8 +110,8 @@ class Function:
             function.optimize(assumptions=function.assumptions
                               | AssumptionOptions.none(escape_analysis=True))
 
-        Raises `StriderError` while the producing `Lifter` is in `analyze`,
-        `build_cfg` or `add_elf`. Stales `Node` / `Match` handles and node
+        Reads the producing `Lifter`'s `rom`, and raises `StriderError` while
+        that `Lifter` is in `analyze`, `build_cfg` or `add_elf`. Stales `Node` / `Match` handles and node
         ids. Holds the GIL."""
         ...
     def to_dot(
@@ -201,11 +201,13 @@ class Function:
     ) -> list[Match]:
         """Every deduplicated `Match` for `pat`, one per distinct binding:
         `int_add(anything().capture(k), anything())` on `int_add(x, y)` gives
-        `k=x` and `k=y`; `.ordered()` pins operand slots.
+        `k=x` and `k=y`; `.ordered()` pins operand slots. Each output
+        `any_output()` binds is its own match; `m[c] ==` tells them apart.
 
         A list of patterns joins on shared `Capture`s, one merged `Match` per
-        row, and `constraints` filter the rows. `ignore_root` keys dedup on
-        captures alone. `ignore_casts` (`True`, or a `CastMask`) looks through
+        row, and `constraints` filter the rows. Rows differing only in the
+        root of a pattern whose captures are all shared with an earlier one
+        collapse to one. `ignore_root` keys dedup on captures alone. `ignore_casts` (`True`, or a `CastMask`) looks through
         extend / truncate / bit-reinterpret casts.
         """
         ...
@@ -238,7 +240,8 @@ class Function:
     def rewrite(self, find: _PatLike, replace: _ReplaceLike) -> int:
         """Apply one `find` -> `replace` rewrite in one walk (not a fixed
         point), returning how often it fired. `replace` is a `Template`, a
-        `Capture` or a capture name (a `Pat` raises `TypeError`). Raises
+        `Capture` or a capture name (a `Pat` raises `TypeError`, one nested in
+        a `Template` `StriderError`). Raises
         `StriderError` up front for a `.when()` guard on `find` or a capture
         `find` does not bind, and at a match holding no instruction-produced
         node (an `initial_var` or `phi` root) when `replace` builds nodes.
