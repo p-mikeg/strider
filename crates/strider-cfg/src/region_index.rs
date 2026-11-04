@@ -1,5 +1,3 @@
-//! Which region owns an address.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{Bound, Range};
 

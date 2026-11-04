@@ -1,14 +1,8 @@
-//! Indirect-branch answers the build seats; classifying them needs the IR,
-//! above this crate.
-
 use rustc_hash::FxHashSet;
 
-/// One resolved branch target.
-///
-/// `isa_bit` is the ISA mode the branch commits for this target on an
-/// alternate-ISA arch (ARM Thumb, MIPS16): `Some(true)` alternate, `Some(false)`
-/// base, `None` when the branch commits none and the target inherits the mode
-/// flowing into the branch. `addr` already has the mode bit masked off.
+/// One resolved branch target. `addr` carries no mode bit; `isa_bit` is the
+/// ISA mode the branch commits for it (`Some(true)` alternate: Thumb,
+/// MIPS16), `None` when it inherits the mode flowing into the branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedTarget {
     pub addr: u64,
@@ -22,7 +16,7 @@ impl ResolvedTarget {
     }
 }
 
-/// A bare address with no mode switch (`isa_bit: None`), the common case.
+/// A bare address with no mode switch (`isa_bit: None`).
 impl From<u64> for ResolvedTarget {
     fn from(addr: u64) -> Self {
         Self {
@@ -35,13 +29,11 @@ impl From<u64> for ResolvedTarget {
 /// The statically-known targets of one `BranchIndirect`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedTargets {
-    /// Return via the link register (ARM/AArch64 `bx lr`).  Seated as a
+    /// Return via the link register (ARM `bx lr`), seated as a
     /// [`crate::RegionTerminator::Return`].
     LinkRegister,
-    /// A constant dispatch, or a caller declaring one. Out of function range it
-    /// is a [`crate::RegionTerminator::TailCall`]; in range it is seated as a
-    /// one-arm [`crate::RegionTerminator::Switch`], which keeps the selector so
-    /// a later round can widen it.
+    /// One target: a [`crate::RegionTerminator::TailCall`] out of function
+    /// range, else a one-arm [`crate::RegionTerminator::Switch`].
     Single(ResolvedTarget),
     /// A jump table, seated as a [`crate::RegionTerminator::Switch`]; one
     /// out-of-range or off-boundary arm defers the whole site.

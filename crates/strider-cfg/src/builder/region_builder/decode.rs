@@ -87,9 +87,8 @@ pub(in crate::builder) fn decode_failure(err: &anyhow::Error) -> Option<DecodeFa
 }
 
 impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
-    /// Each [`FlowCommit::Flowing`] var's value at [`Self::last_lift`], a
-    /// context this build set: what an edge to an address with no recorded
-    /// `inst_next` carries. `NoFlow` vars commit one address and never flow.
+    /// Each [`FlowCommit::Flowing`] var's value at [`Self::last_lift`]: what an
+    /// edge to an address with no recorded `inst_next` carries.
     pub(super) fn flowing_commits(&self) -> Result<Vec<(&'static str, u32)>> {
         let Some(from) = self.last_lift else {
             return Ok(Vec::new());
@@ -173,14 +172,12 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
 
     /// Makes the commit-able context at `at` this build's own: erases each var,
     /// then re-lifts `from` so its own `globalset` lands again. The erase
-    /// paints forward to the next change point, so its value is per class:
+    /// paints forward to the next change point, with, per class:
     ///
-    /// - [`FlowCommit::NoFlow`]: the pspec default. Its commit covers one
-    ///   address; painting a live IT state forward predicates what follows
-    ///   and can fail the decode.
-    /// - [`FlowCommit::Flowing`]: the value in force at `from`, what would
-    ///   have flowed to `at`. The default would cancel a mode an earlier
-    ///   instruction set.
+    /// - [`FlowCommit::NoFlow`]: the pspec default; a live IT state painted
+    ///   forward would predicate what follows.
+    /// - [`FlowCommit::Flowing`]: the value in force at `from`; the default
+    ///   would cancel a mode an earlier instruction set.
     fn rederive_flow(&mut self, at: u64, from: u64) -> Result<()> {
         let mut wrote = false;
         for &(name, flow, default) in &self.builder.engine.tables.flow_commit {
