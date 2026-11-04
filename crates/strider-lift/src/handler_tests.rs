@@ -375,6 +375,30 @@ fn plain_opcodes_lower_to_their_ir_shape() {
             &[q24, q32],
             "Extend(ZeroExtend):i8(FloatCmpOp(Less):i1(IntBitsToFloat:f64(r24), IntBitsToFloat:f64(r32)))",
         ),
+        (
+            Opcode::IntSlessEqual,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Xor):i1(IntCmpOp(Sless):i1(r4, r0), 0x1:i1))",
+        ),
+        (
+            Opcode::FloatSub,
+            r8,
+            &[r0, r4],
+            "FloatBitsToInt:i32(FloatBinaryOp(Add):f32(IntBitsToFloat:f32(r0), FloatUnaryOp(Neg):f32(IntBitsToFloat:f32(r4))))",
+        ),
+        (
+            Opcode::FloatNotEqual,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Xor):i1(FloatCmpOp(Equal):i1(IntBitsToFloat:f32(r0), IntBitsToFloat:f32(r4)), 0x1:i1))",
+        ),
+        (
+            Opcode::FloatLessEqual,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Or):i1(FloatCmpOp(Less):i1(IntBitsToFloat:f32(r0), IntBitsToFloat:f32(r4)), FloatCmpOp(Equal):i1(IntBitsToFloat:f32(r0), IntBitsToFloat:f32(r4))))",
+        ),
     ];
     // `r8 = op(r0, r4)`.
     let binary: &[(Opcode, &str)] = &[
@@ -986,32 +1010,6 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
     });
 }
 
-#[test]
-fn lift_int_sless_equal_lowers_to_boolneg_sless() {
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::IntSlessEqual,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
-            ),
-            "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap of the Sless)"
-        );
-        assert!(
-            graph_has_kind(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
-            "expected IntCmpOp::Sless in graph (the lowered cmp)"
-        );
-    });
-}
-
 /// The negated compares coerce each operand at its own width, which re-interns
 /// a constant operand and so stamps this instruction's address onto a constant
 /// an earlier instruction built.
@@ -1108,9 +1106,6 @@ fn process_insn_no_operand_dispatch_routing() {
 
 #[test]
 fn read_vn_unknown_returns_initial_var_or_phi() {
-    // Either kind is correct: `InitialVar` is the entry value, `Phi` the
-    // merge node the builder lazily inserts at a region entry pointing back to
-    // it.  What matters is that the producer is not some arithmetic node.
     with_test_lifter(|d, _rid| {
         let value = d.read_vn(&reg(0)).expect("read_vn should succeed");
         let producer = d.builder.function().producer(value);
@@ -1242,8 +1237,6 @@ fn lift_missing_output_errors_for_op_that_needs_one() {
 
 #[test]
 fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
-    // Guards the checked-accessor conversion: a missing inputs[1] must error,
-    // not panic on an out-of-bounds index.
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::IntAdd,
@@ -1254,98 +1247,6 @@ fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
         assert!(
             res.is_err(),
             "binary op with too few inputs should error, not panic"
-        );
-    });
-}
-
-#[test]
-fn lift_float_sub_lowers_to_float_add_neg() {
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::FloatSub,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::FloatBinaryOp(strider_ir::FloatBinaryOp::Add)
-            ),
-            "FloatSub lift must produce a FloatAdd (the lowering wrap)"
-        );
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::FloatUnaryOp(strider_ir::FloatUnaryOp::Neg)
-            ),
-            "FloatSub lift must produce a FloatUnaryOp::Neg (the negated rhs)"
-        );
-    });
-}
-
-#[test]
-fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::FloatNotEqual,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
-            ),
-            "FloatNotEqual lift must produce an IntBinaryOp::Xor (the I1 logical-NOT wrap of the FloatEqual)"
-        );
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)
-            ),
-            "FloatNotEqual lift must produce a FloatCmpOp::Equal (the lowered cmp)"
-        );
-    });
-}
-
-#[test]
-fn lift_float_less_equal_lowers_to_or_less_equal() {
-    // NaN-aware: both children are false on NaN, so the Or is false.
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::FloatLessEqual,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        assert!(
-            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Or)),
-            "FloatLessEqual lift must produce an IntBinaryOp::Or (the disjunction wrap)"
-        );
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Less)
-            ),
-            "FloatLessEqual lift must produce a FloatCmpOp::Less"
-        );
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)
-            ),
-            "FloatLessEqual lift must produce a FloatCmpOp::Equal"
         );
     });
 }
