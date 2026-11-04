@@ -2,38 +2,33 @@
 
 `out/<arch>/<case>.elf` is built from `cases/<case>.{c,S}` by `make`, one
 target per (arch, case); every C case also builds an unlinked `.o` twin.
-Every `.o` under `out/` is committed: `strider-reader`'s release-only
-`read_digest` digests every image it finds there, so a twin missing from a
-clone fails it, and one built and left untracked is a new digest row to
-commit with its re-blessed `read_digest.txt`.
+Every `.o` is committed: `strider-reader`'s release-only `read_digest`
+digests every image under `out/`, so a new one needs its digest row
+re-blessed.
 
 The binaries are committed through Git LFS, so a clone without `git-lfs` gets
-129- or 130-byte pointer text where an ELF should be; run `git lfs pull` before
+LFS pointer text where an ELF should be; run `git lfs pull` before
 running the test suite.
 
 Rebuilding is only needed when a case or an arch's flags change. See the header
 of `Makefile` for the `ARCH=` / `CASE=` selectors.
 
-`loader/out/` holds the images the ELF reader tests load for GOT slots the
-dynamic loader fills: MIPS executables and the libraries they import from,
-and x86 / x86-64 images with an IFUNC. Beside them are the i386 and AArch64
-objects whose GOT references the reader resolves itself, a ppc64le image
-whose calls enter their callees at ELFv2 local entries, an x86-64 library
-linked with its `.dynsym` discarded, an x86-64 object whose `R_X86_64_32`
-values must zero-extend, a MIPS library with one relro pointer, and a ppc64
-ELFv1 image. Each needs a link or flags of its own, so they are built by
-`make -C loader` from `loader/src/`, not per arch, and the golden suite
-analyses none of them. They need `gcc`, `gcc-i686-linux-gnu`,
-`gcc-aarch64-linux-gnu`, `gcc-mips-linux-gnu`, `gcc-mips64el-linux-gnuabi64`,
-`gcc-powerpc64-linux-gnu` and `gcc-powerpc64le-linux-gnu`.
+`loader/out/` holds images the ELF reader tests need a link or flags of their
+own for (dynamic GOT slots, IFUNC, TLS, copy relocations, ppc64 local
+entries, ...). `make -C loader` builds them from `loader/src/`; see that
+Makefile for the list and its cross compilers. The golden suite analyses none
+of them.
 
 Each `arch/<arch>.mk` is one row of `FIXTURE_ARCHES` in
 `crates/strider-orchestrator/tests/common/fixtures.rs`; `cargo test -p
 strider-orchestrator --test golden` fails until the two agree.
 
 `golden/<arch>/<case>.txt` pins what `Strider::analyze` makes of every function
-of `out/<arch>/<case>.elf`. After an intended change, re-bless and review the
-diff: `UPDATE_EXPECT=1 cargo test -p strider-orchestrator --test golden`, then
+of `out/<arch>/<case>.elf`. The `INTENT` rows in
+`crates/strider-orchestrator/tests/golden.rs` must hold before a golden is
+compared or written, and `GAPS` names each arch where a dispatch is known not
+to resolve. After an intended change, re-bless and review the diff:
+`UPDATE_EXPECT=1 cargo test -p strider-orchestrator --test golden`, then
 `git diff fixtures/golden`.
 
 ## Toolchains
