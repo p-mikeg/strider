@@ -6,9 +6,7 @@ from typing import Union
 
 __all__: list[str]
 
-#: The `MainOptimizerPass` class names, as the extension registers them.
 _MAIN_PASS_NAMES: tuple[str, ...]
-#: The `PostOptimizerPass` class names, as the extension registers them.
 _POST_PASS_NAMES: tuple[str, ...]
 
 #: A pass `OptimizerPipeline.add` accepts: run repeatedly to a fixed point.
@@ -24,8 +22,7 @@ MainOptimizerPass = Union[
     "LoadReadOnly",
 ]
 
-#: A pass that runs once, after the fixed-point loop converges. `add` raises
-#: for these; `add_post` takes them and any `MainOptimizerPass` too.
+#: A pass that runs once, after the fixed-point loop. `add` raises for these.
 PostOptimizerPass = Union[
     "FunctionArgDetect",
     "CallStackArgCollect",
@@ -35,16 +32,14 @@ PostOptimizerPass = Union[
 OptimizerPass = Union[MainOptimizerPass, PostOptimizerPass]
 
 class OptimizerPipeline:
-    """An ordered list of optimizer passes, plus post-passes that run once
-    after the main passes finish.
-
-    Pass one to `Function.optimize(pipeline=...)`, or to
-    `LifterOptions(pipeline=...)` to override the default. Applying a pipeline
-    copies its passes, so one object serves any number of calls.
+    """An ordered list of optimizer passes plus post-passes that run once at
+    the end. Pass one to `Function.optimize(pipeline=...)` or
+    `LifterOptions(pipeline=...)`. Applying a pipeline copies it, so one
+    object serves any number of calls.
     """
     @classmethod
     def empty(cls) -> OptimizerPipeline:
-        """A pipeline with no passes; add them with `add` / `add_post`."""
+        """A pipeline with no passes."""
         ...
     @classmethod
     def default(cls) -> OptimizerPipeline:
@@ -53,18 +48,18 @@ class OptimizerPipeline:
         ...
     @property
     def passes(self) -> list[str]:
-        """The registered main (repeated) passes, by name, in order."""
+        """The main passes' names, in order."""
         ...
     @property
     def post_passes(self) -> list[str]:
-        """The registered post-passes (run once at the end), by name."""
+        """The post-passes' names, in order."""
         ...
     def add(self, pass_obj: MainOptimizerPass) -> None:
-        """Append a pass to the main list, which runs repeatedly until the
-        graph stops changing. Raises `StriderError` for a post-pass."""
+        """Append a pass to the main list, run until the graph stops changing.
+        Raises `StriderError` for a post-pass."""
         ...
     def add_post(self, pass_obj: OptimizerPass) -> None:
-        """Append a post-pass, run once after the main passes finish. A
+        """Append a post-pass, run once after the main passes. A
         `MainOptimizerPass` is accepted too, and runs once."""
         ...
 

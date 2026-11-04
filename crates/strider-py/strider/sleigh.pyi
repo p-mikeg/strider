@@ -1,5 +1,4 @@
-"""Type stubs for strider.sleigh: architecture, calling convention, user-op
-ABI and varnode surface."""
+"""Architectures, calling conventions, user-op ABIs and varnodes."""
 
 from __future__ import annotations
 
@@ -14,11 +13,8 @@ ARCH_PRESETS: tuple[str, ...]
 CC_PRESETS: tuple[str, ...]
 
 class SleighArch:
-    """A target architecture: instruction-set specification plus byte order.
-
-    Use one of the presets below, or let `strider.lift.load_elf` pick one from
-    the ELF header.
-    """
+    """A target architecture: a preset below, or the one
+    `strider.lift.load_elf` picks from the ELF header."""
     @classmethod
     def x86_64(cls) -> SleighArch:
         """64-bit x86, little-endian."""
@@ -94,8 +90,8 @@ class SleighArch:
         ...
     @classmethod
     def preset(cls, name: str) -> SleighArch:
-        """The preset called `name` (one of `ARCH_PRESETS`). Raises
-        `StriderError` for any other name."""
+        """The preset called `name` (one of `ARCH_PRESETS`); else raises
+        `StriderError`."""
         ...
     def calling_conventions(self) -> tuple[CallingConvention, ...]:
         """The calling-convention presets for this arch, in roster order."""
@@ -104,15 +100,13 @@ class SleighArch:
         """The preset's short name, e.g. `"x86_64"` or `"arm_thumb"`."""
         ...
     def endianness(self) -> str:
-        """Byte order of this architecture: `"little"` or `"big"`."""
+        """`"little"` or `"big"`."""
         ...
     def reg(self, name: str) -> Optional[Vn]:
-        """The varnode for the register called `name`, or `None` when the
-        name is not a register of this arch."""
+        """The varnode of register `name`, or `None`."""
         ...
     def reg_name(self, vn: Vn) -> Optional[str]:
-        """The register name for `vn`, or `None` when it is not a register of
-        this arch."""
+        """The register name of `vn`, or `None`."""
         ...
     def __eq__(self, other) -> bool:
         """Equal when built from the same preset."""
@@ -121,11 +115,7 @@ class SleighArch:
 
 class CallingConvention:
     """How a function receives arguments, returns values, and which
-    registers it may clobber.
-
-    Every `analyze` call takes one. Use a preset, or `custom` for an unusual
-    ABI.
-    """
+    registers it may clobber: a preset, or `custom`."""
     @classmethod
     def x86_64_systemv(cls) -> CallingConvention:
         """The System V AMD64 ABI used by Linux userland on x86-64."""
@@ -174,8 +164,7 @@ class CallingConvention:
         """32-bit x86 Linux kernel-internal convention (`-mregparm=3`).
 
         Variadic (`printk`) and `asmlinkage` callees take every argument on
-        the stack, yet a call under this convention lists EAX, EDX, ECX as
-        arguments 0-2; map them to `x86_cdecl()` in
+        the stack: map them to `x86_cdecl()` in
         `LifterOptions(per_address_ccs=...)`. To analyse one, pass
         `cc=x86_cdecl()` and map its regparm callees to this convention."""
         ...
@@ -212,23 +201,22 @@ class CallingConvention:
         reg_args_adjoin_stack_args: bool = ...,
         entry_address: Optional[str] = ...,
     ) -> CallingConvention:
-        """Build a convention from register names resolved against `sleigh`.
+        """A convention from register names resolved against `sleigh`.
 
-        Stack arguments start `stack_arg_base` bytes from the call-time stack
-        pointer (`None`: none on the stack) and advance by
-        `stack_arg_increment`; `ret_stack_pop` is how many bytes the callee
-        pops on return. `preserves_memory=True` declares that a call cannot
-        write memory. `arg_passing_regs_float` are numbered after
-        `arg_passing_regs`: the first is `arg(len(arg_passing_regs))` in a
-        `call()` pattern. `reg_args_adjoin_stack_args=True` says each argument
-        register has a stack home just below the stack arguments (ARM AAPCS,
-        MIPS O32 / N64, PowerPC64 ELF), so a split by-value argument is one
-        object. `entry_address` names the register the ABI guarantees holds
-        the function's own entry address on entry (PPC64 ELFv2 `r12`, MIPS
-        abicalls `t9`).
+        Stack arguments start `stack_arg_base` bytes from the call-time SP
+        (`None`: none on the stack) and advance by `stack_arg_increment`;
+        `ret_stack_pop` is how many bytes `ret` pops. `preserves_memory=True`
+        declares that a call cannot write memory. `arg_passing_regs_float`
+        are numbered after `arg_passing_regs`: the first is
+        `arg(len(arg_passing_regs))` in a `call()` pattern.
+        `reg_args_adjoin_stack_args=True` says each argument register has a
+        stack home just below the stack arguments (ARM AAPCS, MIPS O32 / N64,
+        PowerPC64 ELF). `entry_address` names the register holding the
+        function's own address on entry (PPC64 ELFv2 `r12`, MIPS abicalls
+        `t9`).
 
-        Raises `StriderError` here for an unknown name or a broken ABI
-        invariant, among them:
+        Raises `StriderError` for an unknown name or a broken ABI invariant,
+        among them:
 
         - a `link_register` must also appear in `callee_saved_regs`;
         - `stack_pointer` must be as wide as the arch's addresses, and so
@@ -244,37 +232,29 @@ class CallingConvention:
         ...
     @classmethod
     def preset(cls, name: str) -> CallingConvention:
-        """The preset called `name` (one of `CC_PRESETS`). Raises
-        `StriderError` for any other name."""
+        """The preset called `name` (one of `CC_PRESETS`); else raises
+        `StriderError`."""
         ...
     def to_dict(self) -> dict[str, Any]:
-        """The keyword arguments of `custom` other than `sleigh`, so
-        `CallingConvention.custom(arch, **cc.to_dict())` rebuilds an
-        equivalent convention. `stack_arg_increment` is `0` when nothing is
-        passed on the stack.
-
-        Raises `StriderError` for a `preserves_all()` / `preserves_regs()`
-        variant, which `custom` cannot express."""
+        """The keyword arguments of `custom` other than `sleigh`:
+        `CallingConvention.custom(arch, **cc.to_dict())` rebuilds it. Raises
+        `StriderError` for a `preserves_all()` / `preserves_regs()` variant."""
         ...
     def preserves_all(self) -> CallingConvention:
         """A variant that clobbers nothing: every register callee-saved,
-        memory unchanged, no arguments or return value; stack / link-register
-        geometry kept. For a per-address override on a transparent hook
-        (`__fentry__` / `mcount`).
-        """
+        memory unchanged, no arguments or return value; stack geometry kept.
+        For a transparent hook (`__fentry__` / `mcount`)."""
         ...
     def preserves_regs(self) -> CallingConvention:
-        """Like `preserves_all` but memory may be clobbered, so the call keeps
-        its arguments (a callee writing memory must be seen taking a frame
-        address)."""
+        """Like `preserves_all`, but memory may be clobbered, so the call keeps
+        its arguments."""
         ...
     def name(self) -> str:
-        """The preset's short name, e.g. `"x86_64_systemv"`, or `"custom"`
-        for a `custom(...)` one."""
+        """The preset name, e.g. `"x86_64_systemv"`, or `"custom"`."""
         ...
     def __eq__(self, other) -> bool:
-        """Equal when the same constructor calls built both: a `custom` never
-        equals a preset, nor one resolved against another arch."""
+        """Equal when built by the same constructor calls; a `custom` never
+        equals a preset."""
         ...
     def __hash__(self) -> int: ...
 
@@ -291,13 +271,9 @@ class VnSpace:
     def __hash__(self) -> int: ...
 
 class Vn:
-    """A varnode: an address space, an offset, and a size in bytes.
-
-    Registers, memory locations, constants and lifter temporaries are all
-    varnodes.
-    """
+    """A varnode: an address space, an offset, and a size in bytes."""
     def __init__(self, space: VnSpace, off: int, size: int) -> None:
-        """Build the varnode at `off` in `space`, `size` bytes wide."""
+        """The varnode at `off` in `space`, `size` bytes wide."""
         ...
     @property
     def space(self) -> VnSpace:
@@ -315,18 +291,14 @@ class Vn:
     def __hash__(self) -> int: ...
 
 class CallOtherAbi:
-    """How one Sleigh user-op is lifted: the implicit register footprint,
-    the memory effect, and whether control returns.
-
-    Pass one per user-op name to
-    `strider.cfg.CfgOptions(call_other_abis={name: abi})`, overriding the
-    built-in table. `Lifter.user_op_names()` lists the names and
-    `Lifter.call_other_abi(name)` reads back the current classification.
+    """How one Sleigh user-op is lifted: implicit registers, memory effect
+    and whether control returns. Pass to
+    `strider.cfg.CfgOptions(call_other_abis={name: abi})`;
+    `Lifter.call_other_abi(name)` reads back the current one.
     """
     @classmethod
     def noop(cls) -> CallOtherAbi:
-        """The op lifts to nothing: control and memory unchanged, any
-        p-code result ignored."""
+        """The op is dropped: no IR node, any p-code result ignored."""
         ...
     @classmethod
     def pure(cls) -> CallOtherAbi:
@@ -339,8 +311,8 @@ class CallOtherAbi:
         ...
     @classmethod
     def no_return(cls) -> CallOtherAbi:
-        """Control does not pass the op, which ends its region. Empty
-        footprint; use `custom(..., no_return=True)` for one."""
+        """Control does not pass the op. Empty footprint; use
+        `custom(..., no_return=True)` for one."""
         ...
     @classmethod
     def custom(
@@ -351,16 +323,10 @@ class CallOtherAbi:
         clobbers_memory: bool = ...,
         no_return: bool = ...,
     ) -> CallOtherAbi:
-        """An ABI naming implicit registers, resolved against `sleigh`; an
-        unknown name raises `StriderError`.
-
-        `implicit_reads` are read beyond the p-code-explicit operands and
-        lead the lifted call's argument list; `implicit_writes` are written
-        beyond the p-code-explicit result.
-
-        Usable only with a `Lifter` sharing `sleigh`'s register table (`arm`,
-        `arm_thumb` and `arm_be_kernel` share one); any other raises
-        `StriderError` at `analyze`.
+        """An ABI naming implicit registers resolved against `sleigh`; an
+        unknown name raises `StriderError`. `implicit_reads` lead the lifted
+        call's arguments. Usable only with a `Lifter` sharing `sleigh`'s
+        register table (`arm`, `arm_thumb` and `arm_be_kernel` share one).
         """
         ...
     @property
@@ -381,7 +347,7 @@ class CallOtherAbi:
         ...
     @property
     def is_noop(self) -> bool:
-        """Whether the op lifts to nothing at all."""
+        """Whether this is `noop()`."""
         ...
     def __eq__(self, other) -> bool: ...
     def __hash__(self) -> int: ...

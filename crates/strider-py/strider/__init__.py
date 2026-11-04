@@ -1,9 +1,8 @@
-"""Python bindings for the Strider binary analysis pipeline.
+"""Strider: lift a native function to a sea-of-nodes IR and query it.
 
-The public API is the domain submodules `strider.ir`, `strider.lift`,
-`strider.cfg`, `strider.sleigh`, `strider.reader`, `strider.opt`,
-`strider.pattern` and `strider.template`, plus the top-level
-`StriderError`.
+The API is the submodules `strider.ir`, `strider.lift`, `strider.cfg`,
+`strider.sleigh`, `strider.reader`, `strider.opt`, `strider.pattern` and
+`strider.template`, plus `StriderError`.
 """
 
 import importlib as _importlib
@@ -48,8 +47,8 @@ __version__ = _ext.__version__
 
 
 def _export(module, *names: str) -> None:
-    """Add `names` to `module.__all__` once; the extension submodules
-    survive `importlib.reload(strider)`."""
+    """Add `names` to `module.__all__` once (the extension submodules survive
+    `importlib.reload(strider)`)."""
     module.__all__ += [n for n in names if n not in module.__all__]
 
 from . import _api as _mod_api  # noqa: E402
@@ -106,9 +105,8 @@ _export(_p.constraints, "ConstraintLike")
 cfg.IncompleteReason = _t.Literal[cfg.INCOMPLETE_REASONS]  # type: ignore[attr-defined]
 _export(cfg, "IncompleteReason")
 
-# The builders' shared vocabulary as runtime-checkable protocols: a pyclass
-# takes one base, so they cannot share a Rust one. The stubs list these as
-# the builders' bases.
+# The builders' shared methods as protocols: a pyclass takes one base, so
+# they cannot share a Rust one. The stubs list these as the builders' bases.
 _S = _t.TypeVar("_S")
 
 

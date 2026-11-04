@@ -1,6 +1,4 @@
-//! `forall_preset!` stamps out one `#[classmethod]` per preset name for the
-//! `SleighArch` / `CallingConvention` wrappers (needs PyO3's
-//! `multiple-pymethods`).
+//! `forall_preset!` needs PyO3's `multiple-pymethods`.
 
 macro_rules! forall_preset {
     (cc $self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
@@ -43,8 +41,8 @@ macro_rules! forall_preset {
 
 pub(crate) use forall_preset;
 
-/// Registers a module's `#[pyclass]`es and free functions. `$m` is whatever
-/// `wrap_pyfunction!` wants: `m` for a `&Bound`, `&m` for an owned one.
+/// Registers a module's classes and functions. `$m` is `m` for a `&Bound`,
+/// `&m` for an owned one.
 macro_rules! bind {
     ($m:expr; $(classes [$($c:ty),* $(,)?];)? $(fns [$($f:ident),* $(,)?];)?) => {{
         $($( $m.add_class::<$c>()?; )*)?

@@ -6,11 +6,9 @@ use strider_ir::node::NodeKind;
 use crate::errors::into_strider_err;
 use crate::function::FunctionAt;
 
-/// A handle on a single node in the IR graph.
-///
-/// Every accessor raises `StriderError` once the function has been compacted
-/// or rewritten. Two handles are equal when they share the function object,
-/// id and graph generation.
+/// A handle on one IR node. Every accessor raises `StriderError` once the
+/// function has been compacted or rewritten. Equal handles share the
+/// function, id and graph generation.
 #[pyclass(eq, hash, name = "Node", module = "strider.ir", frozen)]
 #[derive(PartialEq, Hash)]
 pub struct PyNode {
@@ -30,8 +28,7 @@ pub(crate) fn node_id(
 }
 
 impl PyNode {
-    /// Run `f` on the function and this node's id, once [`FunctionAt::read`]
-    /// admits it.
+    /// Run `f` on the function and this node's id, unless the handle is stale.
     fn with_node<F, R>(&self, py: Python<'_>, f: F) -> PyResult<R>
     where
         F: FnOnce(&strider_ir::Function, strider_ir::node::NodeId) -> R,
@@ -41,8 +38,7 @@ impl PyNode {
         })?
     }
 
-    /// The first value output, skipping control / memory slots; for a `Call`
-    /// the return value, ahead of its clobbers.
+    /// The first value output; a `Call`'s return value, ahead of its clobbers.
     fn value_output(
         function: &strider_ir::Function,
         nid: strider_ir::node::NodeId,
@@ -77,23 +73,20 @@ pub(crate) fn sint_of(
 
 #[pymethods]
 impl PyNode {
-    /// Exposes `function` to the cyclic GC; the cycle is broken at the
-    /// reader's `__dict__` / `PyLifter::__clear__`, never here.
+    // The cycle is broken at the reader's `__dict__` / `PyLifter::__clear__`.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.at.function)
     }
 
-    /// The node's raw integer id in the graph. Raises once the handle is
-    /// stale.
+    /// The node's integer id.
     #[getter]
     fn id(&self, py: Python<'_>) -> PyResult<u32> {
         self.with_node(py, |_, _| self.id)
     }
 
-    /// The node's kind as a string. An op or memory space carries its payload
+    /// The node's kind: an op or memory space carries its payload
     /// (`"IntBinaryOp(Add)"`, `"Load(RAM)"`), a float constant its raw bits
-    /// (`"FloatConst(<bits>)"`); other kinds are bare (`"IntConst"`,
-    /// `"CallOther"`, `"Region"`).
+    /// (`"FloatConst(<bits>)"`), other kinds are bare (`"IntConst"`).
     fn kind(&self, py: Python<'_>) -> PyResult<String> {
         // A `VnSpace`'s `Debug` is its shortcut byte; render its name instead.
         self.with_node(py, |function, nid| match function.node_kind(nid) {
@@ -118,8 +111,8 @@ impl PyNode {
         })
     }
 
-    /// The operation variant of an op-carrying node (`"Add"`, `"Less"`,
-    /// `"Sqrt"`, `"SignExtend"`), or `None` for kinds carrying no operation.
+    /// The operation of an op node (`"Add"`, `"Less"`, `"SignExtend"`), else
+    /// `None`.
     pub(crate) fn op(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| match function.node_kind(nid) {
             NodeKind::IntBinaryOp(op) => Some(format!("{op:?}")),
@@ -133,9 +126,8 @@ impl PyNode {
         })
     }
 
-    /// The node's value-output type as a string (`"I1"`, `"I32"`, `"F64"`), or
-    /// `None` for a node with no value output. Booleans are the 1-bit integer
-    /// `I1`.
+    /// The value-output type (`"I1"`, `"I32"`, `"F64"`), or `None` without
+    /// one.
     pub(crate) fn value_type(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| {
             let value = Self::value_output(function, nid)?;
@@ -144,8 +136,7 @@ impl PyNode {
         })
     }
 
-    /// The producer node behind each input edge, in input-slot order. A
-    /// producer appears once per slot it feeds.
+    /// The producer of each input, in slot order (once per slot).
     fn inputs(&self, py: Python<'_>) -> PyResult<Vec<PyNode>> {
         self.with_node(py, |function, nid| {
             function
@@ -156,8 +147,8 @@ impl PyNode {
         })
     }
 
-    /// The nodes consuming this node's outputs. A consumer appears once per
-    /// edge it draws from this node, in output-slot then use order.
+    /// The consumers of this node's outputs, in output-slot then use order
+    /// (once per edge).
     fn outputs(&self, py: Python<'_>) -> PyResult<Vec<PyNode>> {
         self.with_node(py, |function, nid| {
             let mut out = Vec::new();
@@ -170,32 +161,29 @@ impl PyNode {
         })
     }
 
-    /// Integer constant value, sign-extended at its declared width (any
-    /// width), or `None` when the value output isn't an `IntConst`. A boolean
-    /// constant reads as `0` / `-1`.
+    /// The integer constant, sign-extended at its width, else `None`. A
+    /// boolean reads as `0` / `-1`.
     pub(crate) fn sint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.with_node(py, sint_of)?
             .map(|v| crate::bigint::ibig_to_py_int(py, &v))
             .transpose()
     }
 
-    /// Integer constant value, masked to its declared width (any width), or
-    /// `None` when the value output isn't an `IntConst`.
+    /// The integer constant, masked to its width, else `None`.
     pub(crate) fn uint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.with_node(py, uint_of)?
             .map(|v| crate::bigint::ubig_to_py_int(py, &v))
             .transpose()
     }
 
-    /// Boolean constant value, or `None` when the value output isn't an
-    /// `I1`-typed `IntConst`.
+    /// The boolean constant, else `None`.
     pub(crate) fn boolean(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.with_node(py, |function, nid| {
             Self::value_output(function, nid).and_then(|value| function.bool_const_val(value))
         })
     }
 
-    /// Raw IEEE 754 bit pattern, or `None` when the node isn't a `FloatConst`.
+    /// A float constant's IEEE 754 bits, else `None`.
     pub(crate) fn float_bits(&self, py: Python<'_>) -> PyResult<Option<u64>> {
         self.with_node(py, |function, nid| match function.node_kind(nid) {
             NodeKind::FloatConst(bits) => Some(*bits),
@@ -203,10 +191,8 @@ impl PyNode {
         })
     }
 
-    /// The varnode this node names, else `None`: for `InitialVar` the varnode
-    /// read at entry, for a `Call` its return register (its first value
-    /// output, not a clobber), for a `CallOther` whatever varnode the sla
-    /// assigns its result to, if any.
+    /// The varnode an `InitialVar` reads, a `Call` returns in, or a
+    /// `CallOther` result is assigned to; else `None`.
     pub(crate) fn vn(&self, py: Python<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
         let vn = self.with_node(py, |function, nid| {
             if matches!(
@@ -225,9 +211,8 @@ impl PyNode {
         Ok(vn.map(crate::sleigh::PyVn::from_inner))
     }
 
-    /// Sorted, deduped machine-instruction addresses whose lift or rewrite
-    /// contributed to this node's value. Empty for structural kinds (Entry,
-    /// InitialMemory, InitialVar, Region, Phi, MemPhi).
+    /// The machine-instruction addresses recorded on this node, sorted and
+    /// deduplicated.
     pub(crate) fn asm_fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.with_node(py, |function, nid| {
             let mut addrs: Vec<u64> = function

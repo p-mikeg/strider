@@ -3,9 +3,8 @@ use pyo3::types::PyType;
 
 use crate::macros::forall_preset;
 
-/// A target architecture (Sleigh `.sla` + `.pspec` + endianness), built by a
-/// preset classmethod, e.g. `SleighArch.x86_64()`. Equal when built from the
-/// same preset.
+/// A target architecture, from a preset such as `SleighArch.x86_64()`. Equal
+/// when built from the same preset.
 #[pyclass(name = "SleighArch", module = "strider.sleigh", frozen, eq, hash)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PySleighArch {
@@ -14,12 +13,12 @@ pub struct PySleighArch {
 
 #[pymethods]
 impl PySleighArch {
-    /// The preset name this arch was constructed from (e.g. `"x86_64"`).
+    /// The preset name (e.g. `"x86_64"`).
     fn name(&self) -> &'static str {
         self.inner.preset().name()
     }
 
-    /// Byte order of this architecture: `"little"` or `"big"`.
+    /// `"little"` or `"big"`.
     fn endianness(&self) -> &'static str {
         match self.inner.endianness() {
             strider_target::Endianness::Little => "little",
@@ -52,13 +51,11 @@ impl PySleighArch {
         )
     }
 
-    /// `SleighArch.<preset>()`.
     fn __repr__(&self) -> String {
         format!("SleighArch.{}()", self.name())
     }
 
-    /// Look up a register's varnode by Sleigh name, or `None` if this arch's
-    /// table has no such name.
+    /// The varnode of register `name`, or `None`.
     fn reg(&self, name: &str) -> Option<crate::sleigh::PyVn> {
         self.inner
             .names()
@@ -67,8 +64,7 @@ impl PySleighArch {
             .map(crate::sleigh::PyVn::from_inner)
     }
 
-    /// Reverse of `reg(...)`: `None` for a varnode that is not a register of
-    /// this arch.
+    /// The register name of `vn`, or `None`.
     fn reg_name(&self, vn: &crate::sleigh::PyVn) -> Option<&'static str> {
         self.inner.names().regs().vn_to_name(vn.inner)
     }

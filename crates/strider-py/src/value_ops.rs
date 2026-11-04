@@ -1,6 +1,3 @@
-//! The value-op constructor vocabulary, emitted over `PyPat` for
-//! `strider.pattern` and over `PyTemplate` for `strider.template`.
-
 /// A row's docstring: `$verb` then `$doc`, plus the row's note in the
 /// `pattern` module only.
 macro_rules! op_doc {

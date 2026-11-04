@@ -1,4 +1,4 @@
-"""Type stubs for strider.reader: the code and read-only-memory readers."""
+"""Code and read-only-memory readers."""
 
 from __future__ import annotations
 
@@ -7,119 +7,88 @@ from typing import Optional, Protocol, Sequence, Union
 __all__: list[str]
 
 class BufferReader:
-    """Raw byte reader for firmware or custom sources.
-
-    Serves both roles: the `mem` (instruction fetch) and `rom` (read-only
-    memory) arguments of `strider.lift.lifter`. Cheap to copy; copies share
-    one backing state.
-    """
+    """Raw byte reader, usable as both `mem` and `rom`. Copies share state."""
     def __init__(self, base_addr: int, data: Union[bytes, bytearray, Sequence[int]]) -> None:
-        """Serve `data` as the bytes mapped starting at `base_addr`. Raises
-        `ValueError` for a region that runs past the end of the address
-        space. A buffer (`memoryview`, `array`, numpy) serves its raw bytes
-        and must have one-byte items, else `TypeError`."""
+        """Map `data` at `base_addr`. Raises `ValueError` if the region runs
+        past the address space, `TypeError` for a buffer whose items are not
+        one byte."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Up to `size` bytes at `addr` (fewer near a region edge, or before a
-        relocation the ELF loader does not compute), or `None` when `addr`
-        itself is unmapped or inside such a relocation's field. In writable,
-        non-executable data such a field is not cut out: it serves the file's
-        bytes."""
+        """Up to `size` bytes at `addr` (fewer at a region edge or before an
+        uncomputed relocation), or `None` when `addr` is unmapped or inside
+        such a relocation's field. Writable, non-executable data serves the
+        file's bytes for that field."""
         ...
 
 class MemReader:
-    """Instruction source backed by Python.
-
-    Subclass and override `read(addr, size)` to feed the pipeline from your
-    own data source.
-    """
+    """Instruction source backed by Python: subclass and override `read`."""
 
     def __init__(self, *args, **kwargs) -> None:
         """Base initialiser; subclasses may take whatever arguments they like."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Return up to `size` bytes at `addr` (a short read near a region edge
-        is allowed), or `None` when `addr` is unmapped. A buffer must have
-        one-byte items. The base implementation raises `NotImplementedError`.
-
-        Raising, returning another type, or returning more than `size` bytes
-        fails the lift with `StriderError`, a raised exception as its
-        `__cause__`; `KeyboardInterrupt` and `SystemExit` propagate unchanged."""
+        """Override to return up to `size` bytes at `addr`, or `None` for
+        unmapped. Raising, another type, or more than `size` bytes fails the
+        lift with `StriderError` (the exception as `__cause__`);
+        `KeyboardInterrupt` and `SystemExit` propagate."""
         ...
 
 class ReadOnlyMemory:
-    """Read-only memory backed by Python, read by constant-load folding and
-    jump-table probes.
-
-    Subclass and override `read(addr, size)` to return the raw bytes at
-    `addr`. Only RAM loads reach it.
-    """
+    """Read-only memory backed by Python: subclass and override `read`. Only
+    RAM loads reach it."""
 
     def __init__(self, *args, **kwargs) -> None:
         """Base initialiser; subclasses may take whatever arguments they like."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Return exactly `size` raw bytes at `addr`, or `None` when unmapped.
-        Bytes are not byte-swapped; the optimizer decodes them per the run's
-        endianness. A short return is an error, not a partial read. The base
-        implementation raises `NotImplementedError`.
-
-        An exception here, or a return of another type or length, is
-        swallowed as if `None` were returned, except `KeyboardInterrupt` and
-        `SystemExit`, which stop the run."""
+        """Override to return the `size` raw (not byte-swapped) bytes at
+        `addr`, or `None` for unmapped. An exception, or another type or
+        length, reads as `None`; `KeyboardInterrupt` and `SystemExit` stop
+        the run."""
         ...
 
 class Symbol:
-    """One ELF symbol: where it is, what the ELF says it spans, and which
-    loaded region it falls in."""
+    """One ELF symbol."""
 
     @property
     def name(self) -> str:
-        """The symbol name as spelled in the ELF symbol table."""
+        """The name as spelled in the symbol table."""
         ...
     @property
     def address(self) -> int:
-        """The symbol's virtual address (`st_value`), except for a ppc64
-        ELFv1 function, where it is the code the `.opd` descriptor at
-        `st_value` names. An ARM Thumb function keeps the Thumb bit; see
-        `is_thumb`. An undefined symbol of an object file has an address past
-        the image that maps nothing."""
+        """`st_value`; for a ppc64 ELFv1 function, the code its `.opd`
+        descriptor names. A Thumb function keeps the Thumb bit. An object
+        file's undefined symbol has an unmapped address past the image."""
         ...
     @property
     def size(self) -> Optional[int]:
-        """`None` for `st_size == 0` (no recorded extent), and for a ppc64
-        ELFv1 function whose `st_size` measures its `.opd` descriptor rather
-        than its code."""
+        """`st_size`; `None` when 0, or when a ppc64 ELFv1 function's
+        `st_size` measures its `.opd` descriptor."""
         ...
 
     @property
     def is_function(self) -> bool:
-        """Whether the ELF types this `STT_FUNC` (or `STT_GNU_IFUNC`), rather
-        than inferring it from the section the symbol lives in."""
+        """Whether the ELF types this `STT_FUNC` or `STT_GNU_IFUNC`."""
         ...
     @property
     def end(self) -> Optional[int]:
-        """One past the last byte, or `None` when `size` is. Measured from the
-        first instruction, so a Thumb function's ISA bit does not count."""
+        """One past the last byte, or `None` when `size` is. Ignores the
+        Thumb bit."""
         ...
     @property
     def is_thumb(self) -> bool:
-        """Whether this is an ARM Thumb function: `address` then carries the
-        Thumb bit, on which `analyze` enters in Thumb mode, and the first
-        instruction is at `address & ~1`, where `symbol_at` and `region`
-        measure from."""
+        """An ARM Thumb function: `address` carries the Thumb bit, so
+        `analyze` enters in Thumb mode at `address & ~1`."""
         ...
     @property
     def region(self) -> Optional[tuple[int, int]]:
-        """The `(start, end)` bounds (end exclusive) of the loaded region this
-        symbol maps into, such as the `.text` mapping, or `None` when its
-        address falls in no mapped region."""
+        """`(start, end)` of the loaded region holding the symbol, or
+        `None`."""
         ...
     @property
     def local_entry(self) -> int:
-        """Where a call sharing the symbol's TOC enters: on ppc64 ELFv2,
-        `address` plus the local-entry offset `st_other` encodes. `address`
-        itself everywhere else."""
+        """`address` plus the ppc64 ELFv2 local-entry offset, else
+        `address`."""
         ...
     def __repr__(self) -> str: ...
     def __eq__(self, other) -> bool:
@@ -133,7 +102,7 @@ class SymbolIter:
     def __iter__(self) -> "SymbolIter": ...
     def __next__(self) -> Symbol: ...
     def __len__(self) -> int:
-        """How many symbols are left, not the total."""
+        """Symbols left."""
         ...
 
 
@@ -142,10 +111,9 @@ class _Readable(Protocol):
 
     def read(self, addr: int, size: int, /) -> Optional[bytes]: ...
 
-#: Source of instruction bytes: a `BufferReader`, a `MemReader` subclass, or
-#: any object with `read(addr, size)`.
+#: Instruction bytes: a `BufferReader`, `MemReader` or any `read(addr, size)`.
 MemLike = Union[MemReader, BufferReader, _Readable]
 
-#: Read-only memory image for constant folding: a `BufferReader`, a
-#: `ReadOnlyMemory` subclass, or any object with `read(addr, size)`.
+#: Read-only memory: a `BufferReader`, `ReadOnlyMemory` or any
+#: `read(addr, size)`.
 RomLike = Union[ReadOnlyMemory, BufferReader, _Readable]

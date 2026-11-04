@@ -1,5 +1,3 @@
-//! `strider.template`: the build-valid rewrite RHS shapes.
-
 use pyo3::prelude::*;
 use strider_pattern as sp;
 
@@ -27,7 +25,6 @@ impl Drop for PyTemplate {
 
 #[pymethods]
 impl PyTemplate {
-    /// Exposes the operand sub-templates to the collector.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         self.repr.args.iter().try_for_each(|a| visit.call(a))
     }

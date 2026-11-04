@@ -375,9 +375,8 @@ class NodePat(Protocol):
 class InputPat(Protocol):
     """A builder whose node kind exposes raw input slots."""
     def input(self: _S, idx: int, p: PatLike) -> _S:
-        """Match `p` against raw input slot `idx`, as the IR's
-        `expected_signature` lays them out: `Call` is `[ctrl, mem, target,
-        sp, arg0, ...]`, `Load` `[mem, addr]`, `If` `[ctrl, cond]`.
+        """Match `p` against raw input slot `idx`: `Call` is `[ctrl, mem,
+        target, sp, arg0, ...]`, `Load` `[mem, addr]`, `If` `[ctrl, cond]`.
 
         A typed value sub-pattern binds only a value edge; `var` /
         `anything` any edge; a control producer (`entry()`, `region()`, ...)
@@ -716,7 +715,7 @@ def bool_const(value: bool | Capture | None = ...) -> Pat:
     """Match a 1-bit boolean constant equal to `value`. Given a `Capture`, or
     nothing, match any boolean constant, binding it if given."""
 def float_const(bits: int | Capture | None = ...) -> Pat:
-    """Match a float constant whose raw bits (a `u64`) equal `bits`. Given a
+    """Match a float constant whose raw 64-bit pattern equals `bits`. Given a
     `Capture`, or nothing, match any float constant, binding it if given."""
 def any_int(c: Capture | None = ...) -> Pat:
     """Match any node with an integer output (`I1` through `I512`, so

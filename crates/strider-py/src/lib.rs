@@ -1,9 +1,9 @@
-// These three fire on PyO3 0.22 macro expansions, not on our own code.
+// These three fire on PyO3 0.22 macro expansions.
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
 #![allow(clippy::useless_conversion)]
-// `#[pymethods]` receivers must be `&self` / `&mut self`, so the `into_pat`
-// finaliser on every pattern builder can't take `self` by value.
+// `#[pymethods]` receivers are `&self` / `&mut self`, so `into_pat` can't
+// take `self`.
 #![allow(clippy::wrong_self_convention)]
 
 use pyo3::prelude::*;
@@ -41,8 +41,8 @@ fn force_anyhow_backtrace_capture() {
         unsafe {
             std::env::set_var("RUST_LIB_BACKTRACE", "1");
         }
-        // std caches the decision on the first capture; the variable is then
-        // removed so spawned children do not inherit it.
+        // std caches the decision on the first capture; removing the variable
+        // keeps it from children.
         let _ = std::backtrace::Backtrace::capture();
         // SAFETY: as above.
         unsafe {

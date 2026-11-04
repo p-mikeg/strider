@@ -72,7 +72,6 @@ pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
             "{name:?} is reserved (use anything() / var() / _ explicitly)"
         )));
     }
-    // A hit allocates nothing.
     let mut names = NAMES
         .lock()
         .map_err(|_| into_strider_err(anyhow::anyhow!("intern table lock poisoned")))?;
@@ -448,10 +447,9 @@ fn parse_value_ty(name: &str) -> PyResult<T> {
         .map_err(into_strider_err)
 }
 
-// The per-query walk recurses natively over the pattern tree, so the bounds
-// below turn a stack overflow into an exception. They bound the walk and the
-// `.capture()` chain, not construction: a nested constructor is unbounded,
-// and dropping one is safe because operand slots are deferred (`defer_drop`).
+// The per-query walk recurses natively, so these bounds turn a stack overflow
+// into an exception. They bound the walk and the `.capture()` chain, not
+// construction; dropping a deep constructor is safe (`defer_drop`).
 
 /// Walk levels, the root and one per nested operand. The stack budget is what
 /// holds on a thread smaller than the main one.
@@ -472,8 +470,6 @@ const STACK_BUDGET_SHARE: usize = 4;
 const STEP_RESERVE: usize = 32 * 1024;
 
 /// Stack one compile may consume where the thread's bounds are not reported.
-/// A depth count alone cannot bound stack: frame size varies by build and
-/// thread stacks by size.
 const FALLBACK_PATTERN_STACK: usize = 48 * 1024;
 
 thread_local! {
@@ -662,10 +658,9 @@ impl TemplateLike<'_> {
     }
 }
 
-// A raising `.when()` predicate stashes its error here so the matcher can
-// finish its walk, as a reader does a `KeyboardInterrupt` / `SystemExit` or
-// its own failure. The first error wins; later predicates do not run and
-// answer no-match; the outer boundary re-raises.
+// A raising predicate stashes its error here and the matcher finishes its
+// walk: the first error wins, later predicates answer no-match without
+// running, and the query boundary re-raises.
 thread_local! {
     static PENDING_QUERY_ERROR: std::cell::Cell<Option<PyErr>> =
         const { std::cell::Cell::new(None) };
@@ -688,11 +683,10 @@ pub(crate) fn stash_pending_query_error(e: PyErr) {
     PENDING_QUERY_ERROR.with(|cell| cell.set(Some(e)));
 }
 
-// The function a running query reads, for the `Match` a `.when()` predicate
-// is handed (a pattern is built before any `Function` exists). A stack, since
-// a predicate may issue a nested query. A predicate's `Match` re-borrows the
-// function under the query's own read borrow, safe because only
-// `PyFunction::edit` borrows mutably.
+// The function a running query reads, for the `Match` a predicate is handed.
+// A stack: a predicate may run a nested query. The predicate's `Match`
+// re-borrows under the query's read borrow; only `PyFunction::edit` borrows
+// mutably.
 thread_local! {
     static CURRENT_QUERY_FUNCTION: std::cell::RefCell<Vec<crate::function::FunctionAt>> =
         const { std::cell::RefCell::new(Vec::new()) };
@@ -904,21 +898,21 @@ macro_rules! forall_castmask {
 
 forall_castmask! {
     zero_extend => sp::CastMask::ZERO_EXTEND,
-        "The `ZERO_EXTEND` cast mask, for the matcher to walk through.";
+        "Zero-extending widenings only.";
     sign_extend => sp::CastMask::SIGN_EXTEND,
-        "The `SIGN_EXTEND` cast mask, for the matcher to walk through.";
+        "Sign-extending widenings only.";
     extend => sp::CastMask::EXTEND,
-        "The `EXTEND` cast mask, for the matcher to walk through.";
+        "Both widening kinds.";
     truncate => sp::CastMask::TRUNCATE,
-        "The `TRUNCATE` cast mask, for the matcher to walk through.";
+        "Narrowings only.";
     int_bits_to_float => sp::CastMask::INT_BITS_TO_FLOAT,
-        "The `INT_BITS_TO_FLOAT` cast mask, for the matcher to walk through.";
+        "Integer-bits-to-float reinterpretations only.";
     float_bits_to_int => sp::CastMask::FLOAT_BITS_TO_INT,
-        "The `FLOAT_BITS_TO_INT` cast mask, for the matcher to walk through.";
+        "Float-bits-to-integer reinterpretations only.";
     all => sp::CastMask::all(),
-        "Every value-passthrough cast, so the matcher walks through all of them.";
+        "Every passthrough cast.";
     none => sp::CastMask::empty(),
-        "No cast at all, so the matcher walks through none of them.";
+        "No passthrough casts.";
 }
 
 #[pymethods]
@@ -933,7 +927,7 @@ impl PyCastMask {
             inner: self.inner & other.inner,
         }
     }
-    /// The mask as a raw integer bitset.
+    /// The mask as a raw bitset.
     fn bits(&self) -> u32 {
         self.inner.bits()
     }
@@ -941,7 +935,6 @@ impl PyCastMask {
     fn __bool__(&self) -> bool {
         !self.inner.is_empty()
     }
-    /// The classmethods that build it, joined with `|`.
     fn __repr__(&self) -> String {
         if self.inner.is_empty() {
             return "CastMask.none()".to_owned();
@@ -957,13 +950,11 @@ impl PyCastMask {
 
 #[pymethods]
 impl PyPat {
-    /// Exposes the operands and any `.when()` predicate to the collector.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         self.repr.args.iter().try_for_each(|a| visit.call(a))
     }
 
-    /// Capture this pattern's matched node under `c`, a `Capture` or a name.
-    /// Returns a new `Pat`.
+    /// Bind the matched node to `c`, a `Capture` or a name.
     fn capture(slf: &Bound<'_, Self>, c: crate::matcher::CaptureKey<'_>) -> PyResult<PyPat> {
         let c = c.resolve()?;
         let pat = slf.get();
@@ -978,28 +969,26 @@ impl PyPat {
         })
     }
 
-    /// Attach a predicate `f(match) -> bool` run after this pattern matches;
-    /// `False` fails the match, a non-`bool` return is a `TypeError`. Raising
-    /// aborts the query and re-raises out of `find_all` / `find_unique`. It
-    /// may run on a partial match, more than once, or not at all.
+    /// Keep a match only when `f(match)` returns `True`. A non-`bool` return
+    /// is a `TypeError`; raising aborts the query and re-raises. `f` may run
+    /// on a partial match, more than once, or not at all.
     fn when(slf: &Bound<'_, Self>, f: PyObject) -> PyResult<PyPat> {
         derive(slf, Wrap::When, Some(f))
     }
 
-    /// Constrain the matched node's value output to exactly `n` bits.
-    /// Match-only.
+    /// Constrain the matched node's value output to `n` bits. Match-only.
     fn of_width(slf: &Bound<'_, Self>, n: u32) -> PyResult<PyPat> {
         derive(slf, Wrap::OfWidth(n), None)
     }
 
-    /// Constrain the matched node's value output to the type named by `ty`,
-    /// e.g. `"i1"`, `"i64"`, `"f32"`. Match-only.
+    /// Constrain the matched node's value output to type `ty` (`"i64"`,
+    /// `"f32"`). Match-only.
     fn value_ty(slf: &Bound<'_, Self>, ty: &str) -> PyResult<PyPat> {
         let t = parse_value_ty(ty)?;
         derive(slf, Wrap::ValueTy(t), None)
     }
 
-    /// Sugar for `.of_width(1)`, a boolean output. Match-only.
+    /// `.of_width(1)`: a boolean output. Match-only.
     fn bool_valued(slf: &Bound<'_, Self>) -> PyResult<PyPat> {
         derive(slf, Wrap::OfWidth(1), None)
     }
@@ -1008,7 +997,6 @@ impl PyPat {
     /// node alone (for `int_ne` / `float_ne`, the `Equal` under the `Xor`). A
     /// shape with no operands to order raises. Match-only.
     fn ordered(slf: &Bound<'_, Self>) -> PyResult<PyPat> {
-        // Look through wrappers that constrain the node they wrap.
         let r = slf.get().repr.under(slf.py(), |r| {
             matches!(r.op, Op::Wrap(_)) || r.kind == Kind::Through
         });
@@ -1259,18 +1247,10 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
     PyPat::from(leaf("initial_var_for()", Kind::Match, Box::new(make)))
 }
 
-/// Alternation (logical OR): match if any listed sub-pattern matches. Nests
-/// in any slot. Match-only. No alternatives matches nothing.
-///
-/// A union, not an ordered choice: every matching arm is enumerated with its
-/// own bindings, so overlapping arms both fire (use `first_of` to cut). A
-/// match is identified by what it binds: arms matching one node with the same
-/// bindings are one match. Captures under an arm that did not fire are left
-/// unbound, so `Match.has(c)` tells which arm matched:
-///
-/// ```python
-/// offset = h.uint(off) if h.has(off) else 0
-/// ```
+/// Match if any listed sub-pattern matches (a union: every matching arm
+/// fires with its own bindings; `first_of` cuts). Arms matching one node with
+/// the same bindings are one match; a capture under an arm that did not fire
+/// stays unbound. Nests in any slot. Match-only; no arms matches nothing.
 #[pyfunction]
 pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from(Repr::new(
@@ -1281,11 +1261,11 @@ pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     ))
 }
 
-/// Alternation with a first-match cut (ordered OR): at each value it is
-/// offered, the first listed arm that yields any match wins, so a leading
-/// `anything()` arm shadows the rest. Each read of a `first_of` settles on its
-/// own; several settle in pattern order (operands left to right, inner before
-/// outer). Nests in any slot. Match-only. No alternatives matches nothing.
+/// Match the first listed sub-pattern that matches (an ordered OR): at each
+/// value it is offered, the first arm yielding a match wins, so a leading
+/// `anything()` shadows the rest. Several settle in pattern order (operands
+/// left to right, inner before outer). Nests in any slot. Match-only; no arms
+/// matches nothing.
 #[pyfunction]
 pub fn first_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from(Repr::new(
@@ -1296,7 +1276,6 @@ pub fn first_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     ))
 }
 
-/// Match any node, subject to a Python predicate. Shorthand for
 /// `anything().when(f)`.
 #[pyfunction]
 pub fn predicate(py: Python<'_>, f: PyObject) -> PyResult<PyPat> {
@@ -1517,7 +1496,6 @@ macro_rules! builder_common_methods {
                 Ok(format!("{}(...)", slf.get_type().name()?))
             }
 
-            /// Exposes the operands and `.when()` predicate to the cyclic GC.
             /// `try_borrow`: a collection can land mid-setter.
             fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
                 if let Ok(common) = self.common.try_borrow() {
@@ -1534,8 +1512,7 @@ macro_rules! builder_common_methods {
                 self.traverse_operands(&visit)
             }
 
-            /// Drops everything `__traverse__` reports, so the GC can break a
-            /// cycle of builders.
+            /// Drops everything `__traverse__` reports.
             fn __clear__(&self) {
                 if let Ok(mut common) = self.common.try_borrow_mut() {
                     common.when = None;
@@ -1579,8 +1556,7 @@ macro_rules! builder_slot_methods {
     ($ty:ty, input) => {
         #[pymethods]
         impl $ty {
-            /// Match `p` against raw input slot `idx`, as the IR's
-            /// `expected_signature` lays them out: `Call` is `[ctrl, mem,
+            /// Match `p` against raw input slot `idx`: `Call` is `[ctrl, mem,
             /// target, sp, arg0, ...]`, `Load` `[mem, addr]`, `If` `[ctrl,
             /// cond]`.
             fn input<'py>(
@@ -1597,10 +1573,9 @@ macro_rules! builder_slot_methods {
     ($ty:ty, output) => {
         #[pymethods]
         impl $ty {
-            /// Bind or constrain the value at raw output `slot` (a `Call` is
-            /// `[ctrl, mem, result, ...clobbers]`, a `Load` `[value]`).
-            /// Returns a terminal taking one of `.capture(c)`,
-            /// `.of_width(w)`, `.of_type("i64")`.
+            /// Bind or constrain raw output `slot` (a `Call` is `[ctrl, mem,
+            /// result, ...clobbers]`, a `Load` `[value]`) through the returned
+            /// `.capture(c)` / `.of_width(w)` / `.of_type(ty)`.
             fn output(slf: Bound<'_, Self>, slot: usize) -> PyOutputSlot {
                 PyOutputSlot {
                     parent: slf.into_any().unbind(),
@@ -1608,8 +1583,7 @@ macro_rules! builder_slot_methods {
                 }
             }
 
-            /// Like `output`, over some output rather than a fixed slot. Asks
-            /// whether such an output exists; enumerate with `output(n)`.
+            /// Like `output`, over some output rather than a fixed slot.
             fn any_output(slf: Bound<'_, Self>) -> PyOutputSlot {
                 PyOutputSlot {
                     parent: slf.into_any().unbind(),
@@ -1696,7 +1670,6 @@ macro_rules! node_builder {
         }
     };
 
-    // The generic slots, replayed from `CommonState`.
     (@apply_slot $self:ident, $py:ident, $b:ident, any_input) => {
         let __items: Vec<Py<PyAny>> = $self
             .common
@@ -2036,8 +2009,8 @@ node_builder! {
     ctor: call = "Start a `Call` pattern builder.",
 }
 
-/// Returned by `.output(slot)` / `.any_output()`. Each terminal commits one
-/// constraint and returns the parent builder.
+/// One output slot of a builder, from `.output(slot)` / `.any_output()`.
+/// Each terminal commits one constraint and returns the builder.
 #[pyclass(name = "OutputSlotPat", module = "strider.pattern")]
 pub struct PyOutputSlot {
     parent: Py<PyAny>,
@@ -2067,17 +2040,17 @@ impl PyOutputSlot {
         }
     }
 
-    /// Bind the sibling output's value to `c`, a `Capture` or a name.
+    /// Bind this output to `c`, a `Capture` or a name.
     fn capture(&self, py: Python<'_>, c: crate::matcher::CaptureKey<'_>) -> PyResult<Py<PyAny>> {
         self.commit(py, OutputAspect::Capture(c.resolve()?))
     }
 
-    /// Constrain the sibling output to bit width `bits`.
+    /// Require this output to be `bits` wide.
     fn of_width(&self, py: Python<'_>, bits: u32) -> PyResult<Py<PyAny>> {
         self.commit(py, OutputAspect::Width(bits))
     }
 
-    /// Constrain the sibling output to the type named by `ty`, e.g. `"i64"`.
+    /// Require this output's type to be `ty`, e.g. `"i64"`.
     fn of_type(&self, py: Python<'_>, ty: &str) -> PyResult<Py<PyAny>> {
         self.commit(py, OutputAspect::Ty(parse_value_ty(ty)?))
     }
@@ -2085,7 +2058,6 @@ impl PyOutputSlot {
 
 #[pymethods]
 impl PyOutputSlot {
-    /// Exposes the parent handle to the collector.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.parent)
     }
@@ -2228,12 +2200,9 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
     b
 }
 
-// `strider.pattern.constraints`: relational predicates over captures,
-// evaluated post-join.
-
-/// A CFG relation between captured entities, passed to
-/// `Function.find_all([...], constraints=[...])` to filter joined tuples.
-/// Construct via `dominates` / `phi_input_from_edge`, and negate with `negate`.
+/// A CFG relation between captures, passed as
+/// `Function.find_all([...], constraints=[...])` to filter joined matches.
+/// Built by `dominates`, `phi_input_from_edge`, `negate`, `any_of`, `all_of`.
 #[pyclass(name = "JoinConstraint", module = "strider.pattern.constraints")]
 pub struct PyJoinConstraint {
     pub(crate) inner: Arc<ConstraintTree>,
@@ -2246,7 +2215,6 @@ pub struct PyJoinConstraint {
 /// A `JoinPredicate` instance baked into a `Where` closure.
 type PredicateFn = Arc<PyObject>;
 
-/// Well above any realistic constraint expression.
 const MAX_CONSTRAINT_NESTING: u32 = 512;
 
 /// Cap on the materialised node count, which repeated sharing
@@ -2341,12 +2309,9 @@ impl PyJoinConstraint {
 
 /// `a` dominates `b`: every control-flow path from entry to `b` passes through
 /// `a`. Each is a captured node or an `If` branch-edge capture
-/// (`capture_true` / `capture_false`).
-///
-/// Dominance, not reachability: no single incoming edge dominates a merge
-/// `Phi`; use `phi_input_from_edge` for that. A capture with no control
-/// position (a `load`, `store` or arithmetic node) drops the tuple, under
-/// `negate` too.
+/// (`capture_true` / `capture_false`). No single incoming edge dominates a
+/// merge `Phi`; use `phi_input_from_edge`. A capture with no control position
+/// (a `load`, `store` or arithmetic node) drops the match, negated or not.
 #[pyfunction]
 pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinConstraint {
     PyJoinConstraint::leaf(JoinConstraint::Dominates {
@@ -2355,9 +2320,8 @@ pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinCons
     })
 }
 
-/// The value merged into `phi` from the branch `edge` is `value`. `edge` binds
-/// an `If`'s `capture_true` / `capture_false` value, and `value` is bound by
-/// another pattern in the same `find_all` list.
+/// `phi` merges `value` from the branch `edge` binds (an `If`'s
+/// `capture_true` / `capture_false`).
 #[pyfunction]
 pub fn phi_input_from_edge(
     phi: PyRef<'_, PyCapture>,
@@ -2371,8 +2335,7 @@ pub fn phi_input_from_edge(
     })
 }
 
-/// The negation of `c`: a match survives only if `c` does not hold. `c` is a
-/// built-in `JoinConstraint` or a `JoinPredicate` instance.
+/// Passes when `c`, a `JoinConstraint` or `JoinPredicate`, fails.
 #[pyfunction]
 pub fn negate(c: &Bound<'_, PyAny>) -> PyResult<PyJoinConstraint> {
     let mut predicates = Vec::new();
@@ -2401,24 +2364,21 @@ fn composite(
     })
 }
 
-/// A constraint that passes when any listed constraint passes. An empty list
-/// passes nothing.
+/// Passes when any listed constraint passes; an empty list passes nothing.
 #[pyfunction]
 pub fn any_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> {
     composite(&constraints, ConstraintNode::Any)
 }
 
-/// A constraint that passes only when every listed constraint passes. An
-/// empty list passes everything.
+/// Passes when every listed constraint passes; an empty list passes
+/// everything.
 #[pyfunction]
 pub fn all_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> {
     composite(&constraints, ConstraintNode::All)
 }
 
-/// Base class for a user-defined join constraint. Override `constraint` to
-/// decide whether a joined match survives; optionally override `captures` to
-/// declare the captures it correlates, so it can connect otherwise
-/// independent patterns.
+/// Base class for a user-defined join constraint: override `constraint`, and
+/// optionally `captures` to correlate captures across patterns.
 #[pyclass(
     name = "JoinPredicate",
     module = "strider.pattern.constraints",
@@ -2435,15 +2395,13 @@ impl PyJoinPredicate {
         Self
     }
 
-    /// The captures this predicate correlates. The base returns none (a pure
-    /// filter); override to make the predicate a connector too.
+    /// The captures this predicate correlates; the base returns none.
     fn captures(&self) -> Vec<Py<PyCapture>> {
         Vec::new()
     }
 
-    /// Override to return whether the joined match survives, as a `bool`;
-    /// anything else is a `TypeError`. The base raises
-    /// `NotImplementedError`.
+    /// Whether the joined match survives, as a `bool`; anything else is a
+    /// `TypeError`. The base raises `NotImplementedError`.
     #[allow(unused_variables)]
     fn constraint(&self, m: &Bound<'_, PyAny>) -> PyResult<bool> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
@@ -2545,15 +2503,14 @@ node_builder! {
     ctor: mem_phi = "Start a `MemPhi` pattern builder.",
 }
 
-/// `.input_from` / `.constraints` on the two phi builders.
 macro_rules! phi_edge_links {
     ($ty:ty) => {
         #[pymethods]
         impl $ty {
-            /// Merge `value` in from the branch edge `edge` binds (an
-            /// `if_else` `capture_true` / `capture_false`). A pattern `value`
-            /// becomes an input; a `Capture` names one another pattern binds.
-            /// Pass `constraints()` to the query.
+            /// Merge `value` from the branch edge `edge` binds (an `if_else`
+            /// `capture_true` / `capture_false`). A pattern `value` becomes an
+            /// input; a `Capture` names one another pattern binds. Pass
+            /// `constraints()` to the query.
             fn input_from<'py>(
                 slf: PyRef<'py, Self>,
                 edge: crate::matcher::CaptureKey<'_>,
@@ -2670,13 +2627,11 @@ impl PyFunctionArgPat {
         }
     }
 
-    /// No operand slots; `__traverse__` still needs the hook.
     fn traverse_operands(&self, visit: &pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         let _ = visit;
         Ok(())
     }
 
-    /// No operand slots; `__clear__` still drops `.when()`.
     fn clear_operands(&self) {}
 }
 
@@ -2706,12 +2661,12 @@ impl PyFunctionArgPat {
         slf.index.set(Some(i));
         slf
     }
-    /// Constrain to an argument sourced from register varnode `vn` or a register containing it.
+    /// Constrain to an argument arriving in register `vn` or one containing it.
     fn source_register(slf: PyRef<'_, Self>, vn: crate::sleigh::PyVn) -> PyRef<'_, Self> {
         slf.source.set(Some(FunctionArgSource::Register(vn.inner)));
         slf
     }
-    /// Constrain to an argument sourced from the stack at `(space, offset)`.
+    /// Constrain to an argument arriving on the stack at `(space, offset)`.
     fn source_stack(
         slf: PyRef<'_, Self>,
         space: crate::sleigh::PyVnSpace,
@@ -2835,8 +2790,7 @@ macro_rules! binary_op_builder {
 
         #[pymethods]
         impl $ty {
-            /// Force left-to-right operand matching, disabling commutativity.
-            /// Chainable.
+            /// Match operands left to right only, not commuted.
             fn ordered(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
                 slf.ordered.set(true);
                 slf

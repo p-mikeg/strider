@@ -2,22 +2,21 @@ use pyo3::prelude::*;
 
 use crate::errors::into_strider_err;
 
-/// The theme a render falls back to when the caller names none.
 const DEFAULT_STYLE: &str = "dark";
 
-/// The CFG renderers' fallback theme: `dark` with Courier metrics.
+/// `dark` with Courier metrics.
 pub const DEFAULT_CFG_STYLE: &str = "dark_cfg";
 
 type StyleCtor = fn() -> dot::DotStyle;
 
-/// Every style name a render accepts (`strider.cfg.DOT_STYLES`).
+/// `strider.cfg.DOT_STYLES`.
 pub(crate) const DOT_STYLES: [(&str, StyleCtor); 3] = [
     ("dark", dot::DotStyle::dark),
     ("dark_cfg", dot::DotStyle::dark_cfg),
     ("empty", dot::DotStyle::default),
 ];
 
-/// Map a style name onto a [`dot::DotStyle`]; an unknown name is an error.
+/// The [`dot::DotStyle`] named `name`.
 pub fn dot_style_for(name: &str) -> PyResult<dot::DotStyle> {
     if let Some((_, style)) = DOT_STYLES.iter().find(|(n, _)| *n == name) {
         return Ok(style());
@@ -30,8 +29,8 @@ pub fn dot_style_for(name: &str) -> PyResult<dot::DotStyle> {
     )))
 }
 
-/// Writes `d` to `path` and returns `None`, or returns the text when there is
-/// no `path`; HTML when `html`, else DOT.
+/// Writes `d` (HTML when `html`, else DOT) to `path`, or returns it without
+/// one.
 pub fn render<G: dot::GraphDotDumper>(
     d: &dot::GraphDot<G>,
     html: bool,
@@ -46,9 +45,8 @@ pub fn render<G: dot::GraphDotDumper>(
     .map_err(into_strider_err)
 }
 
-/// The `pretty=` render selector: `False` renders the graph as stored, `True`
-/// renders it prettily in the default theme, and a style name renders it
-/// prettily in that theme.
+/// `pretty=`: `False` is the raw render, `True` the pretty one in the default
+/// theme, a style name the pretty one in that theme.
 #[derive(FromPyObject)]
 pub enum Pretty {
     Flag(bool),
@@ -56,7 +54,7 @@ pub enum Pretty {
 }
 
 impl Pretty {
-    /// `None` for the raw render, else the pretty render's theme.
+    /// The pretty render's theme; `None` for the raw render.
     pub fn theme(&self) -> Option<&str> {
         match self {
             Pretty::Flag(false) => None,
