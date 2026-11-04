@@ -46,11 +46,17 @@ _ARMS = {
 }
 
 
-@pytest.mark.parametrize("slot", sorted(_SLOTS))
-@pytest.mark.parametrize("arm", sorted(_ARMS))
+# `if_else` is not a memory producer.
+_LONE_ARMS = [
+    (slot, arm)
+    for arm in sorted(_ARMS)
+    for slot in sorted(_SLOTS)
+    if not (arm == "if_else" and slot in ("load.mem", "store.mem"))
+]
+
+
+@pytest.mark.parametrize("slot, arm", _LONE_ARMS)
 def test_a_lone_arm_answers_what_the_operand_does(functions, slot, arm):
-    if arm == "if_else" and slot in ("load.mem", "store.mem"):
-        pytest.skip("not a memory producer")
     at, make = _SLOTS[slot], _ARMS[arm]
     plain = _count(functions, at(make()))
     assert _count(functions, at(p.one_of([make()]))) == plain
