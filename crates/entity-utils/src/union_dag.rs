@@ -45,17 +45,12 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
         Self::default()
     }
 
-    /// O(1) amortised: the first value fills `n`'s own node, later ones become
-    /// absorbed leaves. Re-adding a value already held on `n`'s OWN root is a
-    /// no-op; one `n` reaches only through a union is allocated again, and
+    /// O(1) amortised. Re-adding a value held on `n`'s own root is a no-op;
+    /// one reached only through a union is added again, and
     /// [`Self::for_each`] then yields it twice.
     pub fn extend(&mut self, n: N, v: V) {
         let root = self.ensure(n);
-        // Same reason `union` keeps `linked`: re-adding one value would grow
-        // `root`'s parents without bound and turn `for_each` linear in the
-        // number of `extend` calls, its `seen` set hiding the repetition in the
-        // ANSWER, not in the COST. Keyed by the pair rather than by `own`
-        // alone, so alternating values do not each defeat the guard.
+        // As `linked` in `union`: keeps `parents` from growing per call.
         if !self.held.insert((root, v)) {
             return;
         }
@@ -67,22 +62,16 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
         }
     }
 
-    /// O(1) amortised: links `src`'s root under `dst` rather than copying. A no-op when
-    /// `src` is empty.
-    ///
-    /// The link is a LIVE ALIAS, not a snapshot: a value added to `src` AFTER
-    /// the union is visible from `dst` too. Not the other way round: `dst`'s
-    /// own later values stay out of `src`.
+    /// O(1) amortised: links `src`'s root under `dst`; a no-op when `src` is
+    /// empty. A live alias: values added to `src` later are visible from `dst`,
+    /// not the reverse.
     pub fn union(&mut self, dst: N, src: N) {
         let Some(src_root) = self.roots[src].expand() else {
             return;
         };
         let dst_root = self.ensure(dst);
-        // Re-linking one `(dst, src)` pair would otherwise grow `dst`'s
-        // parents without bound and turn `for_each` linear in the number of
-        // `union` calls: its `seen` set hides the repetition in the ANSWER,
-        // not in the COST. `linked` catches the pair whatever else was unioned
-        // in between, so `parents` holds one entry per distinct link.
+        // One `parents` entry per distinct link, however often re-linked, so
+        // `for_each` cost does not grow with the call count.
         if !self.linked.insert((dst_root, src_root)) {
             return;
         }
@@ -93,21 +82,14 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
         self.roots[n].is_none()
     }
 
-    /// Visits every value reachable from `n`'s set. Dedup is per NODE, not per
-    /// value: a shared sub-DAG is walked once, but the same value held by two
-    /// nodes is yielded twice and the caller must collect it. Cycle-safe:
-    /// mutual absorption still terminates.
-    ///
-    /// Costs the transitive closure reached from `n`, not the count of values
-    /// yielded. On a chain of unions each key reaches the whole chain below it,
-    /// so sweeping every key is quadratic in the chain length.
+    /// Visits every value reachable from `n`'s set, cycle-safe. Dedup is per
+    /// node: one value held by two nodes is yielded twice. Costs the closure
+    /// reached from `n`, so sweeping every key of a union chain is quadratic.
     pub fn for_each(&self, n: N, mut f: impl FnMut(V)) {
         let Some(root) = self.roots[n].expand() else {
             return;
         };
-        // Sized by what the walk VISITS. A dense set would zero a backing
-        // vector reaching the largest `UnionId` in the arena, making a call
-        // that yields one value cost in proportion to the whole arena.
+        // Sized by what the walk visits, not by the arena.
         let mut seen: FxHashSet<UnionId> = FxHashSet::default();
         let mut stack = vec![root];
         seen.insert(root);
@@ -124,15 +106,10 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
         }
     }
 
-    /// Relabels keys after the `N` space is compacted. `f` must be INJECTIVE:
-    /// two keys mapping to one keep only whichever the iteration order writes
-    /// last.
-    ///
-    /// `f` returning `None` culls a key's entry point, so a direct lookup of
-    /// it is empty. Its DAG node survives: a surviving key that unioned from
-    /// it still reaches those values. Only the key->root map is rebuilt; the
-    /// DAG arena is untouched, which is why `held` / `linked` need no pruning:
-    /// a `UnionId` is never reused, so a stale pair can never match a new one.
+    /// Relabels keys after the `N` space is compacted; `f` must be injective.
+    /// `None` culls a key's entry point but not its DAG node, so a key that
+    /// unioned from it still reaches its values. The arena is untouched and a
+    /// `UnionId` never reused, so `held` / `linked` need no pruning.
     pub fn remap(&mut self, f: impl Fn(N) -> Option<N>) {
         let mut roots: SecondaryMap<N, PackedOption<UnionId>> = SecondaryMap::new();
         for (key, root) in self.roots.iter() {
