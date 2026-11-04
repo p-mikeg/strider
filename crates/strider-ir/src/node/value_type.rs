@@ -137,7 +137,7 @@ impl ValueType {
     }
 }
 
-/// `I32` / `F64`, as Python's `Node.value_type()` spells it.
+/// `I32` / `F64`.
 impl std::fmt::Debug for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

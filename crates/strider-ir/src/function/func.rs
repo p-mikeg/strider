@@ -15,12 +15,9 @@ pub fn cc_ret_and_clobber_vns(
     cc.ret_and_clobber_vns(all, |v| vn_container::largest_container_in(all, v))
 }
 
-/// A lifted function: structural [`Graph`] plus per-function overlay state.
-/// Always has an entry node; `Clone` is a deep, independent copy.
-///
-/// The overlay is: facts settled once, the id-keyed payload tables in
-/// [`FunctionSideTables`], and graph-derived memos that
-/// [`Self::invalidate_analyses`] drops.
+/// A lifted function: a [`Graph`] plus facts settled once, the id-keyed
+/// payload tables in [`FunctionSideTables`], and graph-derived memos that
+/// [`Self::invalidate_analyses`] drops. `Clone` is a deep copy.
 #[derive(Clone)]
 pub struct Function {
     graph: Graph,
@@ -34,8 +31,7 @@ pub struct Function {
     /// The union of every set [`Self::assume`] added.
     assumptions: crate::AssumptionOptions,
     /// See [`Self::call_register_frame_reach`]. Set once by
-    /// `FunctionBuilder::build`; the only record that a callee may have
-    /// received a stack address in a clobbered register.
+    /// `FunctionBuilder::build`.
     call_register_frame_reach: Option<i128>,
 
     side_tables: FunctionSideTables,
@@ -100,8 +96,7 @@ impl Function {
         &mut self.side_tables
     }
 
-    /// The claims in force: the union of every [`Self::assume`]. Only a fresh
-    /// lift drops one.
+    /// The claims in force: the union of every [`Self::assume`].
     #[inline]
     pub fn assumptions(&self) -> &crate::AssumptionOptions {
         &self.assumptions
@@ -127,16 +122,9 @@ impl Function {
         self.call_register_frame_reach = reach;
     }
 
-    /// Adds `claims` to the claims in force, and drops the graph-derived memos
-    /// when one is new (a decomposition made without an allocator claim reads
-    /// its return as not-memory). A region filter or [`Self::stack_offset`]
-    /// then reads nothing until a run or `strider_opt::refresh_memory_classes`.
-    ///
-    /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode)
-    /// and
-    /// [`fp_rounding_mode_is_nearest`](crate::AssumptionOptions::fp_rounding_mode_is_nearest)
-    /// are read only by the lift: assumed after it, they are recorded without
-    /// effect.
+    /// Adds `claims` to the claims in force, dropping the graph-derived memos
+    /// when one is new. A region filter or [`Self::stack_offset`] then reads
+    /// nothing until a run or `strider_opt::refresh_memory_classes`.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
         if claims.omitted_by(&self.assumptions).is_empty() {
             return;

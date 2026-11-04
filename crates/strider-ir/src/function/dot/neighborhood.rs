@@ -1,6 +1,3 @@
-//! Neighborhood selection for the interactive explorer: the node set the
-//! pretty dumper is restricted to.
-
 use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};

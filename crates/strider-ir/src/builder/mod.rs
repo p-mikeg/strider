@@ -200,8 +200,7 @@ fn address_step(kind: &NodeKind) -> Option<AddrStep> {
 /// none is. Any other step is not a stack address, but added to one makes
 /// the offset unknown. A reloaded value is left out: storing it was already
 /// an escape. Solved optimistically, so a loop that restores the stack
-/// pointer keeps the offset. Runs here because these register-only values
-/// are gone after optimization.
+/// pointer keeps the offset.
 fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     use crate::IRViewer;
     let mut cone = Vec::new();

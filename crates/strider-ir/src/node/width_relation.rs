@@ -1,5 +1,3 @@
-//! Where an input slot's width comes from.
-
 use crate::node::NodeKind;
 use crate::node::signature::{Conversion, OperandWidth};
 

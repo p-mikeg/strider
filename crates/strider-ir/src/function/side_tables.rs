@@ -58,9 +58,6 @@ pub struct FunctionSideTables {
 }
 
 impl FunctionSideTables {
-    /// Crate-private so no caller can wipe the tables through
-    /// [`Function::side_tables_mut`](crate::Function::side_tables_mut).
-    /// `vn_interner` is fixed by [`Function::new`](crate::Function::new).
     pub(crate) fn new(vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>) -> Self {
         Self {
             asm_fingerprints: UnionDag::default(),
@@ -294,14 +291,11 @@ impl FunctionSideTables {
     }
 }
 
-/// Readers and writers over the tables above.
 impl crate::Function {
     /// Interns `value` masked to `ty`'s width.
     ///
-    /// `ty` must be an integer type; a float one masks every value to `0`.
-    /// Not asserted, so a user-supplied rewrite gets the catchable
-    /// [`crate::validate`] error instead of a panic;
-    /// [`crate::IRBuilderExt::build_int_const`] checks up front.
+    /// `ty` must be an integer type; a float one masks every value to `0` and
+    /// [`crate::validate`] rejects the node.
     pub fn intern_int_const(
         &mut self,
         value: impl Into<UBig>,

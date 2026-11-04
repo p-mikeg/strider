@@ -1,5 +1,3 @@
-//! Claims about the analysed code that a lift or an optimizer run may rest on.
-
 /// One claim's lattice. The type's `Default` is the floor (the claim not held).
 trait Claim: Default {
     /// Adds whatever `other` claims.
@@ -94,20 +92,11 @@ macro_rules! claims {
 
 claims! {
     /// Assertions about the analysed code that the analysis cannot check. Each field's
-    /// positive value is the risky one: turned on, it can make the answer wrong on valid
-    /// input. [`AssumptionOptions::none`] is the sound floor of these fields, under the
-    /// premises stated there.
-    ///
-    /// Five default on: [`stack_global_disjoint`](Self::stack_global_disjoint),
-    /// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls),
-    /// [`return_slots_survive_untracked_writes`](Self::return_slots_survive_untracked_writes),
-    /// [`msr_register_keeps_mode`](Self::msr_register_keeps_mode) and
-    /// [`fp_rounding_mode_is_nearest`](Self::fp_rounding_mode_is_nearest). `strider_lift`'s
-    /// `build_ir` holds none.
+    /// positive value is the risky one: on, it can make the answer wrong on valid input.
+    /// [`AssumptionOptions::none`] is the sound floor, under the premises stated there.
     ///
     /// Claims accumulate per [`Function`](crate::Function) through
-    /// [`Function::assume`](crate::Function::assume) and are never withdrawn; only a fresh
-    /// lift drops one.
+    /// [`Function::assume`](crate::Function::assume) and are never withdrawn.
     pub struct AssumptionOptions {
         /// The stack never overlaps a constant-address region (`.data`, `.rodata`, `.bss`,
         /// MMIO). Wrong only where a constant address equals `sp + K` at runtime. Default on.
@@ -138,9 +127,7 @@ claims! {
         /// Default off.
         ///
         /// Inert without [`escape_analysis`](Self::escape_analysis) or a non-empty
-        /// [`noalias_allocators`](Self::noalias_allocators). Only `LoadForward`'s forwarding
-        /// honours it; where it is wrong, a dispatch value folded across a call can seat a
-        /// wrong branch edge.
+        /// [`noalias_allocators`](Self::noalias_allocators). Read only by `LoadForward`.
         pub callee_preserves_stack_args: bool = false,
         /// Callee addresses of pure `noalias` heap allocators (a size in, a fresh pointer out,
         /// no pointer arguments). An allocation is disjoint from every other live allocation,
@@ -182,26 +169,18 @@ claims! {
         /// lifted function it changes nothing. Default on.
         pub msr_register_keeps_mode: bool = true,
         /// The dynamic rounding mode a float-to-integer, narrowing or integer-to-float
-        /// conversion reads is round to nearest even: x86 MXCSR.RC at the SSE and scalar
-        /// VEX conversions that read it (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`,
-        /// `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
-        /// `cvtsi2ss`, the 64-bit `cvtsi2sd`), x87 RC at `fst` / `fstp` to a single or
-        /// double, PowerPC FPSCR.RN at `fctid`, `fctiw`, `fctidu`, `fctiwu`, `fcfid`,
-        /// `fcfids`, `fcfidu`, `fcfidus` and `frsp`, ARM FPSCR.RMode at `vcvtr`,
-        /// `vcvt.f32.f64`, `vcvt.f32.s32`, `vcvt.f32.u32` and `vcvtb` / `vcvtt` to half,
-        /// AArch64 FPCR.RMode at `fcvt` to a narrower float, `fcvtn`, `scvtf` / `ucvtf`
-        /// from a general register, `scvtf` from an FP one, `bfcvt` and `bfcvtn`, and MIPS
-        /// FCSR.RM at `cvt.w`, `cvt.l`, `cvt.s.d`, `cvt.s.w`, `cvt.s.l` and `cvt.d.l`.
-        /// Fixed-mode forms (`cvtt*`, `fcti*z`, ARM `vcvt` to an integer, MIPS `round` /
-        /// `trunc` / `floor` / `ceil`, AArch64 `fcvt{n,a,m,p,z}{s,u}` and `fcvtxn`) read no
-        /// mode, and x87 `fist`, `fistp` and `frndint` always read RC.
+        /// conversion reads is round to nearest even: x86 MXCSR.RC (SSE and VEX
+        /// conversions) and x87 RC at `fst` / `fstp` to a single or double, PowerPC
+        /// FPSCR.RN, ARM FPSCR.RMode, AArch64 FPCR.RMode and MIPS FCSR.RM. Fixed-mode
+        /// forms (`cvtt*`, `fcti*z`, ARM `vcvt` to an integer, MIPS `round` / `trunc` /
+        /// `floor` / `ceil`, AArch64 `fcvt{n,a,m,p,z}{s,u}` and `fcvtxn`) read no mode, and
+        /// x87 `fist`, `fistp` and `frndint` always read RC.
         ///
-        /// Off, each listed conversion selects among the four modes, so a mode the function
+        /// Off, each such conversion selects among the four modes, so a mode the function
         /// sets (`ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr`, `ctc1`) folds and an unknown one
         /// stays a select; an AArch64 FPCR read is volatile, so there it always stays one.
         /// Wrong after `fesetround` or under a mode a caller set. Float arithmetic and the
-        /// conversions lifted as opaque user ops are outside it; the rest of the float
-        /// environment is [`AssumptionOptions::none`]'s premise.
+        /// conversions lifted as opaque user ops are outside it.
         ///
         /// Read by the lift only (`AnalyzeOptions::assumptions`); added to a lifted
         /// function it changes nothing. Default on.
@@ -225,10 +204,7 @@ mod tests {
     use rustc_hash::FxHashSet;
 
     claims! {
-        /// A throwaway claims type over an arbitrary field list: a claim off
-        /// by default, one on, and a set.  Declared through the same macro,
-        /// so what holds here is what the generator does, not what one call
-        /// of it happens to produce.
+        /// A claim off by default, one on, and a set.
         pub struct Trial {
             /// Off by default.
             pub quiet: bool = false,

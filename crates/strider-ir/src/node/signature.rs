@@ -1,6 +1,3 @@
-//! Every node kind's slot shape: value kind (validation), name (dot labels)
-//! and role (dot colors).
-
 use crate::node::{NodeKind, ValueKind, ValueType};
 
 /// A slot's admissible value kinds, coarser than [`ValueKind`].
