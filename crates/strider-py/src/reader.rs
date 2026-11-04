@@ -70,8 +70,8 @@ impl PyBufferReader {
     /// the address space, `TypeError` for a buffer whose items are not one
     /// byte.
     #[new]
-    fn new(base_addr: u64, data: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let region = MemRegion::new(base_addr, extract_bytes(data)?.into_owned())
+    fn new(base_addr: crate::bigint::Addr, data: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let region = MemRegion::new(base_addr.0, extract_bytes(data)?.into_owned())
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(Self::from_regions(vec![region]))
     }
@@ -90,13 +90,13 @@ impl PyBufferReader {
     fn read<'py>(
         &self,
         py: Python<'py>,
-        addr: u64,
+        addr: crate::bigint::Addr,
         size: usize,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let table = self.lookup_table();
         table.check_unchanged().map_err(into_strider_err)?;
         Ok(table
-            .read_vec(addr, size)
+            .read_vec(addr.0, size)
             .map(|buf| PyBytes::new_bound(py, &buf)))
     }
 }
@@ -764,7 +764,8 @@ impl PyLoadedElf {
     /// The nearest symbol at or below `address` whose extent reaches it, or
     /// `None`. An unsized symbol covers only its own address; aliases rank
     /// by having a size, then by being code.
-    fn symbol_at(&self, address: u64) -> PyResult<Option<PySymbol>> {
+    fn symbol_at(&self, address: crate::bigint::Addr) -> PyResult<Option<PySymbol>> {
+        let address = address.0;
         self.with_symbols(|t| {
             // Highest start first, so the nearest start's aliases lead.
             let mut hits = t.extents.covering(address, 1).peekable();
@@ -857,7 +858,7 @@ impl PyLoadedElf {
     fn read<'py>(
         &self,
         py: Python<'py>,
-        addr: u64,
+        addr: crate::bigint::Addr,
         size: usize,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         self.mem.read(py, addr, size)
@@ -882,10 +883,11 @@ impl PyLoadedElf {
         let mut added = Vec::with_capacity(symbols.len());
         for (name, value) in symbols {
             let name: String = name.extract()?;
-            let (address, size) = if let Ok((a, n)) = value.extract::<(u64, u64)>() {
-                (a, (n != 0).then_some(n))
+            let (address, size) = if value.is_instance_of::<pyo3::types::PyTuple>() {
+                let (a, n): (crate::bigint::Addr, u64) = value.extract()?;
+                (a.0, (n != 0).then_some(n))
             } else {
-                (value.extract::<u64>()?, None)
+                (value.extract::<crate::bigint::Addr>()?.0, None)
             };
             added.push(PySymbol {
                 name,

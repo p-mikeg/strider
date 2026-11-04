@@ -11,10 +11,11 @@ create_exception!(
     PyException,
     "Raised when an analysis fails, a pattern is malformed, or an argument \
      (a malformed ELF included) has a bad value. Otherwise a wrong type \
-     raises `TypeError`, an out-of-range int `OverflowError` (`entry` \
-     raises `StriderError`), a range-checked option `ValueError`, a missing \
-     path `FileNotFoundError`, and `load_elf` on a non-ELF file or an \
-     unsupported arch or ABI `ValueError`.\n\n\
+     raises `TypeError` (a `bool` address or index included), an \
+     out-of-range address, node id or operand index `StriderError` and \
+     another out-of-range int `OverflowError`, a range-checked option \
+     `ValueError`, a missing path `FileNotFoundError`, and `load_elf` on a \
+     non-ELF file or an unsupported arch or ABI `ValueError`.\n\n\
      `.backtrace` is the message plus the Rust backtrace (empty when raised \
      from Python); `STRIDER_BACKTRACE=1` appends it to the message."
 );
