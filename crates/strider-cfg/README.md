@@ -65,25 +65,13 @@ an ISA-mode clash with an arm.
 
 `Cfg::incomplete()` is a sorted set of `(PcodeInsnAddr, Reason)`. A build
 resolves nothing, so every deferred site is `UnresolvedBranch` and every seat
-`UnverifiedSeed`. Target reasons:
-
-- `UnmappedTarget`: a direct branch or fall-through to bytes the reader lacks,
-  left through a `TailCall` stub. An unmapped seeded arm is dropped; an
-  unmapped entry fails the build.
-- `UndecodableTarget`: a direct branch to bytes Sleigh rejects or
-  `data_ranges` marks, or a fall-through into them past a call, directly or
-  through a run of zero-p-code-op instructions. A branch or a nop run leaves
-  through a stub; a call ends `NoReturn`, dropping what follows it. Any
-  fall-through into a data range is reported; any other into bytes Sleigh
-  rejects fails the build. The entry decodes even inside a data range.
-- `PastFunctionEnd`: a fall-through, not-taken path or conditional
-  instruction's skip of itself past a `FunctionBound::Size` or fragment end,
-  at the first address after the last decoded instruction. It leaves through
-  a stub; a call returning there ends `NoReturn`. Off a seeded arm the arm is
-  dropped.
-- `IsaModeConflict`: two edges reached an address in different ISA modes; the
-  loser decodes in the winner's. Other committed vars are not compared.
-- `InteriorTarget`: an off-boundary target, and a stepped-over region start.
+`UnverifiedSeed`. The target reasons are `UnmappedTarget`,
+`UndecodableTarget`, `PastFunctionEnd`, `IsaModeConflict` and
+`InteriorTarget`; each one's contract is on `Reason`. A direct branch to
+unmapped or undecodable bytes leaves through a `TailCall` stub, a call
+falling into them ends `NoReturn`, and a seeded arm reaching them is dropped.
+An unmapped entry, or a fall-through into bytes Sleigh rejects that no call
+explains, fails the build.
 
 Beside it: `undecodable_seeded_targets` (each arm dropped because it, or code
 it leads to before the next dispatch, would not decode, with its site) and
