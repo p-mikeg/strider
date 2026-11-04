@@ -12,7 +12,6 @@ OUT_DIR = pathlib.Path(tempfile.gettempdir())
 prog = strider.lift.load_elf(str(FIXTURE))
 cfg, function, unresolved = prog.analyze("array_sum")
 
-# analyze returns the final resolved CFG.
 cfg_html = OUT_DIR / "array_sum-cfg.html"
 cfg.to_html(str(cfg_html), style="dark_cfg")
 print(f"wrote {cfg_html} ({cfg_html.stat().st_size} bytes)")
