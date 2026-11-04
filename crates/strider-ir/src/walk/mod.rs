@@ -69,7 +69,7 @@ pub fn close_over_control_preds(
 
 pub use graph_algorithms::walk::{FnSuccs, PostOrder, PreOrder, WalkPhase};
 
-/// Successors follow data inputs backward and control edges forward.
+/// Successors follow every input backward and control edges forward.
 #[derive(Clone, Copy)]
 pub struct GraphWalkSuccs<'a>(&'a Graph);
 
@@ -97,9 +97,9 @@ pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item =
         .map(|(succ, _use_idx)| succ)
 }
 
-/// Every data predecessor (non-control edges backward) and every CFG successor
+/// Every input's producer (control inputs included) and every CFG successor
 /// (control edges forward). A dead CFG input still shows up while a live node
-/// uses it as data.
+/// uses it.
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
@@ -139,7 +139,7 @@ pub struct GraphWalkInfo {
 }
 
 impl GraphWalkInfo {
-    /// Walks the mixed backward-data plus forward-control relation.
+    /// Walks the mixed backward-input plus forward-control relation.
     pub fn compute_full(graph: &Graph, entry: NodeId) -> Self {
         let mut walk = walk_graph(graph, entry);
         let roots: Vec<NodeId> = walk
