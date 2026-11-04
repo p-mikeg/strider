@@ -31,14 +31,8 @@ pub fn vn_overlaps(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 
 /// Drops each REGISTER / UNIQUE varnode a strictly larger same-space varnode
 /// encloses (`edi` when `rdi` is present); other spaces pass through.
-/// Survivors keep input order.
-///
-/// Partially overlapping varnodes both survive and are modelled as
-/// non-aliasing, sound only because none arise: register files nest exactly,
-/// `strider-lift`'s `register_slot_of` drops a computed slot
-/// [`smallest_enclosing`] cannot seat, and every UNIQUE varnode lies in one
-/// 256-byte-aligned block (SleighCompile's temp stride; it checks declared
-/// temps only, so an operand-sized temp is bounded by the widest register).
+/// Survivors keep input order. Partial overlaps both survive, as non-aliasing;
+/// callers must not produce them.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {
