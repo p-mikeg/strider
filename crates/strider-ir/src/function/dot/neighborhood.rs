@@ -1,5 +1,5 @@
-//! Neighborhood selection for the interactive explorer.  Only the node SET is
-//! computed here; the render is the ordinary pretty dumper restricted to it.
+//! Neighborhood selection for the interactive explorer: the node set the
+//! pretty dumper is restricted to.
 
 use std::collections::VecDeque;
 
@@ -30,7 +30,7 @@ fn producers(f: &Function, node: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-/// BFS around `center` over **both** input and output edges, capped at
+/// BFS around `center` over both input and output edges, capped at
 /// `max_nodes`.  A node is a hub when its consumer fan-out (plus its producers
 /// when `count_producers`) exceeds `hub_cap`: it is included and its producers
 /// (inputs) are still followed, but its consumer fan-out is not, so a

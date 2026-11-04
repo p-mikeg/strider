@@ -12,36 +12,23 @@ use crate::node::{
 };
 
 impl Function {
-    /// The canonical text form: a header (endianness, tracked varnodes, default convention, the
-    /// claims in force ([`Self::assumptions`]) when any is on, `frame_address_in_call_register
-    /// reach=<offset|unbounded>` when a call's clobbered register held a stack address, argument
-    /// carriers), then one line per node reachable from [`Self::entry`] as `outs = op[payload]
-    /// ins`, values named `%vN` in print order. With `fingerprints`, each line ends in its sorted
-    /// asm address set `  @{..}`; those sets can dwarf the rest on large functions, and each one
-    /// costs a walk of that node's whole fingerprint union closure, so a chain of unions is
-    /// quadratic in its length while the text stays linear (see
+    /// The canonical text form: a header (endianness, tracked varnodes, default convention,
+    /// claims in force, `frame_address_in_call_register reach=<offset|unbounded>` when set,
+    /// argument carriers), then one `outs = op[payload] ins` line per node reachable from
+    /// [`Self::entry`], values named `%vN` in print order. With `fingerprints`, each line ends in
+    /// its sorted asm address set `  @{..}`, which can be quadratic in a chain of unions (see
     /// [`UnionDag::for_each`](entity_utils::UnionDag::for_each)).
     ///
-    /// Control nodes print in reverse postorder of the control graph, taking
-    /// successors in output-index order. Each is preceded by its unprinted
-    /// data inputs in post-order over input slots. A `Phi` / `MemPhi` prints
-    /// right after its `Region`, siblings in the order a consumer first
-    /// demands them, and the cone of an input it takes over a predecessor edge
-    /// prints after that predecessor. A value that cone shares with a block
-    /// printed later is pulled into that later block, so a line of the cone
-    /// can name a value defined below it. Nothing reads an arena id, a hash
-    /// order or a use-list, save a control output's single use, so equal
-    /// graphs print equal text however they were built.
-    ///
-    /// Unreachable nodes are not printed, which is why [`Self::compact`]
-    /// leaves the text unchanged.
+    /// Control nodes print in reverse postorder, each after its unprinted data inputs; a phi
+    /// prints right after its `Region`. The order reads no arena id, hash order or use-list, so
+    /// equal graphs print equal text however they were built, and [`Self::compact`] leaves it
+    /// unchanged.
     pub fn to_text(&self, fingerprints: bool) -> String {
         self.to_text_with(fingerprints, &vn_str)
     }
 
-    /// Test-only: [`Self::to_text`], spelling each varnode `names` holds a
-    /// register for as that register (`RDI` for `%:0x38:8`); any other keeps
-    /// its `space:offset:size` form.
+    /// [`Self::to_text`], spelling each varnode `names` knows as its register
+    /// (`RDI` for `%:0x38:8`).
     #[cfg(any(test, feature = "test-util"))]
     pub fn to_text_named(&self, fingerprints: bool, names: &strider_target::ArchNames) -> String {
         let regs = names.regs();
@@ -571,7 +558,7 @@ fn push_value_kind(out: &mut String, kind: ValueKind) {
 }
 
 /// `space` as its Sleigh shortcut character, or its byte in hex where that
-/// is not graphic or is the `:` separator: the one raw spelling of a space.
+/// is not graphic or is the `:` separator.
 pub(crate) fn space_str(space: rsleigh::VnSpace) -> String {
     let byte = space.shortcut_raw();
     if byte.is_ascii_graphic() && byte != b':' {
