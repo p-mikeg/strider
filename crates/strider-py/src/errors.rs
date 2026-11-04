@@ -125,6 +125,49 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     })
 }
 
+/// The message of a failing `MemReader.read`, stashed so a failure the
+/// decoder swallows still raises.
+#[derive(Debug)]
+struct ReaderFailure(String);
+
+impl std::fmt::Display for ReaderFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ReaderFailure {}
+
+/// The `StriderError` a failing `MemReader.read` stashes, `cause` chained.
+pub fn reader_failure(msg: String, cause: Option<PyErr>) -> PyErr {
+    PyErr::new::<StriderError, _>(Raised {
+        origin: ReaderFailure(msg).into(),
+        cause,
+    })
+}
+
+/// What a call raises given the `pending` error a callback stashed and the
+/// error `out` it returned: `out` when `pending` is a [`reader_failure`] and
+/// `out` the `StriderError` it propagated as, which names where the decode
+/// failed, with `pending`'s cause; else `pending`.
+pub fn pending_over(py: Python<'_>, pending: PyErr, out: PyErr) -> PyErr {
+    let is_reader_failure = pending
+        .value_bound(py)
+        .getattr(intern!(py, "_origin"))
+        .ok()
+        .and_then(|o| {
+            o.downcast::<ErrorOrigin>()
+                .ok()
+                .map(|o| o.get().0.is::<ReaderFailure>())
+        })
+        .unwrap_or(false);
+    if !is_reader_failure || !out.is_instance_of::<StriderError>(py) {
+        return pending;
+    }
+    out.set_cause(py, pending.cause(py));
+    out
+}
+
 fn backtrace_requested() -> bool {
     std::env::var_os("STRIDER_BACKTRACE").is_some_and(|v| !v.is_empty() && v != "0")
 }
