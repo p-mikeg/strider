@@ -1,10 +1,6 @@
 use super::{ArchPreset, SleighArch};
 
-/// Naming vars to re-derive implies an ISA-mode var, which keeps
-/// `Builder::is_benign_prefix_reentry`'s throwaway decode away from every
-/// preset whose commits are believed: that probe is gated on
-/// `isa_mode_var` being `None`, and `Builder::enqueue` reads the engine
-/// only where `flow_commit_vars` is non-empty, so the two are disjoint.
+/// Naming vars to re-derive implies an ISA-mode var.
 #[test]
 fn a_preset_that_re_derives_context_has_an_isa_mode_var() {
     for preset in ArchPreset::ALL {
