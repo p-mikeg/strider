@@ -95,12 +95,8 @@ impl MemRegion {
     }
 
     /// `[file_offset, file_offset + len)` of `bytes` mapped at `start_addr`,
-    /// sharing the buffer.
-    ///
-    /// # Errors
-    ///
-    /// When the window runs past the end of `bytes`, or `start_addr + len`
-    /// would exceed `u64::MAX`.
+    /// sharing the buffer. Errs when the window runs past `bytes` or
+    /// `start_addr + len` overflows.
     pub(crate) fn window(
         start_addr: u64,
         bytes: &FileBytes,
@@ -160,16 +156,12 @@ impl MemRegion {
         self.start_addr
     }
 
-    /// One `stat` of the file these bytes were mapped from, compared against
-    /// map time; `Ok` over owned bytes. A change racing a [`read`] is still a
-    /// torn read or a SIGBUS.
+    /// Re-stats the mapped file against map time; `Ok` over owned bytes. A
+    /// change racing a [`read`](Self::read) still tears or SIGBUSes.
     ///
     /// # Errors
     ///
-    /// When the mapped file no longer stats, or no longer looks like the file
-    /// that was mapped.
-    ///
-    /// [`read`]: Self::read
+    /// When the file no longer stats, or its size or mtime changed.
     pub fn check_unchanged(&self) -> Result<()> {
         self.bytes.check_unchanged()
     }
