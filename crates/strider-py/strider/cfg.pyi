@@ -82,32 +82,26 @@ class Cfg:
         empty is complete. Check it before trusting an absence ("no store to
         X").
 
-        `"unresolved_branch"` and `"unverified_seed"` name a dispatch site; the
-        other five a branch target:
+        Two reasons name a dispatch site:
 
         - `"unresolved_branch"`: an indirect branch with no complete successor
-          set, including a return not provably to the caller and not seeded
+          set, including a return not provably to the caller nor seeded
           `"return"`.
-        - `"unverified_seed"`: a seated answer nothing verified: a
-          `known_targets` seat, a consumed tail call, or a `"return"` seed.
-        - `"isa_mode_conflict"`: reached in two ISA modes; the losing path
-          decodes in the other.
-        - `"interior_target"`: off every instruction boundary, or a region
-          start a later decode stepped over.
+        - `"unverified_seed"`: a seated answer nothing verified (a
+          `known_targets` seat, a consumed tail call, a `"return"` seed).
+
+        Five name a branch target:
+
+        - `"isa_mode_conflict"`: reached in two ISA modes.
+        - `"interior_target"`: off every instruction boundary.
         - `"unmapped_target"`: no byte of the image backs it.
-        - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
-          it as data.
-        - `"past_function_end"`: code falls through past `function_max_size`
-          or a `fragment_ranges` end (a tail call to this address), or a call
-          not to a `no_return_targets` entry would return here.
+        - `"undecodable_target"`: holds no instruction, or is in `data_ranges`.
+        - `"past_function_end"`: past `function_max_size` or a
+          `fragment_ranges` end.
 
-        A seeded arm that falls through into an unmapped, undecodable or
-        past-the-end target is dropped and named there, unless a call precedes
-        those bytes (the call then does not return). A branch from an arm's
-        code to an unmapped target leaves through a stub and keeps the arm.
-
-        From `analyze`, target reasons accumulate over the resolver's rounds
-        and site reasons are the final round's.
+        A seeded arm running into an unmapped, undecodable or past-the-end
+        target is dropped. From `analyze`, target reasons accumulate over the
+        resolver's rounds; site reasons are the final round's.
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:
@@ -121,32 +115,27 @@ class Cfg:
 class CfgOptions:
     """Options controlling how the CFG is built.
 
-    `function_max_size` bounds how far past the entry to decode (omit for
-    unbounded); a fall-through past it is `"past_function_end"`.
-    `allow_code_before_start_addr` permits blocks below the entry; it raises
-    `ValueError` beside a size.
+    - `function_max_size`: how far past the entry to decode (omit for
+      unbounded); a fall-through past it is `"past_function_end"`.
+    - `allow_code_before_start_addr`: follow branches below the entry;
+      `ValueError` beside a size.
+    - `known_targets`: a dispatch address's targets, or `"return"` to seat
+      it as a function return. An empty list seats nothing.
+    - `call_other_abis`: Sleigh user-op names to a `CallOtherAbi`, over the
+      built-in table.
+    - `no_return_targets`: direct-call targets that never return, a Thumb or
+      MIPS16 one at `addr & ~1`. On ppc64 ELFv2 a plain `Lifter` also needs
+      each `Symbol.local_entry`; `ElfLifter` adds it.
+    - `data_ranges`: `(start, end)` data ranges, end exclusive (an ARM
+      literal pool); a branch into one is `"undecodable_target"`, never
+      decoded, except at the entry.
+    - `fragment_ranges`: ranges outside the bound that are still this
+      function's code (GCC `<name>.cold`), followed on a branch; running past
+      one's end is `"past_function_end"`.
 
-    `known_targets` maps a dispatch address to its targets, or to `"return"`
-    to seat it as a function return. An empty list seats nothing.
-
-    `call_other_abis` maps Sleigh user-op names to a
-    `strider.sleigh.CallOtherAbi`, winning over the built-in table.
-
-    `no_return_targets` lists direct-call targets that never return (`exit`,
-    `panic`). A Thumb or MIPS16 one is listed at `addr & ~1`. A ppc64 ELFv2
-    call sharing the callee's TOC lands at `Symbol.local_entry`, which
-    `ElfLifter` adds for each listed `address`; on a plain `Lifter`, list
-    it yourself.
-
-    `data_ranges` lists `(start, end)` ranges, end exclusive, of data (an
-    ARM literal pool): a branch or fall-through into one is
-    `"undecodable_target"`, never decoded, except at the entry.
-    `fragment_ranges` lists ranges outside the bound that are still this
-    function's code (GCC `<name>.cold`): a branch into one is followed, and
-    a fall-through past one's end is `"past_function_end"`. `ElfLifter`
-    fills an empty one from the ELF's `$d` mapping symbols or sized
-    `<name>.cold[.N]` symbols. A range ending at or below its start raises
-    `ValueError`.
+    `ElfLifter` fills empty `data_ranges` / `fragment_ranges` from the ELF's
+    `$d` and sized `<name>.cold[.N]` symbols. A range ending at or below its
+    start raises `ValueError`.
     """
 
     @property

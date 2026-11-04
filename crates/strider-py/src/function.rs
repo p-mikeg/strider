@@ -87,17 +87,7 @@ impl PyFunction {
     }
 
     /// Run `pipeline` (default: the default pipeline) over this function in
-    /// place. `assumptions` must include every claim in force and may not add
-    /// the lift-time claims `msr_register_keeps_mode` /
-    /// `fp_rounding_mode_is_nearest`, else `StriderError` before running. Add
-    /// a claim with::
-    ///
-    ///     function.optimize(assumptions=function.assumptions
-    ///                       | AssumptionOptions.none(escape_analysis=True))
-    ///
-    /// Reads the producing `Lifter`'s rom; raises `StriderError` while that
-    /// `Lifter` is in `analyze`, `build_cfg` or `add_elf`. Stales `Node` /
-    /// `Match` handles. Holds the GIL.
+    /// place. Stales `Node` / `Match` handles and node ids.
     #[pyo3(signature = (assumptions=None, pipeline=None))]
     fn optimize(
         &self,
@@ -228,10 +218,8 @@ impl PyFunction {
         Ok(PyFunction::new(cloned, self.cfg.clone_ref(py)))
     }
 
-    /// Every deduplicated `Match` of `pat`. A list of patterns joins on
-    /// shared captures, and `constraints` filter the joined results.
-    /// `ignore_casts` (`True`, or a `CastMask`) looks through extend /
-    /// truncate / bit-reinterpret casts.
+    /// Every deduplicated `Match` for `pat`; a list of patterns joins on
+    /// shared captures.
     #[pyo3(signature = (pat, ignore_root=false, ignore_casts=IgnoreCasts::Flag(false), constraints=None))]
     fn find_all(
         slf: Py<Self>,
@@ -244,9 +232,7 @@ impl PyFunction {
         query(&slf, py, pat, &ignore_casts, constraints, ignore_root)
     }
 
-    /// The single `Match` of `pat` after dedup, else `StriderError`.
-    /// Arguments as in `find_all`; with `ignore_root=True` a pattern binding
-    /// no captures succeeds on any number of occurrences.
+    /// The single `Match` for `pat` after dedup, else `StriderError`.
     #[pyo3(signature = (pat, ignore_root=false, ignore_casts=IgnoreCasts::Flag(false), constraints=None))]
     fn find_unique(
         slf: Py<Self>,
@@ -303,14 +289,7 @@ impl PyFunction {
     }
 
     /// Apply one `find` -> `replace` rewrite in one walk, returning how often
-    /// it fired. `replace` is a `Template`, a `Capture` or a capture name.
-    /// Raises `StriderError` up front if `replace` names a capture `find`
-    /// does not bind, or `find` has a `.when()` guard.
-    ///
-    /// A match is skipped when the replacement has another width, or, for a
-    /// `find` through a phi or region, would read the matched value or is not
-    /// available everywhere that value is read. Stales every `Node` handle,
-    /// even on a return of 0.
+    /// it fired. Stales every `Node` handle, even on a return of 0.
     fn rewrite(
         &self,
         find: crate::pattern::PatLike<'_>,
@@ -320,7 +299,7 @@ impl PyFunction {
     }
 
     /// Apply the first matching `(find, replace)` pair at every reachable
-    /// node, returning the total fire count. See `rewrite`.
+    /// node, returning the total fire count. Stales `Node` handles.
     fn rewrite_all(
         &self,
         pairs: Vec<(
