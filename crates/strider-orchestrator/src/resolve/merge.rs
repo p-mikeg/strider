@@ -8,21 +8,10 @@ use super::visit;
 /// `targets` with each mode-less entry taking the ISA mode `known` already
 /// proved for that address.
 ///
-/// At a site `known` proves a mode DIFFERENT from `flowing_isa_bit`, an
-/// address only a mode-less re-derivation reports is dropped rather than
-/// seated: `None` reads to the cfg as the mode flowing into the branch, which
-/// at an interworking dispatch is the mode being switched away from. The
-/// dropped set stays seatable, so the fold reports the site through
-/// `Progress::derived_incomplete` rather than relying on the cfg to re-defer
-/// it.
-/// Where every proved mode IS the flowing one, seating `None` decodes
-/// identically, so the set still widens. Only the arms already evaluated
-/// proved that mode, and they are no evidence about an arm nobody has
-/// evaluated, so a later round widening the index can seat an address whose
-/// committed mode was never checked. Dropping it would cost every same-mode
-/// dispatch its arms, so it is kept and the second return value reports the
-/// site through `Progress::assumed_modes`: the arm set is whole, which is an
-/// UNVERIFIED answer rather than an incomplete one.
+/// A new mode-less address is dropped at an interworking site (`None` decodes
+/// in the flowing mode, the one being switched away from), and the fold
+/// reports the site incomplete. Where every proved mode is the flowing one it
+/// is kept, and the returned flag marks the site's modes as assumed.
 pub(super) fn adopt_known_modes(
     known: Option<&ResolvedTargets>,
     targets: ResolvedTargets,
@@ -46,9 +35,6 @@ pub(super) fn adopt_known_modes(
             (Some(_), _) => Some(*t),
             (None, Some(&bit)) => Some(ResolvedTarget::new(t.addr, Some(bit))),
             (None, None) if known_addrs.contains(&t.addr) => Some(*t),
-            // New to a mode-committing site, and the site does not interwork so
-            // the flowing mode decodes it the same way the proved arms decode.
-            // Kept, and flagged: nobody evaluated THIS arm's mode.
             (None, None) => (!interworking).then(|| {
                 assumed = true;
                 *t
@@ -62,9 +48,8 @@ pub(super) fn adopt_known_modes(
 #[derive(Debug, PartialEq, Eq)]
 struct Contradiction;
 
-/// The caller's `seed` unioned with the loop's answer `derived` at one site,
-/// by address and under no mode filter: a seed carries a mode only if the
-/// caller built one.
+/// The caller's `seed` unioned with the loop's answer `derived`, under no
+/// mode filter.
 pub(super) fn union_with_seed(
     seed: &ResolvedTargets,
     derived: &ResolvedTargets,
@@ -72,10 +57,8 @@ pub(super) fn union_with_seed(
     combine(seed, derived, None)
 }
 
-/// Two classifications of one pcode address that BOTH derive from the IR,
-/// united, dropping a mode-less address only the non-interworking side knows:
-/// an address reported with no mode decodes in `flowing_isa_bit`, which is a
-/// guess only against a side proving a DIFFERENT mode.
+/// Two IR-derived classifications of one pcode address united, dropping a
+/// mode-less address only the non-interworking side knows.
 pub(super) fn merge_derived(
     a: &ResolvedTargets,
     b: &ResolvedTargets,
@@ -84,24 +67,15 @@ pub(super) fn merge_derived(
     combine(a, b, Some(flowing_isa_bit))
 }
 
-/// Two answers for one site united by address. `Withdrawn` is the empty set,
-/// so either side `Withdrawn` gives the other; two `LinkRegister`s stay
-/// `LinkRegister`; anything else is the unioned targets, deduped by address.
+/// Two answers for one site united by address, order-independently.
+/// `Withdrawn` is the empty set; two `LinkRegister`s stay `LinkRegister`.
 /// `flowing_isa_bit` is the mode flowing into the branch, `None` disabling the
-/// interworking drop. Order-independent: two entries for one address keep the
-/// ISA mode only where they agree, since a bit contradicted by the other
-/// classification cannot be trusted (see [`merge_isa_bit`]).
+/// interworking drop. An address the two sides prove in different modes is
+/// dropped, unlike [`ResolvedTargets::table`], which keeps both for the cfg
+/// to report.
 ///
-/// The OPPOSITE policy to [`ResolvedTargets::table`], which KEEPS both modes
-/// of one address so the cfg can report the clash. Both are deliberate, and
-/// this dedup does not make that one redundant: `table` runs after it, over a
-/// set this has already reduced to one entry per address.
-///
-/// `ResolvedTargets` cannot hold "returns AND jumps to X", so mixing
-/// `LinkRegister` with a concrete set LOSES the return successor. The fold
-/// accounts for it: `None` is one of the successors it tracks, so the site
-/// comes back in `Progress::derived_incomplete` instead of converging on the
-/// smaller answer.
+/// Mixing `LinkRegister` with targets loses the return successor; the fold
+/// tracks it and reports the site.
 fn combine(
     a: &ResolvedTargets,
     b: &ResolvedTargets,
@@ -150,10 +124,7 @@ fn combine(
         }
         match merge_isa_bit(kept.isa_bit, later.isa_bit) {
             Ok(bit) => kept.isa_bit = bit,
-            // Two classifications proved DIFFERENT modes for one address.
-            // Decoding it once in either is a coin flip, and the decode-once
-            // CFG cannot hold both, so drop it; the fold reports the site,
-            // which stays seatable on its remaining arms.
+            // Decoded once, it cannot be both: drop it.
             Err(Contradiction) => {
                 contradicted.insert(kept.addr);
             }
@@ -166,8 +137,7 @@ fn combine(
 }
 
 /// `targets` without each address `proved` holds in both ISA modes, and whether
-/// any was dropped. The same rule as [`merge_isa_bit`], over every
-/// `(target, mode)` a round proved rather than one pair at a time.
+/// any was dropped.
 pub(super) fn drop_contradicted(
     targets: ResolvedTargets,
     proved: &FxHashSet<(u64, bool)>,
@@ -187,13 +157,9 @@ pub(super) fn drop_contradicted(
     (kept, true)
 }
 
-/// `arms` as one answer: `Single` only when `from_single`, i.e. the lone
-/// survivor is a `Single` input's target. [`ResolvedTargets::Single`] and
-/// [`ResolvedTargets::Multiple`] own what each shape seats out of range, and
-/// a merge must not change which. Nothing left is `Withdrawn`: once every target has been
-/// contradicted the honest answer is "nothing trustworthy here", where staging
-/// nothing would leave the previous round's answer seated as if it had never
-/// been contradicted.
+/// `arms` as one answer: `Single` only when the lone survivor is a `Single`
+/// input's target, since the two shapes seat out-of-range targets
+/// differently. No arms is `Withdrawn`, not "no answer".
 fn single_or_table(arms: Vec<ResolvedTarget>, from_single: bool) -> ResolvedTargets {
     match arms.as_slice() {
         [single] if from_single => ResolvedTargets::Single(*single),
@@ -201,10 +167,8 @@ fn single_or_table(arms: Vec<ResolvedTarget>, from_single: bool) -> ResolvedTarg
     }
 }
 
-/// The ISA mode two classifications of one target agree on. A side committing
-/// no mode reports nothing rather than denying the other's, so a mode-less
-/// `Switch` re-derivation cannot erase a seated interworking mode. Commutative,
-/// so `merge_derived` reads the same either way round.
+/// The ISA mode two classifications of one target agree on; no mode denies
+/// nothing.
 fn merge_isa_bit(a: Option<bool>, b: Option<bool>) -> Result<Option<bool>, Contradiction> {
     match (a, b) {
         (Some(x), Some(y)) if x != y => Err(Contradiction),

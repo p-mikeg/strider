@@ -15,31 +15,25 @@ use super::visit;
 /// One fold's effect on the induced edge set.
 #[derive(Default)]
 pub(super) struct Progress {
-    /// Addresses whose successor set changed without losing ground, which
-    /// includes a target taking a proved mode at an unchanged address set
-    /// (`ResolvedTargets::narrows_to`).
+    /// Addresses whose successor set changed without losing ground, a target
+    /// gaining a proved mode included.
     pub(super) grew: Vec<PcodeInsnAddr>,
-    /// Addresses that LOST a successor, so the signal is not monotone there.
+    /// Addresses that lost a successor or flipped a mode.
     pub(super) narrowed: Vec<PcodeInsnAddr>,
-    /// Some address's one target turned into or out of a `Single`: out of
-    /// range the cfg seats a `Single` as a tail call but defers a table's
-    /// arm, so an unchanged successor set is not an unchanged seat.
+    /// Some address's one target turned into or out of a `Single`, which the
+    /// cfg seats differently out of range.
     pub(super) reshaped: bool,
-    /// Addresses whose fold dropped a successor the CLASSIFIER proved this
-    /// round, or whose answer stopped being a superset. A seed says nothing
-    /// about what the classifier derives, so this list is never suppressed.
-    /// A successor carried over from an earlier round needs no list of its
-    /// own: dropping one is exactly what stops the answer being a superset.
+    /// Addresses whose fold dropped a successor the classifier proved this
+    /// round, or whose answer stopped being a superset. No seed suppresses
+    /// these.
     pub(super) derived_incomplete: Vec<PcodeInsnAddr>,
-    /// Addresses that seated a NEW arm on a mode nothing proved for that arm.
-    /// The arm set is whole, so this is an unverified answer rather than an
-    /// incomplete one.
+    /// Addresses that seated a new arm in a mode nothing proved for it: an
+    /// unverified answer, not an incomplete one.
     pub(super) assumed_modes: Vec<PcodeInsnAddr>,
 }
 
 impl Progress {
-    /// Some address's seat differs from the previous round's: the loop's
-    /// progress signal.
+    /// Some address's seat differs from the previous round's.
     pub(super) fn changed(&self) -> bool {
         !self.grew.is_empty() || !self.narrowed.is_empty() || self.reshaped
     }
@@ -51,14 +45,12 @@ struct Staged {
     targets: ResolvedTargets,
     /// The ISA-mode bit flowing into the branch.
     flowing: bool,
-    /// Every successor the classifications name, before any mode filter:
-    /// what the fold has to account for. `None` is the `LinkRegister`
-    /// successor, which `ResolvedTargets` cannot hold alongside concrete
-    /// targets, so a merge that drops it has to be visible here.
+    /// Every successor the classifications name, before any mode filter.
+    /// `None` is the `LinkRegister` successor, which a merge with targets
+    /// drops.
     reported: FxHashSet<Option<u64>>,
-    /// Every `(target, mode)` the classifications prove: a target proved in
-    /// both modes is dropped however many anchors there are, where merging
-    /// them pairwise can forget the contradiction.
+    /// Every `(target, mode)` the classifications prove, so a contradiction
+    /// survives any number of pairwise merges.
     proved: FxHashSet<(u64, bool)>,
 }
 
@@ -72,7 +64,7 @@ impl Staged {
         }
     }
 
-    /// Merges one anchor's answer in: two anchors at one address UNION.
+    /// Unions one anchor's answer in.
     fn add(&mut self, targets: ResolvedTargets) {
         for (target, bit) in visit(targets.successors()) {
             self.reported.insert(target);
@@ -80,7 +72,6 @@ impl Staged {
                 self.proved.insert((target, bit));
             }
         }
-        // `Withdrawn` is the merge's identity.
         self.targets = match &self.targets {
             ResolvedTargets::Withdrawn => targets,
             prev => merge_derived(prev, &targets, self.flowing),
@@ -90,11 +81,9 @@ impl Staged {
 
 /// The loop's answers, over the caller's.
 ///
-/// A caller can only spell a machine address, so its seed may sit at the
-/// instruction's p-code index 0 ([`seated_in`]). The loop keys each answer of
-/// its own at the anchor, where the cfg's
-/// [`CfgOptions::derived_targets`] lookup is exact, so withdrawing one anchor
-/// leaves a sibling `BranchIndirect` of the same instruction its seed.
+/// A seed may sit at the instruction's machine start ([`seated_in`]); the
+/// loop keys its own answers at the anchor, so withdrawing one anchor leaves
+/// a sibling `BranchIndirect` its seed.
 #[derive(Clone)]
 pub(super) struct SiteTable<'s> {
     /// The caller's `known_targets`: never copied or edited.
@@ -127,8 +116,8 @@ impl<'s> SiteTable<'s> {
         seated_in(self.seeds, site)
     }
 
-    /// Whether the loop holds an answer at `site` with an arm to seat. No
-    /// seed fallback: a withdrawn site is not seated whatever its seed says.
+    /// Whether the loop holds an answer at `site` with an arm to seat,
+    /// ignoring seeds.
     pub(super) fn is_seated(&self, site: PcodeInsnAddr) -> bool {
         self.seats
             .get(&site)
@@ -142,8 +131,6 @@ impl<'s> SiteTable<'s> {
 
     /// `base` with the loop's answers layered over its seeds.
     pub(super) fn cfg_options<'o>(&'o self, base: &CfgOptions<'o>) -> CfgOptions<'o> {
-        // Cloned whole: naming the other fields would silently drop any field
-        // added to `CfgOptions` later from the whole re-lift loop.
         CfgOptions {
             derived_targets: &self.seats,
             ..base.clone()
@@ -156,9 +143,8 @@ impl<'s> SiteTable<'s> {
         self.seats.insert(site, keep);
     }
 
-    /// Withdraws each site in `narrowed` losing ground for the second time,
-    /// and returns those: a second loss means the answer depends on what the
-    /// previous round seated, so no member of the cycle is trustworthy.
+    /// Withdraws and returns each site in `narrowed` losing ground for the
+    /// second time.
     pub(super) fn note_narrowed(&mut self, narrowed: &[PcodeInsnAddr]) -> Vec<PcodeInsnAddr> {
         let mut withdrawn_now = Vec::new();
         for &site in narrowed {
@@ -171,14 +157,8 @@ impl<'s> SiteTable<'s> {
     }
 
     /// Folds a round's classifications into the seats, keyed back to their
-    /// anchors.
-    ///
-    /// Within one round, two anchors can share one address: their target sets
-    /// are UNIONED, not last-write-wins. Across rounds the staged set REPLACES
-    /// the previous seat, so a set that narrows from unseatable to seatable
-    /// once other branches resolve is not stranded; convergence rides on the
-    /// per-address diff, so an unchanged cone re-inserts an equal value and
-    /// reads as no growth.
+    /// anchors. Anchors sharing an address union within a round; across
+    /// rounds the new set replaces the seat.
     ///
     /// # Errors
     ///
@@ -195,9 +175,7 @@ impl<'s> SiteTable<'s> {
         Ok(progress)
     }
 
-    /// The round's classifications per address, so same-address collisions
-    /// merge before anything touches the seats. A frozen site takes none:
-    /// folding one back in would re-enter the cycle that froze it.
+    /// The round's classifications per address. A frozen site takes none.
     fn stage(
         &self,
         anchors: &[FlowingAnchor],
@@ -234,15 +212,10 @@ impl<'s> SiteTable<'s> {
         } = staged;
         let (targets, contradicted) = drop_contradicted(targets, &proved);
         let seat = self.seat(addr);
-        // A re-derivation reports no mode where the dispatch commits none,
-        // including at an address a caller seed gave a mode. Re-deriving
-        // must widen the arm set, not re-decode the old arms in the mode
-        // flowing into the branch.
+        // A re-derivation reports no mode; it must not re-decode old arms.
         let (targets, assumed_mode) = adopt_known_modes(seat, targets, flowing);
-        // The caller's own seed is unioned in by ADDRESS every round, after
-        // both mode filters and never subject to them: a seed carries a
-        // mode only if the caller built one, and filtering it against a
-        // mode-bearing classification would delete the whole caller answer.
+        // The seed is unioned in after the mode filters, never subject to
+        // them.
         let targets = match self.seed(addr) {
             Some(seed) => union_with_seed(seed, &targets),
             None => targets,
@@ -264,16 +237,13 @@ impl<'s> SiteTable<'s> {
                 progress.grew.push(addr);
             }
         } else if seat.is_some_and(|seat| is_single(seat) != is_single(&targets)) {
-            // Settles in one round: in range both shapes seat the same
-            // `Switch`, and out of range a `Single` is consumed as a tail
+            // Settles in one round: an out-of-range `Single` becomes a tail
             // call, which nothing classifies again.
             progress.reshaped = true;
         }
         if derived_dropped || narrowed {
             progress.derived_incomplete.push(addr);
         }
-        // Decodable, and the arm set is whole: nothing evaluated THIS arm's
-        // mode, which is `UnverifiedSeed`, not `UnresolvedBranch`.
         if assumed_mode {
             progress.assumed_modes.push(addr);
         }
