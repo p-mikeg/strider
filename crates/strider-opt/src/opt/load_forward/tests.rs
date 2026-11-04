@@ -1680,3 +1680,47 @@ fn an_untaken_arm_joining_a_live_path_keeps_its_store() -> Result<()> {
     assert_eq!(outcome(&fg), None);
     Ok(())
 }
+
+/// A merge arm fed only by a loop no path enters is never taken, so the
+/// merge reads the entry store; the loop's own reload, whose memory edge
+/// stands on the store it feeds, stays put.
+#[test]
+fn a_merge_arm_from_a_loop_nothing_enters_is_never_taken() -> Result<()> {
+    let sp = sp32_vn();
+    let ty = ValueType::int(32);
+    let mut b = sp_frame(sp).build_fn()?;
+    let [entry, orphan, merge] = [(); 3].map(|()| b.create_region_all());
+    let [entry, orphan, merge] = [entry?, orphan?, merge?];
+    b.set_entry_region_all(entry)?;
+    let global = |b: &mut FunctionBuilder| b.build_int_const(0x1000u64, ty);
+
+    b.set_region(entry);
+    let slot = global(&mut b)?;
+    store32(&mut b, slot, 1)?;
+    b.build_branch(merge)?;
+    b.set_region(orphan);
+    let slot = global(&mut b)?;
+    let reload = load32(&mut b, slot)?;
+    let one = b.build_int_const(1u64, ty)?;
+    let next = b.build_int_binary_operation(reload, one, IntBinaryOp::Xor, ty)?;
+    b.build_store(slot, next, rsleigh::VnSpace::RAM)?;
+    let sp_v = b.read_variable(&sp)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let again = b.build_int_cmp_operation(sp_v, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    b.build_if(again, orphan, merge)?;
+
+    b.set_region(merge);
+    let slot = global(&mut b)?;
+    let loaded = load32(&mut b, slot)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    strider_ir::validate::validate(&fg)?;
+
+    run_passes(
+        &mut fg,
+        &[&PhiCollapse, &crate::RegionCollapse, &LoadForward],
+    )?;
+    assert_eq!(outcome(&fg), Some(1));
+    Ok(())
+}
