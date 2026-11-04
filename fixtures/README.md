@@ -4,14 +4,12 @@
 target per (arch, case). The cases in the Makefile's `OBJ_TWINS` also build an
 unlinked `.o` twin, which the reader tests use.
 
-The binaries are committed through Git LFS, so a clone without `git-lfs` gets
-LFS pointer text where an ELF should be; run `git lfs pull` before
-running the test suite.
+The binaries are Git LFS objects; without `git lfs pull` a clone holds pointer
+text where an ELF should be.
 
-Rebuilding is only needed when a case or an arch's flags change. Rebuild just
-that one with the `ARCH=` / `CASE=` selectors in the header of `Makefile`.
-`strider-reader`'s release-only `read_digest` digests every image under `out/`,
-so re-bless the digest of each image you changed and review the diff:
+Rebuild only when a case or an arch's flags change, selecting it with `ARCH=` /
+`CASE=` (see the `Makefile` header). `strider-reader`'s release-only
+`read_digest` digests every image under `out/`; re-bless and review:
 
 ```
 UPDATE_EXPECT=1 cargo test -p strider-reader --release --test read_digest
@@ -20,11 +18,10 @@ git diff crates/strider-reader/tests/data/read_digest.txt
 
 A changed `.elf` also needs its golden re-blessed (below).
 
-`loader/out/` holds images the ELF reader tests need a link or flags of their
-own for (dynamic GOT slots, IFUNC, TLS, copy relocations, ppc64 local
-entries, ...). `make -C loader` builds them from `loader/src/`; see that
-Makefile for the list and its cross compilers. The golden suite analyses none
-of them.
+`loader/out/` holds images the ELF reader tests need their own link or flags
+for (dynamic GOT slots, IFUNC, TLS, copy relocations, ppc64 local entries,
+...). `make -C loader` builds them from `loader/src/`; its Makefile lists them
+and their cross compilers. The golden suite analyses none of them.
 
 Each `arch/<arch>.mk` is one row of `FIXTURE_ARCHES` in
 `crates/strider-orchestrator/tests/common/fixtures.rs`; `cargo test -p
@@ -33,8 +30,8 @@ strider-orchestrator --test golden` fails until the two agree.
 `golden/<arch>/<case>.txt` pins what `Strider::analyze` makes of every function
 of `out/<arch>/<case>.elf`. The `INTENT` rows in
 `crates/strider-orchestrator/tests/golden.rs` must hold before a golden is
-compared or written, and `GAPS` names each arch where a dispatch is known not
-to resolve. After an intended change, re-bless and review the diff:
+compared or written; `GAPS` names each arch where a dispatch is known not to
+resolve. After an intended change, re-bless and review:
 `UPDATE_EXPECT=1 cargo test -p strider-orchestrator --test golden`, then
 `git diff fixtures/golden`.
 
@@ -70,5 +67,5 @@ sudo apt install clang lld gcc-i686-linux-gnu \
 ```
 
 Not `gcc-multilib`, which conflicts with the aarch64, arm and powerpc64le
-cross compilers. Only on a host without `gcc-i686-linux-gnu` do the `x86`
-arches fall back to `gcc -m32`; install `gcc-multilib` alone there.
+cross compilers; install it only on a host without `gcc-i686-linux-gnu`, where
+the `x86` arches fall back to `gcc -m32`.
