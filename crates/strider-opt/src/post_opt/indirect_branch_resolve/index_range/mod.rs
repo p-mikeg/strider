@@ -124,12 +124,6 @@ impl<'f> RangeMap<'f> {
         )
     }
 
-    /// The function these ranges are of.
-    #[must_use]
-    pub(crate) fn function(&self) -> &'f strider_ir::Function {
-        self.function
-    }
-
     /// Range of `value` valid within `region`.
     ///
     /// A multi-input phi unions each arm's range in that arm's predecessor
