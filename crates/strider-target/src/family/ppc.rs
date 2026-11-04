@@ -227,6 +227,15 @@ const PPC_FPSCR_CR1: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     no_return: false,
 });
 
+/// An AltiVec record form (`vcmp*.`, `bcd*.`): the sla leaves its CR6
+/// unwritten. A non-record `vcmp*` shares the op name; over-approximated.
+const PPC_CR6: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &["cr6"],
+    clobbers_memory: false,
+    no_return: false,
+});
+
 /// `slbfee.` / `icswx.`: the sla emits no `cr0flags`.
 const PPC_DOT_CR0: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
@@ -400,6 +409,57 @@ const CALL_OTHER: &[Row] = &[
     Row::new(&["vsx300_85"], PPC_FP_VECTOR),      // xvcvhpsp
     Row::new(&["vsx300_86"], PPC_FP_VECTOR),      // xvcvsphp
     Row::new(&["vsx300_xsdivqp"], PPC_FP_RESULT), // xsdivqp, a fork op
+    Row::new(
+        &[
+            "vectorCompareBoundsFloatingPoint",
+            "vectorCompareEqualToFloatingPoint",
+            "vectorCompareEqualToUnsignedByte",
+            "vectorCompareEqualToUnsignedHalfWord",
+            "vectorCompareEqualToUnsignedWord",
+            "vectorCompareGreaterThanOrEqualToFloatingPoint",
+            "vectorCompareGreaterThanFloatingPoint",
+            "vectorCompareGreaterThanSignedByte",
+            "vectorCompareGreaterThanConditionRegisterSignedHalfWord",
+            "vectorCompareGreaterThanSignedWord",
+            "vectorCompareGreaterThanUnsignedByte",
+            "vectorCompareGreaterThanUnsignedHalfWord",
+            "vectorCompareGreaterThanUnsignedWord",
+        ],
+        PPC_CR6,
+    ),
+    Row::new(&["altv207_14", "altv207_16", "altv207_18"], PPC_CR6), // vcmp{equd,gtsd,gtud}.
+    Row::new(&["altv207_64", "altv207_65"], PPC_CR6),               // bcdadd. bcdsub.
+    // bcdcfn. .. bcdutrunc.
+    Row::new(
+        &[
+            "altv300_1",
+            "altv300_2",
+            "altv300_3",
+            "altv300_4",
+            "altv300_5",
+            "altv300_6",
+            "altv300_7",
+            "altv300_8",
+            "altv300_9",
+            "altv300_10",
+            "altv300_12",
+            "altv300_13",
+            "altv300_14",
+        ],
+        PPC_CR6,
+    ),
+    // vcmpne{b,h,w}. vcmpnez{b,h,w}.
+    Row::new(
+        &[
+            "altv300_21",
+            "altv300_23",
+            "altv300_25",
+            "altv300_27",
+            "altv300_29",
+            "altv300_31",
+        ],
+        PPC_CR6,
+    ),
     // Store-conditional and byte-reverse stores write RAM; dcbz zeroes a
     // block; dcbf/dcbst/icbi and TLB/SLB management are ordering barriers;
     // icswx/copy-paste and doorbell messages have external memory effects.
@@ -511,14 +571,11 @@ const CALL_OTHER: &[Row] = &[
     Row::new(&["dataStreamStopAll"], NoOp),
 ];
 
-/// GHIDRA emits Altivec / VSX / named vector intrinsics as `altv207_<n>`,
-/// `vsx<ver>_<n>`, and `vector<Op>`.  Reached only after `CALL_OTHER`, which
-/// holds the nineteen `vsx*` forms whose memory access the sla leaves out of
-/// the p-code and the forms that also set FPSCR bits; everything else in
-/// the three families is register compute touching no RAM, its destination
-/// written from the op's output. The stock sla wrote some nowhere, and the
-/// fork patches them: `xsiexpdp`'s XT, `vminud`'s vrD, and CR field BF of
-/// the seven `PPC_FPCC` / `PPC_FPCC_VX` compares.
+/// AltiVec / VSX / named vector ops (`altv207_<n>`, `vsx<ver>_<n>`,
+/// `vector<Op>`). Reached only after `CALL_OTHER`, which holds the nineteen
+/// `vsx*` memory forms, the forms setting FPSCR bits and the record forms
+/// setting CR6; the rest is register compute whose destination is the op's
+/// output.
 const PREFIXES: &[Prefix] = &[Prefix {
     prefixes: &["altv", "vsx", "vector"],
     class: PURE,
