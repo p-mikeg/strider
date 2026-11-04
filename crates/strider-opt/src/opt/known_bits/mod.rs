@@ -1,5 +1,6 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::{DenseEntitySet, Worklist};
+use rustc_hash::FxHashMap;
 
 use strider_ir::eval::mask_below;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -382,9 +383,15 @@ impl Optimizer for KnownBits {
         for (value, new_value) in folds {
             edit.replace_value(value, new_value);
         }
-        for (out, x, c) in masks {
+        // A mask over an earlier-dropped mask takes that one's operand.
+        let mut dropped: FxHashMap<ValueId, ValueId> = FxHashMap::default();
+        for (out, mut x, c) in masks {
+            while let Some(&below) = dropped.get(&x) {
+                x = below;
+            }
             edit.absorb_fingerprint(x, c);
             edit.replace_value(out, x);
+            dropped.insert(out, x);
         }
         Ok(())
     }
