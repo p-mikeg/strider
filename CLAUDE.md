@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-Guidance for Claude Code working in this repository. This file orients; the
-per-crate detail lives in each crate's own module and item docs. When they
-disagree with this file, trust the code. Longer-form docs live in `docs/`.
+Orientation for Claude Code in this repository. Detail lives in each crate's
+module and item docs; when they disagree with this file, trust the code.
+Longer-form docs live in `docs/`.
 
 Strider lifts a native binary function to a sea-of-nodes IR and exposes it for
 pattern queries from Rust or Python:
@@ -26,28 +26,25 @@ cargo clippy --workspace
 # The rest of what CI gates on (.github/workflows/ci.yml):
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --release   # a debug_assert hides from the debug run
-                                   # (release keeps overflow-checks on and
-                                   #  debug-assertions off; root Cargo.toml)
+cargo test --workspace --release   # release keeps overflow-checks on and
+                                   # debug-assertions off (root Cargo.toml)
 RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
 cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
 cargo +1.91.0 check -p <crate> --all-targets    # every package on its own
-cargo run --release -p strider-orchestrator --example dump_arch_cmps  # and
-                                   # orchestrator_demo (plain and -- memory); the tree
-                                   # must stay clean afterwards
+cargo run --release -p strider-orchestrator --example dump_arch_cmps
+                                   # and orchestrator_demo (plain and -- memory);
+                                   # the tree must stay clean afterwards
 
 # Re-bless fixtures/golden, then review git diff:
 UPDATE_EXPECT=1 cargo test -p strider-orchestrator --test golden
 
-# Main demo: reads the committed fixtures/out/x86/arithmetic.elf::add and dumps
-# cfg / graph / graph-opt as both .html and .dot at the workspace root.
-# `-- memory` renders x64/memory.elf::main the same way, prefixed `memory-`.
-# Source: crates/strider-orchestrator/examples/orchestrator_demo.rs
+# Main demo: dumps cfg / graph / graph-opt of fixtures/out/x86/arithmetic.elf::add
+# as .html and .dot at the workspace root; `-- memory` does x64/memory.elf::main.
 cargo run -p strider-orchestrator --example orchestrator_demo
 cargo run -p strider-orchestrator --example orchestrator_demo -- memory
 
-# The p-code of cmp-then-conditional-branch sequences, one arch per flag model
-# (reference for FlagCmpCanonicalize's rule set).
+# The p-code of cmp-then-branch sequences per flag model
+# (reference for FlagCmpCanonicalize's rules).
 cargo run -p strider-orchestrator --example dump_arch_cmps
 ```
 
@@ -57,15 +54,13 @@ Python (from the workspace root, never from `crates/strider-py`):
 uv sync --group dev
 uv run maturin develop --features test-hooks   # without it, 2 tests skip
 uv run pytest
-uv run pyright     # type-checks strider/, its tests and examples; gate is 0 errors
+uv run pyright     # strider/, its tests and examples; gate is 0 errors
 ```
 
-`test-hooks` is a default-off feature of `strider-py` carrying `_rebuild`,
-which installs a reader after the handle exists: the one way to close a
-collectable cycle back onto it, and nothing a user should reach. It also
-carries `CfgOptions._call_other_override_builds`, a resolution counter. CI
-turns it on for both `maturin develop` runs and never for `maturin build`, so
-it is absent from the shipped wheel.
+`test-hooks` is a default-off `strider-py` feature carrying `_rebuild` (installs
+a reader after the handle exists, to build a collectable cycle in tests) and
+`CfgOptions._call_other_override_builds` (a resolution counter). CI enables it
+for `maturin develop` and never for `maturin build`, so the wheel lacks it.
 
 CI also runs every `crates/strider-py/examples/python/*.py` on Python 3.9 and
 3.13, `pytest` against `maturin develop --release`, and checks that a
@@ -75,87 +70,58 @@ CI also runs every `crates/strider-py/examples/python/*.py` on Python 3.9 and
 ## Crates
 
 Sixteen crates: six generic utilities, nine strider-specific, plus the
-`strider-ir-test-utils` dev-dependency. External dep `rsleigh` (GHIDRA's Sleigh
-p-code lifter), vendored as a git submodule at `externals/rsleigh`, is used by
-every crate that touches machine state, i.e. all but the five payload-agnostic
-crates (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
-`strider-graph`).
+`strider-ir-test-utils` dev-dependency. `rsleigh` (GHIDRA's Sleigh p-code
+lifter, a git submodule at `externals/rsleigh`) is used by every crate except
+`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory` and
+`strider-graph`.
 
 Generic:
 
 - `dot`: Graphviz / dark-themed HTML renderer.
 - `entity-utils`: `cranelift-entity` helpers (`DenseEntitySet`, `Worklist`,
-  `EntityInterner`, `UnionDag`). Use these over `std` `HashSet`/`HashMap` when
-  keying by `NodeId` / `ValueId`.
-- `graph-algorithms`: generic traversal (`walk`) and dominance-based SSA
-  support (Lengauer-Tarjan `dominators`, dominance frontiers, dominator-tree
-  preorder, iterated-DF phi placement) over opaque node ids. Test-only
-  `graphmock` DSL under `tests/`, and the brute-force `oracle` module behind
-  the `test-util` feature.
-- `strider-graph`: generic despite the name: the payload-agnostic bipartite
-  sea-of-nodes `Graph<N, V, C: NodeCacheable<N, V>>` that `strider-ir` and
-  `strider-pattern` build on. No `Hash`/`Eq` bound on payloads; dedup lives in
-  the `C` policy, backed by the hash-on-demand `NodeCache`.
-- `read-only-memory`: the `ReadOnlyMemory` trait, in its own crate so the
-  optimizer / lifter / reader depend on it one-way without back-edging through
-  the ELF reader.
+  `EntityInterner`, `UnionDag`). Prefer these over `std` sets and maps keyed
+  by `NodeId` / `ValueId`.
+- `graph-algorithms`: traversal (`walk`) and dominance (Lengauer-Tarjan,
+  frontiers, dominator-tree preorder, iterated-DF phi placement) over opaque
+  node ids. The brute-force `oracle` is behind `test-util`.
+- `strider-graph`: the payload-agnostic bipartite sea-of-nodes
+  `Graph<N, V, C: NodeCacheable<N, V>>`; dedup lives in the `C` policy.
+- `read-only-memory`: the `ReadOnlyMemory` trait.
 - `vn-container`: varnode container geometry (`vn_contains`,
-  `largest_container_in`, ...) over `rsleigh` and `rustc-hash`, with no
-  workspace dependency, so target / ir / lift / opt / pattern share one "which
-  tracked varnode contains this one".
+  `largest_container_in`, ...), shared by target / ir / lift / opt / pattern.
 
 Strider:
 
-- `strider-ir`: the sea-of-nodes IR. `strider_ir::eval` is the one integer
-  evaluator, `ExpectedValueKind::admits` the one slot-kind check and
-  `NodeKind::operand_width` the one operand-width rule. Integer constants are
-  stored as `dashu-int`'s `UBig`; `eval`'s `mask` / `all_ones` / `complement`
-  are what hold an unbounded `UBig` to a declared width. `AssumptionOptions`
-  lives here (strider-opt re-exports it) because a `Function` holds the claims
-  in force.
-- `strider-target`: target descriptions (`SleighArch`,
-  `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table),
-  `ArchNames`, each preset's register and space names
-  (`SleighArch::names`), and `DecodeTables`, the sla's decode and lift facts
-  (`SleighArch::decode_tables`), each read off a Sleigh it builds once per
-  preset per process. One `family/<name>.rs` per architecture family holds
-  everything it knows (decode facts, CallOther rows, calling conventions);
-  see the crate README for adding a preset, row or family.
+- `strider-ir`: the sea-of-nodes IR. `strider_ir::eval` is the integer
+  evaluator, `ExpectedValueKind::admits` the slot-kind check,
+  `NodeKind::operand_width` the operand-width rule. `AssumptionOptions` lives
+  here (strider-opt re-exports it) because a `Function` holds its claims.
+- `strider-target`: `SleighArch`, `CallingConvention` /
+  `BuiltCallingConvention`, the `CallOther` ABI table, `ArchNames`
+  (`SleighArch::names`) and `DecodeTables` (`SleighArch::decode_tables`). One
+  `family/<name>.rs` per architecture family; the crate README says how to add
+  a preset, row or family.
 - `strider-reader`: ELF loader and `ReadOnlyMemory` backend.
-- `strider-cfg`: bytes -> `Cfg` of basic-block regions via Sleigh.
-  `DecodeEngine<R>` owns the `Sleigh<R>` and the decode context it carries
-  across functions, and is the one way to build a CFG. IR-free.
-- `strider-lift`: CFG -> IR. The `Lifter<R>` engine wraps a `DecodeEngine<R>`
-  and reads its registers from `SleighArch::names`; the calling convention is
-  a per-call argument.
-- `strider-pattern`: the graph-based pattern DSL (`Pattern` / `Capture` /
-  `Matcher` / `Match` / builders) over `strider-graph` with the `NeverCacheable`
-  policy. `Pat` is the Python class, not a Rust type. Both recursion limits are
-  `MAX_PATTERN_NODES` (256), whose doc in `matcher/graph.rs` carries how a
-  pattern is charged; a pattern over the cap, and one past the 1 MiB lowering
-  stack budget (`MAX_PATTERN_STACK`), are refused through the reject channel
-  (`Pattern.root: Result<NodeId, String>`, surfaced by `Pattern::root()`), not
-  by overflowing the stack. `MatcherBuilder::finish` reports a cyclic wiring
-  through the same channel. `TemplatePat` is sealed, and implemented for
-  `Captured<P>` only at `P = Var`, so `template::int_add(..).capture(c)` is a
-  compile error rather than a silently dropped operand.
-- `strider-opt`: optimization passes, the `OptimizerPipeline`, the
-  `rewrite_rule` facade over `strider-pattern`, and the
-  `indirect_branch_resolve` classifiers (`classify_sites`, which `analyze`
-  calls after the pipeline unless `resolve_indirect_branches` is off). Pure
-  graph->graph; the classifier reports targets and the orchestrator rebuilds
-  the CFG from them. `classify_target` and the single-pass runners
-  (`run_one`, `run_one_unvalidated`, `run_post`) are public only under
-  `test-util`.
-- `strider-orchestrator`: `Strider::analyze` and its `AnalyzeOptions`, plus the
-  re-exported lift engine (`Lifter` / `LiftOutcome` at the crate root) and
-  `strider-opt` re-exported as `opt`.
-- `strider-ir-test-utils`: `make_empty_fn` / `RegisterSet` builders,
-  `MockRom`, asm-fingerprint stamping, the `interp` reference interpreter, the
-  seeded xorshift `Rng`, the brute-force `graph_oracle` (re-exported from
-  graph-algorithms' `test-util` feature), and the `proptest-gen`-gated
-  `proptest_gen` generator, shared by tests.
-- `strider-py`: PyO3 bindings (`maturin develop` builds a wheel).
+- `strider-cfg`: bytes -> `Cfg` of regions via Sleigh. `DecodeEngine<R>` owns
+  the `Sleigh<R>` and its decode context and builds every CFG. IR-free.
+- `strider-lift`: CFG -> IR. `Lifter<R>` wraps a `DecodeEngine<R>`; the
+  calling convention is a per-call argument.
+- `strider-pattern`: the pattern DSL (`Pattern` / `Capture` / `Matcher` /
+  `Match` / builders) over `strider-graph`. `Pat` is the Python class, not a
+  Rust type. A pattern over `MAX_PATTERN_NODES` (256) or past the 1 MiB
+  lowering stack budget is refused through `Pattern::root()`, as is a cyclic
+  wiring. `TemplatePat` is sealed and implemented for `Captured<P>` only at
+  `P = Var`.
+- `strider-opt`: optimization passes, `OptimizerPipeline`, the `rewrite_rule`
+  facade, and the `indirect_branch_resolve` classifiers (`classify_sites`).
+  Pure graph -> graph. `classify_target`, `run_one`, `run_one_unvalidated`
+  and `run_post` are public only under `test-util`.
+- `strider-orchestrator`: `Strider::analyze` and `AnalyzeOptions`, re-exporting
+  `Lifter` / `LiftOutcome` and `strider-opt` as `opt`.
+- `strider-ir-test-utils`: shared test builders (`make_empty_fn`,
+  `RegisterSet`, `MockRom`), the `interp` reference interpreter, a seeded
+  `Rng`, `graph_oracle`, and the `proptest-gen`-gated generator.
+- `strider-py`: PyO3 bindings.
 
 ## Dependency graph (X -> Y = X depends on Y)
 
@@ -178,33 +144,16 @@ strider-py         -> orchestrator, opt, cfg, reader, ir, target, pattern, dot
 strider-ir-test-utils -> strider-ir, strider-target, graph-algorithms
 ```
 
-`strider-ir-test-utils` is a dev-only crate, but those two are normal
-`[dependencies]` of it, so a workspace-wide build resolves `strider-ir` with its
-`test-util` feature on. It also depends on `graph-algorithms` with `test-util`
-(the std-only `oracle` module), which a workspace-wide build likewise unifies.
-A workspace-wide test or bench build also turns on strider-graph's
-`edge-read-count` through strider-ir's dev-dependency, so a bench runs per
-package (`-p`).
+Production dependencies only. `strider-ir-test-utils` depends normally on
+`strider-ir` and `graph-algorithms` with `test-util`, so a workspace-wide build
+unifies those features on; a workspace-wide test build also turns on
+strider-graph's `edge-read-count`, so run a bench per package (`-p`). External
+`petgraph` is a production dependency of `strider-cfg` and `strider-pattern`
+only.
 
-Workspace production dependencies only. Leaves (no workspace deps): `dot`,
-`entity-utils`, `read-only-memory`, `strider-graph`, `vn-container`. Notably
-`strider-cfg` is IR-free, `strider-reader` depends only on `read-only-memory`,
-and the orchestrator reaches `strider-pattern` and `dot` only from its tests
-and examples. External `dashu-int` is a production dependency of `strider-ir`
-alone, the arbitrary-precision unsigned integer behind `const_interner`.
-External `petgraph` is a production dependency of `strider-cfg` and
-`strider-pattern` (the latter for its `UnionFind`: the template's width groups
-and the join's correlation check), and a dev-dependency of `graph-algorithms`,
-`strider-ir` and `strider-lift`: ir's dominance tests check against
-`simple_fast`; graph-algorithms' walk tests also check `acyclic_postorder`'s
-cycle verdict against `toposort`, and a lift test walks a `Cfg` with its `Dfs`.
-
-Dev-dependencies are not in that graph, and are not a DAG:
-`strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
-`graph-algorithms`, `strider-graph`, `strider-orchestrator`, `strider-pattern`,
-`strider-reader` and `strider-target` also dev-depend on THEMSELVES, which is
-how their `tests/` integration targets get a feature (`test-util`,
-`test-injectors`) that `cfg(test)` cannot reach.
+Dev-dependencies are not a DAG: `strider-ir` dev-depends on
+`strider-ir-test-utils`, and several crates dev-depend on themselves to give
+their `tests/` a feature (`test-util`, `test-injectors`).
 
 ## IR node model
 
@@ -224,16 +173,10 @@ how their `tests/` integration targets get a feature (`test-util`,
   `FloatBitsToInt`.
 - Opaque: `CPoolRef`, `New`.
 
-strider-ir warns on `_` / `other` arms over any enum
-(`clippy::wildcard_enum_match_arm` in its `lib.rs`, an error under CI's
-`-D warnings`), so a new `NodeKind` variant forces a decision at every
-classifying `match`; a single-variant test (let-else, `==`, a one-variant
-`matches!`) and the `Phi | MemPhi` family count as compliant. The lint does
-not see a tuple scrutinee, a guarded `_ if` arm or `matches!`; the remaining
-multi-variant `matches!` sites (the phi family, `graph_invariants.rs`'s
-phi-or-call producer test, `walk/mod.rs`'s memory-chain kinds, `render.rs`'s
-`Region | Phi | MemPhi` label guard, `viewer.rs`'s `Load | Store`,
-`NodeKind::is_const`'s `IntConst | FloatConst`) are accepted as they are.
+strider-ir warns on `_` arms over enums (`clippy::wildcard_enum_match_arm`, an
+error under CI's `-D warnings`), so a new `NodeKind` variant forces a decision
+at every classifying `match`. The lint does not see tuple scrutinees, guarded
+`_ if` arms or `matches!`.
 
 Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}`;
 `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
@@ -244,40 +187,30 @@ SShiftRight,ShiftLeft,Mul}`; `IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}`
 arrive already lowered.
 
 `ValueType` (`node/value_type.rs`): `enum { Int(u16), Float(u16) }`, the width
-in bits. The valid widths are the `SUPPORTED` list: integers 1, 8, 16, 24, 32,
-40, 48, 56, 64, 72, 80, 96, 112, 128, 256, 512 and floats 16, 32, 64, 80, 128.
-`ValueType::I1` (booleans are the 1-bit integer) is the one named type; write
-the rest `ValueType::int(32)` / `ValueType::float(64)`, which panic on an
-unlisted width, and match `Int(w)` / `Float(w)`. The list is measured against
-the sla specs: an unmapped width fails the whole function's lift, so every
-width a Sleigh varnode or temporary carries needs an entry. `bit_width(I1) ==
-1` (the one case where width != byte_size*8); `int_from_bytes(1) -> I8`, never
-`I1`. `Debug` spells `I32`, `Display` `i32`.
+in bits, limited to the `SUPPORTED` list: integers 1, 8, 16, 24, 32, 40, 48,
+56, 64, 72, 80, 96, 112, 128, 256, 512 and floats 16, 32, 64, 80, 128. Every
+width a Sleigh varnode or temporary carries needs an entry, or the function's
+lift fails. `ValueType::I1` is the only named type; write the rest
+`ValueType::int(32)` / `ValueType::float(64)` (panic on an unlisted width).
+`bit_width(I1) == 1`; `int_from_bytes(1)` is `I8`. `Debug` spells `I32`,
+`Display` `i32`.
 
-`expected_signature` (`node/signature.rs`) is the SSoT for each kind's slot
-kinds. `Graph` holds only structure; per-function overlay (`default_cc`,
-`byte_order`, tracked varnodes, interners, side-tables) lives on `Function`,
-which wraps a `Graph`. The entry is node 0, not a stored field:
-`Function::new` mints it first and `compact` keeps it first, so a `Function`
-always has one and `EditFunction::new(&mut Function)` is infallible.
+`expected_signature` (`node/signature.rs`) defines each kind's slot kinds.
+`Graph` holds only structure; per-function data (`default_cc`, `byte_order`,
+tracked varnodes, interners, side tables) lives on `Function`. The entry is
+node 0: `Function::new` mints it first and `compact` keeps it first.
 
-Integer constants: `IntConst(IntConstId)` interns through
-the function side tables' `const_interner` into a `dashu_int::UBig` (all int constants, not
-only wide ones); read via `IRViewer::int_const_u128` / `int_const_i128`, never
-off the `UBig`. `UBig` is unsigned and unbounded, so two's-complement at a
-declared width stays strider's rule: interning masks to the width
-(`eval::mask`) before dedup, and `UBig` normalises one value to one form, so
-equal constants from different paths collapse. `eval::le_bytes` (test-util
-only) pads `UBig::to_le_bytes` back to the bytes the type spans, which
-`to_le_bytes` trims. Both DOT labels spell the value and no storage form: the
-raw one its decimal (`function/dot/raw.rs`), the pretty one `const {v:#x}:<ty>`
-(`function/dot/label.rs`). Rendered graphs are compared across builds, so that
-text is the renderer's, not a `Debug` impl.
+Integer constants intern through the function side tables' `const_interner`
+into a `dashu_int::UBig`, masked to the declared width (`eval::mask`) before
+dedup, so equal constants collapse. Read them via `IRViewer::int_const_u128` /
+`int_const_i128` / `int_const_ibig`, never off the `UBig`. DOT labels are
+compared across builds, so they spell the value (decimal raw, `const
+{v:#x}:<ty>` pretty), never a `Debug` form.
 
-IR trait layering: `IRViewer` (point reads), `IRWalker: IRViewer` (control-aware
+IR traits: `IRViewer` (point reads), `IRWalker: IRViewer` (control-aware
 walks), `IRBuilder: IRViewer` (`create_node` / `create_node_attributed`),
 `IRBuilderExt: IRBuilder` (the blanket `build_*` vocabulary). `Function`,
-`FunctionBuilder`, and `EditFunction` implement them.
+`FunctionBuilder` and `EditFunction` implement them.
 
 ## Lift-time canonicalisations
 
@@ -297,169 +230,75 @@ IntNeg(x)           -> Xor(x, all_ones)   (Sleigh IntNeg is complement ~x)
 If(Xor(C,IntConst(1)):I1){A}{B} -> If(C){B}{A}   (opt::IfCondInversion)
 ```
 
-Commutative matching tries both operand orders, driven by the single source of
-truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
-`IntCmpOp::{Equal,Carry,Scarry}`, `FloatCmpOp::Equal`. One pinned operand
-commutes too (`matcher/walk.rs`, `(1..=COMM_ORDER.len()).contains(&n_fixed)`),
-or the same query would answer differently by which slot it named.
-`NodeInputs::interchangeable` cuts the swap when the two pattern operands accept
-the same operand pairs with the same bindings; the matcher also skips the swap
-when both IR slots hold the same value.
+Commutative matching tries both operand orders for the kinds
+`NodeKind::is_commutative` names: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
+`IntCmpOp::{Equal,Carry,Scarry}`, `FloatCmpOp::Equal`. A pattern with one
+pinned operand commutes too. `NodeInputs::interchangeable` skips the swap when
+both pattern operands accept the same pairs with the same bindings.
 
 ## Cross-cutting invariants
 
-- The workspace is single-threaded: prefer `Box` / moves / `&`-borrows, and
-  opt into `Rc` at a call site only if needed. No Rust crate spawns a thread,
-  so beyond read-only calls on one `strider-py` handle, which may interleave
-  across threads at a GIL switch (never with the `analyze`, `build_cfg` or
-  `add_elf` that hold it alone), a `Send` bound buys the right to MOVE a value
-  between threads, not concurrency inside one handle.
-  That move is what lets `strider-py` drop the GIL around `analyze`, so
-  separate handles on separate Python threads DO run in parallel.
-  - `read-only-memory`: `ReadOnlyMemory: Send` so `strider-py` can drop the GIL
-    around `analyze`. `Sync` is deliberately absent: nothing needed it, and
-    it barred an impl holding a `RefCell` memo.
-  - `strider-pattern`: every boxed closure a pattern lowers to is `+ Send`, and
-    `MatchPat` requires it, so a compiled `Pattern` moves with the `Pat` that
-    owns it. A `.when()` predicate must therefore be `Send`: capture an
-    `Arc<AtomicUsize>`, not an `Rc<Cell<_>>`. `JoinPredicateFn` is
-    `Arc<... + Send + Sync>`: `JoinConstraint` is `Clone`, so the predicate is
-    shared rather than duplicated.
-  - `strider-py`: no `#[pyclass(unsendable)]` remains. `OptimizerPipeline`
-    was the last: its `add` / `add_post` take `&mut self`, and `analyze` and
-    `Function.optimize` run a copy, so a `read()` callback may edit it.
-    `Lifter` moves, drops and runs anywhere. Every method that reads the
-    handle borrows its `PyCell`; `analyze`, `build_cfg` and `add_elf` borrow
-    exclusively, across the GIL release and any `read()` callback, so a
-    concurrent call, on any thread, raises the re-entrant `StriderError`,
-    while read-only calls may overlap each other. `BufferReader` is an
-    `Arc<Mutex<_>>`, so a clone shares the region memo and the wrapper is
-    still `Send`; `_LoadedElf` holds two of those and an `ElfMemo` of
-    `OnceLock`s (symbol table, `$d` data ranges, local entries), built on
-    first use and reset by the `&mut` calls that add a source each reads.
-    Everything else moves, so a REPL or notebook that introspects off-thread
-    does not abort the interpreter. `analyze` holds the GIL when `mem`/`rom`
-    is a Python object (its adapter retakes the GIL per read regardless), so
-    finalisation waits for it; a DAEMON thread analysing through a Python
-    reader is still terminated inside the callback and the unwind through Rust
-    aborts, which no Rust-side check can intercept (`Py_IsFinalizing` is 3.13+
-    and outside `abi3-py39`).
-- `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
-  state a decoded instruction can commit at a later address (ARM/Thumb and
-  IT-block state), so per-region decoding must stay sequential
-  (`RegionBuilder::build`). That state is also per-ADDRESS and survives
-  between `build_cfg` calls on one engine, so `RegionBuilder::rederive_flow`
-  erases each var `SleighArch::flow_commit_vars` names and re-lifts the owning
-  instruction, re-deriving the commit from this build's own decode.
-  `DecodeEngine::build_cfg` always supplies that list, which
-  `reused_lifter_rederives_flow_context` pins through `Lifter`.
-  What it erases TO is per var and is load-bearing in both directions, so each
-  var's `FlowCommit` class is the sla's own `noflow` declaration, read off the
-  sla into `DecodeTables`. A `noflow` commit covers one address
-  (`setContextRegion(a, a+1)`), so the pspec DEFAULT is right for ARM `condit`:
-  `set_context_at` paints FORWARD to the next change point, and writing a live
-  IT state forward predicates the code after it and can fail the decode
-  outright. A FLOWING commit is `setContextChangePoint`, painting forward
-  because it is MEANT to persist, so the default would destroy it: ARM
-  `TEEMode` is erased to the value in force at the PREDECESSOR, reproducing
-  the flow, and the re-lift re-applies `enterx`'s own commit. Both vars
-  must be listed. `pin_at` cannot substitute for a flowing var, because a
-  forward paint stops at the next CHANGE POINT of that var, which is exactly
-  where an earlier build's commit sits; leaving `TEEMode` out let a stale
-  ThumbEE mode survive into a later `build_cfg` and drop a `Store`.
-  Only ARM needs any of this: x86 and AArch64 declare flowing vars but no
-  constructor commits one; MIPS commits `ISA_MODE` only at a `jalx` call
-  target, an ISA-mode var like ARM `blx`'s `TMode`, whose paint can reach
-  the caller's own bytes, so a region's successors carry the region's own
-  mode and never read it off the engine; and ppc `linkreg` is committed by
-  `mtlr` but is itself flowing, and every constructor it selects emits the same
-  p-code either way.
-  NOT re-derived, and so still first-decode-wins: two edges reaching one
-  address with different IT state, which ARM calls UNPREDICTABLE.
+- The workspace is single-threaded: prefer `Box` / moves / `&`-borrows, `Rc`
+  only where needed. No Rust crate spawns a thread; a `Send` bound buys moving
+  a value between threads, which lets `strider-py` drop the GIL around
+  `analyze` so separate handles run in parallel.
+  - `ReadOnlyMemory: Send`, not `Sync` (an impl may hold a `RefCell` memo).
+  - Every closure a pattern lowers to is `Send`, so a `.when()` predicate
+    captures an `Arc<AtomicUsize>`, not an `Rc<Cell<_>>`.
+  - `strider-py` has no `unsendable` pyclass. `analyze`, `build_cfg` and
+    `add_elf` borrow the handle's `PyCell` exclusively across the GIL release,
+    so a concurrent call on it raises `StriderError`; read-only calls may
+    overlap. A daemon thread analysing through a Python reader at interpreter
+    shutdown still aborts, which no Rust check can intercept.
+- `Sleigh::lift_one(&mut self)` carries context-register state an instruction
+  can commit at a later address (ARM/Thumb mode, IT blocks), so a region
+  decodes sequentially (`RegionBuilder::build`). The state survives between
+  `build_cfg` calls on one engine, so `RegionBuilder::rederive_flow` erases each
+  var in `SleighArch::flow_commit_vars` and re-lifts its instruction; how it
+  erases each var follows its `FlowCommit` class (the sla's `noflow`
+  declaration). Only ARM needs it. Two edges reaching one address with
+  different IT state keep the first decode.
 - Register aliasing (x86 rax/eax/ax, AArch64 q/d/s, x87 ST*, ...) is handled in
-  the lifter's `read_vn` / `write_vn`: reads and writes go through the largest
-  containing register with shift/mask for sub-register slices.
+  the lifter's `read_vn` / `write_vn` through the largest containing register.
   `Function::new` dedups tracked varnodes into their largest containers and
-  sorts them, which is what fixes `InitialVnId` numbering.
-- Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
-  that converges on the induced edge set; unresolvable branches are reported
-  (`Reason::UnresolvedBranch`), and `analyze` returns its result whatever is
-  reported. Every narrowing is reported there, and a site that NARROWS twice
-  has an unstable answer: it is withdrawn and reported, never an `Err`.
-  Exhausting `MAX_RESOLUTION_ITERATIONS` while every site still grows is the
-  discovery depth limit, and those sites come back as unresolved too. A
-  `Return` whose folded target is not provably the entry return address is
-  reported as well (`strider_opt::ReturnTargets`), unless the caller seeded
-  `LinkRegister` at that site, in which case it is `UnverifiedSeed` instead,
-  whether the CFG seated that seed at a `BranchIndirect`
-  (`Cfg::link_register_seated`) or the p-code `RETURN` op ended the region.
-- Analysis stays inside the function being lifted: nothing reads a callee's
-  code. A callee's stack pop and clobbers come from its calling convention, so
-  a callee-cleanup `ret $imm16` or an i386 PC thunk needs a `per_address_ccs`
-  entry (see `CallingConvention::x86_cdecl`).
-- A converged CFG is never silently incomplete: `AnalyzeResult::incomplete()`
-  (the returned `Cfg`'s own `incomplete()`) is one `Incompleteness` set of
-  `(PcodeInsnAddr, Reason)`, seven reasons, and `is_empty()` is "complete".
-  Target reasons accumulate over the rounds; site reasons are the final
-  round's. Each reason's contract is on `strider_cfg::Reason`.
-  `InteriorTarget` also carries a region start a later decode stepped over
-  (`RegionBuilder::note_stepped_over_region_starts`): those bytes have two
-  owners with two different instruction streams, so overlapping code is
-  reported rather than silently double-owned.
-- SP-alias precision rests on the claims a `Function` holds
-  (`Function::assumptions`), which every SP-aware pass and classifier reads:
-  `AnalyzeOptions.assumptions` seeds each round's fresh lift, and
-  `Function::assume` adds claims, withdrawing none. `assumptions` is an
-  `AssumptionOptions` of nine claims about the code being analysed that the IR
-  cannot prove, so a wrong one miscompiles; every field's risky value is the
-  positive one, five default ON (two, `msr_register_keeps_mode` and
-  `fp_rounding_mode_is_nearest`, are read by the lift instead), and
-  `AssumptionOptions::none()`, not `::default()`, is the sound floor of those
-  fields under any input whose memory behaves as RAM and whose floating-point
-  controls (MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FZ, FS) are the IEEE default. It is
-  the floor, not the only sound setting: `callee_preserves_stack_args` is inert
-  without `escape_analysis` or a listed allocator. Per-field detail is on the
-  struct (`crates/strider-ir/src/function/assumptions.rs`). `LoadForward` asks
-  two policies: it forwards under `Policy::forward` over `assumptions`, and
-  narrows under `Policy::strict`, the same claims less the call relaxations,
-  because the edge `MemQuery::narrow` rewires is read afterwards by walks that
-  honour no call relaxation (the table walk, and return-target verification
-  with its claim off). `FunctionArgDetect` narrows the same way.
+  sorts them, which fixes `InitialVnId` numbering.
+- Indirect-branch resolution is a re-lift fixed-point loop in
+  `Strider::analyze`. Unresolvable sites, sites whose answer narrows twice,
+  sites still growing at `MAX_RESOLUTION_ITERATIONS`, and returns whose target
+  is not provably the entry return address are reported, never an `Err`; a
+  return the caller seeded as `LinkRegister` is `UnverifiedSeed` instead.
+- Analysis never reads a callee's code: its stack pop and clobbers come from
+  its calling convention, so a callee-cleanup `ret $imm16` or an i386 PC thunk
+  needs a `per_address_ccs` entry.
+- A converged CFG is never silently incomplete: `Cfg::incomplete()` is a set
+  of `(PcodeInsnAddr, Reason)` over seven reasons, empty meaning complete.
+  Target reasons accumulate over rounds; site reasons are the final round's.
+  Each reason's contract is on `strider_cfg::Reason`.
+- Memory precision rests on `Function::assumptions`, nine claims the IR cannot
+  prove, so a wrong one miscompiles. `AnalyzeOptions.assumptions` seeds each
+  lift and `Function::assume` adds claims, withdrawing none. Five default on;
+  `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest` are read by the
+  lift. `AssumptionOptions::none()` is the sound floor for RAM-like memory
+  and IEEE-default float controls. `LoadForward` and `FunctionArgDetect`
+  narrow under `Policy::strict` (the claims less the call relaxations),
+  because later walks honour no call relaxation. Per-field detail is in
+  `crates/strider-ir/src/function/assumptions.rs`.
 
 ## strider-py
 
-Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
-`.reader`, `.opt`, `.pattern` with its nested `.pattern.constraints`,
-`.template`, plus `.explore`, home of the `visualize` explorer, bound but
-outside `__all__`) plus the single top-level `strider.StriderError`.
-`strider.lift.lifter(arch, mem, rom=None)` builds the lift handle;
-`analyze(entry, cc, opts)` returns an `AnalyzeResult` with
-`.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple), whatever
-`cfg.incomplete` names: incompleteness is reported, never raised.
-Pattern queries (`find_all` / `find_unique`) and rendering
-(`Function.to_dot(pretty=)`) live on the returned objects. See the `.pyi` stubs
-for the typed surface.
+Submodules `strider.ir`, `.lift`, `.cfg`, `.sleigh`, `.reader`, `.opt`,
+`.pattern` (with `.pattern.constraints`), `.template`, and `.explore` (the
+`visualize` explorer, outside `__all__`), plus the top-level
+`strider.StriderError`. `strider.lift.lifter(arch, mem, rom=None)` builds a
+handle; `analyze(entry, cc, opts)` returns an `AnalyzeResult`
+(`.cfg` / `.function` / `.unresolved`, unpackable as a 3-tuple) and never
+raises over incompleteness. The `.pyi` stubs are the typed surface.
 
-`add_elf(path, apply_relocations=True)` defaults the same way `load_elf` does,
-so a second image does not silently serve unrelocated bytes, and re-merging an
-image already fully loaded does nothing. `CfgOptions` exposes `known_targets` /
-`call_other_abis`, and `LifterOptions` its `per_address_ccs`, as a memoized
-`types.MappingProxyType` over the table, and `no_return_targets` as a
-memoized `frozenset`, not a fresh dict per read: the
-authority is the Rust map, and a seeded 20k-entry table would otherwise cost
-milliseconds on every attribute access. `known_targets` values are tuples, so
-the view is read-only all the way down. A `CfgOptions` seats its
-`known_targets` and `no_return_targets` into `strider_cfg`'s own form at
-construction and every `analyze` BORROWS those tables
-(`strider_cfg::CfgOptions.known_targets` and
-`strider_orchestrator::AnalyzeOptions.per_address_ccs` are `&FxHashMap`,
-`strider_cfg::CfgOptions.no_return_targets` a `&FxHashSet`), so a seeded
-table costs a sweep nothing per function. `per_address_ccs` needs the
-analysing handle's arch to resolve, so it cannot be seated at construction:
-its `PerAddressCcs` memoizes the table built per arch, so the first `analyze`
-pays the build and the rest borrow it. `ElfLifter.analyze` / `build_cfg` hand
-the caller's options unchanged to `Lifter._analyze_elf` / `_build_cfg_elf`,
-which read a symbol's size bound, the ELF's `$d` data ranges and its ppc64
-local entries off the ELF while building the core options; both tables are
-looked up through `strider_cfg::CfgOptions.local_entries`, so a key at a
-global entry also answers a call to its local one.
+`CfgOptions.known_targets` / `call_other_abis` and
+`LifterOptions.per_address_ccs` read back as memoized `MappingProxyType`s and
+`no_return_targets` as a memoized `frozenset`, so a large seeded table costs
+nothing per attribute read. A `CfgOptions` converts its tables once and every
+`analyze` borrows them; `per_address_ccs` is resolved per arch on first use.
+`ElfLifter.analyze` / `build_cfg` add a symbol's size bound, the ELF's `$d`
+data ranges and its ppc64 local entries, which every per-address table is
+looked up through (`strider_cfg::CfgOptions.local_entries`).
