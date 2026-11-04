@@ -79,8 +79,6 @@ pub struct DotStyle {
 }
 
 impl DotStyle {
-    /// `fontname` is the only attribute that differs between [`Self::dark`]
-    /// and [`Self::dark_cfg`].
     fn dark_with_font(fontname: &'static str) -> Self {
         Self {
             graph: vec![
@@ -118,12 +116,11 @@ impl DotStyle {
 
 /// Escapes a string for a DOT double-quoted label.
 ///
-/// Every backslash doubles, so a `\l` in a symbol name stays text rather than
-/// a DOT line break ([`DotEmitter::node_left_lines`] emits a real one). A
-/// newline becomes `\n`. Every other control character but tab, and every
-/// bidi formatting character, becomes the printable text `\xNN`: a NUL ends a
-/// quoted string for Graphviz, other C0 bytes are not legal in the SVG, and
-/// bidi characters reorder the text around them.
+/// Every backslash doubles, so a `\l` in a symbol name stays text. A newline
+/// becomes `\n`. Every other control character but tab, and every bidi
+/// formatting character, becomes the text `\xNN`: a NUL ends a quoted string
+/// for Graphviz, other C0 bytes are illegal in the SVG, and bidi characters
+/// reorder the text around them.
 fn escape_dot_label(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -171,7 +168,7 @@ fn json_quote(s: &str) -> String {
     out
 }
 
-/// Low-level builder that accumulates a Graphviz `digraph { … }` string.
+/// Accumulates a Graphviz `digraph { ... }` string.
 pub struct DotEmitter {
     out: String,
 }
@@ -406,10 +403,6 @@ mod label_tests {
         }
     }
 
-    /// A label carries symbol names and disassembly straight out of the binary
-    /// under analysis. Left raw, a NUL ends the quoted string for Graphviz's
-    /// lexer and the other C0 bytes reach the rendered SVG, where they are not
-    /// legal XML.
     #[test]
     fn escape_dot_label_makes_control_characters_printable() {
         for (input, want) in [
@@ -435,11 +428,7 @@ mod label_tests {
         }
     }
 
-    /// `<` is escaped unconditionally, not just `</`: matching only the pair
-    /// would drag whitespace and case tolerance into the encoder, and a
-    /// `</script>` in a label would otherwise close the surrounding tag.
-    /// 0x20 is the control-escape boundary and high UTF-8 passes through, since
-    /// any compliant parser takes it.
+    /// `<` is escaped unconditionally, not just `</`.
     #[test]
     fn json_quote_escapes_exactly_what_a_script_block_needs() {
         for (input, want) in [
@@ -465,8 +454,6 @@ mod label_tests {
 
 #[cfg(test)]
 mod template_tests {
-    /// A typo in an element id, or a deleted control, would silently break the
-    /// viewer in the browser. Fail the build instead.
     #[test]
     fn template_contains_new_viewer_controls() {
         let t = super::HTML_DOT_TEMPLATE;
