@@ -103,10 +103,8 @@ fn mask_to(v: u128, size_bytes: u32) -> u128 {
 
 impl<R: rsleigh::MemReader> super::Lifter<R> {
     /// The register slice a register-space STORE writes or LOAD reads, at the
-    /// access width, when its address folds into some declared register.
-    /// `None` otherwise, including for ordinary memory. The declared-register
-    /// gate keeps the tracked set a nesting family: a slot straddling two
-    /// registers would be modelled as aliasing neither.
+    /// access width, when its address folds into one declared register (a
+    /// slot straddling two would alias neither); `None` otherwise.
     pub(crate) fn register_slot_of(
         &self,
         insn: &rsleigh::Insn,
