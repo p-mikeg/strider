@@ -1,6 +1,6 @@
 //! PowerPC fused multiply-add (Power ISA 3.0B, Book I 4.6.5.2): `fmadd`,
 //! `fmsub`, `fnmadd` and `fnmsub`, with their single and record forms,
-//! compute A*C ± B exactly and round it once, to single precision for the
+//! compute A*C +/- B exactly and round it once, to single precision for the
 //! `s` forms; the `n` forms negate the rounded result. Each is lifted as
 //! `<form> f1, f2, f3, f4; blr` with f2, f3 and f4 (A, C and B) initial and
 //! f1 returned, and checked against the host's fused multiply-add.
@@ -56,7 +56,7 @@ fn lift(arch: Arch, f: Form, claims: &AssumptionOptions) -> Lifted {
     lift_regs(arch, &[f.word, BLR], &["f1"], &["f2", "f3", "f4"], claims)
 }
 
-/// The ISA result: A*C ± B rounded once, then negated for the `n` forms.
+/// The ISA result: A*C +/- B rounded once, then negated for the `n` forms.
 fn want(f: Form, a: f64, c: f64, b: f64) -> f64 {
     let b = if f.sub { -b } else { b };
     let r = if f.single {

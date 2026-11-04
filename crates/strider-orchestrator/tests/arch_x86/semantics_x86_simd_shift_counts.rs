@@ -2,10 +2,8 @@
 //! and a count at or past the element width clears the lane (or fills it with
 //! the sign bit, for the arithmetic right shift).
 //!
-//! Both halves of that rule are load-bearing. Reading only the low doubleword
-//! turns a huge count into a small one, and truncating the count to the lane
-//! width turns it into zero, so either mistake silently leaves the input
-//! unshifted.
+//! Reading only the low doubleword, or truncating the count to the lane
+//! width, would turn a huge count into a small one or zero.
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
