@@ -11,6 +11,7 @@ mod ring;
 mod stamp;
 mod walker;
 
+pub(crate) use alias::Loc;
 pub(crate) use arg_window::ArgPrefix;
 pub(crate) use decompose::{alignment_masked_operand, decompose};
 pub(crate) use frame::entry_sp_span;
