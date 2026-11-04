@@ -646,15 +646,14 @@ fn collecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
 }
 
 /// Doubling the argument count may only double the work of collecting them
-/// behind an irreducible memory graph, where no index skips the stores
-/// nearer than a slot's own.
+/// behind an irreducible memory graph.
 #[test]
 fn collecting_behind_an_irreducible_loop_is_linear_in_the_slot_count() -> Result<()> {
     let work = |k: usize| -> Result<u64> {
         let mut fg = crate::test_support::memory_shapes::irreducible_stack_args(k)?;
         assert!(
-            crate::mem_ssa::MemLayout::build(&fg).positions().is_none(),
-            "the memory graph has no position index"
+            !crate::mem_ssa::MemLayout::build(&fg).is_reducible(),
+            "the memory graph is irreducible"
         );
         let work = collect_steps(&mut fg)?;
         let collected =

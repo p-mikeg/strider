@@ -393,8 +393,7 @@ pub(crate) mod memory_shapes {
     }
 
     /// `n` stores over four slots, each followed by a read of a slot never
-    /// written, behind an irreducible loop, so every query takes the slow
-    /// climb.
+    /// written, behind an irreducible loop.
     pub(crate) fn irreducible_store_chain(n: usize) -> crate::Result<strider_ir::Function> {
         const SLOTS: usize = 4;
         shape(|b| {
