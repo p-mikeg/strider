@@ -1,12 +1,3 @@
-//! Static ELF relocation application, as one sorted patch list per image
-//! that every region shares and a read applies where it crosses a site.
-//!
-//! Unrelocated, every cross-reference field holds an addend or nothing (an
-//! ET_REL `call rel32` as `e8 fc ff ff ff`, an ET_DYN GOT slot as `ld` left
-//! it), each of which decodes as a plausible reference into the image. A
-//! field whose value is not computed becomes a hole by the rule
-//! [`Ctx::unmodelled`] states.
-
 use object::{Architecture as A, Object};
 
 use std::borrow::Cow;
@@ -30,30 +21,23 @@ use crate::{MemRegion, Patch, RegionIndex, Result};
 
 /// Attaches one relocation patch list, sorted by address, to every region,
 /// replacing any it carries. The tables walked are the ones the loader reads:
-/// for a linked image with a `PT_DYNAMIC` those its tags place
-/// ([`loader_view`](crate::elf::dynamic::loader_view)), else the section
-/// headers'. Each region keeps the part of the list that can overlap it.
+/// those a `PT_DYNAMIC`'s tags place, else the section headers'.
 ///
 /// Computed: every [`classify`](crate::elf::encodings::classify) row, and
 /// `object`'s plain `Absolute` (`S + A`), `Relative` and `PltRelative`
-/// (`S + A - P`, no PLT materialised). The image base is 0; `S` exists only
-/// for a symbol target. On an ET_REL an undefined or `SHN_COMMON` symbol
-/// resolves to its
+/// (`S + A - P`, no PLT materialised). The image base is 0. On an ET_REL an
+/// undefined or `SHN_COMMON` symbol resolves to its
 /// [`extern_address`](crate::elf::sections::ElfSectionLayout::extern_address),
-/// except a weak undefined one (`Target::weak_undefined`). Instruction fields
-/// use the instruction byte order (AArch64: always little-endian), data
-/// fields `EI_DATA`.
+/// except a weak undefined one. Instruction fields use the instruction byte
+/// order (AArch64: always little-endian), data fields `EI_DATA`.
 ///
-/// Not computed, so holed per [`Ctx::unmodelled`]: an unlisted kind, a symbol
-/// with no address or weak undefined, a value its field cannot hold, a branch
-/// needing a veneer, and an IFUNC's value (`R_*_IRELATIVE`, or `S` of a
-/// defined `STT_GNU_IFUNC` outside code, see [`Ctx::in_code`]). Also holed:
-/// every byte of an `R_*_COPY` object ([`hole_copies`]), the MIPS GOT
-/// entries the loader writes ([`mips_implicit_got`]) and the ARM / PPC32
-/// lazy-binding words ([`lazy_got_header`]).
+/// Holed per [`Ctx::unmodelled`]: an unlisted kind, a symbol with no address
+/// or weak undefined, a value its field cannot hold, a branch needing a
+/// veneer, an IFUNC's value (`R_*_IRELATIVE`, or `S` of a defined
+/// `STT_GNU_IFUNC` outside code), every byte of an `R_*_COPY` object, the MIPS
+/// GOT entries the loader writes and the ARM / PPC32 lazy-binding words.
 ///
-/// `layout` must be `obj`'s, `owners` the sections the regions came from
-/// ([`LoadedImage::owners`](crate::elf::sections::LoadedImage::owners)).
+/// `layout` must be `obj`'s, `owners` the sections the regions came from.
 /// Returns the GOT slots the relocations referenced (ET_REL only) as regions.
 ///
 /// # Errors
@@ -107,7 +91,7 @@ pub(crate) fn apply_elf_relocations_with(
         patches: Vec::new(),
     };
     // Rewritten as an ELF for `object` to walk: only its relocation iterators
-    // derive the kind, size and encoding `apply_plain` reads.
+    // derive the kind, size and encoding.
     let from_sections = matches!(view, LoaderView::NotDynamic);
     let rewritten: Option<Cow<'_, [u8]>> = match view {
         LoaderView::NotDynamic => without_repeated_tables(obj)?.map(Cow::Owned),
@@ -230,11 +214,11 @@ impl<'a> Ctx<'a, '_> {
         }
     }
 
-    /// Whether the field lies in an executable mapping. There an IFUNC's `S`
-    /// is the symbol's own address, so a `call` decodes to the function the
-    /// image names. An address taken in code, and a data word in an
-    /// executable mapping (FreeBSD 12's `.rodata`), then also get it, where
-    /// at run time they hold the resolver's result.
+    /// Whether the field lies in an executable mapping, where an IFUNC's `S`
+    /// is the symbol's own address so a `call` decodes to the named function.
+    /// An address taken there, or a data word in an executable mapping
+    /// (FreeBSD 12's `.rodata`), gets it too, though at run time it holds the
+    /// resolver's result.
     fn in_code(&self, addr: u64, width: usize) -> bool {
         self.executable.touches(addr, width)
     }
