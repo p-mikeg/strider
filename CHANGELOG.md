@@ -1205,76 +1205,8 @@ Python and the explorer:
 
 ### Fixed, decoder and sla
 
-The vendored Sleigh engine and specs under `externals/rsleigh`, one line per
-mnemonic group. A caller sees these only in the lift of the named instructions.
-
-- AArch64 `ldrsb` / `ldrsh` into a W register (every addressing form,
-  `ldursb` and `ldtrsb` included) sign-extend to 32 bits and clear the upper
-  half.
-- AArch64 scalar SIMD writes zero the rest of the vector register: 180
-  constructors over 56 mnemonics (`fmadd`, `uaddlv`, `umaxv`, `fmaxv`, ...), as
-  do `addv` into a byte destination and `frint32x` / `frint32z` / `frint64x` /
-  `frint64z`. Every AdvSIMD and SVE write to a sub-register destination now
-  clears what the machine clears, so no AArch64 constructor relies on the
-  lifter widening a user op's output for it: the 64- and 128-bit vector writes,
-  the SVE scalar reductions and extracts, the structure loads, and the
-  W-register forms of the SVE counters, `ldapr` and `cas`. `srhadd` writes the
-  register it names.
-- AArch64 `usdot` / `sudot` / `bfdot` by element read the right lane, and
-  `sudot` decodes.
-- AArch64 `FRINT{A,I,M,N,P,X,Z}` lift through an opaque `NEON_frint` user-op
-  instead of as a float-to-integer conversion, and the `FRINT32` / `FRINT64`
-  forms through `NEON_frint32` / `NEON_frint64`.
-- Thumb-2 `ands`, `bics`, `movs` and `mvns` set C from the shifter or the
-  expanded immediate.
-- ARM NEON `vmov.<dt> Dn[x], Rt` writes the element into its lane.
-- The big-endian ARM VFP register file overlays `s` and `d` registers
-  (`ARM7_be`, `ARM8_be`).
-- ARM `vcmp` sets FPSCR's C when unordered.
-- Thumb `sev` / `sev.w` raise `SendEvent`; A32 `csdb` no longer decodes as an
-  `msr`, and decodes only on ARMv7 and later, where the encoding is defined.
-- An ARM `vld4` / `vst4` single lane sits at the element size, Thumb
-  `vst4.16` included.
-- A Thumb-2 `0xEC8x`..`0xECFx` instruction no longer writes out of bounds in
-  the parser.
-- PowerPC `lhbrx` / `lwbrx` reverse the byte order on little-endian too, and
-  32-bit PowerPC decodes `popcntw`.
-- MIPS64 `clz` / `clo` count the word, `drotrv` rotates by the right amount,
-  and `dsllv` / `dsrlv` / `dsrav` take six count bits.
-- x86 `PSLLD` / `PSLLQ` / `PSRAD` read one count from `SRC[63:0]`, and
-  `psrlw` / `psrld` read a memory count once.
-- x86-64 32-bit destinations clear the upper half: `rdtsc`, `rdpmc`,
-  `xgetbv`, `RDPKRU`, `LOOP` / `LOOPcc` under an address-size override, the
-  `fsgsbase` and `rdpid` reads, `RDRAND`, `RDSEED`, `CMPXCHG8B`, 30 VEX and
-  EVEX constructors, string instructions under a 0x67 prefix (RSI, RDI and the
-  `rep` count), `LODSD`, `PEXTRW`, `MOVMSKPS` / `MOVMSKPD`, `MOVBE`, `LSL`,
-  `SLDT`, `SMSW` and `PCMP[EI]STRI`.
-- x86 `XADD` and `XCHG` with a 32-bit memory operand, `XSTORE`, `MONTMUL` and
-  the `XSHA*` ops write their documented destinations, and MMX `PSRLW` /
-  `PSRLD` / `PSRAD` with a register count latch that count once.
-- x86 `extractps` and VEX `vpextrw` take their SDM destination forms, and the
-  `fsgsbase` and `incssp` register operands require ModRM mod=3.
-- x86-64 `rdfsbase`, `rdgsbase`, `rdpid`, `wrfsbase`, `wrgsbase`, `incssp` and
-  `rdssp` honour `REX.B`; `rdsspd` decodes rather than as a reserved NOP, and
-  `incssp` scales its byte count at the pointer width, where the multiply
-  wrapped inside that byte.
-- x86-64 `VMREAD` / `VMWRITE` take 64-bit operands in long mode, and `GETSEC`
-  clears the upper halves of its results.
-- A decode whose own context commit changes a value, an out-of-band context
-  write, or a re-pinned context variable flushes the parse cache.
-- A memory reader overstating its read is an error rather than a panic across
-  the FFI boundary, a reader that panics is caught rather than unwinding out of
-  the callback, and `setOutOfBandState` checks its operand index rather than
-  reading uninitialised state. A region at the top of the address space no
-  longer overflows the read callback.
-- The Sleigh parse state bounds-checks the operand index, the descent depth
-  and its own size, and throws rather than writing out of bounds on a deep
-  constructor descent: PowerPC `vaddubm` and 126 VFP register lists no longer
-  corrupt it.
-- `Sleigh::clone` replays the pinned context the original held, so a cloned
-  engine decodes as its source does, up to `MAX_CONTEXT_COMMITS` (4096)
-  commits; past that the log is dropped and
-  `Sleigh::clone_would_replay_context` says which of the two a clone gets.
+The vendored Sleigh engine and specs under `externals/rsleigh`: see
+`externals/rsleigh/sleigh/FORK.md`, "What the patches change".
 
 ## 0.1.0
 
