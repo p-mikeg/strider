@@ -115,10 +115,8 @@ fn signed_max(ty: ValueType) -> IBig {
     (IBig::ONE << ty.bit_width().saturating_sub(1)) - IBig::ONE
 }
 
-/// Whether a shift by `amount` is at or past `ty`'s width, where Sleigh
-/// (opbehavior.cc:411) answers 0, or the sign fill for `IntSright`. Takes the
-/// raw amount: masking it first would wrap it back into range. At `I1` the
-/// width is 1 bit, not Sleigh's byte; the lifter never shifts an `I1`.
+/// Whether a shift by `amount` is at or past `ty`'s bit width, where Sleigh
+/// answers 0 (the sign fill for `IntSright`). Takes the raw, unmasked amount.
 #[inline]
 #[must_use]
 pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
