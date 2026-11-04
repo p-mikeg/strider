@@ -95,11 +95,11 @@ claims! {
         /// The stack never overlaps a constant-address region (`.data`, `.rodata`, `.bss`,
         /// MMIO). Wrong where a constant address equals `sp + K` at runtime. Default on.
         pub stack_global_disjoint: bool = true,
-        /// A `Call` leaves the incoming stack-argument slots as it found them. Wrong for a
-        /// callee that writes them: a load after the call is misread as an argument. A
-        /// convention whose register arguments adjoin the stack ones must set
-        /// [`reg_args_adjoin_stack_args`](strider_target::BuiltCallingConvention::reg_args_adjoin_stack_args).
-        /// Default on.
+        /// A `Call` leaves the incoming stack-argument slots as it found them. Decides only
+        /// which loads are incoming arguments, never a memory edge; any call blocks once an
+        /// address into the area escapes, but one spilled and reloaded is missed. Default on.
+        /// Needs [`reg_args_adjoin_stack_args`](strider_target::BuiltCallingConvention::reg_args_adjoin_stack_args)
+        /// where register arguments adjoin the stack ones.
         pub assume_incoming_args_survive_calls: bool = true,
         /// A `Store` rooted at an SP base other than the entry SP (e.g. `sp & -16`) is
         /// disjoint from the probed incoming-argument slot. Wrong where the two bases meet.
@@ -107,16 +107,19 @@ claims! {
         pub distinct_sp_bases_disjoint: bool = false,
         /// A callee leaves the outgoing-argument slots the caller wrote as it found them, so
         /// a spill there survives the call. Wrong for a callee that writes them, as the psABIs
-        /// allow. Default off.
+        /// allow. Inert without [`escape_analysis`](Self::escape_analysis) or a non-empty
+        /// [`noalias_allocators`](Self::noalias_allocators). Default off.
         pub callee_preserves_stack_args: bool = false,
         /// Callee addresses of pure `noalias` allocators: a size in, a fresh pointer out,
         /// disjoint from every other allocation, stack slot and constant address. Wrong for a
         /// callee that can return an existing or interior pointer (`realloc`, an arena).
-        /// Deallocation is not modelled. Empty by default.
+        /// Deallocation is not modelled. Also forwards a private-frame spill across a listed
+        /// call, with [`escape_analysis`](Self::escape_analysis)'s gaps. Empty by default.
         pub noalias_allocators: rustc_hash::FxHashSet<u64> = rustc_hash::FxHashSet::default(),
-        /// When no stack address escapes to a callee, a spill `Load` forwards across a `Call`.
-        /// Wrong where a callee reaches the frame through a path escape tracking misses, such
-        /// as a callee-preserved register. Default off.
+        /// When no stack address escapes to a callee, a spill `Load` forwards across a `Call`
+        /// and, under `stack_global_disjoint`, an `Anchor` store. Gaps: a callee reaching the
+        /// frame through a callee-preserved register, and an alignment hole read as the end
+        /// of the outgoing-argument window, so an argument slot above it forwards. Default off.
         pub escape_analysis: bool = false,
         /// An unplaced RAM `Store`, callee or user-op leaves the saved return-address and
         /// entry-SP slots as it found them. Wrong where one overwrites them: the return is
