@@ -299,10 +299,11 @@ def load_elf(
     symbol) the fold is wrong too. It contradicts `apply_relocations=False`,
     which says the loader has NOT run, and the pair raises `StriderError`.
 
-    Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
-    when the file is not an ELF, or its architecture or ABI is unsupported,
-    a microMIPS image among them. Passing both `arch=` and `cc=` skips the
-    detector, and with it the ABI and microMIPS refusals.
+    Raises `FileNotFoundError` when `path` does not exist, `ValueError`
+    when the file is not an ELF or its architecture or ABI is unsupported
+    (microMIPS among them), and `StriderError` for a malformed ELF. Passing
+    both `arch=` and `cc=` skips the detector, and with it the ABI and
+    microMIPS refusals.
     """
     # `os.fspath` makes a non-path argument a clear `TypeError` rather than a
     # confusing `FileNotFoundError` further down.
