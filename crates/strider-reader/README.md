@@ -3,58 +3,49 @@
 Loads a binary and serves its bytes: the fetch image as a Sleigh instruction
 source (`rsleigh::MemReader`), and the runtime-immutable mappings as
 `ReadOnlyMemory`, which must not include a mapping the program can write.
-`OwnedElf::image` builds both, and the writable addresses, from one parse.
 
 ## What's here
 
-- `MemRegion` and `MemRegionsLookupTable`: byte regions keyed by start address.
-  A read is served by one region: the highest-start region fully covering it,
-  else the one serving the most bytes. O(log n), disjoint or nested.
-- `load_elf(path)` maps an ELF into an `OwnedElf`; `OwnedElf::parse` takes
-  bytes. `OwnedElf::image(source, mode)` gives the fetch and ROM region sets,
-  sharing one buffer.
-- `ElfFileMemReader::new(&elf, mode)` implements both reader traits over that
-  image. `RelocationMode::Unapplied` serves file-initial bytes (an addend or
-  `ld`'s link-time value at each relocation site);
-  `RelocationMode::Applied { got_is_rom }` serves the fields this loader
-  relocates, and with `got_is_rom` also `.got` / `.data.rel.ro` as ROM.
-- Under `elf::`: `RegionSource` picks segments or sections; `ElfSectionLayout`
-  rebases an ET_REL's sections and gives each undefined symbol an
-  `extern_address`; `OpdTable` resolves a ppc64 ELFv1 descriptor;
-  `mapping_symbol_data_ranges` turns ARM / AArch64 `$d` marks into data ranges.
-- `OwnedElf::regions` and `elf::LoadFilter` are test-only (`test-util`).
+- `MemRegion` and `MemRegionsLookupTable`: byte regions keyed by start
+  address. A read is served by one region, the highest-start one fully
+  covering it, else the one serving the most bytes; O(log n).
+- `load_elf(path)` / `OwnedElf::parse(bytes)`; `OwnedElf::image(source, mode)`
+  gives the fetch and ROM region sets and the writable addresses from one
+  parse, sharing one buffer.
+- `ElfFileMemReader::new(&elf, mode)` implements both reader traits.
+  `RelocationMode::Unapplied` serves file-initial bytes;
+  `RelocationMode::Applied { got_is_rom }` serves relocated fields, and with
+  `got_is_rom` also `.got` / `.data.rel.ro` as ROM.
+- Under `elf::`: `RegionSource`, `ElfSectionLayout` (an ET_REL's section
+  placement and each undefined symbol's `extern_address`), `OpdTable` (ppc64
+  ELFv1 descriptors) and `mapping_symbol_data_ranges` (ARM / AArch64 `$d`).
 
 ## Loading is lazy
 
 A region is a window into the mapped file, and relocations are a sorted patch
 list applied as a read crosses a site, so loading touches headers, not bytes.
 
-The file must not change on disk while mapped. `OwnedElf::image` and
-`OwnedElf::checked_file` stat it (through the held fd) against its size and
-whole-second mtime, and `check_unchanged` on `OwnedElf`, `ElfFileMemReader`,
-`MemRegion` and `MemRegionsLookupTable` does so on demand, so a rebuild between
-operations is an `Err`. Not caught: a change during a read (a torn read, or a
-SIGBUS past a shortened end), a same-size rewrite within one second, and a
-paging error on a network or 9p mount (also SIGBUS). `STRIDER_NO_MMAP` set to
-anything but `0` reads the file into memory instead.
+The file must not change on disk while mapped. `check_unchanged` (on
+`OwnedElf`, `ElfFileMemReader`, `MemRegion` and `MemRegionsLookupTable`)
+compares its size and whole-second mtime against map time, and
+`OwnedElf::image` runs it first. A change during a read, or a same-size rewrite
+within one second, is not caught; a shortened file or a paging error on a
+network mount is a SIGBUS. `STRIDER_NO_MMAP` set to anything but `0` reads the
+file into memory instead.
 
 ## Layout and relocation
 
 ET_EXEC / ET_DYN load from PT_LOAD headers, everything else from sections.
-`ElfSectionLayout` seats an ET_REL's sections from a base that leaves 0
-unmapped.
 
-Relocating an ET_REL stands in for the link. An undefined or `SHN_COMMON`
-symbol gets an address in an unmapped range past the image, and a GOT reference
-loads from a synthetic slot. An undefined `STB_WEAK` symbol's address is left
-uncomputed so `if (&w)` folds neither way; only a branch displacement, or a GOT
-reference to a slot left unmapped, is computed. Instruction encodings are
-applied for x86, ARM, AArch64, MIPS and PowerPC, in instruction byte order
-(little-endian on AArch64 whatever `EI_DATA` says). A relocation that cannot be
-computed (TLS, MIPS GP-relative, a branch needing a veneer, one reading `S` of
-STN_UNDEF) makes its field a hole, so decoding or folding across it fails
-naming the type; the rule is `Ctx::unmodelled` in `src/elf/relocations/mod.rs`.
+Relocating an ET_REL stands in for the link: an undefined or `SHN_COMMON`
+symbol gets an address in an unmapped range past the image, and a GOT
+reference loads from a synthetic slot. An undefined weak symbol's address is
+computed only where it cannot be observed (a branch displacement, a GOT slot
+left unmapped), so `if (&w)` folds neither way. Encodings are applied for x86,
+ARM, AArch64, MIPS and PowerPC. A relocation that cannot be computed (TLS,
+MIPS GP-relative, a branch needing a veneer) makes its field a hole, so a read
+across it fails naming the type.
 
-On an image whose only PT_LOAD is RWX (the MIPS `vmlinux` shape) the ROM view
-is empty (under `got_is_rom`, its `.got` / `.data.rel.ro` aside); supply your
-own `ReadOnlyMemory` over its constant data.
+An image whose only PT_LOAD is RWX (the MIPS `vmlinux` shape) has an empty ROM
+view (`got_is_rom`'s sections aside); supply your own `ReadOnlyMemory` over
+its constant data.
