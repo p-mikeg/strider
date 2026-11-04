@@ -15,7 +15,7 @@ pub(crate) struct ArgPrefix {
     /// The slots before the first whose first byte the scan could not see.
     window_len: usize,
     /// The slot from which the callee keeps everything above, the scan having
-    /// been blinded there.  `None` when the prefix ends at a visible
+    /// been blinded there. `None` when the prefix ends at a visible
     /// non-argument.
     blind_from: Option<i128>,
 }
@@ -87,9 +87,8 @@ impl ArgPrefix {
                     });
                 }
                 // Known limit: an unwritten argument slot (an alignment hole)
-                // reads as the end, since without the callee's arity it looks
-                // like a spill above the arguments.  Reachable only under
-                // `escape_analysis` or `noalias_allocators`.
+                // reads as the end; without the callee's arity it looks like a
+                // spill above the arguments.
                 SlotReach::NotAnArgument => break,
                 SlotReach::Blinded => {
                     if prefix.blind_from.is_none() {
@@ -123,12 +122,8 @@ impl ArgPrefix {
 
 /// One lazy reverse scan of a call's memory chain for the stores anchoring its
 /// outgoing-argument slots: it probes the whole window and resumes past each
-/// store, so all slots cost one traversal.
-///
-/// A per-slot probe would stop at the same defs: only a `Store` or `MemPhi`
-/// clobbers by range, and a store disjoint from the window is disjoint from
-/// each slot.  A `MemPhi` may still pass one slot, so a slot left uncovered at
-/// one falls back to its own probe.
+/// store, so all slots cost one traversal. A slot left uncovered at a `MemPhi`
+/// falls back to its own probe.
 struct ArgStoreScan<'a> {
     query: &'a MemQuery,
     policy: Policy,
@@ -193,7 +188,7 @@ impl<'a> ArgStoreScan<'a> {
     }
 
     /// What reaches the `size`-byte slot at `slot_off`, scanning further only
-    /// while `slot_off` is uncovered.  A store inside the slot past its first
+    /// while `slot_off` is uncovered. A store inside the slot past its first
     /// byte (a right-justified big-endian argument) anchors it when nothing
     /// covers the first byte.
     fn reach_at(&mut self, function: &Function, slot_off: i128, size: i128) -> SlotReach {
@@ -364,7 +359,7 @@ impl<'a> ArgStoreScan<'a> {
 
 /// What reaches one argument slot on a call's memory chain.
 enum SlotReach {
-    /// A store anchored in the slot.  `whole` is false when a nearer store
+    /// A store anchored in the slot. `whole` is false when a nearer store
     /// overwrote part of it; `span` runs from the slot's start to the store's
     /// end; `hidden_head` when the store sits past the slot's first byte and
     /// what reaches that byte is unseen.

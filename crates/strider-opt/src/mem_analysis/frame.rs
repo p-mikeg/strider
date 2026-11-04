@@ -6,12 +6,9 @@ use super::ring::wrap_to_addr_width;
 use super::{MemExpr, MemKind};
 
 /// Whether `[base + offset, base + offset + size)` lies wholly in this
-/// function's own frame: below the entry SP plus the ABI's stack-argument
-/// base (0 without one).  At and above it is the caller's outgoing-argument
-/// block, which the caller may have leaked a pointer into.
-///
-/// The bound is in entry-SP coordinates, so the base's [`entry_sp_span`] must
-/// top out at or below zero: `(sp + K) & !0xF` sits above the entry SP.
+/// function's own frame, below the entry SP plus the ABI's stack-argument base
+/// (0 without one). The base's [`entry_sp_span`] must top out at or below
+/// zero: `(sp + K) & !0xF` can sit above the entry SP.
 pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, size: i128) -> bool {
     // The access's end, not its start, is bounded.
     entry_sp_span(function, base).is_some_and(|(_, hi)| hi <= 0)
@@ -23,13 +20,9 @@ pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, siz
 }
 
 /// The lowest and highest offset from the entry SP `value` can stand at, or
-/// `None` when no bound follows from its spine.
-///
-/// Climbs the anchors [`decompose`] names: each alignment mask lowers the
-/// value by at most one alignment less a byte, so the offsets give the top
-/// and the masks the slack below it.  Offsets are read at the address width.
-/// The sum is checked, since an under-read `hi` would call the caller's frame
-/// ours; the slack only lowers `lo` and saturates.
+/// `None` when no bound follows from its spine. Each alignment mask on the
+/// [`decompose`] chain lowers the value by at most one alignment less a byte;
+/// `hi` is overflow-checked, `lo` saturates.
 pub(crate) fn entry_sp_span(function: &Function, value: ValueId) -> Option<(i128, i128)> {
     let (mut cur, mut acc, mut slack) = (value, 0i128, 0i128);
     loop {

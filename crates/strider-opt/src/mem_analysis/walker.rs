@@ -42,7 +42,7 @@ impl ClobberProbe for MemWalker<'_> {
             NodeKind::Store(_) => {
                 let store = Loc::written_by(function, def);
                 // An `Anchor` store cannot name a private-frame slot without
-                // an escaped frame address.  A later forward may turn the
+                // an escaped frame address. A later forward may turn the
                 // pointer into a constant, hence `stack_global_disjoint`.
                 if self.policy.stack_global_disjoint
                     && self.private_frame_forward(function)
@@ -78,7 +78,7 @@ impl ClobberProbe for MemWalker<'_> {
 
 impl MemWalker<'_> {
     /// Whether the probe is a slot of this function's frame and no frame
-    /// address escapes, so no callee or opaque pointer can name it.  A fact,
+    /// address escapes, so no callee or opaque pointer can name it. A fact,
     /// not a claim; it says nothing of the outgoing-argument window
     /// ([`Self::in_outgoing_arg_area`]).
     fn frame_is_private(&self, function: &Function) -> bool {
@@ -99,18 +99,12 @@ impl MemWalker<'_> {
             && self.frame_is_private(function)
     }
 
-    /// Whether the probed slot lies in the region `call` hands its callee,
-    /// which a private frame does not cover: everything below
-    /// `call_sp + base_offset`, and above it the window of the contiguous
-    /// prefix of argument slots with a store reaching the call
-    /// ([`super::arg_window::ArgPrefix`]).
-    ///
-    /// The prefix errs wide (a spill above the arguments extends it), since
-    /// erring narrow is unsound; a def the scan cannot see through continues
-    /// it.  The scan runs under [`Policy::strict`], since a call relaxation
-    /// would re-enter this method at every earlier call.
-    /// [`crate::AssumptionOptions::callee_preserves_stack_args`] empties the
-    /// window.
+    /// Whether the probed slot lies in the region `call` hands its callee:
+    /// everything below `call_sp + base_offset`, and above it the window of
+    /// the argument-slot prefix stored before the call
+    /// ([`super::arg_window::ArgPrefix`]), which errs wide. Under
+    /// `Calls::Forward`, [`crate::AssumptionOptions::callee_preserves_stack_args`]
+    /// empties the window.
     pub(super) fn in_outgoing_arg_area(&self, function: &Function, call: NodeId) -> bool {
         let AddrClass::StackRooted {
             base: load_base,
@@ -145,11 +139,9 @@ impl MemWalker<'_> {
             )
     }
 
-    /// Whether `call` cannot write the probed location.  A private-frame slot
-    /// outside the argument window is passed under `escape_analysis`, or by
-    /// a listed allocator, which writes only its fresh allocation.  An
-    /// allocator also passes a different heap object, never a global or an
-    /// opaque pointer.
+    /// Whether `call` cannot write the probed location. A private-frame slot
+    /// outside the argument window passes under `escape_analysis` or a listed
+    /// allocator; an allocator also passes a different heap object.
     fn call_transparent(&self, function: &Function, call: NodeId, escape_analysis: bool) -> bool {
         let allocated = allocator_return_base(function, call);
         match self.loc.class {
