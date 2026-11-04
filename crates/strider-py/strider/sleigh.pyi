@@ -205,28 +205,20 @@ class CallingConvention:
 
         Stack arguments start `stack_arg_base` bytes from the call-time SP
         (`None`: none on the stack) and advance by `stack_arg_increment`;
-        `ret_stack_pop` is how many bytes `ret` pops. `preserves_memory=True`
-        declares that a call cannot write memory. `arg_passing_regs_float`
-        are numbered after `arg_passing_regs`: the first is
-        `arg(len(arg_passing_regs))` in a `call()` pattern.
-        `reg_args_adjoin_stack_args=True` says each argument register has a
-        stack home just below the stack arguments (ARM AAPCS, MIPS O32 / N64,
-        PowerPC64 ELF). `entry_address` names the register holding the
-        function's own address on entry (PPC64 ELFv2 `r12`, MIPS abicalls
-        `t9`).
+        `ret_stack_pop` is how many bytes `ret` pops (0 with a
+        `link_register`). `preserves_memory=True` declares that a call cannot
+        write memory. `arg_passing_regs_float` are numbered after
+        `arg_passing_regs` in a `call()` pattern. `reg_args_adjoin_stack_args`
+        gives each argument register a stack home just below the stack
+        arguments (ARM AAPCS, MIPS, PowerPC64 ELF). `entry_address` holds the
+        function's own address on entry (PPC64 ELFv2 `r12`, MIPS `t9`).
 
         Raises `StriderError` for an unknown name or a broken ABI invariant,
-        among them:
-
-        - a `link_register` must also appear in `callee_saved_regs`;
-        - `stack_pointer` must be as wide as the arch's addresses, and so
-          must `stack_arg_increment` when `stack_arg_base` is set;
-        - with `link_register=None`, `ret_stack_pop` must cover the return
-          address `call` pushes (x86: 4, x86-64: 8). A link-register arch
-          (ARM, MIPS, PPC) pops 0 and sets `link_register`.
-
-        Usable only with a `Lifter` sharing `sleigh`'s register table (`arm`,
-        `arm_thumb` and `arm_be_kernel` share one); any other raises
+        such as a `link_register` missing from `callee_saved_regs`, a `stack_pointer`
+        (or, with `stack_arg_base`, a `stack_arg_increment`) not address-wide,
+        or, without a `link_register`, a `ret_stack_pop` below the address
+        width. Usable only with a `Lifter` sharing `sleigh`'s register table
+        (`arm`, `arm_thumb` and `arm_be_kernel` share one); any other raises
         `StriderError` at `analyze`.
         """
         ...

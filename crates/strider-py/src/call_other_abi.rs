@@ -80,19 +80,8 @@ impl PyCallOtherAbi {
         Self::from_class(CallOtherClass::NO_RETURN)
     }
 
-    /// An ABI naming implicit registers; a bad name raises `StriderError`.
-    ///
-    /// Args:
-    ///     sleigh: The `SleighArch` to resolve register names against.
-    ///     implicit_reads: Registers read beyond the explicit operands; they
-    ///         lead the lifted call's arguments.
-    ///     implicit_writes: Registers written beyond the explicit result.
-    ///     clobbers_memory: `True` for anything touching memory (atomics,
-    ///         barriers, port I/O, syscalls).
-    ///     no_return: `True` when control does not pass the op.
-    ///
-    /// Usable only with a `Lifter` sharing `sleigh`'s register table (`arm`,
-    /// `arm_thumb` and `arm_be_kernel` share one).
+    /// An ABI naming implicit registers resolved against `sleigh`; an unknown
+    /// name raises `StriderError`.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,

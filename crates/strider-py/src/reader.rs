@@ -145,11 +145,7 @@ fn symbol_place<'d, S: ObjectSymbol<'d>>(sym: &S, layout: &ElfSectionLayout) -> 
     }
 }
 
-/// Relocated, fetch also maps every writable section; `relocated_got_is_rom`
-/// serves `.got`, `.got2` and `.data.rel.ro` (never `.got.plt`) as ROM, less
-/// the slots only the loader computes. A relocation against a defined IFUNC
-/// in an executable mapping folds to the symbol's address, not the
-/// resolver's result. Refuses `relocated_got_is_rom` without
+/// `load_elf`'s two relocation flags; `relocated_got_is_rom` needs
 /// `apply_relocations`.
 fn relocation_mode(
     apply_relocations: bool,

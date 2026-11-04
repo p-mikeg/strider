@@ -113,34 +113,7 @@ impl PyCfg {
     }
 
     /// Sorted `(machine_addr, reason)` pairs this CFG cannot vouch for; empty
-    /// is complete. Check it before trusting an absence ("no store to X").
-    ///
-    /// `"unresolved_branch"` and `"unverified_seed"` name a dispatch site; the
-    /// other five a branch target:
-    ///
-    /// - `"unresolved_branch"`: an indirect branch with no complete successor
-    ///   set, including a return not provably to the caller and not seeded
-    ///   `"return"`.
-    /// - `"unverified_seed"`: a seated answer nothing verified: a
-    ///   `known_targets` seat, a consumed tail call, or a `"return"` seed.
-    /// - `"isa_mode_conflict"`: reached in two ISA modes; the losing path
-    ///   decodes in the other.
-    /// - `"interior_target"`: off every instruction boundary, or a region
-    ///   start a later decode stepped over.
-    /// - `"unmapped_target"`: no byte of the image backs it.
-    /// - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
-    ///   it as data.
-    /// - `"past_function_end"`: code falls through past `function_max_size`
-    ///   or a `fragment_ranges` end (a tail call to this address), or a call
-    ///   not to a `no_return_targets` entry would return here.
-    ///
-    /// A seeded arm that falls through into an unmapped, undecodable or
-    /// past-the-end target is dropped and named there, unless a call precedes
-    /// those bytes (the call then does not return). A branch from an arm's
-    /// code to an unmapped target leaves through a stub and keeps the arm.
-    ///
-    /// From `analyze`, target reasons accumulate over the resolver's rounds
-    /// and site reasons are the final round's.
+    /// is complete.
     #[getter]
     fn incomplete(&self) -> Vec<(u64, &'static str)> {
         incomplete_list(self.inner.incomplete())
