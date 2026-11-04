@@ -119,8 +119,9 @@ pub enum RegionTerminator {
     /// Every target is an instruction start inside the function bound. An arm
     /// out of the bound, or off every instruction boundary of a region decoded
     /// before the seal, defers the whole site as `UnresolvedIndirectBranch`; an
-    /// off-boundary arm found after the seal is dropped. Both are reported as
-    /// [`crate::Reason::InteriorTarget`].
+    /// off-boundary arm found after the seal is dropped. Both off-boundary
+    /// cases are reported as [`crate::Reason::InteriorTarget`]; an out-of-bound
+    /// arm only through the deferred site's `UnresolvedBranch`.
     Switch {
         /// The `BranchIndirect`'s `inputs[0]`.
         target_vn: rsleigh::Vn,
