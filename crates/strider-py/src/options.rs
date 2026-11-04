@@ -35,9 +35,7 @@ impl<'py> FromPyObject<'py> for KnownTarget {
 impl IntoPy<PyObject> for KnownTarget {
     fn into_py(self, py: Python<'_>) -> PyObject {
         match self {
-            // A tuple, not a list: the view below blocks writes to its keys
-            // only, so a mutable value would take an edit the analysis never
-            // reads.
+            // A tuple, so the read-only view is read-only all the way down.
             KnownTarget::Targets(v) => pyo3::types::PyTuple::new_bound(py, v).into_py(py),
             KnownTarget::Return => "return".into_py(py),
         }
@@ -75,9 +73,14 @@ impl<'py> FromPyObject<'py> for AddrSetArg {
     }
 }
 
-/// A mapping argument. Any mapping, not only a `dict`: the `known_targets` /
-/// `call_other_abis` getters hand back a read-only proxy, and that has to
-/// round-trip through the constructor.
+/// Any mapping argument, so a getter's read-only proxy round-trips through the
+/// constructor.
+///
+/// Extracts in two phases: PyO3 panics if a dict changes size while it
+/// iterates it, and a per-element `extract` can run Python (`__index__`). So
+/// the items are collected first with `PyDict_Next`, which runs no Python and
+/// which a `dict` subclass cannot narrow (unlike `PyDict::copy`, whose
+/// `PyDict_Merge` fallback honours an overridden `keys`), then extracted.
 pub struct MapArg<T>(pub T);
 
 impl<'py, K, V, S> FromPyObject<'py> for MapArg<HashMap<K, V, S>>
@@ -87,23 +90,6 @@ where
     S: std::hash::BuildHasher + Default,
 {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        // Two phases, because a per-element `extract` runs Python through
-        // `__index__`, and PyO3 PANICS if a dict changes size or keys while it
-        // is iterating it (`PanicException` is a `BaseException`, which no
-        // `except Exception` catches).
-        //
-        // `iter` is `PyDict_Next` over raw storage and runs no Python, so
-        // collecting cannot be interrupted and a `dict` SUBCLASS cannot narrow
-        // it.  `PyDict::copy` is not equivalent: its raw-storage fast path is
-        // conditional on the subclass not overriding `__iter__`, and the
-        // `PyDict_Merge` fallback then honours an overridden `keys`, so a
-        // subclass overriding both copies as `{}`.
-        //
-        // Phase two extracts from the `Vec`, so the Python it runs is
-        // iterating nothing.  The non-dict branch is not Python-free (`dict`
-        // runs `keys` and `__getitem__`) but completes before any extract.
-        // Values are the caller's own objects, so a list value is read live
-        // (`KnownTarget`'s `Vec<u64>`).
         let items: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)> = match ob.downcast::<PyDict>() {
             Ok(d) => d.iter().collect(),
             Err(_) => ob
@@ -122,18 +108,8 @@ where
     }
 }
 
-/// A table's Python face, built once and handed out read-only.
-///
-/// The authority is the Rust map beside it, which no mutation here would
-/// reach, so every value in the proxy is immutable too.
-///
-/// Read-only to ordinary access only. `MappingProxyType` wraps a dict, and
-/// `gc.get_referents(view)[0]` hands that dict back mutably -- CPython gives
-/// no way to hide an object's referents. Writing to it desynchronizes the view
-/// from the Rust map, which keeps answering every `analyze`; a value fed back
-/// through a constructor is re-extracted and re-validated like any other, so
-/// the reach is a caller confusing itself about its own options, not getting
-/// an unchecked value into the analysis.
+/// A table's Python face, a `MappingProxyType` built once. The Rust map beside
+/// it stays the authority.
 fn mapping_view<'py, T: IntoPy<PyObject> + Clone>(
     view: &OnceLock<PyObject>,
     py: Python<'py>,
@@ -164,43 +140,26 @@ fn memo_obj<'py>(
 pub struct PyCfgOptions {
     /// `function_max_size` and `allow_code_before_start_addr` as one extent.
     pub bound: strider_cfg::FunctionBound,
-    /// Indirect-branch answers supplied by the caller, as
-    /// `{dispatch_address: (target_address, ...) | "return"}`, in the Python
-    /// form the getter hands back; `seated` is the same table as
-    /// `strider_cfg` reads it.
-    ///
-    /// A listed site seats these answers directly instead of deferring to the
-    /// classifier. `"return"` seats the site as a function return, which the
-    /// resolver itself proves only for a bare link register. An empty list
-    /// seats nothing, leaving the site an unresolved indirect branch; the
-    /// classifier still runs unless `resolve_indirect_branches=False`.
+    /// `{dispatch_address: (target_address, ...) | "return"}`, as the getter
+    /// hands it back; `seated` is the same table in `strider_cfg`'s form.
     pub known_targets: HashMap<u64, KnownTarget>,
-    /// Classifications for Sleigh user-op names, as
     /// `{name: strider.sleigh.CallOtherAbi}`, winning over the built-in table.
-    ///
-    /// `Lifter.user_op_names()` lists the names a binary can contain, and
-    /// `Lifter.call_other_abi(name)` reads back what strider already makes of
-    /// one.
     pub call_other_abis: HashMap<String, PyCallOtherAbi>,
     pub(crate) no_return_targets: rustc_hash::FxHashSet<u64>,
-    /// Address ranges `(start, end)` the image marks as data, decoded only for
-    /// the entry instruction.
+    /// Ranges the image marks as data, decoded only for the entry instruction.
     pub data_ranges: strider_cfg::DataRanges,
     /// The three tables' Python faces.
     known_targets_view: OnceLock<PyObject>,
     call_other_abis_view: OnceLock<PyObject>,
     no_return_targets_view: OnceLock<PyObject>,
-    /// `known_targets` in `strider_cfg`'s own form, seated at construction:
-    /// every analyse through this object BORROWS it, so neither the seating
-    /// nor a copy is charged per call.
+    /// `known_targets` seated at construction, borrowed by every analyse.
     pub(crate) seated: SeatedTargets,
-    /// `call_other_abis` as `strider_cfg` borrows it, built on first use and
-    /// rebuilt when the arch changes.
+    /// `call_other_abis` as `strider_cfg` borrows it, rebuilt per arch.
     overrides: Mutex<OverridesMemo>,
 }
 
 /// `slot`'s table when it was built for `target`'s preset, else `build`'s,
-/// kept in `slot`: every field of a `SleighArch` is fixed by its preset.
+/// kept in `slot`.
 fn memo_per_arch<T>(
     slot: &mut Option<(strider_target::SleighArch, Arc<T>)>,
     target: strider_target::SleighArch,
@@ -232,8 +191,8 @@ pub(crate) type SeatedTargets =
     rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
 
 impl PyCfgOptions {
-    /// `call_other_abis` checked against and built for `target`, rebuilt only
-    /// when the arch changes, not per analyse.
+    /// `call_other_abis` checked against and built for `target`, memoized per
+    /// arch.
     pub(crate) fn call_other_overrides(
         &self,
         target: strider_target::SleighArch,
@@ -358,9 +317,7 @@ impl PyCfgOptions {
     }
 
     fn __repr__(&self) -> String {
-        // The tables render as counts: a seeded table is what decides the
-        // successor set, so a `repr` that omits it describes a different
-        // analysis than the one that ran.
+        // Tables render as counts; omitting them would misdescribe the run.
         format!(
             "CfgOptions(function_max_size={}, allow_code_before_start_addr={}, \
              known_targets={{{} entries}}, call_other_abis={{{} entries}}, \
@@ -376,27 +333,21 @@ impl PyCfgOptions {
     }
 }
 
-/// Render a bool the Python way, so a `repr` reads as an eval-able constructor
-/// call (`True`/`False`, not Rust's `true`/`false`).
+/// `True` / `False`, for an eval-able `repr`.
 pub(crate) fn py_bool(b: bool) -> &'static str {
     if b { "True" } else { "False" }
 }
 
 /// Claims about the code being analysed, keyword-only. None is checked, and
-/// each one's risky value is the positive one, so any of them can make the
-/// answer wrong on valid input. Clearing all nine leaves only what the IR
-/// structurally proves, which still takes memory to be RAM and the
+/// each one's risky value is the positive one, so a wrong claim makes the
+/// answer wrong. Clearing all nine still takes memory to be RAM and the
 /// floating-point controls to be the IEEE default.
 ///
 /// Five default `True`: `stack_global_disjoint`,
-/// `assume_incoming_args_survive_calls` and
-/// `return_slots_survive_untracked_writes`, each of which every compiler this
-/// analyses honours, `msr_register_keeps_mode`, which only ARM code
-/// switching mode through a register `msr` breaks, and
-/// `fp_rounding_mode_is_nearest`, which only code changing the SSE, x87,
-/// PowerPC, ARM VFP, AArch64 or MIPS FPU rounding mode breaks.
-///
-/// An omitted or `None` field takes the analysis default, as listed above.
+/// `assume_incoming_args_survive_calls`,
+/// `return_slots_survive_untracked_writes`, `msr_register_keeps_mode` and
+/// `fp_rounding_mode_is_nearest`. An omitted or `None` field takes its
+/// default.
 #[pyclass(eq, name = "AssumptionOptions", module = "strider.lift", frozen)]
 #[derive(Clone, Default, PartialEq)]
 pub struct PyAssumptionOptions {
@@ -469,14 +420,10 @@ macro_rules! assumption_fields {
             }
 
             /// Every claim cleared, then the ones named set. With none named,
-            /// the sound floor of these fields under any input program whose
-            /// memory behaves as RAM and whose floating-point controls are the
-            /// IEEE default, forwarding solely what the IR structurally
-            /// proves. A memory-mapped register polled after a write still
-            /// reads as the value written. Outside the conversion rounding
-            /// mode `fp_rounding_mode_is_nearest` claims, float arithmetic
-            /// rounds to nearest with MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FPSCR.FZ,
-            /// FPCR.FZ and FCSR.FS clear.
+            /// the sound floor for code whose memory behaves as RAM (a polled
+            /// MMIO register reads as the value written) and whose float
+            /// arithmetic rounds to nearest with flush-to-zero and
+            /// denormals-are-zero off.
             #[staticmethod]
             #[allow(clippy::too_many_arguments)]
             #[pyo3(signature = (*, $($name = None),*))]
@@ -509,24 +456,20 @@ macro_rules! assumption_fields {
 
 assumption_fields! {
     /// The stack and global/constant memory (`.data`, `.rodata`, `.bss`,
-    /// MMIO) never overlap at runtime, so a memory walk steps through a
-    /// constant-address store when looking back from a stack load and
-    /// vice-versa (default `True`). Wrong only where a constant address
-    /// coincidentally equals `sp + K`.
+    /// MMIO) never overlap, so a memory walk steps through a constant-address
+    /// store from a stack load and vice-versa (default `True`). Wrong only
+    /// where a constant address equals `sp + K`.
     stack_global_disjoint: bool,
 
-    /// A call on an incoming stack-argument slot's memory chain leaves the
-    /// slot alone (default `True`). Reaches incoming-argument detection only,
-    /// where it holds for any conforming callee: those slots are the caller's
-    /// memory, above the entry SP. A function that hands a callee a pointer
-    /// into them, or into the register arguments' homes a convention keeps
-    /// just below them (ARM, MIPS, PowerPC64), is caught (`h(&a); return
-    /// a;`), and there every call keeps the slots unknown. A `custom`
-    /// convention whose ABI homes or splits register arguments next to the
-    /// stack ones (ARM, MIPS, PPC64, riscv, Win64) must pass
-    /// `reg_args_adjoin_stack_args=True`. A pointer to a local is taken to
-    /// stay inside that local; a callee reading a pointer from a register its
-    /// convention preserves is not caught.
+    /// A call leaves the incoming stack-argument slots alone (default
+    /// `True`); read by incoming-argument detection only. A pointer the
+    /// function hands a callee into them, or into the register-argument homes
+    /// just below them, is caught, and there the slots stay unknown. A
+    /// `custom` convention homing register arguments next to the stack ones
+    /// (ARM, MIPS, PPC64, riscv, Win64) must pass
+    /// `reg_args_adjoin_stack_args=True`. Not caught: a pointer to a local
+    /// escaping that local, or a callee reading a pointer from a register its
+    /// convention preserves.
     assume_incoming_args_survive_calls: bool,
 
     /// A store rooted at a different SP base than the entry SP (an
@@ -536,84 +479,48 @@ assumption_fields! {
 
     /// A callee leaves the outgoing-argument slots the caller wrote as it
     /// found them, so a spill at the stack top survives the call. The psABIs
-    /// let a callee write those slots; this asserts compiler output does not.
-    ///
-    /// Inert on its own: it only empties an outgoing-argument window that
-    /// something else already consults, which is `escape_analysis` or a call
-    /// to an address listed in `noalias_allocators`. Set with one of those.
+    /// allow such writes; this asserts compiler output makes none. Inert
+    /// without `escape_analysis` or a call to a `noalias_allocators` entry.
     callee_preserves_stack_args: bool,
 
-    /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
-    /// a size in, a fresh non-overlapping pointer out, no pointer arguments).
-    /// Distinct allocations are treated as disjoint, and a load steps through
-    /// such a call. An allocation also overlaps no stack slot and no global or
-    /// other constant address, so an allocator carving from a static or a
-    /// caller-supplied arena does not qualify. Disjointness among
-    /// allocations holds for those live at once: nothing
-    /// models deallocation, so a stale pointer is taken as disjoint from the
-    /// storage the allocator handed out again. Reads back sorted, without
-    /// duplicates.
+    /// Callee addresses of pure `noalias` heap allocators (`malloc`-like: a
+    /// size in, a fresh pointer out, no pointer arguments). Distinct
+    /// allocations are disjoint from each other, the stack and every constant
+    /// address, and a load steps through such a call, so an allocator carving
+    /// from a static or caller-supplied arena does not qualify. Deallocation
+    /// is not modelled: a stale pointer is taken as disjoint from storage the
+    /// allocator handed out again. Reads back sorted, without duplicates.
     noalias_allocators: Vec<u64>,
 
-    /// When the frame is provably private (no stack address escapes to a
-    /// callee), forward a spill load across a call and, under
-    /// `stack_global_disjoint`, past an opaque store.
-    /// An address held in an argument, a stored value, a return, or a register
-    /// a call clobbers escapes; the claim is that no callee reads one from a
-    /// register its convention preserves.
+    /// When no stack address escapes to a callee, forward a spill load across
+    /// a call and, under `stack_global_disjoint`, past an opaque store. An
+    /// address in an argument, a stored value, a return or a clobbered
+    /// register escapes; the claim is that no callee reads one from a register
+    /// its convention preserves.
     escape_analysis: bool,
 
-    /// A RAM store whose address the analysis cannot place on the entry stack,
-    /// and any callee or user-op, leave the slots the function saved its
-    /// return address and entry stack pointer in alone (default `True`). Read
-    /// by return-target verification alone: off, a return after a user-op or
-    /// a call whose convention does not preserve memory is reported as
-    /// unverified, and a store through a pointer the analysis can only guess
-    /// at is checked against the slot. A store its SP decomposition places is
-    /// checked either way.
+    /// Untracked RAM stores, callees and user-ops leave the slots holding the
+    /// saved return address and entry stack pointer alone (default `True`).
+    /// Read by return-target verification only: off, a return after a user-op
+    /// or a memory-clobbering call is reported unverified, and a store through
+    /// an unplaced pointer is checked against the slot.
     return_slots_survive_untracked_writes: bool,
 
-    /// The mode an ARM register-form `msr` writes to the CPSR control field
-    /// (`msr cpsr_c, rN`) is the mode already in force, so the write changes
-    /// neither the mode nor the banked registers (default `True`); its masks
-    /// and flags still update, and the immediate form and `cps` still switch
-    /// mode. Off, it re-banks `sp`, `lr` and the rest unless its mode is
-    /// provably the current one. Wrong for a new mode built in a register
-    /// (Linux's boot-time `safe_svcmode_maskall`, the switch into FIQ in
-    /// `fiqasm.S`) and for a saved mode restored after a switch made since
-    /// the save (the return to SVC in `fiqasm.S`'s `__set_fiq_regs`). Read by
-    /// the lift, so `analyze` honours it and `Function.optimize` refuses to add
-    /// it.
+    /// An ARM register-form `msr cpsr_c, rN` writes the mode already in force,
+    /// so it changes neither the mode nor the banked registers (default
+    /// `True`); the immediate form and `cps` still switch mode. Off, it
+    /// re-banks `sp`, `lr` and the rest unless its mode is provably current.
+    /// Wrong for a mode built in a register or restored after a later switch
+    /// (Linux's `safe_svcmode_maskall`, `fiqasm.S`). Read by the lift, so
+    /// `Function.optimize` refuses to add it.
     msr_register_keeps_mode: bool,
 
-    /// The dynamic rounding mode a float-to-integer, narrowing or
-    /// integer-to-float conversion rounds by is round to nearest even
-    /// (default `True`): x86 MXCSR.RC at `cvtsd2si`, `cvtss2si`,
-    /// `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`,
-    /// `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd`
-    /// and their scalar VEX forms, the x87 control word's RC at `fst` and
-    /// `fstp` to memory, PowerPC FPSCR.RN at `fctid`, `fctiw`, `fctidu`,
-    /// `fctiwu`, `fcfid`, `fcfids`, `fcfidu`, `fcfidus`, `frsp` and
-    /// `xscvdpspn`, ARM FPSCR.RMode at `vcvtr`, `vcvt.f32.f64`,
-    /// `vcvt.f32.s32`, `vcvt.f32.u32`, `vcvtb` and `vcvtt`, AArch64
-    /// FPCR.RMode at `fcvt` to a narrower float, `fcvtn`, `scvtf`, `ucvtf`
-    /// and `bfcvt`, and MIPS FCSR.RM at `cvt.w`, `cvt.l`, `cvt.s` and
-    /// `cvt.d.l`. The fixed-mode forms (`cvtt*`, `fcti*z`, ARM `vcvt` to an
-    /// integer, MIPS `round`, `trunc`, `floor`, `ceil`, AArch64
-    /// `fcvt{n,a,m,p,z}{s,u}` and `fcvtxn`) read no mode, and x87 `fist`,
-    /// `fistp` and `frndint` read the control word either way. Off, each
-    /// reads the mode and selects among its four, so a mode set by
-    /// `ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr` or `ctc1` folds and an unknown
-    /// one stays a select (an AArch64 FPCR read is volatile, so `msr fpcr`
-    /// does not fold). Wrong after `fesetround` or a caller's mode change.
-    /// Float arithmetic is taken to round to nearest either way, the
-    /// conversions lifted as opaque user ops (packed VEX, EVEX, `roundss`,
-    /// AArch64 vector and FP-register `#fbits` forms, ARM NEON and
-    /// fixed-point forms, `vrint*`, `frint*`) are outside it, and
-    /// MXCSR.FTZ/DAZ, PowerPC FPSCR.NI/OE/UE, ARM FPSCR.FZ, AArch64 FPCR.FZ
-    /// and MIPS FCSR.FS are taken as 0, so `none()` is not a sound floor for
-    /// `-ffast-math` code or code that sets those. Read by the lift, so `analyze` honours it and
-    /// `optimize` refuses to add it.
+    /// Float conversions that read the dynamic rounding mode (x86 MXCSR.RC,
+    /// x87 RC, PowerPC FPSCR.RN, ARM FPSCR.RMode, AArch64 FPCR.RMode, MIPS
+    /// FCSR.RM) round to nearest even (default `True`), so they fold. Off,
+    /// each selects among the four modes, folding a mode the function sets.
+    /// Wrong after `fesetround` or a caller's mode change. Read by the lift,
+    /// so `Function.optimize` refuses to add it.
     fp_rounding_mode_is_nearest: bool,
 }
 
@@ -650,8 +557,7 @@ pub struct PyLifterOptions {
     /// Nested CFG-shape knobs.
     #[pyo3(get)]
     pub cfg: Py<PyCfgOptions>,
-    /// Nested claims about the analysed code, each one unchecked; the
-    /// defaults when not passed.
+    /// Nested claims about the analysed code; the defaults when not passed.
     #[pyo3(get)]
     pub assumptions: Py<PyAssumptionOptions>,
     /// Drop unreachable IR nodes after analysis (default `True`).
@@ -663,9 +569,8 @@ pub struct PyLifterOptions {
     /// raises: the override describes a callee, not another frame.
     pub per_address_ccs: Option<PerAddressCcs>,
     /// Run the indirect-branch classifier (default `True`). `False` leaves
-    /// every site an `IndirectBranch` placeholder, so you can supply your own
-    /// answers via `CfgOptions(known_targets=...)`, or inspect the raw
-    /// dispatch shape when a resolution looks wrong.
+    /// every site not in `CfgOptions(known_targets=...)` an `IndirectBranch`
+    /// placeholder.
     #[pyo3(get)]
     pub resolve_indirect_branches: bool,
     /// When set, `analyze` runs this pipeline instead of the built-in
@@ -703,8 +608,7 @@ impl PyLifterOptions {
 
 #[pymethods]
 impl PyLifterOptions {
-    /// `cfg`, `assumptions` and `pipeline` are `Py` handles, invisible to the
-    /// collector without this.
+    /// Exposes the `Py` handles to the cyclic GC.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.cfg)?;
         visit.call(&self.assumptions)?;

@@ -3,20 +3,18 @@ use pyo3::types::PyType;
 
 use crate::macros::forall_preset;
 
-/// `Preset` resolves its static register names against a Sleigh lazily, at
-/// consumption time.  `Custom` is resolved eagerly instead, so typos and
-/// ABI-invariant violations in user-supplied names surface at construction.
+/// `Preset` resolves its register names lazily, at consumption time;
+/// `Custom` eagerly, so bad user-supplied names raise at construction.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) enum CcImpl {
     Preset(strider_target::CallingConvention),
     Custom(Box<strider_target::BuiltCallingConvention>),
 }
 
-/// A calling convention.  Construct via a preset classmethod (e.g.
-/// `CallingConvention.x86_64_systemv()`) or `CallingConvention.custom(...)`
-/// for a binary whose ABI matches no built-in preset.
+/// A calling convention: a preset classmethod (e.g.
+/// `CallingConvention.x86_64_systemv()`) or `CallingConvention.custom(...)`.
 ///
-/// Equal when the same constructor calls built both: a `custom` never equals a
+/// Equal when built by the same constructor calls: a `custom` never equals a
 /// preset, nor one resolved against another arch.
 #[pyclass(
     name = "CallingConvention",
@@ -29,8 +27,8 @@ pub(crate) enum CcImpl {
 pub struct PyCallingConvention {
     pub(crate) inner: CcImpl,
     pub(crate) preset_name: &'static str,
-    /// The arch a `custom(...)` convention resolved its register names
-    /// against; `None` for a preset, which resolves at consumption time.
+    /// The arch a `custom(...)` convention resolved against; `None` for a
+    /// preset.
     pub(crate) source_arch: Option<strider_target::SleighArch>,
 }
 
@@ -75,13 +73,10 @@ impl PyCallingConvention {
 
 #[pymethods]
 impl PyCallingConvention {
-    /// A variant of this convention that clobbers nothing: every register
-    /// callee-saved and memory unchanged, with no arguments or return value.
-    /// The stack/link-register geometry of the original is kept.
-    ///
-    /// Use as a per-address CC override for a transparent hook that observes
-    /// no caller state changes (Linux-kernel `__fentry__` / `mcount`), e.g.
-    /// `CallingConvention.x86_64_systemv().preserves_all()`.
+    /// A variant that clobbers nothing: every register callee-saved, memory
+    /// unchanged, no arguments or return value; stack / link-register geometry
+    /// kept. For a per-address override on a transparent hook (kernel
+    /// `__fentry__` / `mcount`).
     fn preserves_all(&self) -> Self {
         Self {
             inner: match &self.inner {
@@ -93,12 +88,9 @@ impl PyCallingConvention {
         }
     }
 
-    /// Like `preserves_all` but leaves memory clobberable: registers are all
-    /// preserved, memory is not.
-    ///
-    /// The argument registers and stack arguments survive, unlike under
-    /// `preserves_all`, so a call still carries its arguments: a callee that
-    /// writes memory has to be seen taking a frame address.
+    /// Like `preserves_all` but memory may be clobbered, so the call keeps its
+    /// arguments (a callee writing memory must be seen taking a frame
+    /// address).
     fn preserves_regs(&self) -> Self {
         Self {
             inner: match &self.inner {
@@ -110,10 +102,8 @@ impl PyCallingConvention {
         }
     }
 
-    /// Build a calling convention from explicit register-name lists, for a
-    /// binary whose ABI matches no built-in preset.  Names are resolved and
-    /// most ABI invariants checked here, so a bad one raises `StriderError` at
-    /// construction rather than at first use.
+    /// Build a calling convention from register-name lists. Names are resolved
+    /// and ABI invariants checked here; a bad one raises `StriderError`.
     ///
     /// Args:
     ///     sleigh: The `SleighArch` to resolve register names against.
@@ -128,34 +118,30 @@ impl PyCallingConvention {
     ///         `None` if the convention passes no args on the stack.
     ///     stack_arg_increment: Byte stride between successive positional
     ///         stack args (used only when `stack_arg_base` is set).
-    ///     ret_stack_pop: Net byte change `ret` inflicts on caller SP
+    ///     ret_stack_pop: Net byte change `ret` makes to caller SP
     ///         (typically 4/8 on stack-push ISAs, 0 on link-register ISAs).
-    ///     link_register: Optional register name of the link register
-    ///         (ARM/AArch64/MIPS/PowerPC); pass `None` on x86/x86_64.
+    ///     link_register: The link register (ARM/AArch64/MIPS/PowerPC), or
+    ///         `None` on x86/x86_64.
     ///     preserves_memory: `True` for transparent hooks
     ///         (`__fentry__`/`mcount`-style) that preserve memory.
     ///     arg_passing_regs_float: Float/vector argument registers, in ABI
-    ///         order.  Appended after `arg_passing_regs` in a `Call`'s
-    ///         argument list, so the first one is `arg(len(arg_passing_regs))`.
+    ///         order, numbered after `arg_passing_regs` in a `Call`'s
+    ///         arguments (the first is `arg(len(arg_passing_regs))`).
     ///     reg_args_adjoin_stack_args: `True` where each argument register
-    ///         has a stack home just below the stack arguments, one slot each
-    ///         (ARM AAPCS, MIPS O32 / N64, PowerPC64 ELF): a by-value
-    ///         argument split between registers and the stack is then one
-    ///         object, and its address reaching a callee keeps every
-    ///         incoming stack argument read after a call unknown.
-    ///     entry_address: Register name the ABI guarantees holds the
-    ///         function's own entry address on entry (PPC64 ELFv2 `r12`,
-    ///         MIPS abicalls `t9`), or `None` for no such promise.
+    ///         has a stack home just below the stack arguments (ARM AAPCS,
+    ///         MIPS O32 / N64, PowerPC64 ELF), so a split by-value argument
+    ///         is one object.
+    ///     entry_address: Register the ABI guarantees holds the function's
+    ///         own entry address on entry (PPC64 ELFv2 `r12`, MIPS abicalls
+    ///         `t9`), or `None`.
     ///
-    /// Raises `StriderError` here when `stack_pointer` is not as wide as the
-    /// arch's addresses, when `stack_arg_base` is set and `stack_arg_increment`
-    /// is not that width, or when `link_register=None` and `ret_stack_pop` is
-    /// below it.
+    /// Raises `StriderError` when `stack_pointer` is not address-width, when
+    /// `stack_arg_base` is set and `stack_arg_increment` is not that width, or
+    /// when `link_register=None` and `ret_stack_pop` is below it.
     ///
-    /// The frozen varnodes belong to `sleigh`'s registers, so the result is
-    /// usable only with a `Lifter` with the same register table (`arm`,
+    /// Usable only with a `Lifter` sharing `sleigh`'s register table (`arm`,
     /// `arm_thumb` and `arm_be_kernel` share one); any other raises
-    /// `StriderError` at `analyze` time.
+    /// `StriderError` at `analyze`.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,
@@ -248,9 +234,8 @@ impl PyCallingConvention {
         })
     }
 
-    /// The preset named `name` (one of `strider.sleigh.CC_PRESETS`), as
-    /// `CallingConvention.<name>()` builds it.  Raises `StriderError` for an
-    /// unknown name, listing the known ones.
+    /// The preset named `name` (one of `strider.sleigh.CC_PRESETS`). Raises
+    /// `StriderError` for an unknown name.
     #[classmethod]
     fn preset(_cls: &Bound<'_, PyType>, name: &str) -> PyResult<Self> {
         strider_target::CallingConvention::presets()
@@ -269,12 +254,9 @@ impl PyCallingConvention {
 
     /// The keyword arguments of `custom` other than `sleigh`, so
     /// `CallingConvention.custom(arch, **cc.to_dict())` rebuilds an equivalent
-    /// convention.  A preset yields its own register names; a `custom` one the
-    /// names of its resolved registers.  `stack_arg_increment` is `0` when
-    /// the convention passes nothing on the stack.
-    ///
-    /// Raises `StriderError` for a `preserves_all()` / `preserves_regs()`
-    /// variant: `custom` cannot express `preserves_all_registers`.
+    /// convention. `stack_arg_increment` is `0` when nothing is passed on the
+    /// stack. Raises `StriderError` for a `preserves_all()` /
+    /// `preserves_regs()` variant, which `custom` cannot express.
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
         match &self.inner {
             CcImpl::Preset(cc) => dict(py, cc, Ok),
@@ -291,10 +273,8 @@ impl PyCallingConvention {
         self.preset_name
     }
 
-    /// `CallingConvention.<preset>()` for a preset, then the `preserves_*`
-    /// variant taken of it.  A `custom(...)` one has no argument-free
-    /// reproduction, so it renders as a plain description naming the arch its
-    /// registers were resolved against.
+    /// `CallingConvention.<preset>()` plus any `preserves_*` variant; a
+    /// `custom(...)` one renders as a description naming its arch.
     fn __repr__(&self) -> String {
         let (all_regs, memory) = match &self.inner {
             CcImpl::Preset(cc) => (cc.preserves_all_registers, cc.preserves_memory),
@@ -355,7 +335,6 @@ fn dict<'py, R: Copy, L: AsRef<[R]>>(
 
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallingConvention>()?;
-    // Every calling-convention preset name, in roster order.
     m.add(
         "CC_PRESETS",
         pyo3::types::PyTuple::new_bound(

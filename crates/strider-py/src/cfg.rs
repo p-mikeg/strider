@@ -1,7 +1,5 @@
-//! `pcode_at` / `fingerprint_pcode` are LOOKUPS against the CFG's own
-//! lift-time decodes rather than a fresh re-decode, so they stay correct on
-//! context-dependent architectures (ARM/Thumb, MIPS16) where a default-context
-//! Sleigh would render the wrong p-code for a mid-function mode switch.
+//! `pcode_at` / `fingerprint_pcode` look up the CFG's own lift-time decodes
+//! rather than re-decoding, so a mid-function ISA-mode switch renders right.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -19,19 +17,15 @@ use crate::strider_cls::PyLifter;
 #[pyclass(name = "Cfg", module = "strider.cfg", frozen)]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
-    /// The `Lifter` that built `inner`: `Cfg.lifter`, and the rom
-    /// `Function.optimize` folds against.
+    /// The `Lifter` that built `inner`.
     pub(crate) lifter: Py<PyLifter>,
-    /// That lifter's arch, whose name table every render reads, so a render
-    /// never borrows `lifter` (which `analyze` holds mutably with the GIL
-    /// released).
+    /// That lifter's arch, kept so a render never borrows `lifter`.
     pub(crate) arch: strider_target::SleighArch,
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
 }
 
-/// `incomplete` at machine-address granularity, sorted and deduplicated: what
-/// `Cfg.incomplete` reads.
+/// `incomplete` at machine-address granularity, sorted and deduplicated.
 pub(crate) fn incomplete_list(
     incomplete: &strider_cfg::Incompleteness,
 ) -> Vec<(u64, &'static str)> {
@@ -59,11 +53,8 @@ impl PyCfg {
         }
     }
 
-    /// `center` as a region id this CFG actually has.
-    ///
-    /// `RegionId::new` takes any `usize`, so an out-of-range argument would
-    /// render an empty graph rather than say anything, and `u32::MAX` is
-    /// petgraph's end sentinel, never a region.
+    /// `center` as a region id this CFG has (`u32::MAX` is petgraph's end
+    /// sentinel, never a region).
     fn region_id(&self, center: u32) -> PyResult<strider_cfg::RegionId> {
         if center != u32::MAX {
             let id = strider_cfg::RegionId::new(center as usize);
@@ -126,55 +117,42 @@ impl PyCfg {
     }
 
     /// Every machine address this CFG cannot vouch for, with why, sorted and
-    /// deduplicated. Empty is complete. `analyze` and `build_cfg` return
-    /// whatever this names, so check it before trusting an absence ("no store
-    /// to X"): code behind a listed address may be missing.
+    /// deduplicated. Empty is complete. Check it before trusting an absence
+    /// ("no store to X"): code behind a listed address may be missing.
     ///
-    /// `"unresolved_branch"` and `"unverified_seed"` name a dispatch site, the
-    /// address `CfgOptions(known_targets=...)` seeds; the other five a branch
-    /// target, which a direct edge reaches too:
+    /// `"unresolved_branch"` and `"unverified_seed"` name a dispatch site; the
+    /// other five a branch target:
     ///
     /// - `"unresolved_branch"`: an indirect branch with no complete successor
-    ///   set, among them a return whose target is not provably the caller's
-    ///   and that you did not seed `"return"`.
-    /// - `"unverified_seed"`: a seated answer nothing verified, such as a site
-    ///   seated with only your `known_targets`, every tail call the CFG
-    ///   consumed, your own `"return"` seat, and a return your `"return"`
-    ///   seed covers whose target is not provably the caller's.
+    ///   set, including a return not provably to the caller and not seeded
+    ///   `"return"`.
+    /// - `"unverified_seed"`: a seated answer nothing verified: a
+    ///   `known_targets` seat, a consumed tail call, or a `"return"` seed.
     /// - `"isa_mode_conflict"`: reached in two ISA modes; the losing path
     ///   decodes in the other.
     /// - `"interior_target"`: off every instruction boundary, or a region
     ///   start a later decode stepped over.
-    /// - `"unmapped_target"`: no byte of the image backs it. A seeded arm
-    ///   that is unmapped, or whose code falls through here, is dropped,
-    ///   unless a call precedes the bytes, which then does not return. A
-    ///   branch, or a conditional's not-taken side, from an arm's code to here
-    ///   leaves through a stub and keeps the arm, as does an arm landing on an
-    ///   address a direct edge already reported here.
+    /// - `"unmapped_target"`: no byte of the image backs it.
     /// - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
-    ///   it as data. A seeded arm leading to such bytes is dropped, unless
-    ///   its code falls through to them past a call, which then does not
-    ///   return; so is one whose decode fails for a reason no other entry
-    ///   names, named here at its start. An arm landing on an address a direct
-    ///   edge already reported here keeps that edge's stub.
-    /// - `"past_function_end"`: where code falls through past
-    ///   `function_max_size`, and so tail-calls this address, or where a call
-    ///   not to a `no_return_targets` entry would return; a seeded arm whose
-    ///   code falls through here is dropped and named here.
+    ///   it as data.
+    /// - `"past_function_end"`: code falls through past `function_max_size`
+    ///   (a tail call to this address), or a call not to a
+    ///   `no_return_targets` entry would return here.
     ///
-    /// From `build_cfg` this is that one build: every dispatch it left without
-    /// an edge and every seed it seated. From `analyze` the target reasons
-    /// accumulate over the resolver's rounds and the site reasons are the
-    /// final round's.
+    /// A seeded arm that falls through into an unmapped, undecodable or
+    /// past-the-end target is dropped and named there, unless a call precedes
+    /// those bytes (the call then does not return). A branch from an arm's
+    /// code to an unmapped target leaves through a stub and keeps the arm.
+    ///
+    /// From `analyze`, target reasons accumulate over the resolver's rounds
+    /// and site reasons are the final round's.
     #[getter]
     fn incomplete(&self) -> Vec<(u64, &'static str)> {
         incomplete_list(self.inner.incomplete())
     }
 
-    /// Exposes the strong `lifter` back-reference so the cyclic GC can see a
-    /// cycle routed through a `Cfg` and on to the Lifter's Python reader. The
-    /// cycle is broken at the reader's `__dict__` / `PyLifter::__clear__`, and
-    /// `lifter` is load-bearing while the `Cfg` lives.
+    /// Exposes `lifter` so the cyclic GC sees a cycle through a `Cfg` to the
+    /// Lifter's Python reader.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.lifter)
     }
@@ -199,22 +177,18 @@ impl PyCfg {
     /// op decoded there, joined with `"; "`, or `None` when this CFG decoded
     /// nothing at `addr`.
     ///
-    /// Known limitation: an instruction lifting to ZERO p-code ops (x86
-    /// `endbr64`, AArch64 `paciasp`) is indistinguishable from an address
-    /// never decoded; both give `None`.  `Lifter.pcode_at` returns `""`.
+    /// An instruction lifting to no p-code ops (x86 `endbr64`) also gives
+    /// `None`; `Lifter.pcode_at` returns `""` for it.
     fn pcode_at(&self, addr: u64) -> Option<String> {
         self.pcode_map().get(&addr).cloned()
     }
 
     /// `node`'s asm fingerprint as `(addr, text)` p-code pairs sorted by
-    /// address. `[]` for structural nodes carrying no fingerprint.
+    /// address, skipping an address this CFG has no decode for. `[]` for
+    /// structural nodes carrying no fingerprint.
     ///
-    /// An address this CFG has no decode for is skipped, so every pair is a
-    /// genuine hit.
-    ///
-    /// Raises `StriderError` for a `node` from a function some other `Cfg`
-    /// produced: addresses collide across images, so the answer would be this
-    /// CFG's p-code labelled with the other's node.
+    /// Raises `StriderError` for a `node` from a function another `Cfg`
+    /// produced.
     fn fingerprint_pcode(
         slf: &Bound<'_, Self>,
         py: Python<'_>,
@@ -230,7 +204,6 @@ impl PyCfg {
         let slf = slf.get();
         let addrs = node.asm_fingerprint(py)?;
         let map = slf.pcode_map();
-        // `addrs` is sorted, and filtering keeps the order.
         Ok(addrs
             .into_iter()
             .filter_map(|addr| map.get(&addr).cloned().map(|text| (addr, text)))

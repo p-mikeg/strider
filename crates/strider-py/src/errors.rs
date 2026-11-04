@@ -20,11 +20,9 @@ create_exception!(
 );
 
 thread_local! {
-    /// The Python exception a user callback raised, kept so the synthesized
-    /// `StriderError` can chain it as `__cause__`.  Cleared on entry to every
-    /// callback and again when the call that ran the callback drains its
-    /// control-flow cell, so a swallowed failure neither outlives that call nor
-    /// pins the callback frame's traceback.
+    /// The Python exception a user callback raised, chained as the
+    /// `StriderError`'s `__cause__`. Cleared on entry to every callback and
+    /// when the calling operation finishes, so it never outlives that call.
     static CALLBACK_CAUSE: std::cell::RefCell<Option<PyErr>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -82,9 +80,8 @@ fn del_backtrace(err: &Bound<'_, PyAny>) -> PyResult<()> {
         .map_err(|_| pyo3::exceptions::PyAttributeError::new_err("backtrace"))
 }
 
-/// A `StriderError` instantiated when Python raises it, once the raising
-/// stack has unwound: an error can arise where a thread's stack is all but
-/// spent, too little to format it or to call into Python.
+/// A `StriderError` instantiated lazily, once the raising stack has unwound,
+/// as the error site may have too little stack to format it.
 struct Raised {
     origin: anyhow::Error,
     cause: Option<PyErr>,
@@ -115,9 +112,8 @@ impl PyErrArguments for Raised {
 
 /// Convert an error into a `StriderError` carrying its Caused-by chain.
 ///
-/// A pending Python exception wins: it is returned as-is rather than buried
-/// under a synthesized `StriderError`, with `e` chained onto it as the
-/// `__cause__` so the Rust side of the failure is not lost.
+/// A pending Python exception is returned instead, with `e` chained as its
+/// `__cause__`.
 pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     let raised = |cause| PyErr::new::<StriderError, _>(Raised { origin: e, cause });
     Python::with_gil(|py| match PyErr::take(py) {
@@ -125,8 +121,6 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
             pending.set_cause(py, Some(raised(None)));
             pending
         }
-        // A user callback's own exception carries the traceback into their
-        // code, which the message text alone does not.
         None => raised(take_callback_cause()),
     })
 }

@@ -3,32 +3,28 @@ use pyo3::types::PyType;
 
 use strider_target::call_other_abi::{CallOtherClass, CallOtherOverride};
 
-/// `Class` carries the static register names of a table row, resolved against
-/// a Sleigh at lift time.  `Built` is resolved eagerly instead, so a name typo
-/// surfaces at construction.
+/// `Class` is a table row resolved at lift time; `Built` is resolved eagerly,
+/// so a name typo raises at construction.
 #[derive(Clone)]
 pub(crate) enum AbiImpl {
     Class(CallOtherClass),
     Built(Box<strider_target::BuiltCallOtherAbi>),
 }
 
-/// How one Sleigh user-op is lifted: the implicit register footprint, the
-/// memory effect and whether control returns, none of which Sleigh's pcode
-/// encodes.
+/// How one Sleigh user-op is lifted: its implicit register footprint, memory
+/// effect and whether control returns, none of which the pcode encodes.
 ///
-/// Construct via `CallOtherAbi.pure()` / `.noop()` / `.mem_clobber()` /
-/// `.no_return()` for the footprint-free classes, or `CallOtherAbi.custom(...)`
-/// to name registers.  Pass one to
+/// Construct via `pure()` / `noop()` / `mem_clobber()` / `no_return()`, or
+/// `custom(...)` to name registers; pass to
 /// `CfgOptions(call_other_abis={name: abi})`.
 #[pyclass(name = "CallOtherAbi", module = "strider.sleigh", frozen)]
 #[derive(Clone)]
 pub struct PyCallOtherAbi {
     pub(crate) inner: AbiImpl,
-    /// The register names as the caller (or the built-in table) spells them.
+    /// The register names as given.
     reads: Vec<String>,
     writes: Vec<String>,
-    /// The arch a `custom(...)` ABI resolved its register names against;
-    /// `None` for a preset class, which carries no varnodes.
+    /// The arch a `custom(...)` ABI resolved against; `None` for a class.
     pub(crate) source_arch: Option<strider_target::SleighArch>,
 }
 
@@ -60,7 +56,7 @@ impl PyCallOtherAbi {
         }
     }
 
-    /// `source_arch`'s preset, which identifies it without reading the sla.
+    /// `source_arch`'s preset.
     fn source_preset(&self) -> Option<strider_target::ArchPreset> {
         self.source_arch.map(|a| a.preset())
     }
@@ -87,17 +83,15 @@ impl PyCallOtherAbi {
         Self::from_class(CallOtherClass::MEM_CLOBBER)
     }
 
-    /// Control does not pass the op, which ends its region.  Empty footprint;
-    /// `custom(..., no_return=True)` carries one.
+    /// Control does not pass the op, which ends its region. Empty footprint;
+    /// use `custom(..., no_return=True)` for one.
     #[classmethod]
     fn no_return(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::NO_RETURN)
     }
 
-    /// Build an ABI naming implicit registers, for an op strider reads
-    /// wrongly or an OS convention it cannot know.  The names are resolved
-    /// here, so a bad one raises `StriderError` at construction rather than at
-    /// first use.
+    /// Build an ABI naming implicit registers. Names are resolved here; a bad
+    /// one raises `StriderError`.
     ///
     /// Args:
     ///     sleigh: The `SleighArch` to resolve register names against.
@@ -109,8 +103,7 @@ impl PyCallOtherAbi {
     ///         barriers, port I/O, syscalls); `False` for pure compute.
     ///     no_return: `True` when control does not pass the op.
     ///
-    /// The frozen varnodes belong to `sleigh`'s registers, so the result is
-    /// usable only with a `Lifter` with the same register table (`arm`,
+    /// Usable only with a `Lifter` sharing `sleigh`'s register table (`arm`,
     /// `arm_thumb` and `arm_be_kernel` share one); any other raises
     /// `StriderError`.
     #[classmethod]
@@ -193,9 +186,7 @@ impl PyCallOtherAbi {
         if self.is_noop() {
             return "CallOtherAbi.noop()".to_owned();
         }
-        // `source_arch` is what separates a `custom` from a preset under
-        // `__eq__`, so a `custom` keeps the `custom(...)` form however empty
-        // its footprint is.
+        // A `custom` keeps its form however empty, as `__eq__` separates it.
         if self.source_arch.is_none() && self.reads.is_empty() && self.writes.is_empty() {
             if self.is_no_return() {
                 return "CallOtherAbi.no_return()".to_owned();
@@ -215,10 +206,8 @@ impl PyCallOtherAbi {
         )
     }
 
-    /// Equality on the footprint, memory effect, no-return flag and the arch a
-    /// `custom` froze its varnodes against.  A `custom` never equals a preset,
-    /// and two `custom`s frozen on different presets never equal each other,
-    /// even over one sla.
+    /// Equality on the footprint, memory effect, no-return flag and a
+    /// `custom`'s arch preset. A `custom` never equals a class.
     fn __eq__(&self, other: &Self) -> bool {
         self.source_preset() == other.source_preset()
             && self.is_noop() == other.is_noop()

@@ -9,11 +9,8 @@ use crate::function::FunctionAt;
 /// A handle on a single node in the IR graph.
 ///
 /// Every accessor raises `StriderError` once the function has been compacted
-/// or otherwise reshuffled, rather than dereferencing a stale node id.
-///
-/// Equal, and hashed alike, when both reference the same function object, the
-/// same id AND the same graph generation: a stale handle raises on every
-/// accessor, so it is not the node a re-fetched handle names.
+/// or rewritten. Two handles are equal when they share the function object,
+/// id and graph generation.
 #[pyclass(eq, hash, name = "Node", module = "strider.ir", frozen)]
 #[derive(PartialEq, Hash)]
 pub struct PyNode {
@@ -44,10 +41,8 @@ impl PyNode {
         })?
     }
 
-    /// The FIRST value output, skipping control / memory slots. A `Call`
-    /// carries several (return value, then the clobbers), so this is not a
-    /// unique answer for one; control / memory / phi-token-only nodes have
-    /// none at all.
+    /// The first value output, skipping control / memory slots; for a `Call`
+    /// the return value, ahead of its clobbers.
     fn value_output(
         function: &strider_ir::Function,
         nid: strider_ir::node::NodeId,
@@ -82,10 +77,8 @@ pub(crate) fn sint_of(
 
 #[pymethods]
 impl PyNode {
-    /// Exposes the strong `function` back-reference so the cyclic GC can see a
-    /// cycle routed through a `Node`. The cycle is broken at the reader's
-    /// `__dict__` / `PyLifter::__clear__`, and `function` is load-bearing for
-    /// as long as the `Node` lives.
+    /// Exposes `function` to the cyclic GC; the cycle is broken at the
+    /// reader's `__dict__` / `PyLifter::__clear__`, never here.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.at.function)
     }
@@ -97,15 +90,12 @@ impl PyNode {
         self.with_node(py, |_, _| self.id)
     }
 
-    /// The node's kind as a string. An op or a memory space renders with its
-    /// payload (`"IntBinaryOp(Add)"`, `"Load(RAM)"`), and a float constant
-    /// with its raw bits (`"FloatConst(<bits>)"`); an interned or opaque
-    /// handle does not (`"IntConst"`, `"InitialVar"`, `"CallOther"`), nor does
-    /// a kind with none (`"Region"`, `"Phi"`).
+    /// The node's kind as a string. An op or memory space carries its payload
+    /// (`"IntBinaryOp(Add)"`, `"Load(RAM)"`), a float constant its raw bits
+    /// (`"FloatConst(<bits>)"`); other kinds are bare (`"IntConst"`,
+    /// `"CallOther"`, `"Region"`).
     fn kind(&self, py: Python<'_>) -> PyResult<String> {
-        // `Load` / `Store` carry an `rsleigh::VnSpace`, whose `Debug` is its
-        // internal shortcut byte. Render the space by the name `VnSpace`
-        // exposes, so the string a caller matches on is one they can write.
+        // A `VnSpace`'s `Debug` is its shortcut byte; render its name instead.
         self.with_node(py, |function, nid| match function.node_kind(nid) {
             NodeKind::Load(space) => {
                 format!(
@@ -180,21 +170,17 @@ impl PyNode {
         })
     }
 
-    /// Integer constant value, sign-extended at the declared width, at any
-    /// width: a Python `int` is arbitrary-precision, so `I256` / `I512` read
-    /// back here like any other. `None` when the value output isn't an
-    /// integer `IntConst`.
-    /// Booleans are 1-bit integers, so a bool constant surfaces as `0` / `-1`.
+    /// Integer constant value, sign-extended at its declared width (any
+    /// width), or `None` when the value output isn't an `IntConst`. A boolean
+    /// constant reads as `0` / `-1`.
     pub(crate) fn sint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.with_node(py, sint_of)?
             .map(|v| crate::bigint::ibig_to_py_int(py, &v))
             .transpose()
     }
 
-    /// Integer constant value, masked to the declared width, at any width: a
-    /// Python `int` is arbitrary-precision, so `I256` / `I512` read back here
-    /// like any other. `None` when the value output isn't an integer
-    /// `IntConst`.
+    /// Integer constant value, masked to its declared width (any width), or
+    /// `None` when the value output isn't an `IntConst`.
     pub(crate) fn uint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.with_node(py, uint_of)?
             .map(|v| crate::bigint::ubig_to_py_int(py, &v))
@@ -218,13 +204,9 @@ impl PyNode {
     }
 
     /// The varnode this node names, else `None`: for `InitialVar` the varnode
-    /// read at entry, for a `Call` the register it returns in, and for a
-    /// `CallOther` whatever varnode the sla assigns its result to: a
-    /// `unique` temporary (x86 `cpuid`), a tracked register (AArch64
-    /// `popcount32` writes `q0`), or nothing at all (MIPS `udiv`).
-    ///
-    /// A `Node` names a node, not one of its outputs, so a multi-output `Call`
-    /// answers for its FIRST value output, never for one clobber in particular.
+    /// read at entry, for a `Call` its return register (its first value
+    /// output, not a clobber), for a `CallOther` whatever varnode the sla
+    /// assigns its result to, if any.
     pub(crate) fn vn(&self, py: Python<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
         let vn = self.with_node(py, |function, nid| {
             if matches!(
@@ -243,13 +225,11 @@ impl PyNode {
         Ok(vn.map(crate::sleigh::PyVn::from_inner))
     }
 
-    /// Sorted, deduped machine-instruction addresses whose lift or subsequent
-    /// rewrite contributed to this node's value. Empty for structural kinds
-    /// (Entry, InitialMemory, InitialVar, Region, Phi, MemPhi).
+    /// Sorted, deduped machine-instruction addresses whose lift or rewrite
+    /// contributed to this node's value. Empty for structural kinds (Entry,
+    /// InitialMemory, InitialVar, Region, Phi, MemPhi).
     pub(crate) fn asm_fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.with_node(py, |function, nid| {
-            // The side table yields an unordered set; sort for the documented
-            // Python-facing order.
             let mut addrs: Vec<u64> = function
                 .side_tables()
                 .asm_fingerprint(nid)
