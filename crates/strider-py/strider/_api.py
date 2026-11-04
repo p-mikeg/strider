@@ -430,7 +430,8 @@ class ElfLifter(Lifter):
 
     def build_cfg(self, entry: int, opts: Optional[CfgOptions] = None) -> Cfg:
         """`Lifter.build_cfg` with the ELF-derived options `analyze` uses:
-        `$d` mapping symbols as `data_ranges` unless `opts` names some, and
+        `$d` mapping symbols as `data_ranges` and the entry's `<name>.cold`
+        symbols as `fragment_ranges`, each unless `opts` names some, and
         ppc64 ELFv2 local entries for `no_return_targets`. `entry` is an
         address; no symbol size bounds the build."""
         return self._build_cfg_elf(self._elf, entry, opts)
@@ -447,7 +448,9 @@ class ElfLifter(Lifter):
         A `str` entry's recorded size bounds the lift unless
         `opts.cfg.function_max_size` is set, and the bound drops
         `allow_code_before_start_addr`. The ELF's `$d` mapping symbols supply
-        `opts.cfg.data_ranges` unless it names some. A `no_return_targets`
+        `opts.cfg.data_ranges`, and the entry's `<name>.cold` /
+        `<name>.cold.N` symbols `opts.cfg.fragment_ranges`, each unless it
+        names some. A `no_return_targets`
         address or `per_address_ccs` key at a ppc64 ELFv2 symbol's `address`
         also covers its `Symbol.local_entry`.
 

@@ -148,6 +148,8 @@ pub struct PyCfgOptions {
     pub(crate) no_return_targets: rustc_hash::FxHashSet<u64>,
     /// Ranges the image marks as data, decoded only for the entry instruction.
     pub data_ranges: strider_cfg::DataRanges,
+    /// Code outside `bound` that is still this function's.
+    pub fragment_ranges: strider_cfg::DataRanges,
     /// The three tables' Python faces.
     known_targets_view: OnceLock<PyObject>,
     call_other_abis_view: OnceLock<PyObject>,
@@ -222,6 +224,7 @@ impl PyCfgOptions {
                         known_targets = MapArg(HashMap::new()),
                         call_other_abis = MapArg(HashMap::new()),
                         data_ranges = Vec::new(),
+                        fragment_ranges = Vec::new(),
                         no_return_targets = AddrSetArg(rustc_hash::FxHashSet::default())))]
     fn new(
         function_max_size: Option<u64>,
@@ -229,6 +232,7 @@ impl PyCfgOptions {
         known_targets: MapArg<HashMap<u64, KnownTarget>>,
         call_other_abis: MapArg<HashMap<String, CallOtherAbiArg>>,
         data_ranges: Vec<(u64, u64)>,
+        fragment_ranges: Vec<(u64, u64)>,
         no_return_targets: AddrSetArg,
     ) -> PyResult<Self> {
         let bound = function_bound(function_max_size, allow_code_before_start_addr)?;
@@ -241,7 +245,9 @@ impl PyCfgOptions {
                 .into_iter()
                 .map(|(name, abi)| (name, abi.0))
                 .collect(),
-            data_ranges: strider_cfg::DataRanges::try_new(data_ranges)
+            data_ranges: strider_cfg::DataRanges::try_new("data_ranges", data_ranges)
+                .map_err(pyo3::exceptions::PyValueError::new_err)?,
+            fragment_ranges: strider_cfg::DataRanges::try_new("fragment_ranges", fragment_ranges)
                 .map_err(pyo3::exceptions::PyValueError::new_err)?,
             no_return_targets: no_return_targets.0,
             seated,
@@ -285,6 +291,19 @@ impl PyCfgOptions {
             .collect()
     }
 
+    /// Address ranges `(start, end)`, end exclusive, outside the function's
+    /// extent that are still its code (GCC `<name>.cold` partitions), sorted
+    /// and merged. A branch into one is followed, and a fall-through past
+    /// one's end is `"past_function_end"`.
+    #[getter]
+    fn fragment_ranges(&self) -> Vec<(u64, u64)> {
+        self.fragment_ranges
+            .ranges()
+            .iter()
+            .map(|r| (r.start, r.end))
+            .collect()
+    }
+
     /// Indirect-branch answers supplied by the caller, as a read-only
     /// `{dispatch_address: (target_address, ...) | "return"}` mapping.
     #[getter]
@@ -321,13 +340,15 @@ impl PyCfgOptions {
         format!(
             "CfgOptions(function_max_size={}, allow_code_before_start_addr={}, \
              known_targets={{{} entries}}, call_other_abis={{{} entries}}, \
-             data_ranges=[{} ranges], no_return_targets={{{} entries}})",
+             data_ranges=[{} ranges], fragment_ranges=[{} ranges], \
+             no_return_targets={{{} entries}})",
             self.function_max_size()
                 .map_or_else(|| "None".to_owned(), |size| size.to_string()),
             py_bool(self.allow_code_before_start_addr()),
             self.known_targets.len(),
             self.call_other_abis.len(),
             self.data_ranges.ranges().len(),
+            self.fragment_ranges.ranges().len(),
             self.no_return_targets.len(),
         )
     }
