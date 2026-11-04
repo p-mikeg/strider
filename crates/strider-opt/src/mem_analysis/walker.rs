@@ -61,10 +61,8 @@ impl ClobberProbe for MemWalker<'_> {
                 {
                     return false;
                 }
-                // Anything but `Disjoint` clobbers; `load_forward` re-checks
-                // for an exact `Match` afterward.  Same store derivation as
-                // `verdict`, so the walk stops at exactly the stores that
-                // re-check sees.
+                // Anything but `Disjoint` clobbers; `MemQuery::reaching`
+                // re-asks `alias_verdict` for an exact `Match`.
                 alias_verdict(self.loc, store, self.policy) != AliasVerdict::Disjoint
             }
             NodeKind::Call { .. } => {
