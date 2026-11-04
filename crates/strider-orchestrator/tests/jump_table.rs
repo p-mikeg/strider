@@ -57,6 +57,9 @@ mod seated_arm_loss;
 #[path = "jump_table/table_seat_rules.rs"]
 mod table_seat_rules;
 
+#[path = "jump_table/thumb_byte_table_unbounded_index.rs"]
+mod thumb_byte_table_unbounded_index;
+
 #[path = "jump_table/trampoline_chain_depth.rs"]
 mod trampoline_chain_depth;
 
