@@ -26,9 +26,6 @@ pub(crate) trait PeepholePass {
     /// `root` matches [`Self::matches_kind`] and is live. Returns the value
     /// the root was redirected to, whose producer is re-examined; `None` when
     /// there is nothing to revisit.
-    ///
-    /// # Errors
-    /// Propagates the first error from the underlying rewrite.
     fn try_rewrite(
         &self,
         sweep: &mut Self::Sweep,
@@ -38,9 +35,6 @@ pub(crate) trait PeepholePass {
     ) -> Result<Option<ValueId>>;
 
     /// Runs once after every sweep; `changed` when it rewrote something.
-    ///
-    /// # Errors
-    /// Propagates the first error of the follow-up.
     fn after_sweep(&self, _edit: &mut crate::EditFunction<'_>, _changed: bool) -> Result<()> {
         Ok(())
     }
@@ -48,9 +42,6 @@ pub(crate) trait PeepholePass {
 
 /// Drives a [`PeepholePass`] over the live graph to a local fixpoint. `true`
 /// when some rewrite moved a use or killed a node.
-///
-/// # Errors
-/// Propagates the first error from `try_rewrite`.
 pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
     edit: &mut crate::EditFunction<'_>,

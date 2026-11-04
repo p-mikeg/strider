@@ -18,10 +18,6 @@ impl<'mem> OptCtx<'mem> {
 /// pipeline run another iteration.
 pub trait Optimizer: Sync {
     /// `edit` wraps a built function, so its entry is a valid `NodeId`.
-    ///
-    /// # Errors
-    ///
-    /// Returns the first error the pass hits.
     fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &OptCtx<'_>) -> crate::Result<()>;
 
     /// Whether the pass runs only once on a converged graph, which
@@ -45,10 +41,6 @@ pub trait Optimizer: Sync {
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
 ///
-/// # Errors
-///
-/// Returns the first error from [`Optimizer::apply`].
-///
 /// # Panics
 ///
 /// Panics with the rendered errors if the pass leaves `function` invalid.
@@ -70,10 +62,6 @@ pub fn run_one(
 }
 
 /// [`run_one`] without the validation.
-///
-/// # Errors
-///
-/// Returns the first error from [`Optimizer::apply`].
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_one_unvalidated(
     pass: &dyn Optimizer,
@@ -104,10 +92,6 @@ fn apply_counted(
 
 /// Post-pass sibling of [`run_one`]: the memory classes survive a pass that
 /// changed nothing, as between `run`'s post-passes.
-///
-/// # Errors
-///
-/// Returns the first error from [`Optimizer::apply`].
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_post(
     pass: &dyn Optimizer,
@@ -193,14 +177,10 @@ impl OptimizerPipeline {
     }
 
     /// Runs the passes to convergence, then each post-pass once, then
-    /// validates. Every exit hands the graph back drained, with every live
-    /// access's memory class stamped afresh.
-    ///
-    /// # Errors
-    ///
-    /// The first pass error, unvalidated, leaving `function` mutated up to
-    /// the failing rewrite; else a validation error; else non-convergence
-    /// after `MAX_ITERS` iterations, in which case the post-passes do not run.
+    /// validates; every exit drains the graph and restamps memory classes.
+    /// Errs with the first pass error (unvalidated, `function` mutated up to
+    /// it), else a validation error, else non-convergence after `MAX_ITERS`
+    /// iterations (post-passes skipped).
     pub fn run(&self, function: &mut strider_ir::Function, ctx: &OptCtx<'_>) -> crate::Result<()> {
         function.invalidate_analyses();
         let outcome = {

@@ -8,15 +8,10 @@ use strider_ir::{CtrlKey, DominatorTree, Function};
 
 /// Verifies that a function's return sites jump to the address it was entered
 /// with: the entry link register, or on a stack-push ISA the entry-SP slot a
-/// `call` pushed it into.  Saved return addresses and saved stack pointers are
-/// followed back through the stores that saved them.
-///
-/// A RAM store not placed on the entry stack, and any callee or user-op, leave
-/// the slot intact under
+/// `call` pushed it into. Saved return addresses and stack pointers are
+/// followed back through the stores that saved them; untracked writes are
+/// governed by
 /// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions::return_slots_survive_untracked_writes).
-/// Without it, such a store is located the way a load is and clobbers the slot
-/// unless a held claim puts it off the stack (`stack_global_disjoint`, a listed
-/// allocator).
 pub struct ReturnTargets<'f> {
     function: &'f Function,
     /// Every claim a query has decided, shared across sites.
@@ -91,7 +86,7 @@ impl<'f> ReturnTargets<'f> {
     /// function was entered with.
     ///
     /// A claim holds unless one it rests on fails, so a cycle of claims (a
-    /// loop rewriting a slot with its own value) holds.  Linear in the claims
+    /// loop rewriting a slot with its own value) holds. Linear in the claims
     /// reached.
     pub fn returns_to_caller(&mut self, ret: NodeId, target: ValueId) -> bool {
         let root = Claim::Holds {

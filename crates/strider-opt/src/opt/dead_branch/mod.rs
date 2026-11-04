@@ -2,9 +2,8 @@
 //! dispatch address: the live control output is replaced with the branch's
 //! control input, and the branch (side-effecting, so never culled) is killed.
 //!
-//! A dead subgraph can transiently stay reachable through live data (a dead
-//! `Call`'s memory into a live `MemPhi`); validation runs only after
-//! convergence. Every run then strips each join's dead predecessor slots.
+//! A dead subgraph can stay reachable through live data until every run
+//! strips each join's dead predecessor slots.
 
 use entity_utils::DenseEntitySet;
 use smallvec::SmallVec;
@@ -65,9 +64,7 @@ impl PeepholePass for DeadBranchElimination {
 
 /// Strips every `Region` predecessor slot whose control producer entry no
 /// longer reaches, with the matching `Phi` / `MemPhi` slots; `true` if it
-/// stripped one.
-///
-/// The caller resyncs the live set after a strip.
+/// stripped one. The caller resyncs the live set after a strip.
 fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     let entry = edit.entry();
     // An edge is dead iff its producer is control-unreachable, but the joins
