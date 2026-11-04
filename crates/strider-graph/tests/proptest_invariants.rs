@@ -634,6 +634,64 @@ fn detach_then_readd_inputs() {
 }
 
 #[test]
+fn detach_evicts_a_cached_node() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    let add = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    g.detach_node_inputs(add);
+    assert_ne!(g.create_node(TestKind::Add, [x, y], [TestVal::Int]), add);
+}
+
+/// `update_input` moves the use between use-lists; onto its own value it
+/// changes nothing, the list order included.
+#[test]
+fn update_input_moves_the_use() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    let a = region_node(&mut g);
+    let b = region_node(&mut g);
+    g.add_node_input(a, x);
+    g.add_node_input(b, x);
+    assert!(!g.value_has_one_use(x));
+    let head = g.value_first_use_id(x);
+    for node in [a, b] {
+        g.update_input(g.node_input_id_at(node, 0).unwrap(), x);
+        assert_eq!(g.value_first_use_id(x), head);
+    }
+    let b0 = g.node_input_id_at(b, 0).unwrap();
+
+    g.update_input(b0, y);
+    assert!(g.value_has_one_use(x));
+    assert_eq!(g.value_uses(y).collect::<Vec<_>>(), [(b, 0)]);
+    assert_use_list_consistent(&g);
+}
+
+#[test]
+fn exact_and_indexed_accessors_report_a_wrong_arity() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let region = region_node(&mut g);
+    g.add_node_input(region, x);
+    let err = g.node_inputs_exact::<2>(region).unwrap_err();
+    assert!(
+        err.to_string().contains("does not have exactly 2 inputs"),
+        "{err}"
+    );
+    let err = g.node_outputs_exact::<2>(g.producer(x)).unwrap_err();
+    assert!(
+        err.to_string().contains("does not have exactly 2 outputs"),
+        "{err}"
+    );
+    let err = g.node_input_id_at(region, 1).unwrap_err().to_string();
+    assert!(
+        err.contains("input index 1 out of bounds") && err.contains("len=1"),
+        "{err}"
+    );
+}
+
+#[test]
 fn remove_node_input_compacts_indices() {
     let mut g = TestGraph::new();
     let a = const_node(&mut g, 1);
