@@ -1,5 +1,4 @@
-//! Everything here is pure: no constructor touches lift-time scratch such as
-//! the active region or the SSA variable table.
+//! Pure constructors: none touches the active region or variable table.
 
 use anyhow::anyhow;
 use dashu_int::UBig;
@@ -28,8 +27,7 @@ pub trait IRBuilderExt: IRBuilder {
         self.function().node_outputs(node)[0]
     }
 
-    /// Narrows a wider value; no-ops at equal-or-narrower width, whether or not
-    /// the value is constant.
+    /// No-op at equal or narrower width.
     fn truncate_if_needed(&mut self, value_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
@@ -37,7 +35,6 @@ pub trait IRBuilderExt: IRBuilder {
             return Ok(value_id);
         }
 
-        // Interning at the target width masks.
         if let Some(v) = self.int_const(value_id).cloned() {
             return self.build_int_const(v, output_type);
         }
@@ -45,7 +42,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::Truncate, [value_id], output_type))
     }
 
-    /// Widens a narrower value; no-ops at equal-or-wider width.
+    /// No-op at equal or wider width.
     fn extend_if_needed(
         &mut self,
         value_id: ValueId,
@@ -69,8 +66,6 @@ pub trait IRBuilderExt: IRBuilder {
             return Ok(value_id);
         }
 
-        // Both types are integers by the checks above, so `eval::mask` is the
-        // width reduction and not a float's empty bit set.
         if let Some(v) = self.int_const(value_id).cloned() {
             let folded = match op {
                 ExtendOp::SignExtend => eval::sign_extend(&v, curr_output_type, output_type),
@@ -87,8 +82,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::Extend(op), [value_id], output_type))
     }
 
-    /// Keys on bit width, not byte size, so an `I1` still zero-extends up to
-    /// `I8` despite the two sharing a byte.
+    /// Keys on bit width, so `I1` zero-extends to `I8` despite sharing a byte.
     fn convert_to_int_if_needed(
         &mut self,
         value_id: ValueId,
@@ -105,8 +99,7 @@ pub trait IRBuilderExt: IRBuilder {
         self.extend_if_needed(truncate_id, output_type, ExtendOp::ZeroExtend)
     }
 
-    /// An integer input reinterprets bit-for-bit; another float precision
-    /// changes precision.
+    /// Bitcasts an integer; reprecisions a float.
     fn cast_to_float_if_needed(&mut self, input: ValueId, float_ty: ValueType) -> Result<ValueId> {
         let in_ty = self.value_type(input)?;
         if in_ty == float_ty {
@@ -119,15 +112,12 @@ pub trait IRBuilderExt: IRBuilder {
         }
     }
 
-    /// An `IntConst` at `I1`.
     fn build_boolean_const(&mut self, val: bool) -> ValueId {
-        // I1 is an integer, so the guard inside can never fire.
         self.build_int_const(u128::from(val), ValueType::I1)
             .expect("I1 is always an integer type")
     }
 
-    /// Masks `val` to the type's width, at any width: `Into<UBig>` takes
-    /// every unsigned primitive and a `UBig` itself.
+    /// Masks `val` to the type's width.
     fn build_int_const(&mut self, val: impl Into<UBig>, output_type: ValueType) -> Result<ValueId> {
         if !output_type.is_integer() {
             return Err(anyhow!(
@@ -138,12 +128,9 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
-    /// The `IntConst` of `ty` with the window `[shift, shift + window_bits)`
-    /// cleared and every other bit set: ANDing a container with it preserves
-    /// exactly the bits the window does not cover.
-    ///
-    /// The window is clipped by `ty`, not by its own arithmetic: whatever of
-    /// it lies above the width is simply not part of the value.
+    /// All ones at `ty` except the window `[shift, shift + window_bits)`,
+    /// clipped to `ty`: ANDed with a container it preserves the bits outside
+    /// the window.
     fn build_window_preserve_mask(
         &mut self,
         window_bits: u64,
@@ -154,14 +141,12 @@ pub trait IRBuilderExt: IRBuilder {
         self.build_int_const(eval::complement(&window, ty), ty)
     }
 
-    /// The all-ones `IntConst` of `ty`, at any integer width.
     fn build_all_ones(&mut self, ty: ValueType) -> Result<ValueId> {
         self.build_int_const(eval::all_ones(ty), ty)
     }
 
-    /// Strict: both operands must already carry `output_type`, a shift's count
-    /// included. p-code leaves that count any width and `validate` exempts it,
-    /// so a caller lowering a shift coerces the count first.
+    /// Strict: both operands must already carry `output_type`, a shift count
+    /// included (stricter than `validate`).
     fn build_int_binary_operation(
         &mut self,
         lhs_id: ValueId,
@@ -176,7 +161,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(kind, [lhs_id, rhs_id], output_type))
     }
 
-    /// Builds `x <op> IntConst(k):ty`; the constant lands on the right.
+    /// `x <op> IntConst(k):ty`.
     fn build_const_binop(
         &mut self,
         k: impl Into<UBig>,
@@ -188,7 +173,7 @@ pub trait IRBuilderExt: IRBuilder {
         self.build_int_binary_operation(x, kc, op, ty)
     }
 
-    /// Returns `value` untouched on a zero shift.
+    /// `value` itself on a zero shift.
     fn build_shift_by_const(
         &mut self,
         value: ValueId,
@@ -215,24 +200,21 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(kind, [value], output_type))
     }
 
-    /// Counts over the INPUT's width; `output_type` only sizes the result, so
-    /// the two are independent. Coercing the input would shift the count by the
-    /// width difference.
+    /// Counts over the input's width; `output_type` only sizes the result.
     fn build_popcount(&mut self, input_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         require_integer_type(self.value_type(input_id)?)?;
         require_integer_type(output_type)?;
         Ok(self.build_single_output_pure(NodeKind::Popcount, [input_id], output_type))
     }
 
-    /// Counts leading zeros over the INPUT's width; see [`Self::build_popcount`].
+    /// Counts over the input's width, as [`Self::build_popcount`].
     fn build_lzcount(&mut self, input_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         require_integer_type(self.value_type(input_id)?)?;
         require_integer_type(output_type)?;
         Ok(self.build_single_output_pure(NodeKind::Lzcount, [input_id], output_type))
     }
 
-    /// Outputs `I1`. Strict: both operands must already carry `operand_type`,
-    /// the comparison width.
+    /// Strict: both operands must already carry `operand_type`.
     fn build_int_cmp_operation(
         &mut self,
         lhs_id: ValueId,
@@ -248,13 +230,11 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(kind, [lhs_id, rhs_id], ValueType::I1))
     }
 
-    /// `bits` is the raw IEEE 754 pattern, masked to `output_type`'s width so
-    /// two patterns differing only above it dedup onto one node.
+    /// `bits` is raw IEEE 754, masked to `output_type`'s width.
     ///
     /// # Panics
     ///
-    /// On a non-float `output_type`, or one wider than `FloatConst`'s `u64`
-    /// payload (`F80` / `F128`), which would keep only the low 8 bytes.
+    /// On a non-float `output_type`, or one wider than 64 bits.
     fn build_float_const(&mut self, bits: u64, output_type: ValueType) -> ValueId {
         assert!(
             output_type.is_float() && output_type.byte_size() <= 8,
@@ -292,7 +272,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(kind, [coerced], output_type))
     }
 
-    /// Outputs `I1`. Strict: both operands must already share one float type.
+    /// Strict: both operands must already share one float type.
     fn build_float_cmp_op(
         &mut self,
         lhs: ValueId,
@@ -327,9 +307,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [value], float_type))
     }
 
-    /// An `IntConst` input up to 8 bytes folds to a `FloatConst` with the same
-    /// bits. Anything else builds the conversion node, `F80` and `F128`
-    /// included: `FloatConst` carries a `u64`.
+    /// Folds an `IntConst` of at most 8 bytes to a `FloatConst`.
     fn build_int_bits_to_float(
         &mut self,
         value: ValueId,
@@ -346,18 +324,15 @@ pub trait IRBuilderExt: IRBuilder {
                 float_type.byte_size(),
             ));
         }
-        // `FloatConst`'s payload is a u64, so a wider pattern cannot fold.
         if let Some(bits) = self.int_const_u128(value)
             && float_type.byte_size() <= 8
         {
-            // Already masked to the type's width.
             return Ok(self.build_float_const(bits as u64, float_type));
         }
         Ok(self.build_single_output_pure(NodeKind::IntBitsToFloat, [value], float_type))
     }
 
-    /// A `FloatConst` input up to 8 bytes folds to an `IntConst` with the same
-    /// bits. Anything else builds the conversion node.
+    /// Folds a `FloatConst` of at most 8 bytes to an `IntConst`.
     fn build_float_bits_to_int(&mut self, value: ValueId, int_type: ValueType) -> Result<ValueId> {
         require_float_value(self.function(), value)?;
         require_integer_type(int_type)?;
@@ -370,7 +345,6 @@ pub trait IRBuilderExt: IRBuilder {
                 int_type.byte_size(),
             ));
         }
-        // A u64 payload cannot represent a wider pattern.
         if let NodeKind::FloatConst(bits) = *self.function().kind_of_value(value)
             && input_ty.byte_size() <= 8
         {
