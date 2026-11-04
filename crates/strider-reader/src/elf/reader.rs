@@ -4,19 +4,11 @@ use super::load::{OwnedElf, RelocationMode};
 use super::sections::RegionSource;
 
 /// An [`rsleigh::MemReader`] over an ELF's fetch image and a
-/// [`crate::ReadOnlyMemory`] over its runtime-immutable mappings (plus `.got`,
-/// `.got2` and `.data.rel.ro` under `got_is_rom`): instruction fetch may
-/// reference a mapping that constant-load folding must not, so the two views
-/// differ.
+/// [`crate::ReadOnlyMemory`] over its ROM ([`OwnedElf::image`]).
 ///
-/// Its regions are windows into the [`OwnedElf`]'s bytes, so over a mapped
-/// file it holds the mapping: [`check_unchanged`](Self::check_unchanged)
-/// catches a file rebuilt between two operations, and a read past the end of
-/// a file truncated under a live reader, or a paging error on a network or 9p
-/// mount, is a SIGBUS (`STRIDER_NO_MMAP=1` reads the file instead; an
-/// [`OwnedElf::parse`] image owns its bytes). Once the reader is handed to
-/// `Sleigh` or a `Strider`, check through the [`OwnedElf`] that shares its
-/// mapping.
+/// Its regions window the [`OwnedElf`]'s mapping: a read past the end of a
+/// file truncated under it is a SIGBUS (`STRIDER_NO_MMAP=1` reads the file
+/// instead).
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     fetch: MemRegionsLookupTable,
@@ -24,10 +16,7 @@ pub struct ElfFileMemReader {
 }
 
 impl ElfFileMemReader {
-    /// `elf`'s views under `mode`, kind-dispatched: PT_LOAD program headers
-    /// for ET_EXEC / ET_DYN, allocatable sections at their
-    /// [`ElfSectionLayout`](super::ElfSectionLayout) bases otherwise. See
-    /// [`OwnedElf::image`].
+    /// `elf`'s views under `mode`, from [`RegionSource::Auto`].
     ///
     /// # Errors
     ///
@@ -40,9 +29,7 @@ impl ElfFileMemReader {
         })
     }
 
-    /// One `stat` of the file the regions window, as
-    /// [`OwnedElf::check_unchanged`]. Both tables window the one mapping, so
-    /// the fetch table answers for both.
+    /// [`OwnedElf::check_unchanged`] for the mapping both views window.
     ///
     /// # Errors
     ///
@@ -76,11 +63,8 @@ mod tests {
     use crate::ReadOnlyMemory;
     use crate::elf::ElfSectionLayout;
 
-    /// A single RWX PT_LOAD, the firmware / `ld -N` shape. Its bytes must be
-    /// FETCHABLE (it is the only mapping to decode from) yet must NOT answer
-    /// a ROM read: `LoadReadOnly` folds a constant-address load without
-    /// consulting the memory chain, so a writable mapping there would make a
-    /// store-then-reload fold to the file-initial byte.
+    /// A single RWX mapping, the firmware / `ld -N` shape: fetchable, but
+    /// not ROM.
     fn rwx_elf() -> Vec<u8> {
         use object::write::{Object, StandardSegment};
         use object::{Architecture, BinaryFormat, Endianness, SectionKind};

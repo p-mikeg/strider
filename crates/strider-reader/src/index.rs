@@ -1,12 +1,9 @@
 use crate::MemRegion;
 
-/// Ascending-start index over a slice of [`MemRegion`]s: which of them cover a
-/// request, answered through a max-end tree instead of a walk down every lower
-/// start.
-///
-/// The indices it yields are into that slice, which must not be reordered
-/// while the index is held. Equal-start regions are all indexed, the highest
-/// slice index among them first.
+/// Ascending-start index over a slice of [`MemRegion`]s, answering which
+/// cover a request through a max-end tree. Yields indices into the slice,
+/// which must not be reordered while held; among equal starts, the highest
+/// slice index first.
 #[derive(Debug)]
 pub struct RegionIndex {
     /// Ascending by `start`, equal starts in slice order.
@@ -61,14 +58,10 @@ impl RegionIndex {
 
     /// Slice indices of every region fully covering `[addr, addr + len)`,
     /// highest `start` first; a `len` of 0 asks only that `addr` be mapped.
-    ///
-    /// One O(log n) descent per index yielded, however deeply the image nests.
-    /// A read a region fully covers costs one descent. A partial read costs
-    /// two: the miss here, then the widest-serving fallback.
+    /// One O(log n) descent per index yielded.
     pub fn covering(&self, addr: u64, len: u64) -> Covering<'_> {
-        // Without the floor a region ENDING at `addr` would answer a
-        // zero-length request, which it does not contain. An end past
-        // `u64::MAX` matches nothing.
+        // The floor stops a region ending at `addr` answering a zero-length
+        // request. An end past `u64::MAX` matches nothing.
         let (upper, want) = match addr.checked_add(len.max(1)) {
             Some(want) => (self.entries.partition_point(|e| e.start <= addr), want),
             None => (0, 0),
@@ -87,9 +80,8 @@ impl RegionIndex {
             .entries
             .partition_point(|e| e.start <= addr)
             .checked_sub(1)?;
-        // Bytes served grow with the end address, so the widest region is the
-        // one attaining the prefix maximum, and the rightmost such entry is
-        // the highest start among ties.
+        // The widest region attains the prefix-max end; the rightmost such
+        // entry is the highest start among ties.
         let reach = self.entries[hi].reach;
         if reach <= addr {
             return None;
@@ -126,10 +118,8 @@ thread_local! {
     pub(crate) static DESCENTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Max-end segment tree over `ends`, which is in ascending-start order.
-///
-/// Answers, in O(log n): the last entry at or below a given index whose end
-/// reaches `want`.
+/// Max-end segment tree over `ends` (ascending-start order): in O(log n), the
+/// last entry at or below an index whose end reaches `want`.
 #[derive(Debug)]
 struct MaxEnd {
     /// `1`-rooted, leaves at `size..size * 2`.
