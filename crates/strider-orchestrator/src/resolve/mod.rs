@@ -19,9 +19,7 @@ use round::{Resolutions, Round};
 use sites::SiteTable;
 
 /// Caps the folds, and so the discovery depth: one fold seats one level of
-/// indirect branches. A site still growing at the cap is reported, never an
-/// `Err`. A run builds one more round than this, plus one per stale round at
-/// the cap.
+/// indirect branches. A site still growing at the cap is reported.
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
 /// `items`, counting each read under `cfg(test)`.
@@ -62,10 +60,6 @@ where
 {
     /// [`Strider::analyze`] with `classify` in place of
     /// [`strider_opt::classify_sites`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Strider::analyze`].
     pub(crate) fn resolve(
         &mut self,
         entry: u64,
@@ -155,10 +149,6 @@ impl<'s> LoopState<'s> {
 
     /// Folds `round`'s classifications into the seats, withdrawing a site on
     /// its second narrowing. Returns whether any site's seat changed.
-    ///
-    /// # Errors
-    ///
-    /// As [`SiteTable::fold`].
     fn fold(&mut self, round: &Round, resolutions: Resolutions) -> Result<bool> {
         let progress = self.sites.fold(&round.flowing_anchors(), resolutions)?;
         self.derived_incomplete
@@ -171,10 +161,6 @@ impl<'s> LoopState<'s> {
     }
 
     /// The result over `round`, the last one built.
-    ///
-    /// # Errors
-    ///
-    /// As [`SiteTable::fold`].
     fn finish(mut self, round: Round, end: Termination) -> Result<AnalyzeResult> {
         // The cap round's classifications fold into a copy, which only the
         // reports read: the published cfg is built from the seats as they
