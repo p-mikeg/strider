@@ -138,13 +138,8 @@ fn rewrite_rule_runtime_rejects_a_refused_template() {
     assert!(err.contains("targets a capture"), "{err}");
 }
 
-/// A capture bound on only SOME `one_of` arms must be rejected at construction.
-///
-/// Exactly one arm fires per match, so a rule whose RHS needs `k` has nothing to
-/// instantiate when the arm that does not bind `k` matches. Accepting it defers
-/// the failure to whichever binary first exercises that arm, where
-/// `instantiate`'s unbound-capture error is not a skip and aborts the pipeline
-/// for the whole function.
+/// A capture bound on only some `one_of` arms is rejected at construction,
+/// since only one arm fires per match.
 #[test]
 fn rewrite_rule_runtime_rejects_capture_bound_on_only_some_arms() {
     let x = Capture::new();

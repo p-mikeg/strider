@@ -34,14 +34,12 @@ impl<'mem> OptCtx<'mem> {
 ///     }
 /// }
 /// ```
-///
 pub trait Optimizer: Sync {
     /// `edit` wraps a built function, so its entry is a valid `NodeId`.
     ///
     /// # Errors
     ///
-    /// Returns the first error the pass hits, typically an IR validation
-    /// failure or a pattern-rewrite error.
+    /// Returns the first error the pass hits.
     fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &OptCtx<'_>) -> crate::Result<()>;
 
     /// Whether the pass runs only once on a converged graph, which
@@ -101,8 +99,6 @@ pub fn run_one_unvalidated(
     function: &mut strider_ir::Function,
     octx: &OptCtx<'_>,
 ) -> crate::Result<bool> {
-    // As `run` starts: a memo an edit since the last run can have outdated is
-    // dropped.
     function.invalidate_analyses();
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
@@ -142,10 +138,9 @@ pub fn run_post(
     apply_post(pass, &mut edit, octx)
 }
 
-/// One iteration of `run`'s post-pass loop: a pass that changed the graph
-/// drops the memos, since it may have rewired an address. The frame-escape
-/// verdict goes after every pass, since an edit through `function_mut` is
-/// not counted.
+/// One post-pass: a pass that changed the graph drops the memos. The
+/// frame-escape verdict goes after every pass, since an edit through
+/// `function_mut` is not counted.
 fn apply_post(
     pass: &dyn Optimizer,
     edit: &mut crate::EditFunction<'_>,
@@ -166,15 +161,13 @@ fn apply_post(
 /// convergence.
 const MAX_ITERS: u32 = 1024;
 
-/// An ordered pass list run in a shared fixed-point loop: every pass is
-/// called once per iteration in registration order, repeating until no pass
-/// moves a use or kills a node.  A pass whose last run changed nothing is
-/// skipped until some edit changes the live graph, so a pass must be a
-/// function of the graph, its options, the function's claims and the ROM;
-/// the claims cannot change during a run.
+/// An ordered pass list run in a shared fixed-point loop until no pass moves
+/// a use or kills a node. A pass whose last run changed nothing is skipped
+/// until some edit changes the graph, so a pass must be a function of the
+/// graph, its options, the function's claims and the ROM.
 ///
-/// Passes are held `&'static`: a unit-struct pass is rvalue-promoted at
-/// `add(&Pass)`, so a pipeline copies by reference and crosses threads.
+/// Passes are held `&'static` (a unit-struct pass is rvalue-promoted at
+/// `add(&Pass)`), so a pipeline copies by reference and crosses threads.
 #[derive(Clone, Default)]
 pub struct OptimizerPipeline {
     passes: Vec<&'static dyn Optimizer>,
@@ -199,11 +192,8 @@ impl OptimizerPipeline {
         self.passes.push(pass);
     }
 
-    /// A pass that runs ONCE on the converged graph, so it may rely on any
-    /// canonical shape the fixed-point passes settle on (e.g. `Add(_, Neg(_))`
-    /// for subtraction) rather than re-normalising. The memory classes
-    /// survive a post-pass that changes nothing; one that changes the graph
-    /// drops them.
+    /// A pass that runs once on the converged graph, so it may rely on its
+    /// canonical shapes.
     pub fn add_post_pass(&mut self, pass: &'static dyn Optimizer) {
         self.post_passes.push(pass);
     }
@@ -219,31 +209,17 @@ impl OptimizerPipeline {
         &self.post_passes
     }
 
-    /// Runs the passes to convergence, then each post-pass once in
-    /// registration order, then re-validates the graph.
-    ///
-    /// `function` must be built (`function.entry()` is a valid `NodeId`).
+    /// Runs the passes to convergence, then each post-pass once, then
+    /// validates. Every exit hands the graph back drained, with every live
+    /// access's memory class stamped afresh.
     ///
     /// # Errors
     ///
-    /// Returns the first error from any pass, or from the final validation. A
-    /// pass error skips the final validation step and wins, leaving `function`
-    /// mutated up to the failing rewrite.
-    ///
-    /// Exhausting the iteration cap also leaves `function` mutated, and
-    /// validated: a validation failure there is reported ahead of the
-    /// non-convergence.  The post-passes do not run.
-    ///
-    /// Every exit hands the graph back drained, with every live access's
-    /// memory class stamped afresh.
-    ///
-    /// Every pass reads [`strider_ir::Function::assumptions`]; a caller adds
-    /// claims with [`strider_ir::Function::assume`] before the run.
+    /// The first pass error, unvalidated, leaving `function` mutated up to
+    /// the failing rewrite; else a validation error; else non-convergence
+    /// after `MAX_ITERS` iterations, in which case the post-passes do not run.
     pub fn run(&self, function: &mut strider_ir::Function, ctx: &OptCtx<'_>) -> crate::Result<()> {
-        // A memo left by an earlier run or an edit since is dropped: a rewrite
-        // can move the address it names.
         function.invalidate_analyses();
-        // Scoped so the borrow of `function` ends before validation.
         let outcome = {
             let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
@@ -253,7 +229,6 @@ impl OptimizerPipeline {
             if outcome.is_err() {
                 edit.function().invalidate_analyses();
             }
-            // What `pattern`'s region filters read.
             crate::mem_analysis::stamp_all(&mut edit);
             outcome
         };
@@ -301,8 +276,6 @@ impl OptimizerPipeline {
                 *settled = (!pass_changed).then(|| edit.edits());
                 if pass_changed {
                     changed = true;
-                    // Drain so the next pass sees a culled graph, and drop the
-                    // memos a rewrite can invalidate.
                     edit.clean();
                     edit.function().invalidate_analyses();
                 }
@@ -352,8 +325,7 @@ mod tests {
     }
 
     /// A pass reports its own name, and a clone runs the same passes in the
-    /// same order: the copy every Python-driven analysis runs. Mutation: make
-    /// `add` drop its pass.
+    /// same order. Mutation: make `add` drop its pass.
     #[test]
     fn a_cloned_pipeline_runs_as_the_original() -> crate::Result<()> {
         let mut pipeline = super::OptimizerPipeline::new();
@@ -392,9 +364,6 @@ mod tests {
         let before = function.walk().count();
         pipeline.run(&mut function, &OptCtx::new(None))?;
         let after = function.walk().count();
-        // An already-folded constant cannot fold further, so the reachable
-        // count is stable. Pins that `run` does not mutate the graph beyond
-        // what the passes themselves produce.
         assert!(
             after <= before,
             "default pipeline must not GROW the reachable set"
@@ -448,9 +417,8 @@ mod tests {
         );
     }
 
-    /// The caller keeps the graph a capped run mutated, so it must not be one
-    /// the crate's own validator rejects: the cap runs the final validation
-    /// and reports its failure ahead of the non-convergence.
+    /// A capped run validates the graph it hands back, reporting a failure
+    /// ahead of the non-convergence.
     #[test]
     fn fixed_point_limit_still_validates() {
         use super::{Optimizer, OptimizerPipeline};
