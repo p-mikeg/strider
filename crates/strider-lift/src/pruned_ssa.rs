@@ -1,23 +1,13 @@
-//! Semi-pruned SSA value-phi placement: per region, the iterated dominance
-//! frontier of each variable's definition sites, with the Sleigh temporaries
-//! local to a region dropped from the placement.
+//! Semi-pruned SSA phi placement: the iterated dominance frontier of each
+//! variable's def sites, minus region-local Sleigh temporaries.
 //!
-//! Def-sites are collected in the lifter, but `record_insn_effects` is a
-//! HAND-WRITTEN mirror of the lift's write paths, not a shared code path with
-//! them, so a change to what the lift writes has to be made here as well. A
-//! def recorded that the lift never writes only costs a dead phi; one the lift
-//! writes and this misses loses the phi and miscompiles. Debug builds catch
-//! that half for every write the lift itself makes: each routes through
-//! [`FunctionLifter::write_variable`], which asserts the mirror covers it.
-//! [`strider_ir::FunctionBuilder::build_call`]'s post-call SP rebind is the
-//! one production write outside that funnel, made in strider-ir, which cannot
-//! reach the guard. [`FunctionLifter::record_cc_call_effects`] records SP for every call, and
-//! [`crate::Lifter::check_override_cc`] pins an override's stack pointer
-//! to the function's, so the varnode the rebind writes is always one the
-//! mirror recorded.
-//!
-//! The read half has the opposite polarity: a read it misses can drop a needed
-//! phi, so it over-approximates, and it governs UNIQUE temporaries alone.
+//! `record_insn_effects` is a hand-written mirror of the lift's writes: an
+//! extra def costs a dead phi, a missed one miscompiles. Debug builds assert
+//! every write through [`FunctionLifter::write_variable`] was recorded.
+//! [`strider_ir::FunctionBuilder::build_call`]'s SP rebind bypasses that
+//! funnel; it is covered because [`FunctionLifter::record_cc_call_effects`]
+//! records SP and [`crate::Lifter::check_override_cc`] pins an override's SP
+//! to the function's. Reads over-approximate, and matter for UNIQUE only.
 
 use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -35,9 +25,8 @@ pub(crate) type PhiPlacement = FxHashMap<RegionId, FxHashSet<InitialVnId>>;
 /// The regions defining each variable.
 pub(crate) type DefSites = FxHashMap<InitialVnId, FxHashSet<RegionId>>;
 
-/// The def-site scan's state: the regions defining each variable, what the
-/// region under scan has written so far, and the temporaries some region read
-/// before writing.
+/// Def sites, the current region's writes so far, and the temporaries some
+/// region reads before writing.
 #[derive(Default)]
 struct DefScan {
     defs: DefSites,
@@ -46,15 +35,9 @@ struct DefScan {
 }
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// Every write the lift emits from a region's PCODE, which is what phi
-    /// placement needs, plus the UNIQUE temporaries upward-exposed in some
-    /// region (Briggs's non-local names).
-    ///
-    /// Sleigh reuses one unique offset per constructor across every instance of
-    /// that instruction, so a temporary is written in almost every region and a
-    /// phi for it would land at almost every join. It is live across a region
-    /// boundary only where one machine instruction's pcode is split across
-    /// regions, which is what upward exposure detects.
+    /// Every region's writes, plus the UNIQUE temporaries upward-exposed in
+    /// some region (Briggs's non-local names). Sleigh reuses unique offsets
+    /// across instructions, so only these need phis.
     pub(crate) fn collect_def_sites(&self) -> Result<(DefSites, FxHashSet<InitialVnId>)> {
         let mut scan = DefScan::default();
         // Mirrors `bind_entry_address_register`, whose write no pcode names.
@@ -64,19 +47,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         for r in self.cfg.region_ids() {
             let region = &self.cfg.region_graph()[r];
             scan.written.clear();
-            // One resolver per region, fed every op in order, exactly as the
-            // lift feeds its own: the register a store resolves to must be the
-            // same on both sides or a write lands with no phi placed for it.
+            // Fed exactly as the lift feeds its own resolver.
             let mut consts = super::pcode_consts::PcodeConsts::default();
             for wrapped in &region.insns {
                 consts.observe(wrapped.addr, &wrapped.insn);
                 self.record_insn_effects(&wrapped.insn, r, &mut scan, &consts)?;
             }
-            // A `TailCall` region's pcode is only a `Branch`, yet
-            // `handle_tail_call` lifts it into a full CC `Call` plus `Return`.
-            // These defs place no phi (the region has no successors, so an
-            // empty dominance frontier); they are recorded so the mirror is
-            // total and `write_variable`'s check needs no exemption.
+            // `handle_tail_call` lifts a CC `Call` + `Return` no pcode names.
+            // They place no phi (no successors) but keep the mirror total.
             if let strider_cfg::RegionTerminator::TailCall { target } = region.terminator {
                 self.record_cc_call_effects(self.override_at(target.addr), r, &mut scan);
                 self.record_cc_return_reads(&mut scan);
@@ -85,9 +63,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         Ok((scan.defs, scan.nonlocal))
     }
 
-    /// A UNIQUE temporary no region reads before writing it: dead at every
-    /// region boundary, so a phi for it can feed nothing but other phis.
-    /// `id` comes from `vn_id_of`, hence is in the interner.
+    /// A UNIQUE temporary no region reads before writing: dead at every
+    /// region boundary.
     pub(crate) fn is_local_temporary(
         &self,
         id: InitialVnId,
@@ -97,9 +74,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             && self.builder.function().initial_vn(id).addr_space == rsleigh::VnSpace::UNIQUE
     }
 
-    /// Mirrors `build_cc_call`: reads the CC's argument registers and SP, then
-    /// writes its return and clobber registers, plus SP. Over-records SP, which
-    /// `build_call` only writes back for a nonzero `ret_stack_pop`.
+    /// Mirrors `build_cc_call`. Over-records SP, which `build_call` writes
+    /// only for a nonzero `ret_stack_pop`.
     fn record_cc_call_effects(
         &self,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
@@ -124,16 +100,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.add_def(&stack_vn, r, scan);
     }
 
-    /// Mirrors `build_cc_return`: every CC return register is read.
+    /// Mirrors `build_cc_return`.
     fn record_cc_return_reads(&self, scan: &mut DefScan) {
         for vn in self.builder.function().ret_val_regs() {
             self.add_read(&vn, scan);
         }
     }
 
-    /// The lift's single write funnel, so the hand-written mirror above can be
-    /// checked against it. A variable written in a region the mirror did not
-    /// record loses its phi at every join the region reaches.
+    /// The lift's write funnel, checked against the mirror in debug builds.
     pub(crate) fn write_variable(
         &mut self,
         vn: &rsleigh::Vn,
@@ -163,25 +137,17 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         scan: &mut DefScan,
         consts: &super::pcode_consts::PcodeConsts,
     ) -> Result<()> {
-        // Every pcode input is read before this op writes its own output. A
-        // space-id or user-op-id operand is CONST and resolves to nothing.
+        // Inputs are read before the output is written.
         for vn in &insn.inputs {
             self.add_read(vn, scan);
         }
         match insn.opcode {
-            // A call writes the CC's ret + clobber registers and adjusts SP,
-            // none of which appear as pcode outputs, so they come from the CC.
             Opcode::Call | Opcode::CallIndirect => {
                 self.record_cc_call_effects(self.call_override(insn), r, scan);
             }
-            // Mirrors `build_abi_call_other`: pcode output plus the ABI's
-            // implicit reads and writes. Over-records the output for the NoOp
-            // class, where `handle_call_other` drops it and emits no node at
-            // all.
+            // Mirrors `build_abi_call_other`; over-records the NoOp class.
             Opcode::CallOther => {
-                // Resolved through the same `built` call the lift uses, so an
-                // unresolvable ABI register name fails here exactly as it does
-                // there instead of silently placing no phi.
+                // Same `built` as the lift, so a bad ABI name fails here too.
                 let class = strider_cfg::user_op_of(insn, self.lifter.user_op_names()).and_then(
                     |(_, name)| {
                         classify_with(
@@ -205,12 +171,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     self.add_def(vn, r, scan);
                 }
             }
-            // A STORE into the REGISTER space writes a register, not memory:
-            // the sla addresses one that way when an instruction field picks
-            // it (ARM `vld1.N {dX[i]}`). Mirrors `handle_store` on both of
-            // its paths, the named register when the address resolves and the
-            // whole register file when it does not, so a def is recorded for
-            // exactly what is written.
+            // Mirrors `handle_store`'s REGISTER-space paths (ARM
+            // `vld1.N {dX[i]}`): the resolved register, else the whole file.
             Opcode::Store => {
                 if let Some(vn) = self.lifter.register_slot_of(insn, consts) {
                     self.add_def(&vn, r, scan);
@@ -222,12 +184,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     }
                 }
             }
-            // A CC `Return`: reads the return registers, writes nothing.
             Opcode::Return | Opcode::BranchIndirect => self.record_cc_return_reads(scan),
-            // Write no tracked variable.
             Opcode::Branch | Opcode::CondBranch | Opcode::Nop | Opcode::MultiEqual => {}
-            // Write only their pcode output. Listed, not `_`, so a new opcode
-            // must be classified here as in the dispatcher.
+            // Only their pcode output.
             Opcode::Copy
             | Opcode::Load
             | Opcode::IntEqual
@@ -299,8 +258,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         Ok(())
     }
 
-    /// A write to a non-tracked varnode (a RAM address) resolves to no
-    /// `InitialVnId` and is ignored.
+    /// Ignores an untracked (RAM) varnode.
     fn add_def(&self, vn: &rsleigh::Vn, r: RegionId, scan: &mut DefScan) {
         if let Some(id) = self.vn_id_of_container(vn) {
             scan.defs.entry(id).or_default().insert(r);
@@ -308,9 +266,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// A read reaching no write in its own region leaves the variable
-    /// upward-exposed. Tracked for UNIQUE temporaries alone, the only ones
-    /// [`Self::is_local_temporary`] prunes.
+    /// Marks a UNIQUE read with no earlier write in its region upward-exposed.
     fn add_read(&self, vn: &rsleigh::Vn, scan: &mut DefScan) {
         if vn.addr_space != rsleigh::VnSpace::UNIQUE {
             return;
