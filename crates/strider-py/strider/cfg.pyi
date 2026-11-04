@@ -56,28 +56,21 @@ class Cfg:
         """The p-code lifted from the machine instruction at `addr`, joined
         with `"; "`, or `None` when this CFG stored no decode for `addr`.
 
-        This is a lookup against decodes this CFG already made, so it is
-        correct even on architectures where decoding depends on accumulated
-        context (ARM/Thumb, MIPS16).
-
-        An instruction that lifts to zero p-code operations (`endbr64`, say)
-        leaves no trace here, so it is indistinguishable from an address that
-        was never decoded: both give `None`. `Lifter.pcode_at` re-decodes and
-        returns `""` for that case instead.
+        A lookup against this CFG's own decodes, so it is right across an
+        ISA-mode switch (ARM/Thumb, MIPS16). An instruction that lifts to no
+        p-code ops (`endbr64`) also gives `None`; `Lifter.pcode_at` returns
+        `""` for it.
         """
         ...
     def fingerprint_pcode(self, node: Node) -> list[tuple[int, str]]:
         """The asm addresses recorded on `node` paired with their p-code
         text, sorted by address.
 
-        The lookup companion to `Node.asm_fingerprint()`, which gives the
-        addresses alone. An address not present in this CFG is skipped rather
-        than emitted with empty text. Structural nodes (Entry, InitialMemory,
-        InitialVar, Region, phis) carry no fingerprint and give `[]`.
+        An address this CFG has no decode for is skipped. Structural nodes
+        (Entry, InitialMemory, InitialVar, Region, phis) give `[]`.
 
         Raises `StriderError` for a `node` from a function another `Cfg`
-        lifted: a fingerprint is machine addresses, which collide across
-        images.
+        lifted.
         """
         ...
     def entry(self) -> int:
@@ -95,46 +88,35 @@ class Cfg:
     @property
     def incomplete(self) -> list[tuple[int, IncompleteReason]]:
         """Every machine address this CFG cannot vouch for, with why, sorted
-        and deduplicated. Empty is complete. `analyze` and `build_cfg` return
-        whatever this names, so check it before trusting an absence ("no
-        store to X"): code behind a listed address may be missing.
+        and deduplicated. Empty is complete. Check it before trusting an
+        absence ("no store to X"): code behind a listed address may be missing.
 
-        `"unresolved_branch"` and `"unverified_seed"` name a dispatch site, the
-        address `CfgOptions(known_targets=...)` seeds; the other five a branch
-        target, which a direct edge reaches too:
+        `"unresolved_branch"` and `"unverified_seed"` name a dispatch site; the
+        other five a branch target:
 
         - `"unresolved_branch"`: an indirect branch with no complete successor
-          set, among them a return whose target is not provably the caller's
-          and that you did not seed `"return"`.
-        - `"unverified_seed"`: a seated answer nothing verified, such as a site
-          seated with only your `known_targets`, every tail call the CFG
-          consumed, your own `"return"` seat, and a return your `"return"`
-          seed covers whose target is not provably the caller's.
+          set, including a return not provably to the caller and not seeded
+          `"return"`.
+        - `"unverified_seed"`: a seated answer nothing verified: a
+          `known_targets` seat, a consumed tail call, or a `"return"` seed.
         - `"isa_mode_conflict"`: reached in two ISA modes; the losing path
           decodes in the other.
         - `"interior_target"`: off every instruction boundary, or a region
           start a later decode stepped over.
-        - `"unmapped_target"`: no byte of the image backs it. A seeded arm
-          that is unmapped, or whose code falls through here, is dropped,
-          unless a call precedes the bytes, which then does not return. A
-          branch, or a conditional's not-taken side, from an arm's code to here
-          leaves through a stub and keeps the arm, as does an arm landing on an
-          address a direct edge already reported here.
+        - `"unmapped_target"`: no byte of the image backs it.
         - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
-          it as data. A seeded arm leading to such bytes is dropped, unless
-          its code falls through to them past a call, which then does not
-          return; so is one whose decode fails for a reason no other entry
-          names, named here at its start. An arm landing on an address a direct
-          edge already reported here keeps that edge's stub.
-        - `"past_function_end"`: where code falls through past
-          `function_max_size`, and so tail-calls this address, or where a call
-          not to a `no_return_targets` entry would return; a seeded arm whose
-          code falls through here is dropped and named here.
+          it as data.
+        - `"past_function_end"`: code falls through past `function_max_size`
+          (a tail call to this address), or a call not to a
+          `no_return_targets` entry would return here.
 
-        From `build_cfg` this is that one build: every dispatch it left without
-        an edge and every seed it seated. From `analyze` the target reasons
-        accumulate over the resolver's rounds and the site reasons are the
-        final round's.
+        A seeded arm that falls through into an unmapped, undecodable or
+        past-the-end target is dropped and named there, unless a call precedes
+        those bytes (the call then does not return). A branch from an arm's
+        code to an unmapped target leaves through a stub and keeps the arm.
+
+        From `analyze`, target reasons accumulate over the resolver's rounds
+        and site reasons are the final round's.
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:
@@ -156,6 +138,10 @@ class CfgOptions:
     permits blocks below the entry address; it raises `ValueError` beside a
     size, which already fixes the extent.
 
+    `known_targets` maps a dispatch address to its targets, or to `"return"`
+    to seat it as a function return, instead of deferring to the classifier.
+    An empty list seats nothing.
+
     `call_other_abis` classifies Sleigh user-op names, winning over the
     built-in table. Each value is a `strider.sleigh.CallOtherAbi`: one of
     the four footprint-free classes, or `CallOtherAbi.custom(...)` naming
@@ -164,35 +150,25 @@ class CfgOptions:
     `no_return_targets` lists direct-call targets that never return (`exit`,
     `panic`): a call to one ends its block, under `build_cfg` and `analyze`
     alike. A target is the address the call instruction names. A Thumb or
-    MIPS16 one is listed at its decoded, even address: mask the ISA bit off a
-    symbol value (`addr & ~1`). A ppc64 ELFv2 call sharing the callee's TOC
-    lands at `Symbol.local_entry`, usually 8 bytes past `Symbol.address`.
-    `ElfLifter.analyze` and `ElfLifter.build_cfg` add that local entry for
-    every listed `address`; a plain `Lifter` takes the set as given, so list
-    `local_entry` there.
+    MIPS16 one is listed at its even address (`addr & ~1`). A ppc64 ELFv2
+    call sharing the callee's TOC lands at `Symbol.local_entry`, which
+    `ElfLifter.analyze` and `ElfLifter.build_cfg` add for every listed
+    `address`; on a plain `Lifter`, list `local_entry` yourself.
 
     `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
     data rather than code (an ARM literal pool): a branch or fall-through into
     one is reported in `Cfg.incomplete` as `"undecodable_target"`, never
     decoded. The instruction at the entry address decodes even inside one.
     `ElfLifter.analyze` and `ElfLifter.build_cfg` fill it from the ELF's
-    mapping symbols when empty.
-    A range that ends at or below its start raises `ValueError`: it names no
-    address, and accepting it silently dropped the pool the caller meant to
-    mark.
+    mapping symbols when empty. A range that ends at or below its start
+    raises `ValueError`.
     """
 
-    # Read-only: these are getters with no setter, so a plain attribute
-    # declaration would let a type checker accept `o.x = ...`, which raises at
-    # runtime.
     @property
     def function_max_size(self) -> Optional[int]: ...
     @property
     def allow_code_before_start_addr(self) -> bool: ...
-    # The two tables are read-only VIEWS onto what the constructor stored,
-    # built once and handed out unchanged: a seeded table can hold tens of
-    # thousands of entries, and `analyze` reads it. `no_return_targets` is
-    # likewise built once.
+    # Read-only views, built once.
     @property
     def known_targets(self) -> Mapping[int, Union[tuple[int, ...], Literal["return"]]]: ...
     @property
