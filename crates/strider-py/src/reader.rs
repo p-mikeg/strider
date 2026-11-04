@@ -370,6 +370,8 @@ struct SymbolTable {
     by_addr: Vec<usize>,
     /// Which symbols cover an address, over `[start, covered_end)`.
     extents: RegionIndex,
+    /// Each function's sized cold fragments, by its name.
+    cold_fragments: HashMap<String, Vec<std::ops::Range<u64>>>,
 }
 
 /// A build id as the hex string every tool prints it in.
@@ -541,6 +543,28 @@ impl PyLoadedElf {
             .clone())
     }
 
+    /// The cold fragments of every function symbol at `entry`.
+    pub(crate) fn cold_fragments(&self, entry: u64) -> PyResult<strider_cfg::DataRanges> {
+        self.with_symbols(|t| {
+            // A Thumb symbol's `start` is one below its address.
+            let first = t
+                .by_addr
+                .partition_point(|&i| t.syms[i].start() < entry.saturating_sub(1));
+            let names = t.by_addr[first..]
+                .iter()
+                .map(|&i| &t.syms[i])
+                .take_while(|s| s.start() <= entry)
+                .filter(|s| s.is_function && s.address == entry)
+                .map(|s| s.name.as_str());
+            strider_cfg::DataRanges::new(
+                names
+                    .filter_map(|name| t.cold_fragments.get(name))
+                    .flatten()
+                    .cloned(),
+            )
+        })
+    }
+
     /// The local entries of every ELF and symbol file; empty off ppc64.
     pub(crate) fn local_entries(&self) -> PyResult<Arc<strider_cfg::LocalEntries>> {
         if let Some(entries) = self.memo.local_entries.get() {
@@ -675,13 +699,36 @@ impl PyLoadedElf {
         let mut by_addr: Vec<usize> = (0..syms.len()).collect();
         by_addr.sort_by_key(|&i| syms[i].start());
         let extents: Vec<(u64, u64)> = syms.iter().map(|s| (s.start(), s.covered_end())).collect();
+        let mut cold_fragments: HashMap<String, Vec<std::ops::Range<u64>>> = HashMap::new();
+        for sym in syms.iter().filter(|s| s.is_function) {
+            if let (Some(base), Some(size)) = (cold_fragment_base(&sym.name), sym.size) {
+                cold_fragments
+                    .entry(base.to_owned())
+                    .or_default()
+                    .push(sym.start()..sym.start().saturating_add(size));
+            }
+        }
         SymbolTable {
+            cold_fragments,
             extents: RegionIndex::from_ranges(&extents),
             syms,
             by_name,
             by_addr,
         }
     }
+}
+
+/// `<base>` of a GCC hot/cold split's unlikely half, `<base>.cold` or
+/// `<base>.cold.<digits>`. A `.part.N` / `.constprop.N` / `.isra.N` clone is
+/// a separate callee, not a fragment.
+fn cold_fragment_base(name: &str) -> Option<&str> {
+    let unnumbered = match name.rsplit_once('.') {
+        Some((head, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => name,
+    };
+    unnumbered
+        .strip_suffix(".cold")
+        .filter(|base| !base.is_empty())
 }
 
 /// The symbol of `group` covering `address`, ranking aliases by having a

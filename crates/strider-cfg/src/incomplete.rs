@@ -76,12 +76,14 @@ reasons! {
     UndecodableTarget => "undecodable_target",
     /// A fall-through, not-taken path or conditional instruction's skip of
     /// itself ran off a [`FunctionBound::Size`](crate::FunctionBound::Size)
+    /// or [`CfgOptions::fragment_ranges`](crate::CfgOptions::fragment_ranges)
     /// end, named at the first address past the last decoded instruction. It
     /// leaves through a `TailCall` stub; a call returning there ends
     /// `NoReturn` unless its target is in
     /// [`CfgOptions::no_return_targets`](crate::CfgOptions::no_return_targets).
-    /// Off a seeded arm the arm is dropped instead. Never under
-    /// [`FunctionBound::Open`](crate::FunctionBound::Open).
+    /// Off a seeded arm the arm is dropped instead. Under
+    /// [`FunctionBound::Open`](crate::FunctionBound::Open), only past a
+    /// fragment.
     PastFunctionEnd => "past_function_end",
 }
 

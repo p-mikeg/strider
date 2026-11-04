@@ -219,7 +219,8 @@ def test_cfg_options_repr():
     assert repr(strider.cfg.CfgOptions()) == (
         "CfgOptions(function_max_size=None, allow_code_before_start_addr=False, "
         "known_targets={0 entries}, call_other_abis={0 entries}, "
-        "data_ranges=[0 ranges], no_return_targets={0 entries})"
+        "data_ranges=[0 ranges], fragment_ranges=[0 ranges], "
+        "no_return_targets={0 entries})"
     )
     assert repr(
         strider.cfg.CfgOptions(
@@ -228,7 +229,8 @@ def test_cfg_options_repr():
     ) == (
         "CfgOptions(function_max_size=16, allow_code_before_start_addr=False, "
         "known_targets={0 entries}, call_other_abis={0 entries}, "
-        "data_ranges=[1 ranges], no_return_targets={1 entries})"
+        "data_ranges=[1 ranges], fragment_ranges=[0 ranges], "
+        "no_return_targets={1 entries})"
     )
 
 

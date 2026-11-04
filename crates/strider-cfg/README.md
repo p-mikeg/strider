@@ -13,7 +13,8 @@ IR from a `Cfg`.
 - `Region`: maximal straight-line p-code entered only at `start_addr`, ending
   at its `RegionTerminator`. It can end mid-instruction; `contains_addr` owns
   bytes down to the p-code index.
-- `CfgOptions<'a>`: the function `bound`, borrowed tables (`known_targets`,
+- `CfgOptions<'a>`: the function `bound` plus `fragment_ranges` (cold
+  partitions also inside the function), borrowed tables (`known_targets`,
   `derived_targets` which win at their exact key, `no_return_targets`,
   `call_other_overrides`, `local_entries`) and `data_ranges`, never decoded.
 - Queries on `Cfg` (`regions`, `region_containing`, `region_predecessors`,
