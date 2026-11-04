@@ -1,18 +1,12 @@
 """Interactive IR explorer: a small local server plus a graphviz frontend.
 
-`visualize(target)` serves a page showing the whole graph. Pass
-`whole=False` for the neighborhood (inputs and outputs) around one node
-instead, which stays usable on a large function. Click a node to re-center on
-it, click an edge to walk along it, shift-click to mark it. The search bar runs
-a strider pattern, with autocomplete, and highlights the matching nodes.
+`visualize(target)` serves a page showing the whole graph; `whole=False`
+shows the neighborhood around one node instead, for large functions. Click a
+node to re-center, click an edge to walk it, shift-click to mark. The search
+bar runs a strider pattern and highlights the matches.
 
-Drawn node ids are IR node ids, so pattern matches line up one to one with what
-you see. Per-use constant boxes (`c*`) and virtual nodes (`v*`: if.true,
-if.false, Post Call) are not navigation targets.
-
-The render controls in the toolbar are built from `/controls`. Most of those
-defaults are the explorer's own, not the renderer binding's: the page opens
-uncapped where the binding caps depth and node count.
+Drawn node ids are IR node ids. Per-use constant boxes (`c*`) and virtual
+nodes (`v*`: if.true, if.false, Post Call) are not navigation targets.
 """
 
 from __future__ import annotations
@@ -41,9 +35,8 @@ if TYPE_CHECKING:
 
 
 def _pattern_names() -> list[str]:
-    """What a query may name: the `strider.pattern` builders, plus `Capture`
-    for a named binding. The rest of the module is type aliases, protocols and
-    result classes, and `field` reaches a pattern only through a method, which
+    """What a query may name: the `strider.pattern` builders and `Capture`.
+    `field` is excluded: its result is used through a method, which
     `_eval_pattern_node` forbids."""
     from strider import pattern as _p
 
@@ -64,12 +57,9 @@ _CONST_TYPES = (bool, int, float, str, type(None))
 
 
 def _eval_pattern_node(node: ast.expr, names: dict[str, Any]) -> Any:
-    """Evaluate one node of a pattern expression. Builder calls on
-    `strider.pattern` names, literals and their lists are the whole language.
-
-    Nothing may reach an attribute: `eval` with stripped builtins is not a
-    sandbox, since `().__class__.__base__.__subclasses__()` walks from any
-    literal to `os.system`.
+    """Evaluate one node of a pattern expression: builder calls, literals
+    and lists of them. No attribute access: from any literal,
+    `().__class__.__base__.__subclasses__()` reaches `os.system`.
     """
     if isinstance(node, ast.Constant):
         if isinstance(node.value, _CONST_TYPES):
@@ -104,8 +94,7 @@ def _eval_pattern_node(node: ast.expr, names: dict[str, Any]) -> Any:
 
 
 def _run_pattern(function: Function, expr: str) -> list[int]:
-    """Evaluate the `strider.pattern` expression `expr` against `function`,
-    returning the node ids of the deduplicated matches, e.g.
+    """The sorted root node ids of `expr`'s matches in `function`, e.g. for
     `load(addr=int_add(initial_var(), int_const()))`."""
     from strider import pattern as _p
 
@@ -114,8 +103,8 @@ def _run_pattern(function: Function, expr: str) -> list[int]:
     return sorted({m.root for m in function.find_all(pat)})
 
 
-#: Presentation for each render knob: label, tooltip and the range the UI and
-#: the server clamp to. Defaults live in the renderer binding, never here.
+#: Each render knob's label, tooltip and clamp range. Defaults come from the
+#: renderer binding.
 _KNOB_UI = {
     "depth": {
         "kind": "int",
@@ -171,9 +160,8 @@ def _controls(
     names: Sequence[str],
     **literal_defaults: bool | int,
 ) -> list[dict[str, Any]]:
-    """Control descriptors for `names`, each default read from `render`'s own
-    signature unless `literal_defaults` states one, which is how the page
-    opens on a different setting from the binding's own default."""
+    """Control descriptors for `names`, defaulting from `render`'s signature
+    unless `literal_defaults` overrides."""
     params = inspect.signature(render).parameters
     return [
         {
@@ -188,8 +176,8 @@ def _controls(
 
 
 def _parse_control(ctl: dict[str, Any], text: str) -> bool | int:
-    """One query-string control value, clamped to the control's range. Raises
-    `ValueError` on a value that is not a number / flag at all."""
+    """One query-string control value, clamped to its range. Raises
+    `ValueError` on a non-number / non-flag."""
     if ctl["kind"] == "bool":
         low = text.lower()
         if low in ("1", "true", "yes", "on"):
@@ -207,8 +195,8 @@ def _parse_control(ctl: dict[str, Any], text: str) -> bool | int:
 def _dot_params(
     query: dict[str, list[str]], controls: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """The renderer knobs for one `/dot` request: every declared control,
-    falling back to the control's default when the query omits it."""
+    """Every control's value for one `/dot` request, defaulted when
+    omitted."""
     out: dict[str, Any] = {}
     for ctl in controls:
         text = (query.get(ctl["name"]) or [""])[0]
@@ -231,15 +219,13 @@ class _Visualizer(Protocol):
     def completions(self) -> list[str]: ...
 
 
-#: A neighborhood knob set to 0 means "no limit". The renderers compare against
-#: these bounds rather than allocating from them, so an unreachable bound is how
-#: "unlimited" is spelled.
+#: What a 0 ("no limit") neighborhood knob becomes; the renderers only compare
+#: against it.
 _NO_LIMIT = 1 << 62
 
 
 def _uncap(params: dict[str, Any]) -> dict[str, Any]:
-    """`params` with every 0-valued neighborhood knob turned into a bound the
-    walk never reaches."""
+    """`params` with each 0 neighborhood knob set to `_NO_LIMIT`."""
     return {
         k: (_NO_LIMIT if k in ("depth", "hub_cap", "max_nodes") and v == 0 else v)
         for k, v in params.items()
@@ -259,8 +245,7 @@ class _IrVisualizer:
         return self._fn.entry_node()
 
     def controls(self) -> list[dict[str, Any]]:
-        """The render knobs. The page opens uncapped and on the readable view;
-        only `count_producers` takes the renderer binding's default."""
+        """The render knobs; the page opens uncapped and pretty."""
         return _controls(
             self._fn.neighborhood_dot,
             ["whole", "depth", "hub_cap", "max_nodes", "count_producers", "pretty"],
@@ -272,10 +257,7 @@ class _IrVisualizer:
         )
 
     def dot(self, center: int, params: dict[str, Any]) -> str:
-        """DOT for the neighborhood around `center`, `params` holding one
-        value per declared control. `pretty=False` falls back to the
-        structure-faithful view for when the readable one cannot be trusted.
-        `whole` renders every node and ignores the neighborhood knobs."""
+        """DOT around `center`, or of every node under `whole`."""
         pretty = params.get("pretty", True)
         if params.pop("whole", False):
             return cast("str", self._fn.to_dot(pretty=pretty))
@@ -294,8 +276,7 @@ class _CfgVisualizer:
     """A `Cfg` as a `_Visualizer`."""
 
     def __init__(self, cfg: Cfg, whole: bool = True, depth: int = 0) -> None:
-        """Explore `cfg`, building its per-region disassembly text once for
-        reuse by every text search."""
+        """Explore `cfg`; its region disassembly is built once for search."""
         self._cfg = cfg
         self._whole = whole
         self._depth = depth
@@ -306,9 +287,8 @@ class _CfgVisualizer:
         return self._cfg.entry()
 
     def controls(self) -> list[dict[str, Any]]:
-        """The render knobs, every default the explorer's own. The raw view and
-        the hub cap are `Function` concepts (the raw view is keyed by IR node
-        id), so a query naming either knob is ignored."""
+        """The render knobs. `pretty` and `hub_cap` are `Function`-only, so a
+        query naming either is ignored."""
         return _controls(
             self._cfg.neighborhood_dot,
             ["whole", "depth", "max_nodes"],
@@ -318,8 +298,7 @@ class _CfgVisualizer:
         )
 
     def dot(self, center: int, params: dict[str, Any]) -> str:
-        """DOT for the regions around `center`, `params` holding one value per
-        declared control. `whole` renders every region."""
+        """DOT around `center`, or of every region under `whole`."""
         if params.pop("whole", False):
             return cast("str", self._cfg.to_dot())
         return self._cfg.neighborhood_dot(center, **_uncap(params))
@@ -342,29 +321,24 @@ class _CfgVisualizer:
         return []
 
 
-#: How long a response write may make NO progress before the connection is
-#: given up on. Progress re-arms it, so it binds only the idle case. A client
-#: draining 4 KiB every 50 ms measured an 11 s window with no send accepted, so
-#: a lower bound is a false positive on a healthy slow reader.
+#: How long a response write may make no progress before the connection is
+#: dropped; progress re-arms it. A healthy slow reader can stall a send ~10 s.
 _WRITE_STALL_SECONDS = 60.0
 
-#: Longest one blocked `send` waits before the write loop re-checks
-#: `_Server.stopping`. This, not the stall deadline, is what bounds `shutdown`
-#: and interpreter exit with a body in flight.
+#: Longest one blocked `send` waits before re-checking `_Server.stopping`;
+#: bounds `shutdown` with a body in flight.
 _WRITE_POLL_SECONDS = 0.5
 
-#: Total budget for one response, `_RESPONSE_START_SECONDS` plus a byte
-#: allowance at `_MIN_BODY_RATE`. The aggregate bound: a client accepting a
-#: trickle re-arms the no-progress window forever and holds the
-#: single-threaded loop. The largest asset, the 1.4 MB `/viz.js`, needs 17 s of
-#: the 22.6 s these two allow it.
+#: Total budget for one response: `_RESPONSE_START_SECONDS` plus the body at
+#: `_MIN_BODY_RATE` bytes/s, so a trickling client cannot hold the
+#: single-threaded loop forever.
 _RESPONSE_START_SECONDS = 20.0
 _MIN_BODY_RATE = 512 * 1024
 
 
 def _is_loopback(host: str) -> bool:
-    """Whether `host` is the name `localhost` or any loopback address: all of
-    127/8, `::1`, and the IPv4-mapped form `ipaddress` calls global."""
+    """Whether `host` is `localhost` or a loopback address, IPv4-mapped
+    included."""
     if host == "localhost":
         return True
     try:
@@ -375,14 +349,9 @@ def _is_loopback(host: str) -> bool:
 
 
 class _DeadlineReader(io.RawIOBase):
-    """The raw socket layer under `rfile`, under a whole-request deadline.
-
-    Before each `recv` it sets the socket timeout to what is LEFT of the
-    budget, so a client trickling bytes runs out rather than renewing it.
-
-    Under the buffer, not over it: `BufferedReader.readline` loops `recv`
-    inside ONE call, so arming per `readline` would hand every one of those
-    recvs a fresh window.
+    """The raw socket layer under `rfile`, with a whole-request deadline:
+    each `recv` gets only what is left of the budget, so a trickling client
+    runs out. Below the buffer because `readline` loops `recv` in one call.
     """
 
     def __init__(self, inner: Any, conn: Any, budget: float) -> None:
@@ -393,8 +362,7 @@ class _DeadlineReader(io.RawIOBase):
         self._deadline = time.monotonic() + budget
 
     def restart(self) -> None:
-        """Start the budget at the top of a request rather than at connection
-        accept. `do_GET` closes the connection, so this fires once per one."""
+        """Restart the budget at the top of a request."""
         self._deadline = time.monotonic() + self._budget
 
     def readable(self) -> bool:
@@ -415,35 +383,22 @@ class _DeadlineReader(io.RawIOBase):
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
-    """The explorer's HTTP surface, served from `self.server`'s visualizer.
+    """The explorer's HTTP surface over `self.server`'s visualizer.
 
-    Module level, not nested in `_serve`: a locally defined class is a gc
-    cycle through its own `__mro__`, and a nested one's method closures would
-    own the `Function` / `Cfg`, deferring their drop to whatever thread
-    happens to collect next.
+    Module level, not nested in `_serve`: a local class is a gc cycle and its
+    closures would own the `Function` / `Cfg`, deferring their drop to
+    whichever thread collects next.
     """
 
-    #: The whole-request read budget, armed per `recv` by `_DeadlineReader`.
-    #: Without it one connection that sends nothing wedges everything: the
-    #: server is single-threaded so no later request is served, `shutdown`
-    #: cannot stop a loop inside `finish_request` rather than `select`, and the
-    #: serving thread is not a daemon, so the interpreter's own join never
-    #: returns either. The write direction is bounded separately, by a
-    #: no-progress deadline plus the stop flag (`_write_body`).
+    #: The whole-request read budget. Without it, one silent connection wedges
+    #: the single-threaded, non-daemon server and with it `shutdown` and exit.
     timeout = 2.0
 
     def _write_body(self, b: bytes) -> None:
-        """Send `b` in `_WRITE_POLL_SECONDS` slices, so the write stays
-        interruptible. `wbufsize` is 0, so the alternative is one `sendall`
-        under one socket timeout, and no value for it works: short enough for
-        `shutdown` to reach the loop truncates a slow client mid-body against a
-        `Content-Length` already promising the rest, longer parks the
-        single-threaded loop for that whole deadline.
-
-        Three bounds, since `send` is one syscall and a timeout means nothing
-        went out: `deadline` re-arms on progress and cuts an idle peer, `total`
-        caps the one connection that takes a trickle forever, and `stopping` is
-        what bounds `shutdown` and interpreter exit.
+        """Send `b` in `_WRITE_POLL_SECONDS` slices so the write stays
+        interruptible; one `sendall` timeout would either truncate a slow
+        client or park the loop. `deadline` (re-armed on progress) cuts an
+        idle peer, `total` a trickling one, and `stopping` bounds `shutdown`.
         """
         stopping = cast("_Server", self.server).stopping
         view = memoryview(b)
@@ -471,32 +426,25 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     ) -> None:
         b = body.encode() if isinstance(body, str) else body
         try:
-            # The headers go out under `wfile`'s `sendall`; a poll slice is
-            # ample for a few hundred bytes into a fresh connection, and the
-            # read deadline the socket still carries could be near zero.
+            # For the headers' `sendall`; the read deadline may be near zero.
             self.connection.settimeout(_WRITE_POLL_SECONDS)
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(b)))
-            # `/dot` and `/pattern` echo binary-derived text back; without this
-            # a browser may sniff one as HTML and run it.
+            # Responses echo binary-derived text; never sniff it as HTML.
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self._write_body(b)
         except (BrokenPipeError, ConnectionError, TimeoutError, socket.timeout):
-            # Cancelled (clicked again), or too slow to read. Either way this
-            # connection is finished: retrying the send would spend the whole
-            # deadline over again on a socket already known to be stalled.
+            # Cancelled or too slow to read: the connection is finished.
             self.close_connection = True
         finally:
             self.connection.settimeout(self.timeout)
 
     def _host_is_local(self, addr: Any) -> bool:
-        """Whether `Host` names this server by a loopback address.
-
-        Absent (HTTP/1.0) is allowed: a rebinding attack is driven by a browser
-        and browsers always send one. A caller that bound a non-loopback
-        interface asked for outside reach, so every `Host` passes there.
+        """Whether `Host` names this server by a loopback address. An absent
+        `Host` passes (browsers always send one), and so does any `Host` on a
+        server bound to a non-loopback interface.
         """
         host = self.headers.get("Host")
         if host is None:
@@ -504,8 +452,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         parts: list[Any] = list(addr) if isinstance(addr, tuple) else []
         if not _is_loopback(str(parts[0]) if parts else ""):
             return True
-        # An IPv6 literal is bracketed and holds colons of its own, so the port
-        # is whatever follows `]`, not whatever follows the last colon.
+        # A bracketed IPv6 literal's port follows `]`.
         name = host.strip()
         name = (
             name[1:].split("]", 1)[0]
@@ -515,17 +462,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         return _is_loopback(name)
 
     def do_GET(self) -> None:
-        # Close after each response. This server is single-threaded, so it
-        # must never sit blocked in a keep-alive read on an idle connection:
-        # that would stall every other request until the idle connection
-        # times out.
+        # No keep-alive: an idle connection would block the single thread.
         self.close_connection = True
         srv = cast("_Server", self.server)
-        # A page in the user's browser can resolve its own hostname to a
-        # loopback address and reach this server, reading `/dot`, the whole
-        # rendered graph of the binary under analysis. `Host` is what
-        # distinguishes that from a real local request, and no browser lets a
-        # page forge it.
+        # DNS rebinding: a web page resolving its own name to loopback could
+        # read the graph; browsers do not let a page forge `Host`.
         if not self._host_is_local(cast(Any, srv.server_address)):
             self._send("bad host", ctype="text/plain", code=421)
             return
@@ -562,12 +503,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def setup(self) -> None:
         super().setup()
-        # `timeout` on its own is a per-`recv` deadline, which a client
-        # dripping one byte at a time resets with every byte, blocking the
-        # single-threaded loop forever. `_DeadlineReader` replaces the RAW
-        # layer under `rfile` so that one whole-request budget arms every
-        # `recv`, the ones `BufferedReader.readline` loops over inside a single
-        # call included.
+        # `timeout` alone is per `recv`, which a dripping client renews
+        # forever; `_DeadlineReader` makes it one whole-request budget.
         budget = self.timeout if self.timeout is not None else 2.0
         raw = self.rfile
         if isinstance(raw, io.BufferedIOBase):
@@ -595,11 +532,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 
 def _address_family(host: str) -> int:
-    """`AF_INET6` for a literal IPv6 host, else `AF_INET`.
-
-    `TCPServer` is AF_INET, so a caller passing `::1` otherwise gets a
-    `gaierror` out of `bind` rather than a loopback server.
-    """
+    """`AF_INET6` for a literal IPv6 host, else `AF_INET`."""
     try:
         socket.inet_pton(socket.AF_INET6, host)
     except OSError:
@@ -613,10 +546,8 @@ def _url(host: str, port: int) -> str:
 
 
 class _Server(socketserver.TCPServer):
-    """Carries the visualizer, its entry node and its render controls for
-    `_Handler` to read.
-
-    Single-threaded: one request at a time.
+    """The visualizer, entry node and render controls `_Handler` reads.
+    Single-threaded.
     """
 
     allow_reuse_address = True
@@ -625,111 +556,66 @@ class _Server(socketserver.TCPServer):
         self.visualizer: _Visualizer | None = visualizer
         self.entry = visualizer.entry()
         self.controls = visualizer.controls()
-        #: Set on entry to the serve loop. `BaseServer.shutdown` blocks
-        #: forever unless `serve_forever` is already running, so a `shutdown`
-        #: racing the start must wait for this.
+        #: Set on entry to the serve loop; a racing `shutdown` waits for it.
         self.started = threading.Event()
-        #: Set by `shutdown` before it stops the loop, so a handler blocked
-        #: writing to a client that is not reading gives up rather than holding
-        #: the single-threaded loop for the whole no-progress deadline.
+        #: Set by `shutdown` first, so a handler blocked writing gives up.
         self.stopping = threading.Event()
-        #: Set once the thread that served is out of the serve loop and has
-        #: dropped the visualizer. What `shutdown` waits on when the thread
-        #: is the caller's own and outlives the loop, so joining it cannot
-        #: return.
+        #: Set once the serving thread has left the loop and dropped the
+        #: visualizer.
         self.finished = threading.Event()
-        #: The thread started to serve, which ends when the loop does. None
-        #: for a foreground `visualize`, which serves on its caller's thread.
+        #: The background serving thread; None for a foreground `visualize`.
         self.worker: threading.Thread | None = None
         self.address_family = _address_family(address[0])
         super().__init__(address, _Handler)
 
     def serve_forever(self, poll_interval: float = 0.5) -> None:
-        # Marked here, not from `service_actions`: that runs only AFTER a
-        # request completes, so a first connection that holds the handler would
-        # leave `started` clear and `shutdown` would give up on a running
-        # server. A racing `shutdown` is safe either way, since its
-        # `__shutdown_request` is read on the first loop iteration.
+        # Not from `service_actions`, which runs only after a request
+        # completes.
         self.started.set()
         super().serve_forever(poll_interval)
 
 
-#: Explorer servers currently serving, keyed by the port they bound.
-#: `visualize` blocks, so a caller running it on another thread holds no handle
-#: on the server; this registry is how `shutdown` reaches it, and joins its
-#: `worker`.
+#: Running explorer servers by bound port, for `shutdown` to reach.
 _RUNNING: dict[int, _Server] = {}
 
 
-#: Bound on the join that follows a drained serve loop; the thread is out of
-#: the Rust frame long before this.
+#: Bound on joining a drained serve loop's thread.
 _SHUTDOWN_JOIN_SECONDS = 5.0
 
-#: How long `shutdown` waits for a stopped serve loop to drain. A render
-#: already inside a handler cannot be preempted, so past this the loop is left
-#: to exit on its own rather than holding the caller, and interpreter exit,
-#: for the whole of it.
+#: How long `shutdown` waits for a stopped loop to drain; an in-flight render
+#: cannot be preempted, so past this the loop exits on its own.
 _SHUTDOWN_STOP_SECONDS = 5.0
 
-#: How long `shutdown` waits for a server registered but not yet inside
-#: `serve_forever`. Exceeding it means the serve loop never started, so there
-#: is nothing to stop.
+#: How long `shutdown` waits for a registered server's loop to start.
 _SHUTDOWN_START_SECONDS = 5.0
 
 
 def shutdown(port: int | None = None) -> list[int]:
-    """Stop explorer servers started by `visualize`, unblocking whatever
-    thread is parked in it. Returns the ports it stopped.
-
-    `port=None` stops every running explorer. Safe to call when nothing is
-    running (returns `[]`), and safe to call from a thread other than the one
-    serving.
-
-    Joins the serving thread as well as stopping the server: the serve loop
-    exits while the thread is still unwinding out of the Rust frame, and an
-    interpreter that finalizes with a thread in that state aborts the process.
-
-    Every wait here is bounded, so a render already inside a handler does not
-    hold this call for its whole duration; such a port is not reported as
-    stopped, and its loop exits once the render returns.
-
-    Registered with `threading._register_atexit`, NOT `atexit`: CPython's
-    `Py_FinalizeEx` joins non-daemon threads BEFORE running `atexit` handlers,
-    so an `atexit` hook would never run and the process would hang on the join
-    instead.
+    """Stop the explorer on `port`, or every one when `None`, and join its
+    serving thread (finalizing with it inside Rust aborts the process).
+    Returns the ports stopped; `[]` when nothing runs. Callable from any
+    thread. Waits are bounded: a port mid-render is not reported, and its
+    loop exits once the render returns. Runs at interpreter exit.
     """
-    # A snapshot either way: a serving thread pops its own entry as its loop
-    # exits, which is a mutation under both iterations.
+    # A snapshot: a serving thread pops its own entry as it exits.
     running = list(_RUNNING.items())
     targets = running if port is None else [(p, s) for p, s in running if p == port]
     current = threading.current_thread()
     stopped = []
-    # Every server first, before waiting on any: a handler writing a body polls
-    # this, so the loop it holds is reachable within `_WRITE_POLL_SECONDS`.
+    # Flag every server before waiting on any.
     for _p, srv in targets:
         srv.stopping.set()
     for p, srv in targets:
-        # `BaseServer.shutdown` waits on an event `serve_forever` clears on
-        # entry and sets on exit, so calling it before the loop starts blocks
-        # forever.
         if not srv.started.wait(_SHUTDOWN_START_SECONDS):
-            # This server was not stopped, so the flag must not stay set: a
-            # later `_write_body` would send headers and then give up.
+            # Not stopped: a set flag would fail a later `_write_body`.
             srv.stopping.clear()
             continue
-        # Not `BaseServer.shutdown`: that waits on its own event with no
-        # timeout, so a handler mid-render holds this call for the whole
-        # render. Setting the request flag is the half of it that stops the
-        # loop; `serve_forever` clears the flag again as it leaves. `finished`
-        # is the same drain point, under a bound.
+        # `BaseServer.shutdown`'s stop half, without its unbounded wait.
         srv._BaseServer__shutdown_request = True  # type: ignore[attr-defined]
         if srv.finished.wait(_SHUTDOWN_STOP_SECONDS):
             stopped.append(p)
     for p, srv in targets:
-        # Nothing to drain out of a loop that never ran; joining the thread
-        # serving us would deadlock, and it is already past the frame this
-        # exists to drain. A foreground `visualize` serves on its CALLER's
-        # thread, which outlives the serve loop, so it has no worker to join.
+        # Skip a loop that never ran, our own thread, and a foreground server.
         worker = srv.worker
         if p not in stopped or worker is None or worker is current:
             continue
@@ -738,10 +624,7 @@ def shutdown(port: int | None = None) -> list[int]:
     return stopped
 
 
-# Runs BEFORE the non-daemon-thread join, which is the only point at which a
-# parked serve loop can still be stopped; `atexit` is too late (see `shutdown`).
-# Falls back to `atexit` on an interpreter without the private hook, where an
-# explorer left running is no worse off than before.
+# Not `atexit`: finalization joins non-daemon threads before `atexit` runs.
 if hasattr(threading, "_register_atexit"):
     threading._register_atexit(shutdown)  # pyright: ignore[reportAttributeAccessIssue]
 else:  # pragma: no cover - CPython has had this since 3.9
@@ -757,39 +640,27 @@ def visualize(
     whole: bool = True,
     background: bool = False,
 ) -> int:
-    """Start the explorer for `target`, a `Function` from `analyze` or a
-    `Cfg` from `build_cfg` / `analyze`. Blocks serving requests until
-    interrupted, then returns the port it had bound.
+    """Serve the explorer for `target`, a `Function` or a `Cfg`, printing
+    its URL. Blocks until interrupted, then returns the bound port.
 
-    Opens on the entire graph; `whole=False` starts on a neighborhood around
-    the entry instead, and the toolbar's `whole` toggle switches between them
-    from the page. A neighborhood hides nodes without saying so, which is why
-    the whole graph is the default, but a function of a few thousand nodes can
-    keep the layout engine busy for a while.
+    Opens on the whole graph (slow to lay out at a few thousand nodes);
+    `whole=False` opens on a neighborhood around the entry. The neighborhood
+    knobs open uncapped (0 is no limit); an integer `depth` seeds the depth
+    control. A negative or non-integer `depth` (`bool`, `float`) raises
+    `ValueError`.
 
-    The neighborhood knobs (depth, hub cap, max nodes) open uncapped, and are
-    set from the page; 0 means no limit on each. `depth=None` keeps that, while
-    an integer seeds the toolbar's depth control instead. A negative `depth`,
-    or one that is not an integer (a `bool`, a `float`), raises `ValueError`.
-
-    `background=True` serves on a thread instead and returns the port straight
-    away, so the calling thread keeps querying while the browser is open --
-    stop it with `shutdown(port)`, which joins that thread as well as stopping
-    the server, since a thread still parked in the serve loop at interpreter
-    exit aborts the process.
-
-    Either way a render reads the arch's name table, not a decoder, so the
-    server renders while this thread keeps analysing."""
+    `background=True` serves on a thread and returns the port at once; stop
+    it with `shutdown(port)`. Rendering does not block analysis on the
+    calling thread."""
     if depth is not None:
         try:
-            # `bool` is an `int` to `operator.index`, but not a depth.
+            # `operator.index` accepts `bool`.
             if isinstance(depth, bool):
                 raise TypeError
             depth = operator.index(depth)
         except TypeError:
             raise ValueError(f"depth: {str(depth)!r} is not an integer") from None
         if depth < 0:
-            # The control clamps to its min of 0, and 0 is the uncapped sentinel.
             raise ValueError(f"depth must be >= 0, got {depth}")
     seed = min(depth or 0, cast("int", _KNOB_UI["depth"]["max"]))
     tn = type(target).__name__
@@ -809,15 +680,10 @@ def _serve(
     port: int = 0,
     background: bool = False,
 ) -> int:
-    """Serve the explorer over any visualizer-shaped object, printing the URL
-    for the caller to open, and return the port it bound. Blocks serving
-    requests until interrupted, unless `background`.
-
-    `background` serves on a NON-DAEMON thread, so an interpreter exiting with
-    the explorer still up joins the thread rather than aborting inside its
-    Rust frame; `shutdown` is registered to stop it first, so the join
-    completes. Binding happens on THIS thread, before the worker starts, so a
-    port already in use raises here instead of vanishing into the thread."""
+    """Serve `visualizer`, printing the URL, and return the bound port.
+    Blocks unless `background`, which serves on a non-daemon thread (a daemon
+    one would abort inside Rust at exit). Binds on this thread, so a port in
+    use raises here."""
     srv = _Server((host, port), visualizer)
     bound_port: int = srv.server_address[1]
 
@@ -829,15 +695,11 @@ def _serve(
         finally:
             _RUNNING.pop(bound_port, None)
             srv.server_close()
-            # `shutdown` runs on another thread and outlives this frame holding
-            # `srv`, so drop the `Function` / `Cfg` here.
+            # `shutdown` may still hold `srv`; drop the `Function` / `Cfg` now.
             srv.visualizer = None
             srv.finished.set()
 
-    # Registered before the loop starts: the port is already bound, so a
-    # `shutdown()` racing this must find the server. It carries its own
-    # `started` guard, which is what keeps `BaseServer.shutdown` off a loop
-    # that never ENTERED: that call blocks until the loop EXITS.
+    # Before the loop starts, so a racing `shutdown()` finds it.
     _RUNNING[bound_port] = srv
     if background:
         srv.worker = threading.Thread(
@@ -846,8 +708,6 @@ def _serve(
         try:
             srv.worker.start()
         except BaseException:
-            # Nothing will ever drain a registration whose thread never ran,
-            # and the listening socket has no other owner.
             _RUNNING.pop(bound_port, None)
             srv.server_close()
             raise
@@ -856,7 +716,7 @@ def _serve(
         print(f"strider explorer -> {_url(host, bound_port)}  ({how} to stop)")
         print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
     except BaseException:
-        # A foreground server never reaches its loop, which is what drains it.
+        # A foreground server never reaches the loop that would drain it.
         if not background:
             _RUNNING.pop(bound_port, None)
             srv.server_close()

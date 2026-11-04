@@ -1,10 +1,8 @@
 """Type stubs for strider.template: the build side of a rewrite.
 
-`strider.pattern.Pat` is the match side (the `find`); `Template` is the build
-side (the `replace`): the node, op and constant constructors plus
-`var(capture)`. `Function.rewrite(find, replace)` and `rewrite_all` take a
-`Template`, a `Capture` or a capture's name as a `str`; a `Pat` is refused,
-nested or not.
+`Function.rewrite(find, replace)` and `rewrite_all` take as `replace` a
+`Template`, a `Capture` or a capture's name; a `Pat` is refused, nested or
+not.
 """
 
 from __future__ import annotations
@@ -16,34 +14,26 @@ from .pattern import Capture, ExtendOpName, IntCmpOpName
 __all__: list[str]
 
 class Template:
-    """A type-checked expression describing what a rewrite builds.
-
-    Construct one with the free functions below and pass it as `replace` to
-    `Function.rewrite(find, replace)` or `Function.rewrite_all(pairs)`.
-    """
+    """A type-checked expression describing what a rewrite builds, passed as
+    `replace` to `Function.rewrite` / `rewrite_all`."""
     ...
 
-#: A build-side operand accepts a `Template`, a raw `int` (an `int_const`), or a
-#: bare `Capture` (sugar for `var(c)`).
+#: A build-side operand: a `Template`, a raw `int` (an `int_const`), or a
+#: `Capture` (`var(c)`).
 TemplateLike = Union[Template, Capture, int]
 
 def var(c: Capture) -> Template:
-    """Substitute the node bound to `c` on the matched left-hand side. The
-    only build-side wildcard."""
+    """Substitute the node bound to `c` on the matched left-hand side."""
 def capture_typed(c: Capture, inner: Union[Template, int]) -> Template:
     """Build `inner` with its output at the width of the value bound to `c`,
     for an operand nothing else gives a width:
     `int_popcount(capture_typed(a, int_const(0xff)))`. A `Capture` or `var()`
-    as `inner` raises `StriderError`: it keeps the type of the value it
-    bound."""
+    as `inner` raises `StriderError`."""
 def int_const(value: int) -> Template:
-    """Build an integer constant whose stored value, wrapped into the output
-    width, is `value`. `value` has no width cap; one wider than every value
-    type (512 bits) raises. Its width is the
-    one it is evaluated at: an operand's width, a shift count's shift's (a
-    count too wide for it saturates rather than wraps), or the root's. Where
-    nothing gives one, as at a `Popcount` operand, the rewrite is refused;
-    type it with `capture_typed`."""
+    """Build an integer constant whose stored value, wrapped into the width it
+    is evaluated at, is `value` (a shift count too wide saturates). A value
+    wider than 512 bits raises. Where nothing gives a width, as at a
+    `Popcount` operand, the rewrite is refused; use `capture_typed`."""
 def bool_const(value: bool) -> Template:
     """Build a 1-bit boolean constant equal to `value`."""
 def float_const(bits: int) -> Template:

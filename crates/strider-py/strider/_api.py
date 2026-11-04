@@ -1,4 +1,4 @@
-"""High-level Python facade: the ELF loader and the `ElfLifter` it returns.
+"""The ELF loader and the `ElfLifter` it returns.
 
 ```python
 import strider
@@ -7,8 +7,7 @@ cfg, function, unresolved = lift.analyze("function_name")
 matches = function.find_all(strider.pattern.call())
 ```
 
-For non-ELF or custom sources, build a `Lifter` directly with
-`strider.lift.lifter(arch, mem, rom=None)`.
+For other sources use `strider.lift.lifter(arch, mem, rom=None)`.
 """
 
 from __future__ import annotations
@@ -18,16 +17,13 @@ import stat as _stat
 import struct
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Union
 
-# Resolve the extension submodule by its full dotted path so `_ext` is
-# unambiguous regardless of what `__init__.py` binds into the package
-# namespace.
+# By full dotted path, independent of what `__init__.py` binds.
 import importlib as _importlib
 
 _ext = _importlib.import_module("strider._strider")
 
 if TYPE_CHECKING:
-    # `_ext` is an opaque module to a checker, so its attributes come back as
-    # `Any`; the stub imports below are the same classes with their real types.
+    # `_ext` attributes are `Any` to a checker; these are the typed stubs.
     from .cfg import Cfg, CfgOptions
     from .lift import AnalyzeResult, Lifter, LifterOptions
     from .pattern import CaptureKey, LoadPat, Match, Pat, StorePat, ValueLike
@@ -42,12 +38,11 @@ else:
 
 StriderError = _ext.StriderError
 
-#: What the loaders accept as a filesystem path: a `str`, a `pathlib.Path`,
-#: or any object implementing `__fspath__`.
+#: A filesystem path: `str` or any `os.PathLike[str]`.
 StrPath = Union[str, "os.PathLike[str]"]
 
 
-# e_machine codes per the System V ABI gABI and each architecture supplement.
+# e_machine codes (System V gABI).
 _EM_386 = 3
 _EM_MIPS = 8
 _EM_PPC = 20
@@ -67,26 +62,20 @@ _EF_MIPS_ABI_NAMES = {0x2000: "O64", 0x3000: "EABI32", 0x4000: "EABI64"}
 # `EF_MIPS_ARCH_ASE_MICROMIPS`: the image's code is microMIPS.
 _EF_MIPS_MICROMIPS = 0x0200_0000
 
-# PowerPC `KERNELBASE`: Linux links its own text at 0xc000_0000 (ppc32) or
-# 0xc000_0000_0000_0000 (ppc64), which is `TASK_SIZE` on ppc32 and far above
-# the user address space on ppc64, so no userland image's entry point can
-# reach it. The kernel is built `-mno-altivec -mno-vsx`, and its convention
-# names no vector register.
+# PowerPC Linux `KERNELBASE`: at or above the user address space, so no
+# userland entry point reaches it.
 _PPC32_KERNELBASE = 0xC000_0000
 _PPC64_KERNELBASE = 0xC000_0000_0000_0000
 
 
 class _ElfHeader:
-    """Minimal ELF header reader: enough to pick the right `SleighArch` and
+    """The ELF header fields that pick the `SleighArch` and
     `CallingConvention` preset."""
 
     __slots__ = ("is_64bit", "is_little_endian", "e_machine", "e_entry", "e_flags")
 
     def __init__(self, path: str) -> None:
-        # Checked before opening: opening a FIFO read-only BLOCKS until a
-        # writer appears, so `load_elf` on one never returns. `os.stat`
-        # follows symlinks and does not open, so a link to a regular file
-        # still passes and a pipe cannot stall the check itself.
+        # Before opening: opening a FIFO blocks until a writer appears.
         if not _stat.S_ISREG(os.stat(path).st_mode):
             raise ValueError(f"{path!r}: not a regular file")
         with open(path, "rb") as f:
@@ -105,8 +94,7 @@ class _ElfHeader:
         self.is_little_endian = ei_data == 1
         order = "<" if self.is_little_endian else ">"
         (self.e_machine,) = struct.unpack(order + "H", header[18:20])
-        # `e_entry` is the first of the three addresses, at offset 24 on both
-        # classes; 0 on a relocatable object, which has no entry point.
+        # `e_entry` is at offset 24 on both classes; 0 on a relocatable object.
         addr_fmt = order + ("Q" if self.is_64bit else "I")
         size = 8 if self.is_64bit else 4
         (self.e_entry,) = (
@@ -114,8 +102,7 @@ class _ElfHeader:
             if len(header) >= 24 + size
             else (0,)
         )
-        # `e_flags` follows the three addresses: offset 36 on ELF32, 48 on
-        # ELF64. PowerPC64 carries its ABI level in the low two bits.
+        # `e_flags`: offset 36 on ELF32, 48 on ELF64.
         off = 48 if self.is_64bit else 36
         self.e_flags = (
             struct.unpack(order + "I", header[off : off + 4])[0]
@@ -125,8 +112,8 @@ class _ElfHeader:
 
 
 def _refuse_micromips(header: _ElfHeader, remedy: str) -> None:
-    """Every MIPS preset decodes an ISA-bit address as MIPS16e, so a
-    microMIPS image's functions would lift wrong."""
+    """Refuse a microMIPS image: every MIPS preset decodes an ISA-bit address
+    as MIPS16e."""
     if header.e_machine == _EM_MIPS and header.e_flags & _EF_MIPS_MICROMIPS:
         raise ValueError(
             f"unsupported microMIPS image: strider has no microMIPS preset; {remedy}"
@@ -137,23 +124,14 @@ def _arch_and_cc_for_elf(
     header: _ElfHeader,
     is_arm_be8: bool = False,
 ) -> tuple[SleighArch, CallingConvention]:
-    """Pick the `SleighArch` and `CallingConvention` preset matching this ELF.
-    Raises `ValueError` for an unsupported e_machine, for an ELF32 MIPS
-    ABI other than O32, and for a microMIPS image.
+    """The `SleighArch` and `CallingConvention` preset for this ELF. Raises
+    `ValueError` for an unsupported e_machine, an ELF32 MIPS ABI other than
+    O32, and a microMIPS image.
 
-    The convention is the userland one on every architecture but PowerPC,
-    where an `e_entry` at or above `KERNELBASE` selects the kernel flavour:
-    kernel code is built `-mno-altivec -mno-vsx`, so naming the AltiVec
-    windows there would track twelve 16-byte varnodes on every function for
-    nothing. x86's kernel ABI (`x86_linux_kernel`, `-mregparm=3`) has no
-    header bit to detect and stays an explicit `cc=`.
-
-    ARM defaults to little-endian `arm`; a big-endian image is
-    `arm_be_kernel` when `is_arm_be8` and `arm_be` otherwise. Its convention
-    follows the `e_flags` float-ABI bit: `arm_aapcs_soft` for a soft/softfp
-    image, `arm_aapcs` otherwise. A Thumb image is loaded by passing an
-    explicit `arch=SleighArch.arm_thumb()`, since the ELF header does not
-    distinguish a Thumb build from an ARM one.
+    The convention is the userland one except on PowerPC, where an `e_entry`
+    at or above `KERNELBASE` selects the kernel one (no vector registers).
+    x86's kernel ABI has no header bit and needs an explicit `cc=`; a Thumb
+    image needs `arch=SleighArch.arm_thumb()`.
     """
     em = header.e_machine
     le = header.is_little_endian
@@ -167,16 +145,12 @@ def _arch_and_cc_for_elf(
         if le:
             arch = SleighArch.arm()
         elif is_arm_be8:
-            # BE8 stores instructions little-endian, so `arm_be` decodes every
-            # one of them byte-swapped. `EI_DATA` marks both images alike.
+            # BE8 stores instructions little-endian.
             arch = SleighArch.arm_be_kernel()
         else:
             arch = SleighArch.arm_be()
-        # EABI float ABI, `e_flags` bits 9/10. A soft or softfp image passes
-        # floats in r0-r3, so hard-float's d0-d7 would be phantom carriers.
-        # Only a linked image carries either bit: a relocatable object records
-        # its float ABI in `.ARM.attributes` alone, whatever it was built with,
-        # and falls to hard-float here.
+        # A soft/softfp image passes floats in r0-r3. Only a linked image sets
+        # the bit; a relocatable object falls to hard-float.
         if header.e_flags & _EF_ARM_ABI_FLOAT_SOFT:
             return arch, CallingConvention.arm_aapcs_soft()
         return arch, CallingConvention.arm_aapcs()
@@ -188,10 +162,8 @@ def _arch_and_cc_for_elf(
         if is64:
             arch = SleighArch.mipsle64() if le else SleighArch.mipsbe64()
             return arch, CallingConvention.mips_n64()
-        # O32 is the only ELF32 MIPS ABI strider has a preset for. n32 needs a
-        # 64-bit decoder with 32-bit addresses, arguments in $4-$11 and 64-bit
-        # returns; EABI and O64 have register sets of their own. Lifting any of
-        # them as O32 loses the arguments past the fourth.
+        # O32 is the only ELF32 MIPS preset; lifting another ABI as O32 loses
+        # the arguments past the fourth.
         abi = _EF_MIPS_ABI_NAMES.get(header.e_flags & _EF_MIPS_ABI)
         if header.e_flags & _EF_MIPS_ABI2:
             abi = "n32"
@@ -211,10 +183,8 @@ def _arch_and_cc_for_elf(
     if em == _EM_PPC64:
         arch = SleighArch.ppc64le() if le else SleighArch.ppc64be()
         is_kernel = header.e_entry >= _PPC64_KERNELBASE
-        # The ABI level is the low two bits of `e_flags`. The two differ in
-        # linkage-area size, so the wrong one reads stack arguments 16 bytes
-        # off and collects none. Little-endian PPC64 is ELFv2 only; a
-        # big-endian image predating the flag (0) is ELFv1.
+        # ABI level: low two bits of `e_flags`. LE is ELFv2 only; BE with 0
+        # predates the flag and is ELFv1.
         if le or (header.e_flags & 0x3) == 2:
             if is_kernel:
                 return arch, CallingConvention.powerpc64_elf_v2_linux_kernel()
@@ -237,82 +207,55 @@ def load_elf(
     arch: Optional[SleighArch] = None,
     cc: Optional[CallingConvention] = None,
 ) -> "ElfLifter":
-    """Load an ELF binary, picking the architecture and calling convention
-    from its header, and return an `ElfLifter`.
+    """Load an ELF binary as an `ElfLifter`, detecting the architecture and
+    calling convention from its header.
 
-    `from_segments=True` (the default) walks PT_LOAD program headers, falling
-    back to sections for relocatable objects; `from_segments=False` forces
-    the section walk for section-granular regions. Override the detected
-    `arch=` / `cc=` for kernel or custom-ABI workflows. `arch=` alone keeps
-    the header's convention, and `analyze` raises `StriderError` when that
-    convention's stack geometry is another arch's.
+    `from_segments=True` (default) maps PT_LOAD segments, falling back to
+    sections for relocatable objects; `False` maps sections. `arch=` / `cc=`
+    override the detected preset; `arch=` alone keeps the header's
+    convention, and `analyze` raises `StriderError` if that convention's
+    stack geometry belongs to another arch.
 
-    `apply_relocations` (default `True`) applies relocations, which shared
-    objects and PIE binaries need; it also selects what is mapped, so `False`
-    drops writable non-executable sections rather than serving their on-disk
-    bytes. A writable-and-executable mapping is kept either way. With it off,
-    every relocation field still mapped (in code, a `.rodata` table, a TEXTREL
-    image's instructions) serves its file bytes: the addend or the link-time
-    value, not the relocated one. With it on, a linked image is relocated from
-    the tables its dynamic tags place, as the loader reads them, Android
-    packed ones included, whatever its section headers say. An image whose
-    relocation tables name more than twice the entries the file holds at their
-    smallest entry raises `StriderError`, and so does one whose code
-    (`DT_TEXTREL`, or a writable-and-executable mapping) a table the tags
-    place but strider cannot read or decode may relocate. Any other image with
+    `apply_relocations` (default `True`) relocates the image from the tables
+    its dynamic tags place (Android packed ones included), as shared objects
+    and PIE need. `False` drops writable non-executable sections and serves
+    every remaining relocation field as its file bytes; writable-executable
+    mappings are kept either way. With it on, `StriderError` is raised when
+    the relocation tables name more than twice the entries the file can hold,
+    or when a table strider cannot read or decode may relocate code
+    (`DT_TEXTREL`, or a writable-executable mapping); any other image with
     such a table serves none of its writable mappings.
 
-    `relocated_got_is_rom` (default `False`) additionally serves `.got`
-    (PPC32's `.got2` too) and `.data.rel.ro` as READ-ONLY memory, so a load
-    through a GOT slot folds to the address the slot holds. It is what
-    resolves a PIC jump table whose base comes out of the GOT. PPC32 code
-    that relocates its own `.got2` (Linux's `prom_init` `reloc_got2`,
-    `-mrelocatable` `.fixup`) breaks the claim.
+    `relocated_got_is_rom` (default `False`) also serves `.got` (and PPC32's
+    `.got2`) and `.data.rel.ro` as read-only, so a load through a GOT slot
+    folds to the address it holds, which resolves PIC jump tables based off
+    the GOT. Not served when the image has a table strider cannot read or
+    decode. Slots only the dynamic loader computes stay unmapped: an
+    uncomputed relocation (e.g. an import with no address), an IFUNC's
+    (`R_*_IRELATIVE` or against an `STT_GNU_IFUNC` symbol), an `R_*_COPY`
+    object, the lazy-binding GOT header words (ARM, secure-PLT PPC32), and on
+    MIPS the lazy-resolver word, the module-pointer word when requested, and
+    every global entry not already holding a defined symbol's address.
+    `.got.plt` is never served. Inside an executable mapping a relocation
+    against a defined IFUNC takes the symbol's own address, so code still
+    decodes and folds to the symbol rather than the resolver's result.
+    The flag is an unchecked claim that nothing rewrites a slot after loading
+    and that each defined symbol binds to its own definition; a program
+    writing its GOT, a copy relocation, `LD_PRELOAD`, a `dlopen`ed
+    interposer, or PPC32 code relocating its own `.got2` makes it false.
+    Combined with `apply_relocations=False` it raises `StriderError`.
 
-    An image with a table its dynamic tags place that strider cannot read or
-    decode serves neither.
-
-    A slot whose load-time value only the dynamic loader computes stays
-    unmapped, and a load through it does not fold: one under a relocation
-    strider does not compute, such as one against an imported symbol the
-    image gives no address; an IFUNC's (`R_*_IRELATIVE`, or a relocation
-    against a defined `STT_GNU_IFUNC` symbol), which holds what the resolver
-    returns; every byte of an `R_*_COPY` object, which the loader copies from
-    the library defining it; the two GOT header words ARM and secure-PLT
-    PPC32 lazy binding writes (`DT_PLTGOT + 4` / `+ 8`, `DT_PPC_GOT + 4` /
-    `+ 8`); and on MIPS, whose primary GOT no relocation covers, the
-    lazy-resolver word, the module-pointer word when its top bit asks for
-    one, and every global entry except those for symbols the image defines
-    that already hold their address. `.got.plt` is never served, lazy binding
-    rewriting those slots on the first call through each one.
-
-    Inside an executable mapping a relocation against a defined IFUNC takes
-    the symbol's own address instead, so the instruction still decodes. An
-    address taken in code (`lea f(%rip)`, `mov $f`), or a data word in an
-    executable mapping (FreeBSD 12's `.rodata`), then folds to the symbol,
-    where at run time it holds what the resolver returns.
-
-    The rest is an unchecked claim about the runtime: that nothing rewrites a
-    slot after the loader has run, and that a symbol the image defines binds
-    to that definition. Where either is false (a program writing its own GOT;
-    a copy relocation, `LD_PRELOAD` or a `dlopen`ed library interposing the
-    symbol) the fold is wrong too. It contradicts `apply_relocations=False`,
-    which says the loader has NOT run, and the pair raises `StriderError`.
-
-    Raises `FileNotFoundError` when `path` does not exist, `ValueError`
-    when the file is not an ELF or its architecture or ABI is unsupported
-    (microMIPS among them), and `StriderError` for a malformed ELF. Passing
-    both `arch=` and `cc=` skips the detector, and with it the ABI and
-    microMIPS refusals.
+    Raises `FileNotFoundError` when `path` does not exist, `ValueError` when
+    it is not an ELF or its architecture or ABI is unsupported (microMIPS
+    included), and `StriderError` for a malformed ELF. Passing both `arch=`
+    and `cc=` skips detection and with it the ABI and microMIPS refusals.
     """
-    # `os.fspath` makes a non-path argument a clear `TypeError` rather than a
-    # confusing `FileNotFoundError` further down.
+    # A non-path argument is a `TypeError` here, not a `FileNotFoundError`.
     path = os.fspath(path)
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     header = _ElfHeader(path)
     elf = _ext._load_elf(path, from_segments, apply_relocations, relocated_got_is_rom)
-    # Only run the (possibly raising) detector when arch or cc is missing.
     if arch is None or cc is None:
         det_arch, det_cc = _arch_and_cc_for_elf(header, elf.is_arm_be8)
         arch = arch if arch is not None else det_arch
@@ -321,13 +264,9 @@ def load_elf(
 
 
 class ElfLifter(Lifter):
-    """A loaded ELF binary as a `Lifter`, returned by
-    `strider.lift.load_elf(path)`.
-
-    It carries the ELF's memory as both code reader and read-only image, plus
-    the symbol table (`symbol`, `symbol_at`, `symbols`, `entry_point`,
-    `functions`) and an `analyze(target)` that accepts a symbol name. Analyse
-    many functions by calling `analyze` repeatedly:
+    """A loaded ELF binary as a `Lifter`, returned by `load_elf`: its memory
+    as code reader and read-only image, its symbol table, and an `analyze`
+    that accepts a symbol name.
 
     ```python
     lift = strider.lift.load_elf("path/to/file.elf")
@@ -346,8 +285,7 @@ class ElfLifter(Lifter):
         mem: "MemLike",
         rom: Optional["RomLike"] = None,
     ) -> "ElfLifter":
-        """Build the base `Lifter`, which takes only `(arch, mem, rom=...)`;
-        the ELF-specific state is attached in `__init__`."""
+        """Build the base `Lifter`; `__init__` attaches the ELF state."""
         return super().__new__(cls, arch, mem, rom=rom)
 
     def __init__(
@@ -359,12 +297,8 @@ class ElfLifter(Lifter):
         rom: Optional["RomLike"] = None,
     ) -> None:
         """Do not call this directly; use `load_elf`."""
-        # Attaches the ELF backend and default calling convention; `arch`,
-        # `mem` and `rom` were already consumed by `__new__`.
-        del arch, mem, rom
+        del arch, mem, rom  # consumed by `__new__`
         self._elf = elf
-        # Every base `Lifter.analyze` takes its own convention; this is the
-        # ELF-derived default.
         self._cc = cc
 
     @property
@@ -374,40 +308,34 @@ class ElfLifter(Lifter):
 
     @property
     def endianness(self) -> str:
-        """Byte order of the loaded binary, as the first ELF's `EI_DATA`
-        gives it: `"little"` or `"big"`. Read off the ELF, so it answers while
-        a call holds the handle."""
+        """The first ELF's `EI_DATA` byte order: `"little"` or `"big"`.
+        Answers even while a call holds the handle."""
         return "little" if self._elf.is_little_endian else "big"
 
     @property
     def is_arm_be8(self) -> bool:
-        """Whether the binary sets ARM's `EF_ARM_BE8`: instructions stored
-        little-endian, data big-endian. `EI_DATA` marks BE8 and BE32 images
-        alike, so this is what `load_elf` picks `arm_be_kernel` over `arm_be`
-        on. `False` off ARM."""
+        """Whether the binary sets ARM's `EF_ARM_BE8` (little-endian code,
+        big-endian data), which selects `arm_be_kernel` over `arm_be`.
+        `False` off ARM."""
         return self._elf.is_arm_be8
 
     def __repr__(self) -> str:
         try:
             arch = self.arch.name()
         except StriderError:
-            # Another call holds the handle; a repr never raises.
+            # The handle is busy; a repr never raises.
             return f"ElfLifter(cc={self._cc.name()})"
         return f"ElfLifter(arch={arch}, cc={self._cc.name()})"
 
     def functions(self) -> SymbolIter:
-        """The function symbols in address order, one per address: aliases of
-        an address already listed are excluded, preferring the one whose size
-        the ELF records. A function with no recorded size is still yielded,
-        with `Symbol.size` `None`.
-
-        A cursor, not a container: `len()` reports what is LEFT to pull."""
+        """The function symbols in address order, one per address (preferring
+        an alias with a recorded size; unsized ones have `Symbol.size` `None`).
+        A cursor: `len()` is what is left to pull."""
         return self._elf.functions()
 
     def iter_symbols(self) -> SymbolIter:
-        """Every symbol pulled one at a time, so the `Symbol` objects are
-        never all live at once. The table is built up front. `len()`
-        reports what is LEFT to pull, so a consumed cursor shrinks."""
+        """Every symbol, one `Symbol` at a time. A cursor: `len()` is what is
+        left to pull."""
         return self._elf.iter_symbols()
 
     def symbol(self, name: str) -> "Symbol":
@@ -423,12 +351,10 @@ class ElfLifter(Lifter):
         return self._elf.symbol_opt(name)
 
     def symbol_at(self, address: int) -> Optional["Symbol"]:
-        """The symbol covering `address`: the nearest one at or below it whose
-        recorded extent reaches `address`. A symbol with no recorded size
-        covers only its own address, and aliases sharing an address are ranked
-        by having a recorded extent first, then by being code, so a sized DATA
-        alias outranks an unsized CODE one; `functions()` filters to code
-        instead. `None` when nothing covers `address`."""
+        """The nearest symbol at or below `address` whose extent reaches it,
+        or `None`. An unsized symbol covers only its own address. Aliases rank
+        sized first, then code, so a sized data alias outranks an unsized
+        function."""
         return self._elf.symbol_at(address)
 
     def symbols(self) -> Mapping[str, "Symbol"]:
@@ -440,12 +366,10 @@ class ElfLifter(Lifter):
         return self._elf.entry_point()
 
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Up to `size` raw bytes at `addr` from the loaded regions, or `None`
-        when `addr` is unmapped or inside a relocation this loader does not
-        compute. In writable, non-executable data such a field is not cut out
-        but serves the file's bytes, which the loader overwrites. `rom()`
-        serves no writable data, except `.got` / `.got2` / `.data.rel.ro` under
-        `relocated_got_is_rom`, where such a field is unmapped."""
+        """Up to `size` bytes at `addr`, or `None` when unmapped or inside an
+        uncomputed relocation. In writable non-executable data such a field
+        serves its file bytes instead. `rom()` serves no writable data except
+        under `relocated_got_is_rom`, where such a field is unmapped."""
         return self._elf.read(addr, size)
 
     def add_elf(
@@ -455,31 +379,19 @@ class ElfLifter(Lifter):
         apply_relocations: bool = True,
         relocated_got_is_rom: bool = False,
     ) -> None:
-        """Merge another ELF, such as a shared library, into this handle.
-        The earlier-loaded ELF wins on name collisions.
+        """Merge another ELF, such as a shared library, into this handle; the
+        earlier-loaded ELF wins name collisions.
 
-        `apply_relocations` defaults to `True`, matching `load_elf`: a merged
-        ELF is normally the ET_DYN case relocations exist for, and the flag
-        also selects what is mapped, so `False` drops writable non-executable
-        sections rather than serving their on-disk bytes, and serves every
-        relocation field still mapped as its file bytes, as in `load_elf`.
-        With it on, an image whose relocation section headers name more than
-        twice the entries the file holds at its smallest entry, or whose code
-        a dynamic relocation table strider cannot read or decode may relocate,
-        raises `StriderError`, as in `load_elf`.
+        `apply_relocations` behaves, and raises, as in `load_elf`.
+        `relocated_got_is_rom` is `load_elf`'s claim for this image only (not
+        inherited from the handle), and with `apply_relocations=False` raises
+        `StriderError`.
 
-        `relocated_got_is_rom` is `load_elf`'s unchecked claim, made for THIS
-        image only: it does not inherit the handle's, since one shared
-        object's link says nothing about another's. It contradicts
-        `apply_relocations=False` here too, and the pair raises `StriderError`.
-
-        Raises `StriderError` if the new ELF's architecture, class or byte
-        order, or on ARM its `EF_ARM_BE8`, differs from the first image's: one
-        handle decodes one target. Raises it too if the new ELF maps code over
-        an address already loaded with different bytes: `add_elf` places shared
-        objects at distinct addresses, so two ELFs linked at the same base
-        cannot be merged.
-        Raises `ValueError` for a microMIPS image, which no preset decodes."""
+        Raises `StriderError` if the new ELF's architecture, class, byte order
+        or (ARM) `EF_ARM_BE8` differs from the first image's, or if it maps
+        code over an address already loaded with different bytes (two ELFs
+        linked at the same base cannot merge). Raises `ValueError` for a
+        microMIPS image."""
         path = os.fspath(path)
         try:
             header = _ElfHeader(path)
@@ -488,23 +400,14 @@ class ElfLifter(Lifter):
             header = None
         if header is not None:
             _refuse_micromips(header, "add_elf cannot merge it")
-        # One call, so a handle in use refuses before anything is merged
-        # rather than leaving `symbol` and `read` seeing the new ELF and the
-        # decoder not.
+        # One call, so a busy handle refuses before anything is merged.
         self._merge_elf(self._elf, path, apply_relocations, relocated_got_is_rom)
 
     def add_symbol_file(self, path: StrPath) -> None:
-        """Take the symbols of `path` and none of its bytes.
-
-        This is how a separate debug or symbol file attaches after loading: a
-        `objcopy --only-keep-debug` companion and distro debuginfo are linked
-        at the same addresses as the image they describe, so `add_elf` would
-        refuse them as an overlap. Both `.symtab` and `.dynsym` are read, as
-        for any ELF, and the already-loaded ELFs keep a colliding name.
-
-        The mapped bytes are untouched, so nothing about lifting changes; only
-        `symbol`, `symbol_at`, `symbols`, `functions` and `iter_symbols` see
-        more."""
+        """Add the symbols (`.symtab` and `.dynsym`) of `path` and none of its
+        bytes, e.g. a separate debug file, which `add_elf` would refuse as an
+        overlap. Already-loaded ELFs keep a colliding name. Lifting is
+        unchanged; only the symbol queries see more."""
         self._elf.add_symbol_file(os.fspath(path))
 
     def add_symbols(
@@ -513,28 +416,23 @@ class ElfLifter(Lifter):
         *,
         is_function: bool = True,
     ) -> None:
-        """Add symbols directly, for names that live in no ELF: a map file, a
-        kernel `System.map`, a database, or your own naming.
-
-        Each value is an address, or an `(address, size)` pair when the extent
-        is known, which is what lets `symbol_at` resolve an interior address.
-        An ELF already carrying a name keeps its own answer for that name."""
+        """Add symbols from outside any ELF (a map file, `System.map`, ...).
+        Each value is an address or an `(address, size)` pair; the size lets
+        `symbol_at` resolve interior addresses. An ELF already defining a
+        name keeps it."""
         self._elf.add_symbols(symbols, is_function=is_function)
 
     if TYPE_CHECKING:
 
         def reader(self) -> BufferReader:
-            """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD
-            segments unless `from_segments=False`. The base `Lifter.reader`,
-            narrowed."""
+            """The `BufferReader` over the regions `load_elf` mapped."""
             ...
 
     def build_cfg(self, entry: int, opts: Optional[CfgOptions] = None) -> Cfg:
-        """`Lifter.build_cfg`, with the options `analyze` derives from the
-        ELF: its `$d` mapping symbols as `data_ranges` unless `opts` names
-        some, and the local entry of every `no_return_targets` address that
-        is a ppc64 ELFv2 symbol's `address`. `entry` is an address, and no
-        symbol size bounds the build, as for `analyze(int)`."""
+        """`Lifter.build_cfg` with the ELF-derived options `analyze` uses:
+        `$d` mapping symbols as `data_ranges` unless `opts` names some, and
+        ppc64 ELFv2 local entries for `no_return_targets`. `entry` is an
+        address; no symbol size bounds the build."""
         return self._build_cfg_elf(self._elf, entry, opts)
 
     def analyze(
@@ -543,32 +441,26 @@ class ElfLifter(Lifter):
         cc: Optional[CallingConvention] = None,
         opts: Optional[LifterOptions] = None,
     ) -> AnalyzeResult:
-        """Lift the function at `entry`, a symbol name or an address,
-        returning the same `AnalyzeResult` as `Lifter.analyze`.
+        """`Lifter.analyze` at `entry`, a symbol name or an address. `cc`
+        defaults to this handle's convention.
 
-        A `str` entry is resolved through the ELF symbol table, and its
-        recorded size bounds the lift unless `opts.cfg.function_max_size` is
-        set; the bound drops `allow_code_before_start_addr`. Unless
-        `opts.cfg.data_ranges` names some, the ELF's `$d` mapping symbols
-        supply them, so a literal pool is never decoded as code. A
-        `no_return_targets` address or `per_address_ccs` key that is a ppc64
-        ELFv2 symbol's `address` also covers its `Symbol.local_entry`, where a
-        call sharing its TOC lands. `cc` defaults to this handle's
-        convention.
+        A `str` entry's recorded size bounds the lift unless
+        `opts.cfg.function_max_size` is set, and the bound drops
+        `allow_code_before_start_addr`. The ELF's `$d` mapping symbols supply
+        `opts.cfg.data_ranges` unless it names some. A `no_return_targets`
+        address or `per_address_ccs` key at a ppc64 ELFv2 symbol's `address`
+        also covers its `Symbol.local_entry`.
 
         Raises `TypeError` when `entry` is neither `str` nor `int`, and
-        `StriderError` when the binary changed on disk since it was loaded.
-
-        Releases the GIL as `Lifter.analyze` does, and a daemon thread inside
-        it at interpreter finalization aborts the process as it does there.
+        `StriderError` when the binary changed on disk since loading. GIL and
+        daemon-thread behaviour are as for `Lifter.analyze`.
         """
         return self._analyze_elf(self._elf, entry, self._cc if cc is None else cc, opts)
 
 
 class FieldPat:
-    """A struct field at `base + offset`. `ConstantFold` rewrites `base + 0`
-    to `base`, so a field at offset 0 lifts with no `Add`; `pattern` matches
-    both forms and `offset(m)` reads 0 back for the bare one."""
+    """A struct field at `base + offset`. `pattern` also matches a bare
+    `base` (offset 0 folds away), for which `offset(m)` is 0."""
 
     __slots__ = ("pattern", "capture", "_known")
 
@@ -586,8 +478,8 @@ class FieldPat:
         cap = p.Capture() if offset is None else offset
         self.capture = cap
         const = p.int_const().capture(cap) if isinstance(cap, str) else p.int_const(cap)
-        # Ordered, not a union: `base` matches the `Add` too whenever it is
-        # permissive, and a union then reports every field twice.
+        # Ordered: a permissive `base` also matches the `Add`, and a union
+        # would report each field twice.
         self.pattern = p.first_of([p.int_add(base, const), base])
 
     def offset(self, m: Match) -> int:
@@ -615,7 +507,7 @@ def field(base: ValueLike, offset: Union[int, CaptureKey, None] = None) -> Field
 
 
 def code_ptr(target: ValueLike) -> Pat:
-    """`target`, or `target & -2`: an ARM interworking or MIPS16 branch clears
-    the ISA-mode bit, the one mask strider strips when resolving a target."""
+    """`target`, or `target & -2` (an ARM interworking or MIPS16 branch
+    clearing the ISA-mode bit)."""
     p = _ext.pattern
     return p.first_of([p.int_and(target, p.int_const(-2)), target])
