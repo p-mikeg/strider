@@ -228,7 +228,11 @@ impl OwnedElf {
         view: &super::dynamic::LoaderView,
     ) -> Result<super::sections::LoadedImage> {
         if matches!(filter, LoadFilter::ImmutableAndRelocatedGot) && !relocate {
-            anyhow::bail!("LoadFilter::ImmutableAndRelocatedGot with relocate=false");
+            anyhow::bail!(
+                "LoadFilter::ImmutableAndRelocatedGot claims relocated `.got` / \
+                 `.data.rel.ro`, which relocate=false denies: relocate, or use \
+                 LoadFilter::ImmutableOnly"
+            );
         }
         let mut image = super::sections::collect_regions(
             obj,
