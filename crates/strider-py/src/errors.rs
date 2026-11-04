@@ -10,19 +10,19 @@ create_exception!(
     StriderError,
     PyException,
     "Raised when an analysis fails, a pattern is malformed, or an argument \
-     has a bad value, a malformed ELF included. A wrong type raises \
-     `TypeError`, an int out of range `OverflowError` (an `entry` raises \
-     `StriderError`), a range-checked option `ValueError`, a file \
-     `load_elf` finds is not an ELF or targets an unsupported arch or ABI \
-     `ValueError`, and a missing path `FileNotFoundError`.\n\n\
-     `.backtrace` is the message followed by the Rust backtrace (empty when \
-     raised from Python); `STRIDER_BACKTRACE=1` appends it to the message."
+     (a malformed ELF included) has a bad value. Otherwise a wrong type \
+     raises `TypeError`, an out-of-range int `OverflowError` (`entry` \
+     raises `StriderError`), a range-checked option `ValueError`, a missing \
+     path `FileNotFoundError`, and `load_elf` on a non-ELF file or an \
+     unsupported arch or ABI `ValueError`.\n\n\
+     `.backtrace` is the message plus the Rust backtrace (empty when raised \
+     from Python); `STRIDER_BACKTRACE=1` appends it to the message."
 );
 
 thread_local! {
-    /// The Python exception a user callback raised, chained as the
-    /// `StriderError`'s `__cause__`. Cleared on entry to every callback and
-    /// when the calling operation finishes, so it never outlives that call.
+    /// The exception a user callback raised, chained as the `StriderError`'s
+    /// `__cause__`. Cleared on entry to every callback and when the calling
+    /// operation finishes.
     static CALLBACK_CAUSE: std::cell::RefCell<Option<PyErr>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -41,8 +41,7 @@ fn take_callback_cause() -> Option<PyErr> {
     CALLBACK_CAUSE.with(|c| c.borrow_mut().take())
 }
 
-/// The error a `StriderError` was raised from, whose frames `.backtrace`
-/// resolves when read.
+/// The error a `StriderError` was raised from; `.backtrace` renders it.
 #[pyclass(frozen)]
 struct ErrorOrigin(anyhow::Error);
 
@@ -80,8 +79,8 @@ fn del_backtrace(err: &Bound<'_, PyAny>) -> PyResult<()> {
         .map_err(|_| pyo3::exceptions::PyAttributeError::new_err("backtrace"))
 }
 
-/// A `StriderError` instantiated lazily, once the raising stack has unwound,
-/// as the error site may have too little stack to format it.
+/// A `StriderError` built lazily, once the raising stack has unwound: the
+/// error site may have too little stack to format it.
 struct Raised {
     origin: anyhow::Error,
     cause: Option<PyErr>,
@@ -110,10 +109,8 @@ impl PyErrArguments for Raised {
     }
 }
 
-/// Convert an error into a `StriderError` carrying its Caused-by chain.
-///
-/// A pending Python exception is returned instead, with `e` chained as its
-/// `__cause__`.
+/// `e` as a `StriderError` carrying its Caused-by chain, or a pending Python
+/// exception with `e` chained as its `__cause__`.
 pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     let raised = |cause| PyErr::new::<StriderError, _>(Raised { origin: e, cause });
     Python::with_gil(|py| match PyErr::take(py) {
@@ -146,10 +143,10 @@ pub fn reader_failure(msg: String, cause: Option<PyErr>) -> PyErr {
     })
 }
 
-/// What a call raises given the `pending` error a callback stashed and the
-/// error `out` it returned: `out` when `pending` is a [`reader_failure`] and
-/// `out` the `StriderError` it propagated as, which names where the decode
-/// failed, with `pending`'s cause; else `pending`.
+/// What a call raises given the error a callback stashed (`pending`) and the
+/// one it returned (`out`): `out` with `pending`'s cause when `pending` is a
+/// [`reader_failure`] and `out` a `StriderError` (it names where the decode
+/// failed); else `pending`.
 pub fn pending_over(py: Python<'_>, pending: PyErr, out: PyErr) -> PyErr {
     let is_reader_failure = pending
         .value_bound(py)
