@@ -36,9 +36,10 @@ pub enum RelocationMode {
     Unapplied,
     /// Applied by this loader; fetch then maps writable sections too.
     /// `got_is_rom` also serves `.got`, PPC32's `.got2` and `.data.rel.ro` as
-    /// ROM: an unchecked claim that nothing writes them after the loader and
-    /// that a symbol the image defines binds to that definition. A slot only
-    /// the loader computes stays a hole; `.got.plt` is not served.
+    /// ROM: an unchecked claim that nothing writes them after the loader (full
+    /// RELRO; PPC32 code relocating its own `.got2` breaks it) and that a
+    /// symbol the image defines binds to that definition. A slot only the
+    /// loader computes stays a hole; `.got.plt` is not served.
     Applied { got_is_rom: bool },
 }
 
@@ -118,8 +119,7 @@ impl OwnedElf {
     ///
     /// # Errors
     ///
-    /// When the file changed on disk since it was mapped, or the mapped bytes
-    /// no longer parse.
+    /// As [`checked_file`](Self::checked_file).
     pub fn is_arm_be8(&self) -> Result<bool> {
         const EF_ARM_BE8: u32 = 0x0080_0000;
         let file = self.checked_file()?;
