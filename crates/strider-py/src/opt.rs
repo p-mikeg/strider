@@ -7,17 +7,16 @@ use crate::errors::into_strider_err;
 /// A type-erased pass.
 pub(crate) type ErasedPass = &'static dyn strider_orchestrator::opt::Optimizer;
 
-/// Builder for an optimizer pipeline.  Construct via `empty()` or
-/// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
-/// `Function.optimize(pipeline=...)`.  Applying a pipeline copies its
-/// passes, so one pipeline drives any number of calls.
+/// An ordered list of optimizer passes plus post-passes; build with `empty()`
+/// or `default()` then `add` / `add_post`. Applying a pipeline copies it, so
+/// one object serves any number of calls.
 #[pyclass(name = "OptimizerPipeline", module = "strider.opt")]
 pub struct PyOptimizerPipeline {
     inner: OptimizerPipeline,
 }
 
 impl PyOptimizerPipeline {
-    /// A copy of the wrapped pipeline, leaving the wrapper usable again.
+    /// A copy of the wrapped pipeline.
     pub(crate) fn build_pipeline(&self) -> OptimizerPipeline {
         self.inner.clone()
     }
@@ -41,9 +40,8 @@ impl PyOptimizerPipeline {
         }
     }
 
-    /// Append a `strider.opt.*` pass to the main list, which runs repeatedly
-    /// until the graph stops changing.  A single-shot post-pass is rejected
-    /// here; use `add_post` instead.
+    /// Append a pass to the main list, run repeatedly until the graph stops
+    /// changing. Raises `StriderError` for a post-pass; use `add_post`.
     fn add(&mut self, pass_obj: PyOptPass) -> PyResult<()> {
         self.inner.add(pass_obj.into_erased()?);
         Ok(())
@@ -104,9 +102,9 @@ macro_rules! pure_pass_class {
     };
 }
 
-/// The pass catalogue in two sections: a `main` row joins the fixed-point
-/// list, a `post` row runs once after that loop converges and is rejected by
-/// `add`. Each row is `"PythonName" => WrapperType = pass, doc`.
+/// The pass catalogue: `main` rows run to a fixed point, `post` rows run once
+/// and are rejected by `add`. Each row is `"PythonName" => WrapperType = pass,
+/// doc`.
 macro_rules! opt_passes {
     (
         main { $($mn:literal => $mty:ident = $mctor:expr, $mdoc:literal;)* }
@@ -115,10 +113,7 @@ macro_rules! opt_passes {
         $( pure_pass_class!($mn => $mty, $mdoc); )*
         $( pure_pass_class!($pn => $pty, $pdoc); )*
 
-        /// Aggregates every pass-wrapper class so `add` / `add_post` accept
-        /// any of them via PyO3 enum dispatch.
-        // Variants are named for their wrapper types, which the crate prefixes
-        // `Py`; `annotation` is what a failed extraction reports.
+        /// Any pass-wrapper class.
         #[allow(clippy::enum_variant_names)]
         #[derive(FromPyObject)]
         pub enum PyOptPass {
@@ -162,8 +157,7 @@ macro_rules! opt_passes {
     };
 }
 
-// Each text is its class's docstring in `strider/opt.pyi` too, word for word;
-// `test_docstrings.py` holds the two equal.
+// Each text equals its class docstring in `strider/opt.pyi` (`test_docstrings.py`).
 opt_passes! {
     main {
         "ConstantFold" => PyConstantFold = strider_orchestrator::opt::ConstantFold,
@@ -173,23 +167,17 @@ opt_passes! {
             "Tracks which bits are known to be zero or one and simplifies \
              operations whose result is fully determined.";
         "PhiCollapse" => PyPhiCollapse = strider_orchestrator::opt::PhiCollapse,
-            "Braun trivial-phi elimination: redirects a `Phi` / `MemPhi` whose \
-             value inputs resolve to exactly one distinct value, self-references \
-             discarded, to that value, and a strongly connected group of phis whose \
-             only outside input is one value to that input. A genuine two-way merge \
-             is left alone.";
+            "Removes trivial phis: a `Phi` / `MemPhi`, or a strongly connected group \
+             of them, whose inputs other than themselves are one value is replaced by \
+             that value.";
         "RegionCollapse" => PyRegionCollapse = strider_orchestrator::opt::RegionCollapse,
-            "Collapses a `Region` that already has exactly one control input, \
-             rewiring its control consumers to that predecessor and each phi over \
-             it to that phi's lone value input. A multi-predecessor Region is left \
-             alone.";
+            "Collapses a `Region` with exactly one control input into that \
+             predecessor, replacing each phi over it with its lone value input.";
         "DeadBranchElimination" => PyDeadBranchElimination =
             strider_orchestrator::opt::DeadBranchElimination,
-            "Folds a branch with a constant selector (an `If` on a constant `I1`, a \
-             `Switch` on a constant dispatch address), wiring the live successor \
-             past it and killing the branch node. Every run then strips each \
-             `Region` predecessor slot entry can no longer reach, with the matching \
-             `Phi` / `MemPhi` value slots.";
+            "Folds an `If` or `Switch` on a constant selector to its live successor, \
+             then strips the `Region` predecessors entry can no longer reach, with \
+             their `Phi` / `MemPhi` slots.";
         "FlagCmpCanonicalize" => PyFlagCmpCanonicalize =
             strider_orchestrator::opt::FlagCmpCanonicalize,
             "Folds an architecture's condition-flag tree into a single direct \
@@ -199,17 +187,14 @@ opt_passes! {
              into a branch on the plain condition with its two arms swapped.";
         "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward,
             "Forwards a store's value to a later load when the nearest may-aliasing \
-             memory definition is an exact-match store: same address class, base \
-             and offset, covering the load's whole range. A partial overlap, \
-             `InitialMemory`, a `MemPhi` whose arms reach different definitions, or \
-             a call the assumptions cannot see through blocks it; a `MemPhi` whose \
-             arms agree does not.";
+             memory definition is a store to the same address covering the whole \
+             load. A partial overlap, `InitialMemory`, a `MemPhi` whose arms \
+             disagree, or a call the assumptions cannot see through blocks it.";
         "LoadReadOnly" => PyLoadReadOnly = strider_orchestrator::opt::LoadReadOnly,
-            "Folds a load from a constant address into a constant, reading the \
-             bytes from the read-only memory image (`rom=`). A no-op when no rom is \
-             supplied.\n\nThe fold never consults the load's memory chain, so the \
-             rom must map only runtime-immutable memory: code and `.rodata`, never \
-             `.data` / `.got`.";
+            "Folds a load from a constant address into a constant read from the \
+             read-only memory image (`rom=`); a no-op without one.\n\nThe fold \
+             ignores the load's memory chain, so the rom must map only \
+             runtime-immutable memory: code and `.rodata`, never `.data` / `.got`.";
     }
     post {
         "FunctionArgDetect" => PyFunctionArgDetect = strider_orchestrator::opt::FunctionArgDetect,

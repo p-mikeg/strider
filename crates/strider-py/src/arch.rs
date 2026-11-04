@@ -3,9 +3,9 @@ use pyo3::types::PyType;
 
 use crate::macros::forall_preset;
 
-/// A target architecture description (Sleigh `.sla` + `.pspec` +
-/// endianness).  Construct via one of the preset classmethods, e.g.
-/// `SleighArch.x86_64()`. Equal when built from the same preset.
+/// A target architecture (Sleigh `.sla` + `.pspec` + endianness), built by a
+/// preset classmethod, e.g. `SleighArch.x86_64()`. Equal when built from the
+/// same preset.
 #[pyclass(name = "SleighArch", module = "strider.sleigh", frozen, eq, hash)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PySleighArch {
@@ -27,9 +27,8 @@ impl PySleighArch {
         }
     }
 
-    /// The arch preset named `name` (one of `strider.sleigh.ARCH_PRESETS`), as
-    /// `SleighArch.<name>()` builds it.  Raises `StriderError` for an unknown
-    /// name, listing the known ones.
+    /// The arch preset named `name` (one of `strider.sleigh.ARCH_PRESETS`).
+    /// Raises `StriderError` for an unknown name.
     #[classmethod]
     fn preset(cls: &Bound<'_, PyType>, name: &str) -> PyResult<Self> {
         let known = strider_target::ArchPreset::ALL.iter().map(|p| p.name());
@@ -53,7 +52,7 @@ impl PySleighArch {
         )
     }
 
-    /// `SleighArch.<preset>()`, the call that produces this arch.
+    /// `SleighArch.<preset>()`.
     fn __repr__(&self) -> String {
         format!("SleighArch.{}()", self.name())
     }
@@ -68,8 +67,8 @@ impl PySleighArch {
             .map(crate::sleigh::PyVn::from_inner)
     }
 
-    /// Reverse of `reg(...)`. `None` for a non-REGISTER space, or a REGISTER
-    /// offset/size pair absent from this arch's table; never raises.
+    /// Reverse of `reg(...)`: `None` for a varnode that is not a register of
+    /// this arch.
     fn reg_name(&self, vn: &crate::sleigh::PyVn) -> Option<&'static str> {
         self.inner.names().regs().vn_to_name(vn.inner)
     }
@@ -87,9 +86,7 @@ forall_preset!(
 
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySleighArch>()?;
-    // The roster the classmethods above are checked against: a preset added
-    // to `arch_presets!` reaches Python only through that hand-written list,
-    // and nothing else compares the two.
+    // A test checks the `forall_preset!` list above against this roster.
     m.add(
         "ARCH_PRESETS",
         pyo3::types::PyTuple::new_bound(

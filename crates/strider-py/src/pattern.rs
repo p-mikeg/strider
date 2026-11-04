@@ -1,7 +1,6 @@
-//! A capture name interns to one `Capture` per process, so `.capture("x")`, a
-//! `Match` reader keyed by `"x"` and a rewrite RHS `"x"` all name the same
-//! capture. A bare string is not a sub-pattern operand. `"_"` and `"any_"` are
-//! reserved.
+//! A capture name interns to one `Capture` per process: `.capture("x")`,
+//! `m["x"]` and a rewrite RHS `"x"` name the same capture. `"_"` and `"any_"`
+//! are reserved.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -22,10 +21,8 @@ use crate::errors::into_strider_err;
 use crate::value_ops::value_ops;
 use strider_pattern::WithOutput;
 
-/// Binds a matched node so its value, op variant or fingerprint can be read
-/// back from the `Match`. Each `Capture()` is globally unique.
-/// Equal when both wrap the same interned id, so `Capture("x") ==
-/// Capture("x")` and a set/dict dedups them, consistent with `__hash__`.
+/// Binds a matched node so it can be read back from the `Match`. Each
+/// `Capture()` is unique; `Capture("x") == Capture("x")`.
 #[pyclass(eq, name = "Capture", module = "strider.pattern", frozen)]
 #[derive(Clone, PartialEq)]
 pub struct PyCapture {
@@ -35,9 +32,9 @@ pub struct PyCapture {
 #[pymethods]
 impl PyCapture {
     /// A capture variable. `Capture()` is fresh and unique; `Capture("name")`
-    /// interns the name, so it is the SAME capture as a rewrite RHS `"name"`
-    /// and reads back with `match.uint("name")`. A bare string is not a
-    /// match-pattern operand. Reserved names (`"_"`, `"any_"`) raise.
+    /// interns the name, the same capture as a rewrite RHS `"name"`. A bare
+    /// string is not a match-pattern operand. Reserved names (`"_"`,
+    /// `"any_"`) raise.
     #[new]
     #[pyo3(signature = (name=None))]
     fn new(name: Option<&str>) -> PyResult<Self> {
@@ -58,11 +55,7 @@ impl PyCapture {
     }
 }
 
-/// Every interned name both ways, for the process: a `Capture` is a bare u32
-/// handle, so an id handed out stays resolvable, and a bound capture's id
-/// renders as its source name in a `repr`. Nothing prunes it, so a name built
-/// from data rather than written in source (`Capture(f"arg{i}")`) is retained
-/// for the life of the process.
+/// Every interned name both ways, for the life of the process (never pruned).
 struct Names {
     by_name: FxHashMap<String, Capture>,
     by_id: FxHashMap<u32, String>,
@@ -79,8 +72,7 @@ pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
             "{name:?} is reserved (use anything() / var() / _ explicitly)"
         )));
     }
-    // Hits are every `m["off"]` / `"off" in m`, so they take one lock and allocate
-    // nothing; only a first sighting builds the `String`s.
+    // A hit allocates nothing.
     let mut names = NAMES
         .lock()
         .map_err(|_| into_strider_err(anyhow::anyhow!("intern table lock poisoned")))?;
@@ -102,9 +94,7 @@ pub(crate) fn capture_display(id: u32) -> String {
     }
 }
 
-/// Where a Python operand sits, which decides what it may be. Any match
-/// slot but a memory one takes any pattern, refused where it can never
-/// match as Rust refuses it.
+/// Where a Python operand sits, which decides what it may be.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Slot {
     Value,
@@ -150,14 +140,12 @@ pub(crate) enum Op {
     OneOf(bool),
     /// A `.when()` predicate is the second operand.
     Wrap(Wrap),
-    /// A builder's `.into_pat()`, its one operand, which it lowers as, bound
-    /// to the captures chained on since.
+    /// A builder's `.into_pat()` (its one operand), bound to the captures
+    /// chained on since.
     Finished(Vec<Capture>),
 }
 
-/// The recipe behind a `Pat` or a `Template`, lowered fresh on every query:
-/// a shape over the Python objects it was given, which only this node holds
-/// and reports to the collector.
+/// The recipe behind a `Pat` or a `Template`, lowered fresh on every query.
 pub(crate) struct Repr {
     /// The constructor, as an error names it.
     pub(crate) name: &'static str,
@@ -291,8 +279,7 @@ impl Repr {
     }
 
     /// A memory slot takes a wildcard or an alternation, through a
-    /// `.capture()` or `.when()`: a width, a type or an operand order can
-    /// never hold of a memory token.
+    /// `.capture()` or `.when()`.
     fn is_memory(&self, py: Python<'_>) -> bool {
         let through = |r: &Repr| matches!(&r.op, Op::Wrap(Wrap::Capture(_) | Wrap::When));
         let r = self.under(py, through);
@@ -305,7 +292,7 @@ impl Repr {
 pub struct PyPat {
     pub(crate) repr: Repr,
     /// Links below this one in the `.capture()` / `.when()` / `.of_width()`
-    /// chain. Dropping the chain is native recursion, so it is bounded.
+    /// chain, bounded by `MAX_PATTERN_NESTING`.
     depth: u32,
 }
 
@@ -315,10 +302,7 @@ impl From<Repr> for PyPat {
     }
 }
 
-// An operand slot holds another wrapper, so a plain drop descends one native
-// frame per link while the chain that built it went through a Python `for`
-// loop and hit no interpreter limit. PyO3 0.22 has no `Py_TRASHCAN`, so a
-// long enough chain overflows the stack.
+// Deferred: a plain drop recurses once per link and can overflow the stack.
 impl Drop for PyPat {
     fn drop(&mut self) {
         defer_drop(std::mem::take(&mut self.repr.args));
@@ -346,8 +330,7 @@ fn extract_int_operand(ob: &Bound<'_, PyAny>) -> PyResult<Option<strider_ir::IBi
         .transpose()
 }
 
-/// `ob` as the `Expr` the `slot` it sits in takes. Walked fresh per query,
-/// so no Python handle outlives the query inside Rust data.
+/// `ob` as the `Expr` the `slot` it sits in takes.
 pub(crate) fn expr(ob: &Bound<'_, PyAny>, slot: Slot) -> PyResult<Expr> {
     let _depth = DepthGuard::enter()?;
     let py = ob.py();
@@ -370,8 +353,7 @@ pub(crate) fn expr(ob: &Bound<'_, PyAny>, slot: Slot) -> PyResult<Expr> {
     if let Ok(c) = ob.downcast::<PyCapture>() {
         return Ok(ex(sp::var(c.get().inner)));
     }
-    // A raw int is `int_const(value)` at any declared width; narrow with
-    // `.of_width`. One wider than every `ValueType` is refused.
+    // A raw int is `int_const(value)` at any width.
     if slot != Slot::Memory
         && let Some(v) = extract_int_operand(ob)?
     {
@@ -458,8 +440,7 @@ fn pat_rhs_message(repr: &Repr) -> String {
     }
 }
 
-/// Case-insensitive: `"i1"` / `"I64"` / `"f32"`. A refusal names `name` as
-/// given: no spelling the lowercase one refuses parses.
+/// Case-insensitive: `"i1"` / `"I64"` / `"f32"`.
 fn parse_value_ty(name: &str) -> PyResult<T> {
     name.to_ascii_lowercase()
         .parse()
@@ -467,59 +448,32 @@ fn parse_value_ty(name: &str) -> PyResult<T> {
         .map_err(into_strider_err)
 }
 
-// The per-query walk is native recursion mirroring the Python pattern tree's
-// depth, so a pathologically deep pattern would overflow the Rust stack and
-// abort the process. The bounds below turn that abort into an exception.
-//
-// They bound the WALK, and the `.capture()` / `.when()` / `.of_width()` chain
-// at construction. They do NOT bound the other three ways to nest: a free
-// constructor (`int_add(deep, ...)`) starts a fresh count, a
-// `strider.template` constructor does the same, and a builder operand slot
-// holds a bare `Py<PyAny>` with no count at all. Any of
-// them can be driven from a Python `for` loop, which involves no Python
-// recursion and so hits no interpreter limit. Dropping any of them is safe
-// however deep: every builder and `Pat` defers its operand slots (`defer_drop`).
+// The per-query walk recurses natively over the pattern tree, so the bounds
+// below turn a stack overflow into an exception. They bound the walk and the
+// `.capture()` chain, not construction: a nested constructor is unbounded,
+// and dropping one is safe because operand slots are deferred (`defer_drop`).
 
-/// Walk levels, the root and one per nested operand. Well above any
-/// hand-written pattern; a machine-generated one can exceed it.
-///
-/// The cheap bound of the two, and the one calibrated for the main thread's
-/// 8 MiB stack. The stack budget below is what holds on a smaller one.
+/// Walk levels, the root and one per nested operand. The stack budget is what
+/// holds on a thread smaller than the main one.
 const MAX_PATTERN_NESTING: u32 = 512;
 
-/// Operands one walk may visit.
-///
-/// Depth alone does not bound the work: a `Pat` used in two operands
-/// (`q = int_add(q, q)`) lowers once per use, so each level of reuse doubles
-/// the boxed sub-patterns, and every one of them is built before the matcher's
-/// own node cap sees the pattern. Well past
-/// [`strider_pattern::MAX_PATTERN_NODES`], so no pattern a query can run is
-/// refused here.
+/// Operands one walk may visit: a reused `Pat` (`q = int_add(q, q)`) lowers
+/// once per use, so depth alone does not bound the work. Above
+/// [`strider_pattern::MAX_PATTERN_NODES`], so no runnable pattern is refused.
 const MAX_COMPILE_STEPS: u64 = 4096;
 
-/// Fraction of the stack left below the outermost guard, less
-/// [`STEP_RESERVE`], that one compile may consume. The match walk that follows
-/// costs about what the compile did, so a quarter spends half the headroom and
-/// leaves half spare.
+/// One compile may consume `1 / STACK_BUDGET_SHARE` of the stack left below
+/// the outermost guard, less [`STEP_RESERVE`]; the match walk after it costs
+/// about as much again.
 const STACK_BUDGET_SHARE: usize = 4;
 
-/// Stack held back from the budget for what runs past the last check that
-/// passed: one lowering step, then the refusal the next check raises. Both are
-/// fixed costs, not a share of what is left, so a fraction alone leaves too
-/// little on a thread that starts the compile nearly spent. In an unoptimised
-/// build a `store` step measures 18.3 KiB at the root and 14.4 KiB nested,
-/// and the refusal about 3 KiB. Under this much left, the outermost guard
-/// refuses at once.
+/// Stack held back for what runs past the last passing check: one lowering
+/// step and the refusal. Under this much left, the outermost guard refuses.
 const STEP_RESERVE: usize = 32 * 1024;
 
-/// Stack one compile may consume where the thread's own bounds are not
-/// reported, low enough that the walk after it fits in a 256 KiB thread.
-///
-/// A count alone cannot bound stack: an unoptimised build's frame here is over
-/// twenty times an optimised one's, and a `threading.stack_size(1 << 20)`
-/// thread is an eighth of the main thread's, so 512 levels that fit in release
-/// on the main thread overflow in debug on a small one. Overflowing is a
-/// SIGSEGV, which no Python `except` sees.
+/// Stack one compile may consume where the thread's bounds are not reported.
+/// A depth count alone cannot bound stack: frame size varies by build and
+/// thread stacks by size.
 const FALLBACK_PATTERN_STACK: usize = 48 * 1024;
 
 thread_local! {
@@ -527,17 +481,16 @@ thread_local! {
     /// Lowering steps the live compile has spent, reset when the outermost
     /// guard opens.
     static COMPILE_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    /// A frame address from the outermost live guard on this thread, the zero
-    /// the consumption below is measured against.
+    /// A frame address from the outermost live guard, the zero consumption is
+    /// measured against.
     static STACK_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// What one compile may consume on this thread, taken from its real stack
     /// bounds when the outermost guard enters.
     static STACK_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Address of a local in the calling frame. Stack grows DOWN on every target
-/// this ships to, so a deeper frame reads lower; `saturating_sub` is what makes
-/// the other direction read as no consumption rather than as a huge one.
+/// Address of a local in the calling frame. The stack grows down, so a deeper
+/// frame reads lower.
 #[inline(never)]
 fn frame_mark() -> usize {
     let probe = 0u8;
@@ -614,9 +567,8 @@ impl Drop for DepthGuard {
     }
 }
 
-/// Polymorphic input for `Function.find_all` and a rewrite's `find`: a `Pat`,
-/// a `Capture`, a raw int (an `int_const`), or any typed builder. A bare
-/// string is NOT a capture: use `Capture(name)`.
+/// A query pattern: a `Pat`, a `Capture`, a raw int (an `int_const`), or a
+/// typed builder. A bare string is not a capture.
 pub struct PatLike<'py>(Bound<'py, PyAny>);
 
 impl<'py> FromPyObject<'py> for PatLike<'py> {
@@ -636,11 +588,8 @@ impl<'py> FromPyObject<'py> for PatLike<'py> {
     }
 }
 
-/// One pattern, or a list matched as a join: every pattern runs, captures
-/// unify on shared `Capture` objects, and each result collapses to one
-/// merged `Match`.
-// `Single` is tried before `Many` so a lone pattern is not read as a length-1
-// join.
+/// One pattern, or a list matched as a join: captures unify on shared
+/// `Capture` objects, and each result is one merged `Match`.
 #[derive(FromPyObject)]
 pub enum PatQuery<'py> {
     Single(PatLike<'py>),
@@ -656,9 +605,7 @@ impl PatQuery<'_> {
     }
 }
 
-/// Rewrite-RHS input, separate from the match-side `PatLike` so
-/// `Function.rewrite` / `rewrite_all` type `replace` against the build-valid
-/// `Template`.
+/// Rewrite-RHS input: a `Template`, a `Capture` or a capture name.
 pub enum TemplateLike<'py> {
     Template(Bound<'py, crate::template::PyTemplate>),
     Capture(Bound<'py, PyCapture>),
@@ -715,11 +662,9 @@ impl TemplateLike<'_> {
     }
 }
 
-// A `.when()` predicate that raises stashes the error here instead of
-// propagating: the matcher must finish its walk, and returning to CPython
-// with an exception still set trips its "returned a result with an exception
-// set" guard. The first error wins, every later call returning no-match
-// without running the predicate; the outer find boundary drains and re-raises.
+// A raising `.when()` predicate stashes its error here so the matcher can
+// finish its walk. The first error wins; later predicates do not run and
+// answer no-match; the outer find boundary re-raises.
 thread_local! {
     static PENDING_QUERY_ERROR: std::cell::Cell<Option<PyErr>> =
         const { std::cell::Cell::new(None) };
@@ -742,18 +687,11 @@ pub(crate) fn stash_pending_query_error(e: PyErr) {
     PENDING_QUERY_ERROR.with(|cell| cell.set(Some(e)));
 }
 
-// A `.when(f)` predicate is attached at pattern-build time, before any
-// `Function` exists, and the same pattern can run against several of them, so
-// the closure cannot capture a `Py<PyFunction>`. `Function::run_query` pushes
-// the function plus its generation here instead, and `run_when_predicate`
-// peeks the top to build the `Match` it hands the callback.
-//
-// A stack rather than one slot: a predicate may itself issue a nested query,
-// which must not clobber the outer entry. Both entries hold the live query's
-// `Py<PyFunction>`, so a `Match` accessor re-borrowing its `RefCell<Function>`
-// under `run_query`'s own read borrow is a same-thread recursive READ borrow.
-// That is only safe because no mutable borrow is ever taken outside
-// `PyFunction::edit`.
+// The function a running query reads, for the `Match` a `.when()` predicate
+// is handed (a pattern is built before any `Function` exists). A stack, since
+// a predicate may issue a nested query. A predicate's `Match` re-borrows the
+// function under the query's own read borrow, safe because only
+// `PyFunction::edit` borrows mutably.
 thread_local! {
     static CURRENT_QUERY_FUNCTION: std::cell::RefCell<Vec<crate::function::FunctionAt>> =
         const { std::cell::RefCell::new(Vec::new()) };
@@ -775,10 +713,8 @@ fn current_query_function(py: Python<'_>) -> Option<crate::function::FunctionAt>
     CURRENT_QUERY_FUNCTION.with(|c| c.borrow().last().map(|at| at.clone_ref(py)))
 }
 
-/// Runs a Python `.when()` predicate, returning whether to keep the match.
-/// `node` becomes the `Match.root` the predicate sees. A predicate that
-/// raises stashes its exception for the outer boundary and counts as
-/// no-match, so the walk still finishes.
+/// Runs a `.when()` predicate on a `Match` rooted at `node`; a raise counts
+/// as no-match.
 fn run_when_predicate(
     node: strider_ir::node::NodeId,
     bindings: &strider_pattern::Bindings,
@@ -798,9 +734,8 @@ fn run_when_predicate(
     .unwrap_or(false)
 }
 
-/// A Python predicate's `bool` verdict on the `Match` `inner` builds against
-/// the live query. `None` without one, or once a predicate has raised, this
-/// one included: its exception is stashed for the query boundary.
+/// A Python predicate's verdict on the `Match` `inner` builds. `None` without
+/// a live query, or once any predicate has raised.
 fn run_predicate(
     what: &str,
     inner: impl FnOnce(&crate::function::FunctionAt) -> Vec<strider_pattern::Match>,
@@ -811,8 +746,7 @@ fn run_predicate(
             return None;
         }
         let Some(at) = current_query_function(py) else {
-            // Unreachable: every query path pushes an entry before running the
-            // matcher. Fail closed rather than panic into the matcher's stack.
+            // Unreachable; fail closed rather than panic into the matcher.
             eprintln!("strider {what}: no active query function on this thread (internal error)");
             return None;
         };
@@ -824,10 +758,8 @@ fn run_predicate(
     })
 }
 
-// A rewrite holds the function borrowed for mutation while its rules run, so a
-// `.when()` predicate could not read the `Match` it is handed. The LHS compile
-// runs inside this scope and every predicate attachment reports itself, so the
-// rewrite can refuse up front instead of silently matching nothing.
+// Set while a rewrite LHS compiles; a `.when()` attachment marks it, so the
+// rewrite refuses a predicate that could not read the mutably-held function.
 thread_local! {
     static REWRITE_LHS_WHEN: std::cell::Cell<Option<bool>> = const {
         std::cell::Cell::new(None)
@@ -873,8 +805,8 @@ pub(crate) trait Builder {
         false
     }
     fn common(&self) -> &std::cell::RefCell<CommonState>;
-    /// The node with every operand walked, bound to its own capture and
-    /// `caps`, `.when()` aside.
+    /// The node with its operands walked, bound to its capture and `caps`,
+    /// without `.when()`.
     fn node(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<Expr>;
 }
 
@@ -898,8 +830,8 @@ impl dyn Builder + '_ {
         })
     }
 
-    /// Sealed as a root, on the node's own anchor. The root is a walk level,
-    /// opened here so the stack budget covers the builder's own frames.
+    /// Sealed as a root. Opens a walk level so the stack budget covers the
+    /// builder's own frames.
     fn pattern(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<Pattern> {
         let _depth = DepthGuard::enter()?;
         let pat = self.node(py, caps)?.build();
@@ -910,7 +842,7 @@ impl dyn Builder + '_ {
     }
 }
 
-/// The one list of builder types. `f` over `ob` as a builder, if it is one.
+/// `f` over `ob` as a builder, if it is one.
 macro_rules! builders {
     ($($ty:ty),* $(,)?) => {
         pub(crate) fn with_builder<R>(
@@ -947,16 +879,15 @@ builders!(
     PyUnreachablePat,
 );
 
-/// Selects which value-passthrough cast node kinds the matcher walks through
-/// transparently. Build from the classmethods, combine with `|`, and pass as
-/// `find_all(pat, ignore_casts=...)`.
+/// The value-passthrough casts the matcher walks through. Combine with `|`;
+/// pass as `find_all(pat, ignore_casts=...)`.
 #[pyclass(eq, hash, name = "CastMask", module = "strider.pattern", frozen)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyCastMask {
     pub(crate) inner: strider_pattern::CastMask,
 }
 
-/// One classmethod per row, in its own `#[pymethods]` block.
+/// One classmethod per row.
 macro_rules! forall_castmask {
     ($($name:ident => $value:expr, $doc:literal;)*) => {$(
         #[pymethods]
@@ -1005,8 +936,7 @@ impl PyCastMask {
     fn bits(&self) -> u32 {
         self.inner.bits()
     }
-    /// Whether any cast is selected, so `if mask & CastMask.truncate():`
-    /// tests membership.
+    /// Whether any cast is selected.
     fn __bool__(&self) -> bool {
         !self.inner.is_empty()
     }
@@ -1026,15 +956,13 @@ impl PyCastMask {
 
 #[pymethods]
 impl PyPat {
-    /// Exposes the operand sub-patterns and any `.when()` predicate, which are
-    /// `Py` handles the collector cannot otherwise see.
+    /// Exposes the operands and any `.when()` predicate to the collector.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         self.repr.args.iter().try_for_each(|a| visit.call(a))
     }
 
     /// Capture this pattern's matched node under `c`, a `Capture` or a name.
     /// Returns a new `Pat`.
-    /// On an `into_pat()` `Pat`, the builder's own `.capture()`.
     fn capture(slf: &Bound<'_, Self>, c: crate::matcher::CaptureKey<'_>) -> PyResult<PyPat> {
         let c = c.resolve()?;
         let pat = slf.get();
@@ -1049,14 +977,10 @@ impl PyPat {
         })
     }
 
-    /// Attach a Python predicate that runs after this pattern matches.
-    /// Returning `False` fails the match, and the return must be a `bool`:
-    /// anything else is a `TypeError`, so a predicate that forgot to return
-    /// is an error rather than a rejection. Raising aborts the whole query and
-    /// re-raises out of `find_all` / `find_unique`, every later candidate
-    /// failing without running the predicate. It may run on a partial match
-    /// the full match rejects, more than once, or not at all for a candidate
-    /// another operand's node kind already rules out.
+    /// Attach a predicate `f(match) -> bool` run after this pattern matches;
+    /// `False` fails the match, a non-`bool` return is a `TypeError`. Raising
+    /// aborts the query and re-raises out of `find_all` / `find_unique`. It
+    /// may run on a partial match, more than once, or not at all.
     fn when(slf: &Bound<'_, Self>, f: PyObject) -> PyResult<PyPat> {
         derive(slf, Wrap::When, Some(f))
     }
@@ -1079,14 +1003,11 @@ impl PyPat {
         derive(slf, Wrap::OfWidth(1), None)
     }
 
-    /// Stop the matcher retrying this op with its operands swapped; a no-op
-    /// where the op's operands are ordered already. Pins this node alone, so
-    /// a nested op still commutes unless itself `.ordered()`; on the lowered
-    /// `int_ne` / `float_ne` that node is the `Equal` under the `Xor`. A shape
-    /// with no operands to order raises. Match-only.
+    /// Stop the matcher retrying this op with its operands swapped. Pins this
+    /// node alone (for `int_ne` / `float_ne`, the `Equal` under the `Xor`). A
+    /// shape with no operands to order raises. Match-only.
     fn ordered(slf: &Bound<'_, Self>) -> PyResult<PyPat> {
-        // The chainable wrappers and `inputs_of_width` constrain the node they
-        // wrap, so they leave what `.ordered()` pins unchanged.
+        // Look through wrappers that constrain the node they wrap.
         let r = slf.get().repr.under(slf.py(), |r| {
             matches!(r.op, Op::Wrap(_)) || r.kind == Kind::Through
         });
@@ -1166,9 +1087,7 @@ pub fn bool_inputs(inner: Py<PyAny>) -> PyPat {
     inputs_of_width(1, inner)
 }
 
-/// A `Capture`, tried first as a downcast: `T`'s numeric variants ahead of
-/// its own `Cap` would each raise and discard a Python error. Anything else
-/// extracts as `T`, with `T`'s own error.
+/// A `Capture`, tried first as a cheap downcast, else `T`.
 pub enum CapOr<T> {
     Cap(Py<PyCapture>),
     Else(T),
@@ -1195,18 +1114,10 @@ pub enum IntConstArg {
     Cap(Py<PyCapture>),
 }
 
-/// Match an `IntConst` whose stored value equals `value`, BOTH masked to the
-/// output width, so an over-wide argument still matches a narrow constant. Equals
-/// `value`, or is one of `value` when given a list. Bit-pattern equality: a
-/// negative uses its sign-extended form. For the cross-width form use
-/// `int_const_any_width`.
-///
-/// Given a `Capture`, or no argument at all, match any integer constant,
-/// binding it to the capture when there is one.
-///
-/// A list is one set-membership test, not an alternation, and an empty one
-/// vacuously fails; each element is treated exactly as the scalar form treats
-/// it.
+/// Match an `IntConst` equal to `value` (or any member of a list; an empty
+/// list matches nothing), both masked to the output width. Bit-pattern
+/// equality: a negative uses its sign-extended form. Given a `Capture`, or no
+/// argument, match any integer constant, binding it to the capture if given.
 #[pyfunction]
 #[pyo3(signature = (value=None))]
 pub fn int_const(value: Option<CapOr<IntConstArg>>) -> PyResult<PyPat> {
@@ -1215,8 +1126,6 @@ pub fn int_const(value: Option<CapOr<IntConstArg>>) -> PyResult<PyPat> {
         None => any(None),
         Some(CapOr::Cap(c) | CapOr::Else(IntConstArg::Cap(c))) => any(Some(c.get().inner)),
         Some(CapOr::Else(IntConstArg::One(v))) => PyPat::from(int_const_repr(v.value()?)),
-        // A negative carries its two's complement at whatever width it is
-        // matched at, so it names the same constant at every width.
         Some(CapOr::Else(IntConstArg::Set(vs))) => {
             let vs = vs
                 .into_iter()
@@ -1237,12 +1146,9 @@ pub enum IntConstAnyWidthArg {
     Set(Vec<i128>),
 }
 
-/// Match an `IntConst` holding `value` however it was width-extended into the
-/// constant's own type: exact, widened by zero extension, or widened by sign
-/// extension. Given a list, any member of it. `value` must fit the width it
-/// is matched at, so `0x1234` never matches `0x34` at `i8`.
-///
-/// A value outside the signed 64-bit range raises.
+/// Match an `IntConst` holding `value` exactly, zero-extended or
+/// sign-extended (or any member of a list). `value` must fit the matched
+/// width. A value outside the signed 64-bit range raises.
 #[pyfunction]
 pub fn int_const_any_width(value: IntConstAnyWidthArg) -> PyResult<PyPat> {
     Ok(PyPat::from(match value {
@@ -1271,9 +1177,8 @@ pub enum BoolConstArg {
     Cap(Py<PyCapture>),
 }
 
-/// Match an `I1` boolean constant equal to `value`. Given a `Capture`, or no
-/// argument at all, match any `I1` constant, binding it to the capture when
-/// there is one.
+/// Match an `I1` constant equal to `value`. Given a `Capture`, or no
+/// argument, match any `I1` constant, binding it to the capture if given.
 #[pyfunction]
 #[pyo3(signature = (value=None))]
 pub fn bool_const(value: Option<CapOr<BoolConstArg>>) -> PyPat {
@@ -1296,8 +1201,7 @@ pub enum FloatConstArg {
 }
 
 /// Match a `FloatConst` whose raw bits equal `bits`. Given a `Capture`, or no
-/// argument at all, match any float constant, binding it to the capture when
-/// there is one.
+/// argument, match any float constant, binding it to the capture if given.
 #[pyfunction]
 #[pyo3(signature = (bits=None))]
 pub fn float_const(bits: Option<CapOr<FloatConstArg>>) -> PyPat {
@@ -1354,33 +1258,18 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
     PyPat::from(leaf("initial_var_for()", Kind::Match, Box::new(make)))
 }
 
-/// Alternation (logical OR): match if any listed sub-pattern matches. The dual
-/// of a `find_all([...])` list, which is a logical AND. An arm is anything a
-/// top-level pattern is, and the result nests in any slot: value, memory, or
-/// control. Match-only. No alternatives matches nothing.
+/// Alternation (logical OR): match if any listed sub-pattern matches. Nests
+/// in any slot. Match-only. No alternatives matches nothing.
 ///
-/// A union, not an ordered choice: every arm that matches is enumerated, each
-/// with its own bindings, so the order of the alternatives carries no meaning.
-/// Two overlapping arms both fire on a node they share, so a wildcard arm
-/// (`anything()` / `var(c)`) contributes its own match rather than shadowing a
-/// narrower arm; a join or `.when` downstream then keeps the binding it needs.
-/// Use `first_of` for an ordered choice that cuts to the first matching arm.
-///
-/// A match is identified by what it BINDS, so two arms matching one node with
-/// the same bindings are one match. At the root of a pattern that captures
-/// nothing that collapses every arm onto the node, and
-/// `one_of([load(), anything()])` answers exactly what `anything()` does; give
-/// the arms a capture to tell them apart.
-///
-/// Captures under an alternative that did not fire are left UNBOUND, not
-/// defaulted, so `Match.has(c)` (or a `None` from `Match.uint_opt(c)`)
-/// tells you which arm matched and lets you pick your own default:
+/// A union, not an ordered choice: every matching arm is enumerated with its
+/// own bindings, so overlapping arms both fire (use `first_of` to cut). A
+/// match is identified by what it binds: arms matching one node with the same
+/// bindings are one match. Captures under an arm that did not fire are left
+/// unbound, so `Match.has(c)` tells which arm matched:
 ///
 /// ```python
 /// offset = h.uint(off) if h.has(off) else 0
 /// ```
-///
-/// `field` is that alternation for a struct offset.
 #[pyfunction]
 pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from(Repr::new(
@@ -1391,26 +1280,11 @@ pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     ))
 }
 
-/// Alternation with a first-match cut (ordered OR): match the first listed
-/// sub-pattern that matches, ignoring the rest. Unlike `one_of` (a union),
-/// overlapping arms do not each fire: at each value it is offered (each output
-/// of a node is its own) at each read, the first listed arm that yields any
-/// match wins, whatever order the rest of the pattern is tried in, so a leading
-/// `anything()` arm shadows everything after it. A match reaching one
-/// `first_of` more than once (`float_is_nan` and `float_le` read their operands
-/// twice) settles each read on its own, in the order the pattern reads them: of
-/// the matches still kept that make that read, only those through the first arm
-/// any of them took there stay. Several `first_of`s in one match settle in
-/// pattern order: operands left to right, a `one_of`'s arms as listed, a
-/// builder's own slots in its fixed order, then its `any_input`s, then its
-/// `input`s, whatever order the setters were called in, a repeated setter
-/// (`arg`, `input`, ...) keeping its call order, an inner one before the one
-/// holding it, each among the matches the earlier ones kept. Same generality as
-/// `one_of`: any arm, any slot. Match-only. No alternatives matches nothing.
-///
-/// A query holding one runs every configuration of the pattern before it
-/// answers, unless it captures nothing and finds a match through the first
-/// arm of every `first_of`, walking through no cast, where it stops.
+/// Alternation with a first-match cut (ordered OR): at each value it is
+/// offered, the first listed arm that yields any match wins, so a leading
+/// `anything()` arm shadows the rest. Each read of a `first_of` settles on its
+/// own; several settle in pattern order (operands left to right, inner before
+/// outer). Nests in any slot. Match-only. No alternatives matches nothing.
 #[pyfunction]
 pub fn first_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from(Repr::new(
@@ -1428,10 +1302,7 @@ pub fn predicate(py: Python<'_>, f: PyObject) -> PyResult<PyPat> {
     derive(&Bound::new(py, any_())?, Wrap::When, Some(f))
 }
 
-// The one spelling each parser accepts is the op variant's `Debug` output, the
-// same string `Match.op` and `Node.op()` read back. Names come from an
-// exhaustive `match`, so adding a variant in strider-ir is a compile error
-// here instead of a silent desync.
+// Each parser accepts the variant's `Debug` spelling, as `Match.op` reads it.
 
 fn lookup_op<Op: Copy>(
     variants: &[Op],
@@ -1455,18 +1326,14 @@ fn lookup_op<Op: Copy>(
         })
 }
 
-// The optional `_ => unreachable` arm lets a curated subset (the boolean ops)
-// list only the variants it accepts and still match exhaustively. The leading
-// `$vis` token sets per-invocation visibility; `parse_int_cmp_op` and
-// `parse_extend_op` have consumers outside this module.
+// `rest_unreachable` lets a subset (the boolean ops) still match exhaustively.
 macro_rules! op_parser {
     (
         $vis:vis $fn:ident, $names:ident, $ty:ty, $op_kind:literal,
         variants = [$($variant:ident),+ $(,)?]
         $(, rest_unreachable = $msg:literal)? $(,)?
     ) => {
-        /// Every name the parser accepts, published to Python so its
-        /// `Literal` alias is this list rather than a second copy of it.
+        /// Every name the parser accepts.
         pub(crate) const $names: &[&str] = &[$(stringify!($variant)),+];
 
         $vis fn $fn(name: &str) -> PyResult<$ty> {
@@ -1597,7 +1464,6 @@ any_variant! {
         = "Match any `FloatCmpOp` over `(l, r)` and bind the op variant to `c`.";
 }
 
-/// Leaves the original in place so the builder stays reusable.
 fn clone_opt(py: Python<'_>, slot: &Option<Py<PyAny>>) -> Option<Py<PyAny>> {
     slot.as_ref().map(|p| p.clone_ref(py))
 }
@@ -1634,8 +1500,7 @@ macro_rules! builder_common_methods {
                 slf.common.borrow_mut().when = Some(f);
                 slf
             }
-            /// Finalise into a `Pat` holding this builder, its operands
-            /// walked once here so a bad one raises now.
+            /// Finalise into a `Pat`. A bad operand raises here.
             fn into_pat(slf: Bound<'_, Self>) -> PyResult<PyPat> {
                 (&*slf.borrow() as &dyn Builder).pattern(slf.py(), &[])?;
                 let name = "a control / variadic builder";
@@ -1651,9 +1516,8 @@ macro_rules! builder_common_methods {
                 Ok(format!("{}(...)", slf.get_type().name()?))
             }
 
-            /// Exposes the operand slots and the `.when()` predicate to the
-            /// cyclic GC. `try_borrow`: a collection can land mid-setter, with
-            /// the cell already held for mutation.
+            /// Exposes the operands and `.when()` predicate to the cyclic GC.
+            /// `try_borrow`: a collection can land mid-setter.
             fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
                 if let Ok(common) = self.common.try_borrow() {
                     if let Some(f) = common.when.as_ref() {
@@ -1669,10 +1533,8 @@ macro_rules! builder_common_methods {
                 self.traverse_operands(&visit)
             }
 
-            /// Drops everything `__traverse__` reports. Without it these types
-            /// carry `tp_traverse` and a NULL `tp_clear`, and CPython can only
-            /// break a cycle at an object that HAS `tp_clear`: a cycle of
-            /// builders alone would be found, skipped, and never freed.
+            /// Drops everything `__traverse__` reports, so the GC can break a
+            /// cycle of builders.
             fn __clear__(&self) {
                 if let Ok(mut common) = self.common.try_borrow_mut() {
                     common.when = None;
@@ -1685,14 +1547,10 @@ macro_rules! builder_common_methods {
     };
 }
 
-/// Ceiling on a caller-supplied operand index. Orders of magnitude past any
-/// node's real arity, and low enough that the head-slot shift a builder applies
-/// (`input_head_len() + idx`) cannot overflow a `usize` on any target.
+/// Ceiling on a caller-supplied operand index, low enough that
+/// `input_head_len() + idx` cannot overflow.
 const MAX_OPERAND_INDEX: usize = 1 << 20;
 
-/// Rejects an operand index the shift would carry out of range. Unchecked, the
-/// sum wraps onto a real slot in a build without `overflow-checks` and panics
-/// in one with them; both are worse than an error.
 fn check_operand_index(idx: usize) -> PyResult<()> {
     if idx > MAX_OPERAND_INDEX {
         return Err(into_strider_err(anyhow::anyhow!(
@@ -1702,22 +1560,15 @@ fn check_operand_index(idx: usize) -> PyResult<()> {
     Ok(())
 }
 
-// The generic slot vocabulary beneath the named operand accessors, declared
-// once per builder by naming the slot kinds it has rather than restating the
-// methods. `any_input` / `input` / `output` are emitted here and applied from
-// `CommonState`, so a builder opts in with one token.
-//
-// A builder declares only the kinds its node shape has: `EntryPat` has outputs
-// and no inputs, the sinks (`RetPat` / `IndirectBranchPat` / `UnreachablePat`)
-// the reverse.
+// The generic slot methods beneath the named accessors; a builder names the
+// slot kinds its node shape has.
 macro_rules! builder_slot_methods {
     ($ty:ty, any_input) => {
         #[pymethods]
         impl $ty {
-            /// Require SOME input of the node to match `p`, without pinning a
-            /// slot. A typed sub binds an input of its own kind; `var` /
-            /// `anything` also reaches the control, memory and phi-token
-            /// edges. Repeatable, each call taking a distinct slot.
+            /// Require some input of the node to match `p`, without pinning a
+            /// slot. `var` / `anything` also reach control, memory and
+            /// phi-token edges. Repeatable, each call a distinct slot.
             fn any_input<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
                 slf.common.borrow_mut().any_inputs.push(p);
                 slf
@@ -1727,12 +1578,10 @@ macro_rules! builder_slot_methods {
     ($ty:ty, input) => {
         #[pymethods]
         impl $ty {
-            /// Match `p` against raw input slot `idx`. Slot 0 is not uniform
-            /// across kinds: `Call` is `[ctrl, mem, target, sp, arg0, ...]`,
-            /// `Load` is `[mem, addr]`, `If` is `[ctrl, cond]`. The IR's
-            /// `expected_signature` (`strider-ir/src/node/signature.rs`) is
-            /// the source of truth. This is the escape hatch beneath the named
-            /// accessors, not a replacement for them.
+            /// Match `p` against raw input slot `idx`, as the IR's
+            /// `expected_signature` lays them out: `Call` is `[ctrl, mem,
+            /// target, sp, arg0, ...]`, `Load` `[mem, addr]`, `If` `[ctrl,
+            /// cond]`.
             fn input<'py>(
                 slf: PyRef<'py, Self>,
                 idx: usize,
@@ -1747,16 +1596,10 @@ macro_rules! builder_slot_methods {
     ($ty:ty, output) => {
         #[pymethods]
         impl $ty {
-            /// Bind or constrain the value at raw output `slot`. Slot
-            /// numbering is per kind and asymmetric with the inputs: a `Call`
-            /// is `[ctrl, mem, result, ...clobbers]` while a `Load` is
-            /// `[value]`. The IR's `expected_signature`
-            /// (`strider-ir/src/node/signature.rs`) is the source of truth.
+            /// Bind or constrain the value at raw output `slot` (a `Call` is
+            /// `[ctrl, mem, result, ...clobbers]`, a `Load` `[value]`).
             /// Returns a terminal taking one of `.capture(c)`,
             /// `.of_width(w)`, `.of_type("i64")`.
-            ///
-            /// This names the output value itself; it does not recurse into
-            /// whatever consumes that output.
             fn output(slf: Bound<'_, Self>, slot: usize) -> PyOutputSlot {
                 PyOutputSlot {
                     parent: slf.into_any().unbind(),
@@ -1764,12 +1607,8 @@ macro_rules! builder_slot_methods {
                 }
             }
 
-            /// Some output rather than a fixed slot; otherwise `output`.
-            ///
-            /// A capture binds a NODE, and `find_all` reports each distinct set
-            /// of bound nodes once, so every output of ONE node collapses to a
-            /// single match: this asks whether such an output exists, not which
-            /// ones do. Enumerate slots with `output(n)`, which binds each.
+            /// Like `output`, over some output rather than a fixed slot. Asks
+            /// whether such an output exists; enumerate with `output(n)`.
             fn any_output(slf: Bound<'_, Self>) -> PyOutputSlot {
                 PyOutputSlot {
                     parent: slf.into_any().unbind(),
@@ -1786,18 +1625,12 @@ fn cloned_opt<T: Clone>(v: &Option<T>) -> Option<T> {
     v.clone()
 }
 
-// Every node builder is the same skeleton over a different operand field-set,
-// generated here from a compact spec. `memory:` is whether the node produces
-// a memory token. Field kinds: `pat` (one operand, the row naming its `Slot`
-// and any coercion its setter applies), `multi` (an indexed operand vector,
-// the row naming its `Slot`), `scalar` (a value, the row naming any field of
-// the Python wrapper it stores), `flag` (no-arg bool setter), and `region`
-// (the four address-region setters, recorded in call order).
+// Generates a node builder from a field spec. Field kinds: `pat` (one
+// operand), `multi` (indexed operands), `scalar` (a value), `flag` (no-arg
+// bool setter), `region` (the four address-region setters, in call order).
 
 macro_rules! node_builder {
-    // A macro call cannot sit in struct-field position, so the field decls
-    // accumulate here and the `*Inner` struct is emitted once the list runs
-    // out.
+    // Accumulates field decls; a macro call cannot sit in field position.
     (@members $inner:ident [ $($acc:tt)* ] ) => {
         #[derive(Default)]
         struct $inner {
@@ -1820,9 +1653,8 @@ macro_rules! node_builder {
         node_builder!(@members $inner [ $($acc)* $name: Vec<RegionCall>, ] $($rest)*);
     };
 
-    // Bound to a `let` first: an `if let` scrutinee keeps the `Ref` alive for
-    // the body, where compiling the operand runs Python (`__index__`) that can
-    // re-enter a setter and take `borrow_mut`.
+    // Bound to a `let` first so the `Ref` is released before the operand
+    // compile runs Python that can re-enter a setter.
     (@apply $self:ident, $py:ident, $b:ident, { pat $name:ident($c:ident) $($coerce:ident)?: $m:ident = $doc:literal }) => {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
@@ -1863,9 +1695,7 @@ macro_rules! node_builder {
         }
     };
 
-    // The generic slot vocabulary, replayed from `CommonState` onto the core
-    // builder. Guarded by the invocation's `slots:` list, since a core builder
-    // without the slot kind has no method to call.
+    // The generic slots, replayed from `CommonState`.
     (@apply_slot $self:ident, $py:ident, $b:ident, any_input) => {
         let __items: Vec<Py<PyAny>> = $self
             .common
@@ -1907,8 +1737,7 @@ macro_rules! node_builder {
     (@traverse $inner:ident, $visit:ident, { flag $name:ident: $m:ident = $doc:literal }) => {};
     (@traverse $inner:ident, $visit:ident, { region $name:ident }) => {};
 
-    // Mirrors `@traverse`: every slot reported there has to be droppable here,
-    // or a cycle through it is uncollectable.
+    // Mirrors `@traverse`, or a cycle through a slot is uncollectable.
     (@clear $inner:ident, { pat $name:ident($c:ident) $($coerce:ident)?: $m:ident = $doc:literal }) => {
         $inner.$name = None;
     };
@@ -1919,10 +1748,8 @@ macro_rules! node_builder {
     (@clear $inner:ident, { flag $name:ident: $m:ident = $doc:literal }) => {};
     (@clear $inner:ident, { region $name:ident }) => {};
 
-    // pyo3's proc-macro cannot see through a nested macro item, so the setters
-    // cannot be `node_builder!(@setter ...)` calls inside `#[pymethods]`.
-    // Instead the field list is munched one head at a time into an
-    // accumulator, and the whole impl is emitted once the list empties.
+    // Accumulates the setters into one impl: pyo3 cannot see a nested macro
+    // inside `#[pymethods]`.
     (@setters $ty:ident [ $($acc:tt)* ] ) => {
         #[pymethods]
         impl $ty {
@@ -1986,8 +1813,8 @@ macro_rules! node_builder {
                 slf
             }
             /// Keep only accesses proven heap-rooted or proven not
-            /// memory-rooted; an address with no decomposition verdict is
-            /// rejected. Replaces any region filter called before it.
+            /// memory-rooted; an undecided address is rejected. Replaces any
+            /// region filter called before it.
             fn non_stack<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
                 slf.inner.borrow_mut().$name.push(RegionCall::NonStack);
                 slf
@@ -2012,8 +1839,7 @@ macro_rules! node_builder {
         memory: $mem:literal,
         slots: [ $( $slot:ident ),* $(,)? ],
         fields: [ $( $field:tt ),* $(,)? ],
-        // The zero-argument module-level constructor, for builders that need
-        // no pre-set operand.
+        // A zero-argument module-level constructor.
         $( ctor: $ctor:ident = $ctor_doc:literal, )?
     ) => {
         node_builder!(@members $inner [] $($field)*);
@@ -2033,10 +1859,7 @@ macro_rules! node_builder {
             common: std::cell::RefCell<CommonState>,
         }
 
-        // An operand slot holds another builder or `Pat`, so a chain of these
-        // drops one native frame per link; see `defer_drop`. `try_borrow_mut`
-        // for the same reason `__clear__` uses it, and a refusal only costs
-        // this one link its deferral.
+        // Deferred, so a long operand chain cannot overflow the stack.
         impl Drop for $ty {
             fn drop(&mut self) {
                 if let Ok(mut inner) = self.inner.try_borrow_mut() {
@@ -2058,9 +1881,7 @@ macro_rules! node_builder {
 
             /// Applies every set field plus `common.capture` and `caps`.
             fn core_builder(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<$core_ty> {
-                // A field-less builder such as `EntryPat` never touches
-                // `self.inner` or `py`, so reference both unconditionally to
-                // keep that case off `dead_code` / `unused_variables`.
+                // Unused by a field-less builder such as `EntryPat`.
                 let _ = &self.inner;
                 let _ = py;
                 let mut b = $core();
@@ -2114,8 +1935,7 @@ macro_rules! node_builder {
     };
 }
 
-/// One `load()` / `store()` region-filter call, replayed in call order onto
-/// the core builder.
+/// One `load()` / `store()` region-filter call.
 #[derive(Clone, Copy)]
 enum RegionCall {
     StackOffset(i128),
@@ -2201,10 +2021,9 @@ node_builder! {
     slots: [any_input, input, output],
     fields: [
         { pat target(Value) coerce_operand_list: target
-            = "Constrain the call target. `p` is any pattern operand, including a \
-               raw int, which matches a call to that literal address \
-               (`target(0x1000)`). A list of them matches a call to any one \
-               entry; an empty list matches nothing." },
+            = "Constrain the call target. A raw int matches that literal address \
+               (`target(0x1000)`); a list matches any one entry, an empty list \
+               nothing." },
         { pat ctrl(Value): ctrl
             = "Match `p` against the Call's direct ctrl predecessor (`inputs[0]`)." },
         { multi args(usize): arg(Value) = "Constrain positional argument `idx` (0-based)." },
@@ -2217,8 +2036,7 @@ node_builder! {
 }
 
 /// Returned by `.output(slot)` / `.any_output()`. Each terminal commits one
-/// constraint onto the parent builder and hands it back so the chain
-/// continues.
+/// constraint and returns the parent builder.
 #[pyclass(name = "OutputSlotPat", module = "strider.pattern")]
 pub struct PyOutputSlot {
     parent: Py<PyAny>,
@@ -2266,7 +2084,7 @@ impl PyOutputSlot {
 
 #[pymethods]
 impl PyOutputSlot {
-    /// The parent handle is a `Py`, invisible to the collector without this.
+    /// Exposes the parent handle to the collector.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.parent)
     }
@@ -2329,10 +2147,9 @@ node_builder! {
     slots: [any_input, input],
     fields: [
         { pat target(Value) coerce_operand_list: target
-            = "Constrain the dispatch target (`inputs[2]`). `p` is any pattern \
-               operand, including a raw int, which matches a branch to that \
-               literal address. A list of them matches any one entry; an empty \
-               list matches nothing." },
+            = "Constrain the dispatch target (`inputs[2]`). A raw int matches \
+               that literal address; a list matches any one entry, an empty list \
+               nothing." },
         { pat ctrl(Value): ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
         { pat mem(Memory): mem
@@ -2368,11 +2185,9 @@ node_builder! {
     slots: [any_input, input, output],
     fields: [
         { pat selector(Value) coerce_operand_list: selector
-            = "The value the switch dispatches on (`inputs[1]`). The arms' \
-               addresses are the control outputs, not this slot. `p` is any \
-               pattern operand, including a raw int, which matches that literal \
-               value. A list of them matches any one entry; an empty list \
-               matches nothing." },
+            = "The value the switch dispatches on (`inputs[1]`). A raw int \
+               matches that literal value; a list matches any one entry, an \
+               empty list nothing." },
         { pat ctrl(Value): ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
     ],
@@ -2412,8 +2227,7 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
     b
 }
 
-// These live in the `strider.pattern.constraints` submodule: a pattern
-// describes graph SHAPE, a constraint is a relational predicate over captures
+// `strider.pattern.constraints`: relational predicates over captures,
 // evaluated post-join.
 
 /// A CFG relation between captured entities, passed to
@@ -2422,12 +2236,9 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
 #[pyclass(name = "JoinConstraint", module = "strider.pattern.constraints")]
 pub struct PyJoinConstraint {
     pub(crate) inner: Arc<ConstraintTree>,
-    /// The constraints this one was built from. `inner` reaches a
-    /// `JoinPredicate` only through a Rust closure, so these keep the edge
-    /// visible to the cyclic GC.
+    /// The constraints this one was built from, kept visible to the GC.
     operands: Vec<PyObject>,
-    /// The `JoinPredicate` handles the closures in `inner` run, each shared
-    /// with its closure so the pair is one reference reported once.
+    /// The `JoinPredicate` handles the closures in `inner` run.
     predicates: Vec<PredicateFn>,
 }
 
@@ -2441,8 +2252,8 @@ const MAX_CONSTRAINT_NESTING: u32 = 512;
 /// (`all_of([c, c])`) grows exponentially in the depth.
 const MAX_CONSTRAINT_NODES: u64 = 65_536;
 
-/// A composed constraint, shared by `Arc` rather than copied at every wrap and
-/// materialised into a `JoinConstraint` once, at the query boundary.
+/// A composed constraint, materialised into a `JoinConstraint` at the query
+/// boundary.
 pub(crate) struct ConstraintTree {
     node: ConstraintNode,
     /// `1` for a leaf, one more than the deepest child otherwise.
@@ -2493,9 +2304,7 @@ impl ConstraintTree {
     }
 }
 
-// `operands` holds the nested constraints, so a chain of these drops one
-// native frame per link; see `defer_drop`. `inner`'s own child handles are
-// shared with those operands, so dropping it here only lowers a count.
+// Deferred, so a long chain cannot overflow the stack.
 impl Drop for PyJoinConstraint {
     fn drop(&mut self) {
         defer_drop(std::mem::take(&mut self.operands));
@@ -2505,7 +2314,6 @@ impl Drop for PyJoinConstraint {
 impl PyJoinConstraint {
     fn leaf(inner: JoinConstraint) -> Self {
         Self {
-            // A leaf is depth 1 and size 1, under both bounds.
             inner: ConstraintTree::new(ConstraintNode::Leaf(inner)).expect("leaf is within bounds"),
             operands: Vec::new(),
             predicates: Vec::new(),
@@ -2531,19 +2339,13 @@ impl PyJoinConstraint {
 }
 
 /// `a` dominates `b`: every control-flow path from entry to `b` passes through
-/// `a`. Both are captured NODES (any capture) or an `If` branch-EDGE capture
-/// (`capture_true` / `capture_false`), so the meaningful pairs are node->node
-/// (`b` is downstream of `a`), edge->node (`b` sits in the block that edge
-/// leads into), and edge->edge (nested branches).
+/// `a`. Each is a captured node or an `If` branch-edge capture
+/// (`capture_true` / `capture_false`).
 ///
-/// This is dominance, not "reachable from". A merge or loop-header `Phi` is
-/// reached from several predecessors, so NO single incoming edge dominates it:
-/// `dominates(false_edge, phi)` is false there and drops the tuple. To say
-/// "the value `phi` merges from that edge is X", use `phi_input_from_edge`.
-///
-/// Only a capture with a control edge can be placed. A `load`, `store` or
-/// arithmetic capture has no position in the dominator tree, so the constraint
-/// drops the tuple and so does `negate(dominates(...))`.
+/// Dominance, not reachability: no single incoming edge dominates a merge
+/// `Phi`; use `phi_input_from_edge` for that. A capture with no control
+/// position (a `load`, `store` or arithmetic node) drops the tuple, under
+/// `negate` too.
 #[pyfunction]
 pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinConstraint {
     PyJoinConstraint::leaf(JoinConstraint::Dominates {
@@ -2581,8 +2383,7 @@ pub fn negate(c: &Bound<'_, PyAny>) -> PyResult<PyJoinConstraint> {
     })
 }
 
-/// `node` over every listed constraint, coerced, owning the handles the
-/// composite ends up holding.
+/// `node` over every listed constraint, coerced.
 fn composite(
     constraints: &[Bound<'_, PyAny>],
     node: fn(Vec<Arc<ConstraintTree>>) -> ConstraintNode,
@@ -2599,28 +2400,24 @@ fn composite(
     })
 }
 
-/// A constraint that passes when ANY of the listed constraints passes. An
-/// empty list passes nothing.
-///
-/// The top-level `constraints=[...]` list is already an AND, so `any_of` is
-/// how you express OR.
+/// A constraint that passes when any listed constraint passes. An empty list
+/// passes nothing.
 #[pyfunction]
 pub fn any_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> {
     composite(&constraints, ConstraintNode::Any)
 }
 
-/// A constraint that passes only when EVERY listed constraint passes. An
-/// empty list passes everything. Use it to AND constraints inside an `any_of`
-/// (the top-level list does not nest).
+/// A constraint that passes only when every listed constraint passes. An
+/// empty list passes everything.
 #[pyfunction]
 pub fn all_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> {
     composite(&constraints, ConstraintNode::All)
 }
 
-/// Base class for a user-defined join constraint. Subclass and override
-/// `constraint` to decide whether a joined match survives; optionally override
-/// `captures` to declare the captures it correlates, which lets it connect
-/// otherwise-independent patterns and range-check like a built-in constraint.
+/// Base class for a user-defined join constraint. Override `constraint` to
+/// decide whether a joined match survives; optionally override `captures` to
+/// declare the captures it correlates, so it can connect otherwise
+/// independent patterns.
 #[pyclass(
     name = "JoinPredicate",
     module = "strider.pattern.constraints",
@@ -2630,8 +2427,7 @@ pub struct PyJoinPredicate;
 
 #[pymethods]
 impl PyJoinPredicate {
-    /// Base initialiser; ignores any args so subclasses can call
-    /// `super().__init__(...)` freely.
+    /// Base initialiser; ignores any args.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
@@ -2647,7 +2443,6 @@ impl PyJoinPredicate {
     /// Override to return whether the joined match survives, as a `bool`;
     /// anything else is a `TypeError`. The base raises
     /// `NotImplementedError`.
-    // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
     fn constraint(&self, m: &Bound<'_, PyAny>) -> PyResult<bool> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
@@ -2660,12 +2455,9 @@ impl PyJoinPredicate {
     }
 }
 
-/// A built-in `JoinConstraint` used as-is, or a `JoinPredicate` subclass
-/// wrapped into a `Where` (its declared `captures()` read once, its
-/// `constraint` method wired to run per tuple). Anything else is a `TypeError`.
-///
-/// The `Where` closure's handle is shared onto `held`, so whoever keeps the
-/// constraint reports that one reference to the cyclic GC.
+/// A `JoinConstraint` as-is, or a `JoinPredicate` wrapped into a `Where`
+/// whose handle is also pushed onto `held` for the GC. Anything else is a
+/// `TypeError`.
 pub(crate) fn coerce_tree(
     obj: &Bound<'_, PyAny>,
     held: &mut Vec<PredicateFn>,
@@ -2690,10 +2482,8 @@ pub(crate) fn coerce_tree(
     ))
 }
 
-/// Runs a `JoinPredicate.constraint` over the whole joined tuple. It sees one
-/// `Match` spanning the join, so `m.uint(c)` (and every other reader) finds
-/// `c` in whichever pattern bound it. Any exception is stashed for the query
-/// boundary to re-raise; the row drops meanwhile.
+/// Runs a `JoinPredicate.constraint` on one `Match` spanning the joined
+/// tuple. A raise is stashed for the query boundary and drops the row.
 fn run_join_predicate(tuple: &sp::JoinedMatch, obj: &PyObject) -> Option<bool> {
     run_predicate(
         "JoinPredicate",
@@ -2720,10 +2510,7 @@ node_builder! {
                slot `idx + 1`. `.input(i, p)` addresses the raw slot instead." },
         { pat phi_token(Value): phi_token
             = "Constrain the phi's ownership edge, the PhiToken input at raw \
-               slot 0 (the owning Region's PhiToken output), which \
-               `.input(0, p)` also names. A typed sub can never bind it \
-               (PhiToken falls outside the value domain a typed sub matches); \
-               use var()/anything() to bind the edge." },
+               slot 0. Only var()/anything() can bind it." },
     ],
     ctor: phi = "Start a tagged-`Phi` pattern builder.",
 }
@@ -2752,9 +2539,7 @@ node_builder! {
                instead, and takes a value operand." },
         { pat phi_token(Value): phi_token
             = "Constrain the MemPhi's ownership edge, the PhiToken input at \
-               raw slot 0 (the owning Region's PhiToken output), which \
-               `.input(0, p)` also names. See PhiPat.phi_token for the \
-               value-phi analogue." },
+               raw slot 0. Only var()/anything() can bind it." },
     ],
     ctor: mem_phi = "Start a `MemPhi` pattern builder.",
 }
@@ -2766,8 +2551,8 @@ macro_rules! phi_edge_links {
         impl $ty {
             /// Merge `value` in from the branch edge `edge` binds (an
             /// `if_else` `capture_true` / `capture_false`). A pattern `value`
-            /// becomes an input; a `Capture` names one another pattern in the
-            /// query binds. Pass `constraints()` to the query.
+            /// becomes an input; a `Capture` names one another pattern binds.
+            /// Pass `constraints()` to the query.
             fn input_from<'py>(
                 slf: PyRef<'py, Self>,
                 edge: crate::matcher::CaptureKey<'_>,
@@ -2825,10 +2610,8 @@ node_builder! {
     ty: PyEntryPat,
     inner: EntryInner,
     py_name: "EntryPat",
-    doc: "Typed builder for the function's unique `Entry` node pattern. \
-          `Entry` takes no inputs and produces one control output, the \
-          function's initial control edge. Nests as a control operand, e.g. \
-          `region().any_input(entry())`.",
+    doc: "Typed builder for the function's unique `Entry` node. Nests as a \
+          control operand, e.g. `region().any_input(entry())`.",
     core: strider_pattern::entry,
     core_ty: strider_pattern::EntryPat,
     memory: false,
@@ -2841,12 +2624,9 @@ node_builder! {
     ty: PyRegionPat,
     inner: RegionInner,
     py_name: "RegionPat",
-    doc: "Typed builder for `Region` (CFG-merge) node patterns. Every input \
-          is one predecessor's control edge, at raw slots `0..N`, so \
-          `.input(idx, p)` / `.any_input(p)` constrain a predecessor \
-          directly. A typed value sub can never bind a Control edge; use \
-          entry() / region() or an untyped wildcard. Nests as a control \
-          operand, e.g. `region().any_input(region())`.",
+    doc: "Typed builder for `Region` (CFG-merge) node patterns. Input `i` is \
+          one predecessor's control edge, bound by entry() / region() or a \
+          wildcard. Nests as a control operand.",
     core: strider_pattern::region,
     core_ty: strider_pattern::RegionPat,
     memory: false,
@@ -2866,7 +2646,7 @@ pub struct PyFunctionArgPat {
     common: std::cell::RefCell<CommonState>,
 }
 
-// `common` carries the `input` / `any_input` operand handles; see `defer_drop`.
+// Deferred, so a long operand chain cannot overflow the stack.
 impl Drop for PyFunctionArgPat {
     fn drop(&mut self) {
         if let Ok(mut common) = self.common.try_borrow_mut() {
@@ -3003,8 +2783,7 @@ macro_rules! binary_op_builder {
             common: std::cell::RefCell<CommonState>,
         }
 
-        // The operands hold whatever nested here, so a chain of these drops
-        // one native frame per link; see `defer_drop`.
+        // Deferred, so a long operand chain cannot overflow the stack.
         impl Drop for $ty {
             fn drop(&mut self) {
                 defer_drop(std::mem::take(&mut self.repr.args));
@@ -3023,9 +2802,8 @@ macro_rules! binary_op_builder {
                 self.repr.args.iter().try_for_each(|a| visit.call(a))
             }
 
-            /// The operands are fixed at construction, so a cycle cannot close
-            /// through them; only `.when()` can capture this builder, and
-            /// `__clear__` drops that.
+            /// Operands are fixed at construction, so no cycle closes through
+            /// them.
             fn clear_operands(&self) {}
 
             fn new(repr: Repr) -> Self {
@@ -3057,9 +2835,7 @@ macro_rules! binary_op_builder {
         #[pymethods]
         impl $ty {
             /// Force left-to-right operand matching, disabling commutativity.
-            ///
-            /// Chainable, not terminal: the result stays lazy and nests as a
-            /// value operand just like the bare commutative builder.
+            /// Chainable.
             fn ordered(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
                 slf.ordered.set(true);
                 slf
@@ -3093,9 +2869,7 @@ binary_op_builder!(
 );
 
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // The rosters the `Literal` type aliases in `strider/__init__.py` are
-    // built from: each is the list its own parser accepts, so neither can
-    // drift from the Rust enum behind it.
+    // The rosters behind the `Literal` type aliases in `strider/__init__.py`.
     for (name, roster) in [
         ("INT_CMP_OPS", INT_CMP_OPS),
         ("INT_BINARY_OPS", INT_BINARY_OPS),
@@ -3105,8 +2879,8 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     ] {
         m.add(name, pyo3::types::PyTuple::new_bound(py, roster))?;
     }
-    // Lowercase (the `FromStr` spelling) then uppercase (what the readers
-    // emit), which is the order the stub lists and the parity test compares.
+    // Lowercase (`FromStr`) then uppercase (what the readers emit), the stub's
+    // order.
     let widths = strider_ir::ValueType::SUPPORTED;
     let value_types: Vec<String> = widths
         .iter()
@@ -3152,8 +2926,6 @@ fn register_constraints(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResul
     );
 
     parent.add_submodule(&m)?;
-    // The `sys.modules` entry that `import strider.pattern.constraints` needs
-    // is inserted by the package `__init__.py`, which owns every dotted-path
-    // registration.
+    // `__init__.py` adds the `sys.modules` entry.
     Ok(())
 }

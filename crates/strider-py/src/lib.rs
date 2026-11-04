@@ -1,5 +1,4 @@
-// All three fire on PyO3 0.22 macro expansions, not on our own code, and are
-// fixed upstream in 0.23.
+// These three fire on PyO3 0.22 macro expansions, not on our own code.
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
 #![allow(clippy::useless_conversion)]
@@ -31,30 +30,19 @@ mod strider_cls;
 mod template;
 mod value_ops;
 
-/// Makes anyhow capture a backtrace at every error site.
+/// Makes anyhow capture a backtrace at every error site, unless the user set
+/// `RUST_LIB_BACKTRACE` or `RUST_BACKTRACE`.
 fn force_anyhow_backtrace_capture() {
-    // Anyhow reads `RUST_LIB_BACKTRACE`, falling back to `RUST_BACKTRACE`.
-    // Seeding only when neither is set honours a user's explicit opt-out; seeding
-    // only `RUST_LIB_BACKTRACE` leaves panic-time semantics alone.
     if std::env::var_os("RUST_LIB_BACKTRACE").is_none()
         && std::env::var_os("RUST_BACKTRACE").is_none()
     {
-        // SAFETY: glibc `setenv` can free the environ block a concurrent
-        // `getenv` is reading, handing that reader a dangling pointer.  Module
-        // init is serialised against other IMPORTS, not against other threads,
-        // so importing strider from a worker of an already-threaded process
-        // races anything calling `getenv` there.  Accepted, and avoidable:
-        // exporting `RUST_LIB_BACKTRACE` (or `RUST_BACKTRACE`) before the
-        // process starts takes this branch out entirely.
+        // SAFETY: races a concurrent `getenv` if strider is imported from a
+        // threaded process; exporting either variable beforehand avoids it.
         unsafe {
             std::env::set_var("RUST_LIB_BACKTRACE", "1");
         }
-        // std caches the enabled/disabled decision in a static on the first
-        // capture, and anyhow captures through std. The variable is removed
-        // again right after, because `set_var` writes the C `environ`, which
-        // `subprocess` children inherit and `os.environ` does not show: a Rust
-        // tool the host spawns would otherwise pay for backtrace capture on
-        // every error.
+        // std caches the decision on the first capture; the variable is then
+        // removed so spawned children do not inherit it.
         let _ = std::backtrace::Backtrace::capture();
         // SAFETY: as above.
         unsafe {
@@ -76,11 +64,8 @@ fn _strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(pyo3::wrap_pyfunction!(viz_standalone_js, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(reader::load_elf, m)?)?;
-    // StriderError is the one cross-cutting symbol kept at the top level.
     errors::register(py, m)?;
 
-    // lib.rs owns the submodule graph: each `register` fn only populates the
-    // module it is handed.
     let sleigh = PyModule::new_bound(py, "sleigh")?;
     sleigh::register(py, &sleigh)?;
     arch::register(py, &sleigh)?;
