@@ -1,6 +1,5 @@
-//! What the jump-table classifier is allowed to trust: whether a bound this
-//! module derived may be the one sizing a table, or whether some test the
-//! analysis does not read is the real limit.
+//! Whether a derived bound may size a jump table, or some test the analysis
+//! does not read is the real limit.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -12,16 +11,11 @@ use super::interval::{Interval, width_mask};
 use super::{MAX_WALK, RangeMap, Stripped, cast_chain, guard_sink, single_control_consumer};
 
 impl RangeMap<'_> {
-    /// Whether a guard dominating `region` bounds bits of the same root that
-    /// `value` overlaps, the bits that can vary within `iv`, its range at
-    /// `region` (`narrowed` when tighter than its KnownBits bound), in a way
-    /// [`BitField::project`](super::bit_field::BitField::project) does not carry to `value`.
-    ///
-    /// That guard may be the one sizing a table `value` indexes, in a shape
-    /// this module does not read, tighter than `iv`: the KnownBits bound of a
-    /// bit field is the whole field, and a read guard on it may be looser
-    /// still. Enumerating it reads past the table into whatever follows, such
-    /// as the next switch's table.
+    /// Whether a guard dominating `region` bounds bits of `value`'s root that
+    /// overlap the bits varying within `iv` (`value`'s range at `region`,
+    /// `narrowed` when tighter than KnownBits), in a way
+    /// [`BitField::project`](super::bit_field::BitField::project) does not
+    /// carry to `value`. Such a guard may be the table's real, tighter bound.
     pub(crate) fn guard_left_unconnected(
         &mut self,
         value: ValueId,
@@ -51,20 +45,12 @@ impl RangeMap<'_> {
         })
     }
 
-    /// Whether `iv`, `value`'s range at `site`, is no tighter than its
-    /// KnownBits bound (`!narrowed`) while an `If` dominating `site` tests
-    /// bits of `strip`'s cell, a load `value` derives from, that `value`
-    /// reads, or of a load overlapping the cell.
-    ///
-    /// Such a test (a mask, a shift, a sign) bounds the cell in a shape no
-    /// guard here reads, or on a reload `range_of` does not connect, and may
-    /// be what sizes a table `value` indexes. `Equal(cast*(cell), k)` whose
-    /// true edge does not reach `site` only excludes `k`, which
-    /// [`Self::excludes`] reads, and a guard on an edge holding at `site`
-    /// whose bound, carried exactly up `strip`'s steps, still admits all of
-    /// `iv` is one `range_of` reads. A narrowed range is trusted as the
-    /// table's bound: a read guard looser than an unread test is a known
-    /// limit.
+    /// Whether `iv`, `value`'s range at `site`, is not `narrowed` past
+    /// KnownBits while an `If` dominating `site` tests bits `value` reads of
+    /// `strip`'s cell or a load overlapping it, a test that may be the
+    /// table's real bound. Not counted: an `Equal(cast*(cell), k)` whose true
+    /// edge misses `site` (see [`Self::excludes`]), or a guard holding at
+    /// `site` whose bound, carried up `strip`'s steps, covers `iv`.
     pub(crate) fn cell_test_left_unread(
         &mut self,
         value: ValueId,
@@ -88,11 +74,8 @@ impl RangeMap<'_> {
         at.checked_sub(1).is_some_and(|i| spans[i].1 >= pre)
     }
 
-    /// The disjoint dominator-tree preorder ranges, sorted, holding the
-    /// sites [`Self::cell_test_left_unread`] answers yes for: a site's `pre`
-    /// lies in some `If`'s span, within its true edge's when it only
-    /// excludes one value, and outside every span where a guard it records
-    /// reads `iv`. A span is `pre..=post`, and `post` is on the same clock.
+    /// The sorted disjoint dominator-tree preorder ranges `pre..=post` of the
+    /// sites [`Self::cell_test_left_unread`] answers yes for.
     fn unread_cell_test_spans(
         &self,
         value: ValueId,
@@ -159,8 +142,8 @@ impl RangeMap<'_> {
         merged
     }
 
-    /// The node below which a guard recorded on `edge` holds: its sink, when
-    /// reached by that edge alone or joining it into a recovered guard.
+    /// The node below which a guard on `edge` holds: its sink, when reached
+    /// by that edge alone or joining it into a recovered guard.
     fn guard_holds_below(&self, edge: ValueId) -> Option<NodeId> {
         let f = self.function;
         guard_sink(f, edge).or_else(|| {
@@ -179,12 +162,8 @@ impl RangeMap<'_> {
     }
 
     /// Whether `value` is not `x` at `site`: an `If(y == x)` whose false
-    /// edge holds at `site` tests `value` or a zero-extend `y` of it.
-    ///
-    /// The edge's sink must be no merge, as for any edge guard, or the fact
-    /// would hold for the merge's other predecessors too. The constants only
-    /// filter the values enumerated; no range a veto weighs is narrowed by
-    /// them.
+    /// edge's (non-merge) sink dominates `site` tests `value` or a
+    /// zero-extend `y` of it. Filters enumerated values only; narrows no range.
     pub(crate) fn excludes(&self, value: ValueId, x: u128, site: NodeId) -> bool {
         #[cfg(test)]
         EQUALITY_SCANS.with(|c| c.set(c.get() + 1));
@@ -194,9 +173,8 @@ impl RangeMap<'_> {
             .is_some_and(|(sinks, span)| sinks.meet_dominating(span).is_some())
     }
 
-    /// The values `index` scales without wrapping, through zero-extends and
-    /// constant multiplies and left shifts, each with the factor taking it
-    /// to `index`: `index` is not `x` where some value is not `x / factor`.
+    /// The values `index` scales without wrapping through zero-extends,
+    /// constant multiplies and left shifts, each with its factor to `index`.
     pub(crate) fn index_scales(&self, index: ValueId) -> Vec<(ValueId, u128)> {
         let f = self.function;
         let mut out = Vec::new();
@@ -234,12 +212,11 @@ thread_local! {
     pub(crate) static CELL_TEST_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Every `If`, by the base and offset of each load its condition's cone
+/// Every `If`, by the `(base, offset)` of each load its condition's cone
 /// reaches through the ops [`operand_demand`] walks.
 pub(super) struct CellTests {
     by_slot: FxHashMap<(ValueId, u128), Vec<NodeId>>,
-    /// Those whose cone runs past [`MAX_WALK`] values, which
-    /// [`cell_bits_read`] reads as every bit of any cell.
+    /// Those whose cone runs past [`MAX_WALK`] values: they may read any cell.
     any: Vec<NodeId>,
     /// The widest load recorded, in bytes.
     widest: i128,
@@ -256,8 +233,8 @@ impl CellTests {
             all: ifs.to_vec(),
         };
         for &if_node in ifs {
-            // A superset of what `cell_bits_read` visits from the condition, which
-            // ignores the demand, so a cone within the cap here is one there.
+            // A superset of what `cell_bits_read` visits, so a cone within the
+            // cap here is one there.
             let mut seen: FxHashSet<ValueId> = FxHashSet::default();
             let mut stack = vec![f.if_cond(if_node)];
             let mut slots: FxHashSet<(ValueId, u128)> = FxHashSet::default();
@@ -284,8 +261,7 @@ impl CellTests {
         tests
     }
 
-    /// The `If`s whose condition may read bits of `cell`: those reading a
-    /// load overlapping it, and those past the cap. Possibly repeated.
+    /// The `If`s whose condition may read bits of `cell`, possibly repeated.
     fn reading<'a>(
         &'a self,
         f: &strider_ir::Function,
@@ -391,10 +367,9 @@ fn lift_up(
         .try_fold(iv, |iv, &(v, step)| step.image(iv, width_mask(f, v)))
 }
 
-/// The bits of the values `view` accepts that `root`'s value depends on,
-/// walking its operands through integer ops and casts, not through a phi or a
-/// load. `view` answers whether a value's bits align with the cell's, and
-/// every bit of one that does not counts. Every bit past [`MAX_WALK`] values.
+/// The cell bits `root` depends on through integer ops and casts. `view`
+/// says whether a value's bits align with the cell's; an unaligned one reads
+/// every bit, as does a walk past [`MAX_WALK`] values.
 fn cell_bits_read(
     f: &strider_ir::Function,
     root: ValueId,
@@ -439,9 +414,8 @@ fn load_extent(f: &strider_ir::Function, v: ValueId) -> Option<(ValueId, u128, i
     Some((base, off, len))
 }
 
-/// The bits of each variable operand of `v`'s producer that `demand`, bits of
-/// `v`, depends on. Nothing for a producer that is not an integer op or cast;
-/// every bit of an operand of an op this does not model.
+/// The bits of each variable operand of `v`'s producer that bits `demand` of
+/// `v` depend on; every bit for an op this does not model.
 fn operand_demand(f: &strider_ir::Function, v: ValueId, demand: u128) -> Vec<(ValueId, u128)> {
     let kind = *f.kind_of_value(v);
     if !walks_operands(&kind) {
