@@ -84,7 +84,7 @@ compares the full count).
 
 ## Terminators
 
-`Return` and a link-register `BranchIndirect` (ARM `bx lr`) emit a convention
+`Return` and a link-register `BranchIndirect` (ARM `pop {pc}`) emit a convention
 `Return`. A resolved `Switch` gets one control output per arm and keeps its
 selector live; a `TailCall` becomes `Call` + `Return`; an unresolved indirect
 branch becomes an `IndirectBranch` anchoring the dispatch varnode and, on ARM
