@@ -196,12 +196,19 @@ Lifting (vendored Sleigh):
   and record forms; `mtfsfi`, `lxsd`, `stxvw4x`, `fmrgew`, `stfs`, `lfs`,
   `xscvdpspn`, `slbmfee`, `xscmp*`, `paste.` and `isel` (ppc32) fixed;
   `mfpmr` / `mtpmr` lift; `xsdivqp` has its own `call_other`.
+- PowerPC `friz`, `fmsub` and `xscvdpspn` (truncates, reading no FPSCR.RN) fixed.
+- PowerPC `vcmp*.` and `bcd*.` set CR6.
+- MIPS `mtc0` clobbers CP0; `syscall` clobbers `at`, `hi` and `lo`.
 - x86: `fprem`, `fxam`, `fcom`, `rcl` / `rcr` OF, `lock hlt`, and the
   upstream Ghidra b16f1556d2 fixes.
 - AArch64 `fmov` to an h register, `bfcvt*`, `fcvtxn`; ARM `vrintr`,
   `vld3/4`, `vst3/4`, BE8/BE32 `vld1` / `vst1`, `msr` flags; BE8 now decodes
   with its own `ARM8_be8` sla.
 - MIPS float-to-integer saturation and rounding.
+- ppc64 ELFv1 and ppc32 SysV conventions return floats in `f1`-`f4`.
+- CFG decoding of a run of `nop`s is deterministic.
+- `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb), as `analyze`
+  does.
 
 Loading:
 
@@ -214,7 +221,8 @@ Loading:
   IFUNC slots, MIPS global GOT entries, lazy-binding header words, TLS slots
   and `R_*_COPY` objects; it serves PPC32 `.got2`.
 - `add_elf` refuses an image of another architecture, class or byte order.
-- `load_elf` refuses a microMIPS image.
+- `load_elf` refuses a microMIPS image, and a COFF or Mach-O file; a
+  malformed ELF raises `StriderError`.
 - A ppc64 ELFv1 function's `Symbol.size` is its `st_size`; ppc64 ELFv2
   `no_return_targets` and `per_address_ccs` keyed by symbol also cover the
   local entry.

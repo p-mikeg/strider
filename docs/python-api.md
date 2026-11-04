@@ -832,7 +832,8 @@ arch.reg("RAX")                        # the Vn for a register name, or None;
                                        # exact case: upper on x86, lower elsewhere
 arch.reg_name(vn)                      # the name for a Vn, or None
 
-lft.pcode_at(entry, addr)              # decode one instruction's p-code as text
+lft.pcode_at(entry, addr)              # one instruction's p-code as text; an odd
+                                       # entry decodes as Thumb, as in analyze
 
 lft.user_op_names()                    # every Sleigh user-op name this arch emits
 lft.call_other_abi("rdtsc")            # how one is classified, or None
@@ -976,8 +977,9 @@ given.
 
 Analysis failures are `strider.StriderError`. A wrongly typed argument raises
 the usual builtin (`TypeError`, `OverflowError`). `load_elf` raises
-`FileNotFoundError` for a missing path and `ValueError` for an unsupported ELF
-(microMIPS included, as does `add_elf`). Range-checked constructor arguments
+`FileNotFoundError` for a missing path, `ValueError` for a non-ELF file or an
+unsupported arch or ABI (microMIPS included, as does `add_elf`), and
+`StriderError` for a malformed ELF. Range-checked constructor arguments
 raise `ValueError`: `CfgOptions(function_max_size=0)`, a size with
 `allow_code_before_start_addr=True`, a `known_targets` string other than
 `"return"`, a string `call_other_abis` value or a repeated name, an empty
