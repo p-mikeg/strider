@@ -724,7 +724,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         report.link_register_seated.retain(live);
         report.tail_call_seated.retain(live);
         report.flowing_isa_bits.retain(|site, _| live(site));
-        // No resolver ran: every seated answer is unverified.
+        // No resolver ran: every deferred site is unresolved, every seat
+        // unverified.
         for region in graph.node_weights() {
             match &region.terminator {
                 RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
