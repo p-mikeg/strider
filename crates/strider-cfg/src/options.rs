@@ -13,15 +13,15 @@ static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash:
 pub static NO_LOCAL_ENTRIES: LocalEntries = LocalEntries(Vec::new());
 
 /// The extent of the function being built, which decides when a branch leaves
-/// it.
+/// it, together with [`CfgOptions::fragment_ranges`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FunctionBound {
-    /// `[start, start + n)`: a branch outside it is a tail call, and so is a
-    /// sequential fall-through past its end, reported as
+    /// `[start, start + n)`: a branch outside it and every fragment is a tail
+    /// call, and so is a sequential fall-through past its end, reported as
     /// [`crate::Reason::PastFunctionEnd`].
     Size(std::num::NonZeroU64),
-    /// No extent: a branch below the start is a tail call unless
-    /// `code_before_start`.
+    /// No extent: a branch below the start and outside every fragment is a
+    /// tail call unless `code_before_start`.
     Open { code_before_start: bool },
 }
 
@@ -50,9 +50,14 @@ impl FunctionBound {
 
 #[derive(Clone, Debug)]
 pub struct CfgOptions<'a> {
-    /// How far the function extends; a branch or fall-through leaving it is a
-    /// tail call.
+    /// How far the function extends; a branch or fall-through leaving it and
+    /// every [`Self::fragment_ranges`] range is a tail call.
     pub bound: FunctionBound,
+    /// More of this function's code outside `bound`, such as GCC's
+    /// `<name>.cold` partitions: a branch into one is an edge, and a
+    /// fall-through past one's end is [`crate::Reason::PastFunctionEnd`]
+    /// under either bound.
+    pub fragment_ranges: DataRanges,
     /// Caller-seeded answers per `BranchIndirect`; an unlisted site defers.
     /// Read through [`CfgOptions::seated`].
     pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
@@ -99,11 +104,12 @@ impl DataRanges {
     ///
     /// # Errors
     ///
-    /// The first pair ending at or below its start, described.
-    pub fn try_new(ranges: Vec<(u64, u64)>) -> Result<Self, String> {
+    /// The first pair ending at or below its start, described as option
+    /// `what`'s.
+    pub fn try_new(what: &str, ranges: Vec<(u64, u64)>) -> Result<Self, String> {
         if let Some((start, end)) = ranges.iter().find(|(start, end)| end <= start) {
             return Err(format!(
-                "data_ranges: ({start:#x}, {end:#x}) is empty; a range runs start..end with end > start"
+                "{what}: ({start:#x}, {end:#x}) is empty; a range runs start..end with end > start"
             ));
         }
         Ok(Self::new(ranges.into_iter().map(|(start, end)| start..end)))
@@ -168,6 +174,7 @@ impl Default for CfgOptions<'_> {
     fn default() -> Self {
         Self {
             bound: FunctionBound::default(),
+            fragment_ranges: DataRanges::default(),
             known_targets: &NO_TARGETS,
             derived_targets: &NO_TARGETS,
             no_return_targets: &NO_NO_RETURN_TARGETS,
@@ -266,9 +273,9 @@ mod tests {
 
     #[test]
     fn try_new_refuses_an_empty_range() {
-        let err = DataRanges::try_new(vec![(0x10, 0x18), (0x20, 0x20)]).unwrap_err();
+        let err = DataRanges::try_new("data_ranges", vec![(0x10, 0x18), (0x20, 0x20)]).unwrap_err();
         assert!(err.contains("(0x20, 0x20) is empty"), "{err}");
-        let ok = DataRanges::try_new(vec![(0x10, 0x18)]).unwrap();
+        let ok = DataRanges::try_new("data_ranges", vec![(0x10, 0x18)]).unwrap();
         assert_eq!(ok.ranges().len(), 1);
         assert_eq!((ok.ranges()[0].start, ok.ranges()[0].end), (0x10, 0x18));
     }

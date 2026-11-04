@@ -297,6 +297,7 @@ struct ElfSeat {
     /// A symbol's recorded size, bounding a lift the options leave open.
     size: Option<std::num::NonZeroU64>,
     data_ranges: Option<strider_cfg::DataRanges>,
+    fragment_ranges: Option<strider_cfg::DataRanges>,
     local_entries: Option<std::sync::Arc<strider_cfg::LocalEntries>>,
 }
 
@@ -305,13 +306,18 @@ impl ElfSeat {
         elf: &PyLoadedElf,
         opts: &PyCfgOptions,
         per_address_ccs: bool,
+        entry: u64,
         size: Option<u64>,
     ) -> PyResult<Self> {
         let data_ranges = opts.data_ranges.ranges().is_empty();
+        let fragment_ranges = opts.fragment_ranges.ranges().is_empty();
         let keyed = per_address_ccs || !opts.no_return_targets.is_empty();
         Ok(Self {
             size: size.and_then(std::num::NonZeroU64::new),
             data_ranges: data_ranges.then(|| elf.data_ranges()).transpose()?,
+            fragment_ranges: fragment_ranges
+                .then(|| elf.cold_fragments(entry))
+                .transpose()?,
             local_entries: keyed.then(|| elf.local_entries()).transpose()?,
         })
     }
@@ -343,6 +349,9 @@ fn cfg_options_from<'a>(
         data_ranges: elf
             .and_then(|e| e.data_ranges.clone())
             .unwrap_or_else(|| opts.data_ranges.clone()),
+        fragment_ranges: elf
+            .and_then(|e| e.fragment_ranges.clone())
+            .unwrap_or_else(|| opts.fragment_ranges.clone()),
     }
 }
 
@@ -846,10 +855,10 @@ impl PyLifter {
             None => Py::new(py, PyCfgOptions::default())?,
         };
         let opts_ref = opts.get();
-        let seat = elf
-            .map(|elf| ElfSeat::read(&elf, opts_ref, false, None))
-            .transpose()?;
         let entry = entry_addr(entry)?;
+        let seat = elf
+            .map(|elf| ElfSeat::read(&elf, opts_ref, false, entry, None))
+            .transpose()?;
         let bound = slf.bind(py);
         let target = {
             let lifter = try_borrow_lifter(bound)?;
@@ -902,7 +911,7 @@ impl PyLifter {
                     .per_address_ccs
                     .as_ref()
                     .is_some_and(|t| !t.py.is_empty());
-                ElfSeat::read(&elf, cfg, keyed, size)
+                ElfSeat::read(&elf, cfg, keyed, entry, size)
             })
             .transpose()?;
 

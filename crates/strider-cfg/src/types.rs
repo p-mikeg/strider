@@ -78,13 +78,16 @@ pub enum RegionTerminator {
     /// A branch leaving the function: a jump to an out-of-range target, or an
     /// empty stub at `start_addr == target` for an edge leaving the decoded
     /// bytes (out of bound, unmapped, not code), hung off a successor edge.
+    /// Unreported: a branch into a cold partition missing from
+    /// [`crate::CfgOptions::fragment_ranges`] is modelled as a call to an
+    /// ABI-conforming callee.
     TailCall {
         /// The callee, with the ISA mode the branch committed (`None`: its own
         /// entry mode).
         target: crate::ResolvedTarget,
     },
     /// A seated jump table. Every target is an instruction start inside the
-    /// function bound. An arm out of the bound, or off every instruction
+    /// function bound or a fragment. An arm out of the bound, or off every instruction
     /// boundary of a region decoded before the seal, defers the whole site as
     /// `UnresolvedIndirectBranch`; an off-boundary arm found after the seal is
     /// dropped. Both off-boundary cases are reported as
