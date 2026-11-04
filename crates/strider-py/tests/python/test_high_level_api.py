@@ -42,6 +42,14 @@ def test_load_elf_rejects_non_path():
         strider.lift.load_elf(1234)  # type: ignore[arg-type]
 
 
+def test_load_elf_raises_strider_error_for_a_malformed_elf(tmp_path):
+    """A valid header over a truncated file is malformed, not unsupported."""
+    path = tmp_path / "truncated.elf"
+    path.write_bytes(fixture_path("x64", "arithmetic").read_bytes()[:200])
+    with pytest.raises(strider.StriderError):
+        strider.lift.load_elf(str(path))
+
+
 def test_load_x86_32bit():
     elf = fixture_path("x86", "arithmetic")
     s = strider.lift.load_elf(str(elf))
