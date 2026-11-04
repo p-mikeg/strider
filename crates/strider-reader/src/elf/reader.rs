@@ -55,6 +55,10 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         self.rom.read_exact(addr, buf)
     }
+
+    fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
+        self.rom.read(addr, buf) == Some(buf.len())
+    }
 }
 
 #[cfg(test)]
@@ -66,6 +70,11 @@ mod tests {
     /// A single RWX mapping, the firmware / `ld -N` shape: fetchable, but
     /// not ROM.
     fn rwx_elf() -> Vec<u8> {
+        text_elf(true)
+    }
+
+    /// 16 bytes of `.text`, with `writable` also SHF_WRITE.
+    fn text_elf(writable: bool) -> Vec<u8> {
         use object::write::{Object, StandardSegment};
         use object::{Architecture, BinaryFormat, Endianness, SectionKind};
         let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
@@ -78,7 +87,9 @@ mod tests {
         obj.append_section_data(sec, &[0x90u8; 16], 1);
         obj.section_mut(sec).flags = object::SectionFlags::Elf {
             sh_flags: u64::from(
-                object::elf::SHF_ALLOC | object::elf::SHF_EXECINSTR | object::elf::SHF_WRITE,
+                object::elf::SHF_ALLOC
+                    | object::elf::SHF_EXECINSTR
+                    | if writable { object::elf::SHF_WRITE } else { 0 },
             ),
         };
         obj.write().expect("write ELF")
@@ -116,5 +127,37 @@ mod tests {
             err.to_string().contains("is not mapped"),
             "the ROM view holds no writable mapping at all, got: {err}"
         );
+    }
+
+    #[test]
+    fn try_read_answers_as_read_does() {
+        let elf = OwnedElf::parse(text_elf(false)).expect("parse");
+        let obj = elf.checked_file().expect("parse");
+        let base = {
+            use object::{Object as _, ObjectSection as _};
+            let sec = obj
+                .sections()
+                .find(|s| s.name() == Ok(".text"))
+                .expect(".text");
+            ElfSectionLayout::new(&obj).section_base(&sec)
+        };
+        let reader = ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("reader");
+        let mut served = 0;
+        for (addr, len) in [
+            (base, 16),
+            (base + 12, 4),
+            (base + 12, 8),
+            (base + 16, 1),
+            (base, 0),
+        ] {
+            let (mut a, mut b) = (vec![0u8; len], vec![0u8; len]);
+            let read = ReadOnlyMemory::read(&reader, addr, &mut a).is_ok();
+            assert_eq!(reader.try_read(addr, &mut b), read, "{addr:#x}+{len}");
+            if read {
+                assert_eq!(a, b);
+                served += 1;
+            }
+        }
+        assert_eq!(served, 3);
     }
 }

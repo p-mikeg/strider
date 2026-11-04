@@ -17,7 +17,9 @@ pub(crate) fn read_rom_const(
         return None;
     }
     let mut bytes = vec![0u8; ty.byte_size()];
-    rom.read(addr, &mut bytes).ok()?;
+    if !rom.try_read(addr, &mut bytes) {
+        return None;
+    }
     if endianness == Endianness::Big {
         bytes.reverse();
     }

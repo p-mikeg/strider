@@ -1256,6 +1256,10 @@ impl ReadOnlyMemory for PyBufferReaderView {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         self.table.read_exact(addr, buf)
     }
+
+    fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
+        self.table.read(addr, buf) == Some(buf.len())
+    }
 }
 
 /// The memory argument every Python entry point accepts: a `BufferReader`
