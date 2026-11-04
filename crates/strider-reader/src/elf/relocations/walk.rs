@@ -12,9 +12,7 @@ use super::apply::apply_one_relocation;
 use super::implicit::note_copy;
 use super::{Ctx, RelocSite};
 
-/// One relocation, decoded once.
-///
-/// `object` reads a mips64el `Elf64_Rel` `r_info` as one little-endian `u64`,
+/// One relocation, decoded once. `object` reads a mips64el `Elf64_Rel` `r_info` as one little-endian `u64`,
 /// which swaps `r_sym` with the type word (`r_ssym | r_type3 | r_type2 |
 /// r_type`); that is undone here and nowhere else.
 #[derive(Clone, Copy, Debug)]
@@ -98,29 +96,15 @@ pub(super) fn has_crel(obj: &object::File<'_>) -> bool {
     }
 }
 
-/// Invokes `f(site_addr, avail, reloc, pair)` per relocation site, `site_addr`
-/// being the **absolute** virtual address in the coordinate system the loaded
-/// regions live in and `avail` the bytes left of the section owning the site
-/// (`u64::MAX` for a dynamic site, whose owner is a segment and which therefore
-/// has no section end to overrun).
+/// Invokes `f(site_addr, avail, reloc, pair)` per relocation site:
+/// `site_addr` in the regions' address space, `avail` the bytes left of the
+/// owning section (`u64::MAX` for a dynamic site), `pair` for an `SHT_REL`
+/// `R_MIPS_HI16` the site of the following `R_MIPS_LO16` on its symbol.
 ///
-/// `pair` is, for an `SHT_REL` `R_MIPS_HI16`, the site of the `R_MIPS_LO16`
-/// against the same symbol that follows it, whose field holds the low half of
-/// the addend.
-///
-/// Kind dispatch:
-///
-/// * ET_REL: per-section tables, restricted to `owners`. A section's
-///   `relocations()` yields `(r_offset, Relocation)` where `r_offset` is
-///   relative to the section the relocations apply *to* (the one `sh_info`
-///   points at), so the site is that section's `layout` base plus the offset.
-/// * Everything else: the dynamic table, `owners` and `layout` unused.
-///   `dynamic_relocations()` is `Some` for every ELF, but its iterator yields
-///   only relocation sections whose `sh_link` is the dynamic symbol table's
-///   index, which is 0 when there is no `.dynsym`. A static binary's
-///   `.rela.plt` links to `.symtab`, so it walks no sites; `strip` rewrites
-///   that link to 0, and the same binary then walks its IRELATIVE slots;
-///   unstripped, [`relocations_off_dynsym`] walks them.
+/// An ET_REL walks its per-section tables targeting `owners`, rebased
+/// through `layout`. Anything else walks `dynamic_relocations()`, which skips
+/// a table not linked to `.dynsym` (an unstripped static `.rela.plt`;
+/// [`relocations_off_dynsym`] walks those).
 pub(super) fn for_each_reloc_site<F>(
     obj: &object::File<'_>,
     owners: &std::collections::BTreeSet<usize>,
@@ -148,13 +132,8 @@ pub(super) fn for_each_reloc_site<F>(
                     .collect();
                 let pairs = mips_hi16_pairs(&relocs, arch);
                 for (i, (offset, r)) in relocs.iter().enumerate() {
-                    // The gABI puts `r_offset` inside the section `sh_info`
-                    // names.  A malformed object can point it past the end,
-                    // where the site still lands in SOME loaded region and
-                    // would silently patch an unrelated section's bytes.
-                    // `object` sizes only the types it knows, so `avail`
-                    // travels to where the width is chosen instead of being
-                    // checked here.
+                    // `avail` keeps a field past its section from patching
+                    // a neighbour; checked where the width is known.
                     let avail = sec_size.saturating_sub(*offset);
                     let pair = pairs
                         .get(i)
@@ -181,27 +160,20 @@ pub(super) fn for_each_reloc_site<F>(
     }
 }
 
-/// How many entries the relocation section headers a walk reads may name in
-/// all, as a multiple of what the file holds at its smallest entry. Past it
-/// the headers name the same bytes over and over, and the image is refused.
+/// The entries a walk's relocation headers may name, as a multiple of what
+/// the file holds at its smallest entry; past it the image is refused.
 pub(crate) const RELOCATION_ENTRY_BUDGET: u64 = 2;
 
-/// `obj`'s bytes with each relocation section header a walk reads that
-/// repeats an earlier one's table, its `(sh_type, sh_offset, sh_size)` and on
-/// an ET_REL its target, turned `SHT_NULL`; `None` when none repeats. A
-/// repeat walks the same bytes, so dropping it changes nothing read.
-///
-/// A walk reads an ET_REL's header linked to `.symtab`, and a linked image's
-/// linked to `.dynsym` or allocated. A linked image's repeats that disagree
-/// on whether the entries index `.dynsym` leave the header kept allocated
-/// and linked to none: every entry naming a symbol is a hole.
+/// `obj`'s bytes with each walked relocation header that repeats an earlier
+/// one's table (`sh_type`, `sh_offset`, `sh_size`, and an ET_REL's target)
+/// turned `SHT_NULL`; `None` when none repeats. Repeats disagreeing on
+/// whether entries index `.dynsym` leave the kept header linked to none, so
+/// every entry naming a symbol is a hole.
 ///
 /// # Errors
 ///
-/// When the headers name more entries than [`RELOCATION_ENTRY_BUDGET`] times
-/// the file's length over its smallest entry (an `SHT_REL` one, or a byte
-/// with an `SHT_CREL` table). A header whose table runs past the file names
-/// none: no walk reads it.
+/// When the headers name more than [`RELOCATION_ENTRY_BUDGET`] times the
+/// file's length over its smallest entry. A table past the file names none.
 pub(super) fn without_repeated_tables(obj: &object::File<'_>) -> Result<Option<Vec<u8>>> {
     match obj {
         object::File::Elf32(f) => without_repeated_tables_of(f),
@@ -304,8 +276,7 @@ pub(super) fn without_repeated_tables_of<Elf: object::read::elf::FileHeader>(
         }
         Some(())
     };
-    // `object` reads the whole header table in-file at `sizeof(Shdr)` a
-    // header, so every field written lies in `bytes`.
+    // `object` checked the header table lies in-file.
     rewritten().ok_or_else(|| anyhow::anyhow!("a section header lies outside the file"))?;
     Ok(Some(bytes))
 }
@@ -332,17 +303,12 @@ pub(super) fn mips_hi16_pairs(relocs: &[(u64, RelocInfo)], arch: A) -> Vec<Optio
     pairs
 }
 
-/// A linked image's allocated relocation sections that `object`'s
-/// `dynamic_relocations()` skips, their `sh_link` naming another table than
-/// `.dynsym`, or none when there is a `.dynsym`: an unstripped static
-/// executable's `.rela.plt`, linked to `.symtab`, or a table whose link was
-/// left 0. Its `r_sym == 0` entries of a [`classify`] row, the IRELATIVE
-/// slots among them, are applied as the dynamic table's are. Every other
-/// entry is a hole over the field its row names, else over a word: one naming
-/// a symbol because which table its index means is in doubt.
-///
-/// On MIPS every entry but `R_MIPS_NONE` and a MIPS32 `R_MIPS_COPY` is a
-/// hole: its ELF64 type word is not decoded here.
+/// Applies a linked image's allocated relocation sections that
+/// `dynamic_relocations()` skips (not linked to `.dynsym`, e.g. an unstripped
+/// static `.rela.plt`): `r_sym == 0` entries of a [`classify`] row as usual,
+/// every other entry a hole over its row's field, else a word, since which
+/// table its index means is in doubt. On MIPS everything but `R_MIPS_NONE`
+/// and a MIPS32 `R_MIPS_COPY` is a hole (the ELF64 type word is not decoded).
 ///
 /// `walked` is `ctx.obj`, or its copy with repeated tables dropped.
 pub(super) fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
@@ -387,8 +353,7 @@ pub(super) fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::Fil
             Some(Kind::Compute(_, field)) => field.width(),
             None => word,
         };
-        // Held from its first byte, the hole spans the whole field: each
-        // region it overlaps serves its share, and none past them.
+        // Each region the hole overlaps serves its share.
         let holder = ctx.holder(site, addr, 1);
         ctx.unmodelled(holder, addr, width, r.type_word());
     }
