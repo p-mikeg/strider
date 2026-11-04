@@ -34,8 +34,8 @@ type LazyRanges<'f> =
     LazyCell<index_range::RangeMap<'f>, Box<dyn FnOnce() -> index_range::RangeMap<'f> + 'f>>;
 
 /// One function's dispatch-site recogniser, with the memos its sites share.
-/// Every recogniser fails closed on a partial proof; a claim wrong for the
-/// input can still seat a wrong edge.
+/// Every recogniser fails closed on a partial proof, never under-approximating
+/// the target set; a claim wrong for the input can still seat a wrong edge.
 pub(crate) struct SiteClassifier<'f> {
     function: &'f strider_ir::Function,
     /// Built on the first table query.
