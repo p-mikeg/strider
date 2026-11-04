@@ -666,12 +666,6 @@ fn presets_resolved_registers_have_expected_size() {
     }
 }
 
-/// The SP varnode resolves to the arch's SP register and appears in none of
-/// the resolved register lists: on stack-push ISAs the callee's `ret` pops the
-/// return address so SP is not preserved, and on link-register ISAs the call
-/// leaves SP alone but SP is still modelled not-callee-saved for uniformity
-/// (with `ret_stack_pop = 0`).  Stack-arg offsets and `ret_stack_pop` must
-/// round-trip unchanged from the preset.
 /// `preserves_all` / `preserves_regs` are written once on the name form and
 /// once on the built one; either order gives the same convention.
 #[test]
@@ -695,6 +689,12 @@ fn preserves_transforms_commute_with_build() {
     }
 }
 
+/// The SP varnode resolves to the arch's SP register and appears in none of
+/// the resolved register lists: on stack-push ISAs the callee's `ret` pops the
+/// return address so SP is not preserved, and on link-register ISAs the call
+/// leaves SP alone but SP is still modelled not-callee-saved for uniformity
+/// (with `ret_stack_pop = 0`).  Stack-arg offsets and `ret_stack_pop` must
+/// round-trip unchanged from the preset.
 #[test]
 fn presets_stack_pointer_and_arg_offsets() {
     for c in cases() {

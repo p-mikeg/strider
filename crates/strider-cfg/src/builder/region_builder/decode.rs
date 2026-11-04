@@ -150,9 +150,9 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         Ok(())
     }
 
-    /// Imposes the region's ISA mode and the `noflow` defaults at every
-    /// delay-slot address inside the lift at `addr`, which Sleigh decodes in
-    /// the context at the slot's own address. Returns whether it wrote any.
+    /// Imposes the region's ISA mode and the `noflow` defaults at every 2-byte
+    /// offset inside the lift at `addr` (a branch's delay slot decodes in the
+    /// context at its own address). Returns whether it wrote any.
     fn hold_delay_slot(&mut self, addr: u64, len: usize) -> Result<bool> {
         if !self.builder.engine.arch.has_delay_slots() {
             return Ok(false);

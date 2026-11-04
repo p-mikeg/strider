@@ -29,7 +29,7 @@ impl From<u64> for ResolvedTarget {
 /// The statically-known targets of one `BranchIndirect`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedTargets {
-    /// Return via the link register (ARM `bx lr`), seated as a
+    /// Return via the link register (ARM `ldr pc, [sp], #4`), seated as a
     /// [`crate::RegionTerminator::Return`].
     LinkRegister,
     /// One target: a [`crate::RegionTerminator::TailCall`] out of function
