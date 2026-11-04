@@ -5,11 +5,6 @@ use cranelift_entity::{EntityRef, PrimaryMap};
 use rustc_hash::FxHashMap;
 
 /// Dedup by value, dense id by allocation.
-///
-/// The forward `PrimaryMap` and the reverse index can never drift: [`intern`]
-/// is the only mutator and writes both halves in lockstep.
-///
-/// [`intern`]: EntityInterner::intern
 #[derive(Clone, Debug)]
 pub struct EntityInterner<K: EntityRef, V: Clone + Eq + Hash> {
     forward: PrimaryMap<K, V>,
@@ -70,9 +65,8 @@ impl<K: EntityRef, V: Clone + Eq + Hash> Default for EntityInterner<K, V> {
 impl<K: EntityRef, V: Clone + Eq + Hash> Index<K> for EntityInterner<K, V> {
     type Output = V;
 
-    /// Panics on an OUT-OF-RANGE key. A foreign key that happens to be in
-    /// range returns this interner's value for that index instead; use
-    /// [`get`](EntityInterner::get) when provenance is uncertain.
+    /// Panics on an out-of-range key; a foreign in-range key answers this
+    /// interner's value at that index.
     #[track_caller]
     fn index(&self, key: K) -> &V {
         &self.forward[key]
