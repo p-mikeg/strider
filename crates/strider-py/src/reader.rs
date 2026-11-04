@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyMemoryView};
 
 use crate::errors::into_strider_err;
 use strider_reader::elf::{
@@ -73,14 +73,11 @@ impl PyBufferReader {
 impl PyBufferReader {
     /// Create a reader over a single raw-byte region: `data` mapped at
     /// `base_addr`.  Raises `ValueError` for a region that runs past the end
-    /// of the address space.
+    /// of the address space. A buffer (`memoryview`, `array`, numpy) serves
+    /// its raw bytes and must have one-byte items, else `TypeError`.
     #[new]
     fn new(base_addr: u64, data: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let data = match data.extract::<pyo3::pybacked::PyBackedBytes>() {
-            Ok(bytes) => bytes.to_vec(),
-            Err(_) => data.extract::<Vec<u8>>()?,
-        };
-        let region = MemRegion::new(base_addr, data)
+        let region = MemRegion::new(base_addr, extract_bytes(data)?.into_owned())
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(Self::from_regions(vec![region]))
     }
@@ -1072,12 +1069,26 @@ where
     }
 }
 
-/// What a Python `read` returned, as bytes; `bytes` is borrowed.
-fn read_result_bytes<'a>(bound: &'a Bound<'_, PyAny>) -> PyResult<std::borrow::Cow<'a, [u8]>> {
-    Ok(match bound.downcast::<PyBytes>() {
-        Ok(b) => b.as_bytes().into(),
-        Err(_) => bound.extract::<Vec<u8>>()?.into(),
-    })
+/// `bound` as bytes: `bytes` borrowed, another buffer's raw bytes when its
+/// items are one byte wide, a sequence of ints one byte each. A buffer of
+/// wider items raises `TypeError`, as reading it per item would drop bytes.
+fn extract_bytes<'a>(bound: &'a Bound<'_, PyAny>) -> PyResult<std::borrow::Cow<'a, [u8]>> {
+    if let Ok(b) = bound.downcast::<PyBytes>() {
+        return Ok(b.as_bytes().into());
+    }
+    let Ok(view) = PyMemoryView::from_bound(bound) else {
+        return Ok(bound.extract::<Vec<u8>>()?.into());
+    };
+    let itemsize: usize = view.getattr("itemsize")?.extract()?;
+    if itemsize != 1 {
+        let format: String = view.getattr("format")?.extract()?;
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "a buffer of {itemsize}-byte items (format {format:?}) is not bytes; \
+             memoryview(x).cast('B') gives its raw bytes"
+        )));
+    }
+    let bytes = view.call_method0("tobytes")?;
+    Ok(bytes.downcast::<PyBytes>()?.as_bytes().to_vec().into())
 }
 
 /// `rsleigh::MemReader` over a Python reader object, taking the GIL per call.
@@ -1112,7 +1123,7 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
                 anyhow::bail!("{call} returned None");
             }
             let result = result.bind(py);
-            let bytes = read_result_bytes(result).map_err(|e| {
+            let bytes = extract_bytes(result).map_err(|e| {
                 let ty = result
                     .get_type()
                     .name()
@@ -1191,7 +1202,7 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             if result.is_none(py) {
                 anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }
-            let bytes = read_result_bytes(result.bind(py)).map_err(|e| {
+            let bytes = extract_bytes(result.bind(py)).map_err(|e| {
                 anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}")
             })?;
             if bytes.len() != size {
