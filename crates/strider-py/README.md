@@ -30,7 +30,7 @@ for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
 ## The module layout
 
 Every class and function lives in a domain submodule; `StriderError` is the
-only top-level name.
+only top-level class.
 
 | Module | Main names |
 |---|---|
