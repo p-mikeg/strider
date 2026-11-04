@@ -18,8 +18,8 @@ pub trait ReadOnlyMemory: Send {
     /// `addr + buf.len()` overflows `u64`.
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()>;
 
-    /// [`Self::read`] without the error, for a caller that drops it: an impl
-    /// whose errors cost to build answers here without one.
+    /// Whether [`Self::read`] filled `buf`, building no error; an impl whose
+    /// errors are costly overrides it.
     fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
         self.read(addr, buf).is_ok()
     }
