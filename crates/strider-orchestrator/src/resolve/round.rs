@@ -28,8 +28,7 @@ pub type Classifier<'c> = &'c dyn Fn(
 ) -> Result<strider_opt::ClassifiedSites>;
 
 /// One round's cfg, the function lifted and optimised from it, and what the
-/// loop reads off the two. The classifications stay out, so a fold can take
-/// them by value.
+/// loop reads off the two.
 pub(super) struct Round {
     /// The cfg `function` was lifted from.
     pub(super) cfg: strider_cfg::Cfg,
@@ -47,9 +46,8 @@ pub(super) struct Round {
 }
 
 impl Round {
-    /// No dispatch site is left for a fold to change. A seated `Switch` counts
-    /// as one: it is re-derived every round, so a table resolved before its
-    /// loop closed widens here.
+    /// No dispatch site is left for a fold to change. A seated `Switch` is
+    /// one: it is re-derived, and widens, every round.
     pub(super) fn is_settled(&self) -> bool {
         self.placeholders.is_empty() && self.switches.is_empty()
     }
@@ -62,14 +60,9 @@ impl Round {
             .map(|&(site, _)| site)
     }
 
-    /// Every dispatch site with its flowing ISA-mode bit.
-    ///
-    /// Read off the cfg, which sampled it while each site's region was
-    /// decoding ([`strider_cfg::Cfg::flowing_isa_bit_at_site`]). Probing the
-    /// live engine again here would answer for whichever region painted the
-    /// branch address last, and [`super::merge::adopt_known_modes`] would then
-    /// take the wrong `interworking` verdict. Every site is sampled on an arch
-    /// with an ISA-mode var; on one without, the bit is `false`.
+    /// Every dispatch site with its flowing ISA-mode bit, as sampled while its
+    /// region decoded ([`strider_cfg::Cfg::flowing_isa_bit_at_site`]), not as
+    /// the engine holds it now. `false` on an arch with no ISA-mode var.
     pub(super) fn flowing_anchors(&self) -> Vec<FlowingAnchor> {
         self.placeholders
             .iter()
@@ -102,8 +95,7 @@ where
         pipeline: &strider_opt::OptimizerPipeline,
         classify: Classifier<'_>,
     ) -> Result<(Round, Resolutions)> {
-        // Destructured to split the borrow: `lifter` goes out `&mut` while
-        // the optimiser ctx holds `&rom`.
+        // Split borrow: `lifter` is `&mut` while the ctx holds `&rom`.
         let Strider {
             ref mut lifter,
             ref rom,
@@ -111,11 +103,7 @@ where
         } = *self;
         let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
 
-        // A `BranchIndirect` neither table seats is deferred here and resolved
-        // at the full-function IR level by `classify`.
         let cfg = lifter.build_cfg(start_addr, cfg_opts)?;
-        // `cc` is moved all the way into `Function::default_cc`, but the
-        // loop builds again next round, so the clone is unavoidable here.
         let LiftOutcome {
             mut function,
             sites:
@@ -141,8 +129,7 @@ where
             }
         }
         pipeline.run(&mut function, &OptCtx::new(rom_ref))?;
-        // Before `settle_return_sites` truncates the `Return`s and cleans, so
-        // the classifier reads the IR the pipeline settled on.
+        // Before `settle_return_sites` truncates the `Return`s.
         let strider_opt::ClassifiedSites { sites, resolved } = if opts.resolve_indirect_branches {
             classify(&function, rom_ref)?
         } else {
@@ -170,16 +157,9 @@ where
     }
 }
 
-/// The return sites whose target is not the function's entry return address.
-/// Each target is taken back off the `Return` [`Strider::build_round`] anchored
-/// it on.
-///
-/// Verification reads the claims the round's lift was optimized under:
-/// a claim that holds keeps the verdict right, and a claim that does not is
-/// the caller's. There is no second, claim-cleared run to measure what a claim
-/// bought, because nothing downstream would act on the difference.
-///
-/// A site the pipeline culled took its `Return` with it.
+/// The live return sites whose target, anchored last on the `Return` by
+/// [`Strider::build_round`], is not the entry return address. Verified under
+/// the claims the round was optimized with.
 pub(super) fn settle_return_sites(
     function: &mut strider_ir::Function,
     sites: &[strider_lift::ReturnSite],
