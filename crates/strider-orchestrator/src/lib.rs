@@ -120,7 +120,7 @@ where
     }
 
     /// Structural CFG build only: no lift, optimisation or indirect-branch
-    /// resolution.
+    /// resolution, so every seat is `UnverifiedSeed`.
     ///
     /// # Errors
     ///
