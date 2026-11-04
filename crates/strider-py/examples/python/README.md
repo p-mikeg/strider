@@ -5,8 +5,8 @@ Most run against the committed fixture ELFs in `fixtures/out/x86/`; 02, 07,
 
 ## Prerequisites
 
-Run everything from the workspace root; from `crates/strider-py`,
-`maturin develop` succeeds but leaves stale bindings.
+Run from the workspace root; from `crates/strider-py`, `maturin develop`
+succeeds but leaves stale bindings.
 
 ```bash
 uv sync --group dev
@@ -39,9 +39,9 @@ uv run python crates/strider-py/examples/python/01_quickstart.py
 ### The `BufferReader` group (10, 11, 12, 15, 17)
 
 `strider.reader.BufferReader(base_addr, data)` serves `data` at `base_addr`
-as both the `mem` and `rom` of `strider.lift.lifter`, with reads on the Rust
-side. Subclass `MemReader` / `ReadOnlyMemory` (02, 07, 08) only for
-lazily-produced bytes.
+as the `mem` or `rom` of `strider.lift.lifter`, read on the Rust side.
+Subclass `MemReader` / `ReadOnlyMemory` (02, 07, 08) only for lazily produced
+bytes.
 
 - **Padding**: the disassembler prefetches past the last instruction. A
   `BufferReader` short-reads there, so its padding is harmless; a `MemReader`

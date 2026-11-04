@@ -1,7 +1,7 @@
 # strider-py
 
-Strider's Python bindings and primary interface: load a binary, lift and
-optimize a function, and query it with patterns.
+Strider's Python bindings: load a binary, lift and optimize a function, and
+query it with patterns.
 
 ## Getting started
 
@@ -46,10 +46,9 @@ only top-level class.
 
 ## Learn more
 
-- The guides in [`../../docs/`](../../docs/): getting started, vocabulary, the
-  full Python walkthrough, the Python API by topic, and the optimizer passes.
-- [`examples/python/`](examples/python/): runnable scripts, from a quickstart
-  to lifting raw bytes with no ELF.
+- [`../../docs/`](../../docs/): getting started, vocabulary, the Python guide,
+  the Python API by topic, and the optimizer passes.
+- [`examples/python/`](examples/python/): runnable scripts.
 - The `.pyi` stubs in [`strider/`](strider/): the typed reference.
 
 ## Lifting raw bytes

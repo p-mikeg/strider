@@ -56,7 +56,6 @@ for name, pat in idioms().items():
 
 print(f"\n{len(found)} of {len(idioms())} idioms present in this function")
 
-# Swap the function and the table reports a different fingerprint.
 top = max(found, key=lambda kv: kv[1]) if found else None
 if top:
     print(f"most common idiom here: {top[0]!r} ({top[1]} sites)")
