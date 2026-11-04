@@ -119,13 +119,12 @@ where
         self.rom.as_deref()
     }
 
-    /// Structural CFG build only: no lift, no optimisation, no
-    /// indirect-branch resolution, so every dispatch the seeds do not seat is
-    /// [`Reason::UnresolvedBranch`] and every seat [`Reason::UnverifiedSeed`].
+    /// Structural CFG build only: no lift, optimisation or indirect-branch
+    /// resolution.
     ///
     /// # Errors
     ///
-    /// Propagates CFG-build failures (see [`Lifter::build_cfg`]).
+    /// As [`Lifter::build_cfg`].
     pub fn build_cfg(
         &mut self,
         entry: u64,
@@ -136,18 +135,14 @@ where
     }
 
     /// Lifts `entry`, runs `pipeline` (default
-    /// [`strider_opt::default_pipeline`]) and classifies its dispatch sites
-    /// with [`strider_opt::classify_sites`], re-lifting until the seats stop
-    /// changing or the iteration cap runs out.
-    ///
-    /// Check [`AnalyzeResult::incomplete`] before trusting an absence; an
-    /// unresolved site keeps its placeholder. `opts.compact` applies once,
-    /// after the loop.
+    /// [`strider_opt::default_pipeline`]) and classifies its dispatch sites,
+    /// re-lifting until the seats stop changing or the iteration cap runs out.
+    /// `opts.compact` applies once, after the loop.
     ///
     /// # Errors
     ///
-    /// A non-empty `opts.cfg.derived_targets`; lift, cfg, opt or validation
-    /// failures. Never an incomplete result.
+    /// A non-empty `opts.cfg.derived_targets`, or a lift, CFG, opt or
+    /// validation failure; incompleteness is [`AnalyzeResult::incomplete`].
     pub fn analyze(
         &mut self,
         entry: u64,
