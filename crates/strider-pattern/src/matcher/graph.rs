@@ -7,20 +7,17 @@ use super::vertex::{PatNode, PatValue, PostMatchFn};
 pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 
 /// Pattern nodes one query may recurse through. The engine is
-/// continuation-passing, so a node's later operands are matched inside the
-/// deepest frame of its earlier operands' subtrees and the stack grows with
-/// the TREE-UNFOLDED node count, not the depth: a vertex feeding several slots
-/// is walked once per slot, which is what `unfolded_nodes` charges. The cap
-/// keeps the deepest pattern a query can describe inside the 2 MiB a spawned
-/// thread gets by default.
+/// continuation-passing, so the stack grows with the tree-unfolded node count
+/// (a vertex feeding several slots is walked once per slot), plus one frame per
+/// output vertex past a node's first. Under the cap a query fits the 2 MiB a
+/// spawned thread gets.
 pub const MAX_PATTERN_NODES: usize = 256;
 
-/// Per pat node, the most nodes one match configuration passes through, every
-/// vertex counted once per consumer slot that reaches it, and the reads it
-/// unfolds to (see [`super::walk::Read`]), the first saturating and the second
-/// `None` at 2^64 or more. An alternation's inputs are alternatives rather than
-/// operands, one run per configuration, so the first counts its heaviest arm
-/// and the second every arm.
+/// Per pat node: the most nodes one match configuration recurses through
+/// (each vertex once per consumer slot reaching it, each output vertex past the
+/// first as one more), saturating; and the reads it unfolds to (see
+/// [`super::walk::Read`]), `None` at 2^64 or more. An alternation charges its
+/// heaviest arm to the first and every arm to the second.
 fn unfolded(graph: &PatGraph) -> Vec<(usize, Option<u64>)> {
     // Every producer is built before its consumers, so id order is a
     // topological one.
@@ -36,7 +33,8 @@ fn unfolded(graph: &PatGraph) -> Vec<(usize, Option<u64>)> {
         } else {
             inputs.fold(0, |n, s| s.0.saturating_add(n))
         };
-        size.push((below.saturating_add(1), reads));
+        let extra_outputs = graph.node_outputs(node).len().saturating_sub(1);
+        size.push((below.saturating_add(1).saturating_add(extra_outputs), reads));
     }
     size
 }
@@ -367,10 +365,11 @@ mod tests {
             .into_iter()
             .map(|v| unfold(g, g.producer(v), memo))
             .collect();
+        let own = 1 + g.node_outputs(n).len().saturating_sub(1);
         let s = if g.node_kind(n).is_alternation() {
-            1usize.saturating_add(kids.iter().copied().max().unwrap_or(0))
+            own.saturating_add(kids.iter().copied().max().unwrap_or(0))
         } else {
-            kids.iter().fold(1usize, |acc, &k| acc.saturating_add(k))
+            kids.iter().fold(own, |acc, &k| acc.saturating_add(k))
         };
         memo.insert(n, s);
         s
