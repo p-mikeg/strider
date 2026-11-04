@@ -1287,6 +1287,18 @@ mod scaling {
         assert_near_linear("irreducible store chain", shapes::irreducible_store_chain)
     }
 
+    /// Each reload climbs to the loop's merge and walks its region.
+    /// Mutation: ask each def of a run alone in `region_dirty_walked`.
+    #[test]
+    fn an_irreducible_loop_body_costs_near_linear_work() -> crate::Result<()> {
+        let fg = shapes::irreducible_body(8)?;
+        assert!(
+            !crate::mem_ssa::MemLayout::build(&fg).is_reducible(),
+            "the shape must stay irreducible"
+        );
+        assert_near_linear("irreducible loop body", shapes::irreducible_body)
+    }
+
     /// A two-entry loop, then `n` stores to distinct slots and `n` reloads of
     /// distinct slots never written, so no reload's memo serves another.
     fn irreducible_then_distinct_slots(n: usize) -> crate::Result<strider_ir::Function> {
