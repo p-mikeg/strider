@@ -208,6 +208,12 @@ jobs:
               sys.exit(f"{wheels[0]} is missing {missing}")
           print(f"{wheels[0]}: all {len(want)} required members present")
           EOF
+      - name: the wheel is built without test-hooks
+        run: |
+          uv venv "$RUNNER_TEMP/wheel-venv"
+          uv pip install --python "$RUNNER_TEMP/wheel-venv" dist/*.whl
+          cd "$RUNNER_TEMP"
+          wheel-venv/bin/python -c "import strider; assert not hasattr(strider.lift.Lifter, '_rebuild'); assert not hasattr(strider.cfg.CfgOptions, '_call_other_override_builds')"
       - uses: actions/upload-artifact@v4
         with:
           name: dist
