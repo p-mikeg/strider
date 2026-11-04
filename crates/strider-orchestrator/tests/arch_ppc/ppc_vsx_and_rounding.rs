@@ -107,6 +107,39 @@ fn xscvdpspn_then_mfvsrwz_gives_the_single_bits() {
     }
 }
 
+/// `xscvdpspn` packs the bits `stfs` stores (Power ISA ConvertDPtoSP_NS):
+/// nothing rounds, a value past a single keeps its exponent's low bits and
+/// a signalling NaN stays signalling.
+#[test]
+fn xscvdpspn_truncates_like_stfs() {
+    let pack = |x: u64| ((x >> 32) & 0xc000_0000) | ((x >> 29) & 0x3fff_ffff);
+    for arch in ARCHES {
+        for x in [
+            0x3ff0_0000_1400_0000,
+            1e300f64.to_bits(),
+            0x7ff0_0000_2000_0000,
+        ] {
+            let words = [LOAD_F1[0], LOAD_F1[1], 0xf000_0c2c, 0x7c03_00e6, BLR];
+            assert_eq!(returned(arch, &words, x), pack(x), "{arch:?} {x:#x}");
+        }
+    }
+}
+
+/// `friz` and `friz.` give a signalling NaN quieted.
+#[test]
+fn friz_quiets_a_signalling_nan() {
+    for arch in ARCHES {
+        for word in [0xfc20_0b50, 0xfc20_0b51] {
+            let words = [LOAD_F1[0], LOAD_F1[1], word, MFFPRD_R3_F1, BLR];
+            let got = returned(arch, &words, 0x7ff0_0000_0000_0001);
+            assert_eq!(
+                got, 0x7ff8_0000_0000_0001,
+                "{arch:?} {word:#x}: got {got:#x}"
+            );
+        }
+    }
+}
+
 /// `lxsdx vs1, 0, r9` loads doubleword 0, which f1 reads.
 #[test]
 fn lxsdx_loads_doubleword_zero() {
