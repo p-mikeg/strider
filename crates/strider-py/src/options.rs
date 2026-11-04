@@ -516,9 +516,11 @@ assumption_fields! {
     msr_register_keeps_mode: bool,
 
     /// Float conversions that read the dynamic rounding mode (x86 MXCSR.RC,
-    /// x87 RC, PowerPC FPSCR.RN, ARM FPSCR.RMode, AArch64 FPCR.RMode, MIPS
-    /// FCSR.RM) round to nearest even (default `True`), so they fold. Off,
-    /// each selects among the four modes, folding a mode the function sets.
+    /// x87 RC at `fst` / `fstp`, PowerPC FPSCR.RN, ARM FPSCR.RMode, AArch64
+    /// FPCR.RMode, MIPS FCSR.RM) round to nearest even (default `True`), so
+    /// they fold. Fixed-mode forms (`cvtt*`, `fcti*z`, ...) read no mode, and
+    /// x87 `fist`, `fistp` and `frndint` always read RC. Off, each selects
+    /// among the four modes, folding a mode the function sets.
     /// Wrong after `fesetround` or a caller's mode change. Read by the lift,
     /// so `Function.optimize` refuses to add it.
     fp_rounding_mode_is_nearest: bool,

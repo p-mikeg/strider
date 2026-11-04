@@ -43,7 +43,7 @@ class MemReader:
         `NotImplementedError`.
 
         An exception here fails the lift with `StriderError`, chained as its
-        `__cause__`."""
+        `__cause__`; `KeyboardInterrupt` and `SystemExit` propagate unchanged."""
         ...
 
 class ReadOnlyMemory:
