@@ -42,16 +42,12 @@ pub use strider_ir::ReadOnlyMemory;
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(&ConstantFold);
-    // After ConstantFold so a folded constant address is available, and
-    // inside the loop so the value it materialises feeds the next iteration.
+    // After ConstantFold, for a folded constant address.
     p.add(&LoadReadOnly);
     p.add(&KnownBits);
-    // After ConstantFold, so a doubled `Xor(Xor(_,1),1)` at `I1` has already
-    // collapsed.
+    // After ConstantFold, which collapses a doubled `Xor(Xor(_,1),1)`.
     p.add(&FlagCmpCanonicalize);
-    // After both, so the cond a match sees is at most one `Xor(_,1)` deep:
-    // ConstantFold collapses the doubled xor and FlagCmpCanonicalize rewrites
-    // the flag trees that would otherwise bury one.
+    // After both, so a cond is at most one `Xor(_,1)` deep.
     p.add(&IfCondInversion);
     p.add(&PhiCollapse);
     p.add(&RegionCollapse);

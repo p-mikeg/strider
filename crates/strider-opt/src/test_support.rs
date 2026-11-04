@@ -25,9 +25,8 @@ pub(crate) fn run_pass_rom(
     crate::run_one(pass, fg, &crate::OptCtx::new(Some(rom)))
 }
 
-/// Runs `pass` until a run reports no change, each iteration with a fresh
-/// `OptCtx` over no rom. Returns the number of iterations that DID report a
-/// change, so `0` means the first run was already a no-op.
+/// Runs `pass` over no rom until a run reports no change, returning the
+/// number of runs that changed something.
 pub(crate) fn run_to_fixed_point(
     pass: &dyn Optimizer,
     fg: &mut strider_ir::Function,
@@ -150,9 +149,8 @@ pub(crate) fn find_unique_if(graph: &Graph) -> NodeId {
     first
 }
 
-/// Memory-graph shapes the memory tests share. The scaling tests analyse most
-/// of them at two sizes, each built over 64-bit constant addresses so no SP
-/// phi needs collapsing first.
+/// Memory-graph shapes the memory tests share, mostly over 64-bit constant
+/// addresses so no SP phi needs collapsing first.
 pub(crate) mod memory_shapes {
     use strider_ir::node::ValueType;
     use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, node::ValueId};
@@ -367,8 +365,7 @@ pub(crate) mod memory_shapes {
     }
 
     /// One spill, then `n` calls each followed by its reload, summed, its
-    /// region phis over SP collapsed: the `-O0` shape each reload of which
-    /// `escape_analysis` steps past every call above it.
+    /// region phis over SP collapsed: the `-O0` shape.
     pub(crate) fn spill_call_chain(n: usize) -> crate::Result<strider_ir::Function> {
         let sp = stack_vn_x86_64();
         let mut fg = shape(|b| {
@@ -396,8 +393,7 @@ pub(crate) mod memory_shapes {
     }
 
     /// `n` stores over four slots, each followed by a read of a slot never
-    /// written, behind a two-entry loop.  The loop is irreducible, so the
-    /// memory graph has no position index and every query takes the slow
+    /// written, behind an irreducible loop, so every query takes the slow
     /// climb.
     pub(crate) fn irreducible_store_chain(n: usize) -> crate::Result<strider_ir::Function> {
         const SLOTS: usize = 4;
@@ -459,12 +455,10 @@ pub(crate) mod memory_shapes {
         Ok(())
     }
 
-    /// `k` stack arguments written below a lowered SP and one call, all behind
-    /// a two-entry loop over frame locals: the memory graph is irreducible, so
-    /// it has no position index and every probe of the call's argument slots
-    /// takes the slow climb.  After the call, the slot just above the
-    /// arguments is reloaded and the value stored to a global, so a forward
-    /// of it asks the call's argument window across all `k` slots.
+    /// `k` stack arguments written below a lowered SP and one call, behind an
+    /// irreducible loop over frame locals. After the call the slot just above
+    /// the arguments is reloaded and stored to a global, so forwarding it asks
+    /// the argument window across all `k` slots.
     pub(crate) fn irreducible_stack_args(k: usize) -> crate::Result<strider_ir::Function> {
         irreducible_stack_args_merging(k, None)
     }
@@ -561,10 +555,8 @@ pub(crate) mod memory_shapes {
         })
     }
 
-    /// A value spilled to the stack TOP, exactly where outgoing slot 0 sits, and
-    /// reloaded after a call. The store is indistinguishable from an argument
-    /// push, so the reload is pinned unless `callee_preserves_stack_args`
-    /// empties the argument window.
+    /// A value spilled to the stack top, where outgoing slot 0 sits, and
+    /// reloaded after a call: pinned unless `callee_preserves_stack_args`.
     ///
     /// ```text
     /// sp' = sp - 64        ; this function's frame
