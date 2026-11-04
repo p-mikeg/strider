@@ -12,18 +12,15 @@ use crate::walk::{FnSuccs, NodeIdSet, PostOrder, WalkPhase};
 
 use super::ValidationError;
 
-/// No non-phi node is its own transitive data producer.
-///
-/// The DFS post-order's Pre/Post events bound the current path, so a producer
-/// still on it is a back edge.
+/// No non-phi node is its own transitive data producer: a producer still on
+/// the DFS path is a back edge.
 pub(super) fn check_function_invariants_data_cycles(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    // The reachable data producers of a node. `Phi` / `MemPhi` expand to
-    // nothing: closing a data cycle is what they are for.
+    // `Phi` / `MemPhi` expand to nothing: they may close a data cycle.
     let producers = move |node| {
         let phi = matches!(graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi);
         (!phi)
@@ -33,9 +30,8 @@ pub(super) fn check_function_invariants_data_cycles(
             .filter(move |&producer| reachable.contains(producer))
     };
     let mut walk = PostOrder::new(FnSuccs::new(producers), reachable.iter());
-    // Not a `NodeIdSet`: the walk is seeded from every reachable node, so the
-    // path empties once per seed, and `DenseEntitySet::remove` costs
-    // O(max_index / 64) each time it drops the set's maximum.
+    // Not a `NodeIdSet`: its `remove` of the maximum is O(max_index / 64),
+    // and the path empties once per seed.
     let mut on_path: SecondaryMap<NodeId, bool> = SecondaryMap::new();
     while let Some((phase, node)) = walk.next_event() {
         match phase {
@@ -54,7 +50,7 @@ pub(super) fn check_function_invariants_data_cycles(
 }
 
 /// The first two live [`NodeKind::Entry`] and [`NodeKind::InitialMemory`]
-/// nodes; only the first two of each decide the verdict.
+/// nodes of each kind.
 #[derive(Default)]
 pub(super) struct UniqueKinds {
     entry: (Option<NodeId>, Option<NodeId>),
@@ -122,7 +118,6 @@ pub(super) fn check_control_single_use(
         if function.value_kind(value) != ValueKind::Control {
             continue;
         }
-        // Peek at most two uses to classify 0 / 1 / many.
         let mut uses = graph.value_uses(value);
         match (uses.next(), uses.next()) {
             (None, _) => errs.push(ValidationError::UnusedControlOutput { node, value }),
@@ -134,17 +129,10 @@ pub(super) fn check_control_single_use(
     }
 }
 
-/// An arithmetic node is evaluated at ONE width, which every operand
-/// [`NodeKind::operand_width`] ties to it must carry: the output's, or a
-/// comparison's first operand's (its output is `I1`). A shift's count is
-/// free, as in p-code. A bitcast keeps its byte size, which for a pair its
-/// signature admits (one integer side, one float side) is the same claim: no
-/// float is one byte, so only `I1`'s byte size could disagree with its bit
-/// width and no float can pair with it. On a graph that already breaks the
-/// slot-kind check the two differ, and the extra mismatch joins the kind
-/// error rather than replacing it.
-/// `Extend` / `Truncate` carry a DIRECTION instead and are checked by
-/// [`check_extend_truncate`].
+/// Every operand [`NodeKind::operand_width`] ties to an arithmetic node
+/// carries its width: the output's, or for a comparison its first operand's.
+/// A shift count is free. A bitcast keeps its byte size. `Extend` / `Truncate`
+/// are checked by [`check_extend_truncate`].
 pub(super) fn check_arith_widths(
     function: &Function,
     node: NodeId,
@@ -153,9 +141,7 @@ pub(super) fn check_arith_widths(
 ) {
     let graph = function.graph();
     let out = first_output_type(graph, node);
-    // Carries the real input slot, not a position in the filtered list: a
-    // node with an untyped input would otherwise report an index that
-    // names a different operand, and read the wrong slot's width rule.
+    // The real input slot, not a position in the filtered list.
     let operands: Vec<(usize, ValueType)> = graph
         .node_inputs(node)
         .into_iter()
@@ -240,11 +226,7 @@ pub(super) fn check_switch(
     };
     let n_out = graph.node_outputs(node).len();
     if n_out == 0 {
-        // Never the only error: `Switch`'s signature head is one Control,
-        // so `local_typing`'s arity check reports
-        // `NodeOutputCountMismatch` for the same node in the same call.
-        // Kept because it names WHICH arity rule a zero-arm `Switch`
-        // breaks, which the generic count does not.
+        // Also reported as `NodeOutputCountMismatch`; this names the rule.
         errs.push(ValidationError::EmptySwitchTargets { node });
     } else if n_out != targets.len() {
         errs.push(ValidationError::SwitchTargetArityMismatch {
@@ -352,16 +334,10 @@ pub(super) fn check_asm_fingerprint(
     }
 }
 
-/// Every reachable `Store` has its Memory output consumed by a reachable node.
-///
-/// Scoped to `Store`: a memory-preserving `Call` / `CallOther` legitimately
-/// leaves its Memory output unconsumed.
-///
-/// The entry walk reaches a `Store` only through a consumer of that output, so
-/// a violation means a severed use-list. The stronger shape, every `Store` the
-/// memory chain reaches is entry-reachable, is false: `PhiCollapse` can make
-/// two stores identical, and the node cache subsumes one into the other,
-/// leaving a corpse that still consumes the chain.
+/// Every reachable `Store` has its Memory output consumed by a reachable node
+/// (a memory-preserving call may leave its own unconsumed). A violation means
+/// a severed use-list. Not every `Store` on the chain is reachable: a deduped
+/// twin can leave a corpse that still consumes it.
 pub(super) fn check_memory_chain(
     function: &Function,
     reachable: &NodeIdSet,
@@ -410,14 +386,9 @@ pub(super) fn check_initial_vars(
     }
 }
 
-/// The side-indices must not have drifted from the live graph.
-///
-/// * Every reachable `initial_var_index` entry resolves to an
-///   `InitialVar(vn)` node with the same varnode. Unreachable entries are
-///   tolerated.
-/// * Every `value_vn` key with a reachable producer is produced by a `Phi` /
-///   `Call` / `CallOther`.
-///
+/// The side-indices match the live graph: every reachable `initial_var_index`
+/// entry resolves to an `InitialVar` of the same varnode, and every `value_vn`
+/// key with a reachable producer is produced by a `Phi` / `Call` / `CallOther`.
 /// An entry keyed by an unminted id is a `DanglingInitialVnId`.
 pub(super) fn check_function_invariants_side_indices(
     function: &Function,
@@ -504,16 +475,14 @@ pub(super) fn check_consts(
     let Some(ty) = first_output_type(graph, node) else {
         return; // arity reported elsewhere
     };
-    // Canonical masking: every bit above the declared width is zero.
+    // No bit above the declared width.
     if *value != crate::eval::mask(value, ty) {
         errs.push(ValidationError::ConstWidthMismatch { node, id });
     }
 }
 
-/// Every control-reachable node must reach a terminator. The use-count checks
-/// pass an exit-free control cycle: its back-edge consumes the header's control
-/// output, so nothing there is unused or reused, yet no terminator exists to
-/// anchor liveness and compaction drops the whole body.
+/// Every control-reachable node reaches a terminator, which the use-count
+/// checks miss for an exit-free control cycle.
 pub(super) fn check_function_invariants_terminator_reachable(
     function: &Function,
     errs: &mut Vec<ValidationError>,
@@ -530,11 +499,8 @@ pub(super) fn check_function_invariants_terminator_reachable(
 
 /// Every live `Store` is on a memory chain that reaches a sink: the memory
 /// input of a live `Return`, `IndirectBranch`, `Unreachable`, `Call` or
-/// `CallOther`. The chain steps back through `Store`, the live-edge arms of a
-/// `MemPhi` and `Call` / `CallOther` memory inputs. A
-/// `Load` is no sink, so a write only a `Load` reads, while the chain carries
-/// on from the `Store`'s own input token, is lost. A token may fork: each arm
-/// of a branch continues the same chain.
+/// `CallOther`. The chain steps back through `Store`s, live `MemPhi` arms and
+/// call memory inputs. A `Load` is no sink. A token may fork across branch arms.
 pub(super) fn check_function_invariants_memory_linearity(
     ctx: &ScheduleContext<'_>,
     errs: &mut Vec<ValidationError>,
@@ -568,20 +534,15 @@ pub(super) fn check_function_invariants_memory_linearity(
     check_memory_order(ctx, &on_chain, errs);
 }
 
-/// Memory state follows control: every PINNED read of it takes the latest
-/// memory effect on each path in.
+/// Every pinned memory read takes the latest memory effect on each path in. A
+/// `Load` is unpinned and not judged: an earlier token is its pre-store value.
 ///
-/// A `Load` is unpinned, so its own memory input is not judged here: a `Load`
-/// on an earlier token legitimately denotes the pre-store value, and the case
-/// where that leaves a write unobserved is `LostStore`'s.
-///
-/// A control node's state is the nearest memory effect dominating it: the
-/// entry, a `Region` with a `MemPhi` on the chain, a `Call` whose convention
-/// does not preserve memory, or a `Call` / `CallOther` on the chain. A memory
-/// input steps back through `Store`s to one of these, which must be the state
-/// before its consumer. A `MemPhi` arm must be its edge's state, and at a
-/// `Region` with no such `MemPhi` every live edge carries the state the
-/// `Region`'s immediate dominator has.
+/// A control node's state is the nearest dominating memory effect: the entry,
+/// a `Region` with a `MemPhi` on the chain, a non-memory-preserving `Call`, or
+/// a `Call` / `CallOther` on the chain. A memory input steps back through
+/// `Store`s to the state before its consumer. A `MemPhi` arm must be its edge's
+/// state; at a `Region` with no `MemPhi`, every live edge carries its
+/// immediate dominator's state.
 fn check_memory_order(
     ctx: &ScheduleContext<'_>,
     on_chain: &NodeIdSet,
@@ -751,13 +712,11 @@ fn ctrl_memory_input(graph: &Graph, node: NodeId) -> Option<ValueId> {
         .filter(|&v| graph.value_kind(v) == ValueKind::Memory)
 }
 
-/// Every data input is available where it is used, judged on an early schedule
-/// ([`schedule_early`]): a floating node sits at the latest of its inputs'
-/// positions, which must lie on one dominator chain; a control node's latest
-/// input must dominate it; a phi's input must dominate the predecessor edge it
-/// arrives on. An input with no position at all, computed only in unreachable
-/// code or on a data cycle, is unavailable to a live use. A phi input on an
-/// unreachable edge can never be selected, and is not judged.
+/// Every data input is available where it is used, on the early schedule
+/// ([`schedule_early`]): a floating node's input positions lie on one dominator
+/// chain; a control node's latest input dominates it; a phi input dominates its
+/// predecessor edge. An input with no position is unavailable. A phi input on
+/// an unreachable edge is not judged.
 pub(super) fn check_function_invariants_availability(
     ctx: &ScheduleContext<'_>,
     errs: &mut Vec<ValidationError>,
