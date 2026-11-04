@@ -47,8 +47,8 @@ cfg, function, unresolved = prog.analyze("array_sum")
 
 - `cfg`: the control flow graph.
 - `function`: the optimized IR you query.
-- `unresolved`: indirect branches Strider could not resolve, one of seven
-  incompleteness reasons `cfg.incomplete` lists
+- `unresolved`: indirect branches Strider could not resolve, the
+  `"unresolved_branch"` entries of `cfg.incomplete`
   ([python-api.md](python-api.md#12-the-cfg-stridercfg)).
 
 Or keep the result whole: `result.cfg`, `result.function`, `result.unresolved`.
@@ -63,8 +63,8 @@ addr = prog.symbol("array_sum").address
 cfg, function, unresolved = prog.analyze(addr, opts=opts)
 ```
 
-This passes the address because a call by name bounds the lift by the
-symbol's size, making `allow_code_before_start_addr` moot.
+By name, the symbol's size bounds the lift and drops
+`allow_code_before_start_addr`; hence the address.
 
 Other options ([python-api.md](python-api.md#2-analyzing-a-function)):
 `assumptions=AssumptionOptions(...)` states unchecked claims about the code
@@ -85,12 +85,9 @@ for sym in prog.functions():
     ...
 ```
 
-**One handle per thread** for parallelism. `analyze`, `build_cfg` and
-`add_elf` hold a handle alone; `analyze` drops the GIL, so a worker with its
-own handle over `prog.arch`, `prog.reader()` and `prog.rom()` runs alongside.
-Gather those three before any analysis on `prog` is in flight, after every
-`add_elf`: a handle decodes the image as it was when built. A plain handle has
-no symbols or default convention, so call `analyze(addr, prog.cc)`.
+**One handle per thread** for parallelism, each built over `prog.arch`,
+`prog.reader()` and `prog.rom()`; see
+[python-api.md](python-api.md#2-analyzing-a-function).
 
 ## Writing a query
 
@@ -110,9 +107,8 @@ for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
     print("offset =", hit.uint_opt(off))   # None if it is not constant
 ```
 
-`ignore_casts=True` is `CastMask.all()`: matching walks through extends,
-truncations, `int_bits_to_float` and `float_bits_to_int`; pass a `CastMask` for
-a subset. `find_all` returns every match; `find_unique` raises unless there is
+`ignore_casts=True` (`CastMask.all()`) matches through extends, truncations,
+`int_bits_to_float` and `float_bits_to_int`; a `CastMask` picks a subset. `find_all` returns every match; `find_unique` raises unless there is
 exactly one.
 
 ### Reading a match
@@ -131,8 +127,8 @@ hit.op_opt(base)             # operation name, e.g. "Add", or None
 
 Pass the `Capture` or its name (`hit.uint("off")`);
 [python-api.md](python-api.md#6-reading-a-match) lists every reader. A capture
-can land on a node with no operation, such as an `InitialVar` (a register at
-entry), so prefer `op_opt`.
+on a node with no operation (an `InitialVar`) makes `op` raise; `op_opt` does
+not.
 
 ### Guards and joins
 
@@ -167,15 +163,14 @@ prints four rows, two pairing a field with itself (`4 and 4`, `8 and 8`).
 
 ### One pattern, several shapes
 
-`one_of` reports every matching alternative; `first_of` stops at the first,
-for overlapping alternatives. Either can sit in any slot:
+`one_of` reports every matching alternative; `first_of` stops at the first.
+Either can sit in any slot:
 
 ```python
 from strider.pattern import one_of, load, int_add, var, Capture
 
 base, off = Capture("base"), Capture("off")
-# A field read is `base + offset` in one function and a bare pointer in the
-# next; one query covers both.
+# `base + offset`, or a bare pointer.
 hits = function.find_all(
     load(addr=one_of([int_add(base, off), var(base)])),
     ignore_casts=True,
@@ -266,8 +261,8 @@ class MultipleOfEight(JoinPredicate):
 function.find_all([call().arg(0, int_const(n))], constraints=[MultipleOfEight()])
 ```
 
-`captures()` names the bindings the rule reads; it runs once they are
-bound.
+`captures()` names the bindings the rule reads; `constraint` runs once they
+are bound.
 
 ## Rewriting the graph
 
@@ -328,8 +323,7 @@ dot = function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)
 
 ## When a pattern does not match
 
-Usually optimization rewrote the shape ([optimizations.md](optimizations.md)).
-Common traps:
+Usually optimization rewrote the shape ([optimizations.md](optimizations.md)):
 
 - **Subtraction and "not equal" are not primitives**: `a - b` is `a + (-b)`,
   `a != b` is `not (a == b)`. Use the aliases (`int_sub`, `int_le`, `float_ne`,
@@ -345,8 +339,8 @@ the actual shape.
 ## Beyond ELF: custom code and data
 
 A lifter reads code from a reader and, optionally, constant data from a
-read-only image; both can come from Python (firmware, raw blobs).
-`BufferReader` serves `bytes`, a `bytearray` or a sequence of ints at a base:
+read-only image; both can come from Python. `BufferReader` serves `bytes`, a
+`bytearray` or a sequence of ints at a base:
 
 ```python
 arch = strider.sleigh.SleighArch.x86_64()
