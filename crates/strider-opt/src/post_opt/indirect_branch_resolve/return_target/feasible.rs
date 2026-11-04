@@ -1,5 +1,3 @@
-//! Which arm of a phi control can have taken to reach a point.
-
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{CtrlKey, Function, IRViewer, control_edge_dominator_tree};
 

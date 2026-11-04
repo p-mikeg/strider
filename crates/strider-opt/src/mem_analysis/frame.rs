@@ -1,6 +1,3 @@
-//! Entry-SP geometry: the offsets a stack address can stand at, and whether
-//! an access lies in the function's own frame.
-
 use strider_ir::node::ValueId;
 use strider_ir::{Function, IRViewer};
 

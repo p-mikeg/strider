@@ -1,9 +1,7 @@
-/// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
-/// call. It carries no claim: a pass reads the function's
-/// ([`strider_ir::Function::assume`] adds them).
+/// Per-run context of [`Optimizer::apply`]. Claims live on the function
+/// ([`strider_ir::Function::assume`]).
 pub struct OptCtx<'mem> {
-    /// `None` cuts off every read of the image: `LoadReadOnly` bails, and a
-    /// jump table stored in the image does not decode.
+    /// `None` cuts off every read of the image.
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
 }
 
@@ -87,8 +85,7 @@ pub fn run_one(
     Ok(changed)
 }
 
-/// [`run_one`] without the validation, for a fixture malformed on purpose and
-/// for a bench timing the pass alone.
+/// [`run_one`] without the validation.
 ///
 /// # Errors
 ///
@@ -165,9 +162,6 @@ const MAX_ITERS: u32 = 1024;
 /// a use or kills a node. A pass whose last run changed nothing is skipped
 /// until some edit changes the graph, so a pass must be a function of the
 /// graph, its options, the function's claims and the ROM.
-///
-/// Passes are held `&'static` (a unit-struct pass is rvalue-promoted at
-/// `add(&Pass)`), so a pipeline copies by reference and crosses threads.
 #[derive(Clone, Default)]
 pub struct OptimizerPipeline {
     passes: Vec<&'static dyn Optimizer>,
@@ -192,8 +186,7 @@ impl OptimizerPipeline {
         self.passes.push(pass);
     }
 
-    /// A pass that runs once on the converged graph, so it may rely on its
-    /// canonical shapes.
+    /// Adds a pass run once on the converged graph.
     pub fn add_post_pass(&mut self, pass: &'static dyn Optimizer) {
         self.post_passes.push(pass);
     }

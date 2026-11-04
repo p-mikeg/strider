@@ -1,6 +1,3 @@
-//! The outgoing-argument window of a call and the scan of the stores that
-//! fill it.
-
 use std::collections::BTreeMap;
 
 use rustc_hash::FxHashSet;

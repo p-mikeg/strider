@@ -86,8 +86,7 @@ fn shift_known_bits(
     })
 }
 
-/// Operand facts from interned constants alone, for a one-hop
-/// [`node_known_bits`] caller.
+/// Operand facts from interned constants alone.
 pub(crate) fn const_only(
     function: &strider_ir::Function,
 ) -> impl Fn(ValueId) -> KnownBitsFacts + '_ {

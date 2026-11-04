@@ -1,7 +1,3 @@
-//! For each `Call`, walks the memory-SSA chain to find the `Store` supplying
-//! each positional stack-arg slot and appends the stored data as extra Call
-//! inputs.
-
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;

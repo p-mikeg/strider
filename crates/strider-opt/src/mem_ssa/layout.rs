@@ -32,8 +32,7 @@ const NONE: u32 = u32::MAX;
 
 #[cfg(test)]
 thread_local! {
-    /// Climb steps, hops, region-walk visits and candidate asks, counted by
-    /// the scaling tests.
+    /// Climb steps, hops, region-walk visits and candidate asks.
     pub(crate) static CLIMB_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
