@@ -57,4 +57,5 @@ before trusting an absence.
   fed the classifier whether or not the final CFG keeps it.
 
 A seed suppresses only the unclassified-`Switch` report, and only until the
-site outgrows it.
+site outgrows it; a `LinkRegister` seed moves an unproven return it covers from
+`UnresolvedBranch` to `UnverifiedSeed`.
