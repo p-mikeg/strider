@@ -14,9 +14,7 @@ mod walker;
 pub(crate) use arg_window::ArgPrefix;
 pub(crate) use decompose::{alignment_masked_operand, decompose};
 pub(crate) use frame::entry_sp_span;
-#[cfg(test)]
-pub(crate) use query::narrow_load_to;
-pub(crate) use query::{MemQuery, Policy, ReachingDef, store_value_byte_size};
+pub(crate) use query::{MemQuery, Policy, ReachingDef, narrow_load_to, store_value_byte_size};
 pub(crate) use ring::{reduce, ring_overlap, wrap_to_addr_width};
 pub use stamp::refresh_memory_classes;
 pub(crate) use stamp::stamp_all;

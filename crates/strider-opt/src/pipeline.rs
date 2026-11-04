@@ -158,6 +158,12 @@ fn apply_post(
 /// convergence.
 const MAX_ITERS: u32 = 1024;
 
+#[cfg(test)]
+thread_local! {
+    /// Fixed-point iterations run.
+    static ITERATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// An ordered pass list run in a shared fixed-point loop until no pass moves
 /// a use or kills a node. A pass whose last run changed nothing is skipped
 /// until some edit changes the graph, so a pass must be a function of the
@@ -260,6 +266,8 @@ impl OptimizerPipeline {
         // Per pass, `edits()` after its last run when that run changed nothing.
         let mut settled: Vec<Option<u64>> = vec![None; self.passes.len()];
         for _ in 0..MAX_ITERS {
+            #[cfg(test)]
+            ITERATIONS.with(|c| c.set(c.get() + 1));
             let mut changed = false;
             for (opt, settled) in self.passes.iter().zip(&mut settled) {
                 if *settled == Some(edit.edits()) {
@@ -377,6 +385,44 @@ mod tests {
             .expect("the fixture returns a constant");
         let next = edit.build_int_const(k + 1, ValueType::int(64))?;
         assert!(edit.replace_value(value, next), "the return reads it");
+        Ok(())
+    }
+
+    /// A chain of guards each reloading a constant past the previous guard's
+    /// call settles in a bounded number of iterations.
+    #[test]
+    fn a_dependent_guard_chain_settles_in_bounded_iterations() -> crate::Result<()> {
+        use crate::test_support::memory_shapes::guard_chain;
+        let is_call =
+            |k: &strider_ir::node::NodeKind| matches!(k, strider_ir::node::NodeKind::Call { .. });
+        let mut f = guard_chain(200, 0)?;
+        let iterations = crate::test_support::steps(&[&super::ITERATIONS], || {
+            crate::default_pipeline().run(&mut f, &OptCtx::new(None))
+        })?;
+        assert!(iterations <= 10, "{iterations} iterations");
+        assert!(!f.has_kind(is_call));
+        let mut f = guard_chain(1500, 0)?;
+        crate::default_pipeline().run(&mut f, &OptCtx::new(None))?;
+        Ok(())
+    }
+
+    /// A guard whose constant takes the call keeps every later reload behind
+    /// it. Mutation: skip the arm the `If` takes instead.
+    #[test]
+    fn a_taken_guard_call_blocks_the_reload() -> crate::Result<()> {
+        let mut f = crate::test_support::memory_shapes::guard_chain(3, 1)?;
+        crate::default_pipeline().run(&mut f, &OptCtx::new(None))?;
+        let count = |k: fn(&strider_ir::node::NodeKind) -> bool| {
+            f.walk().filter(|&n| k(f.node_kind(n))).count()
+        };
+        assert_eq!(
+            count(|k| matches!(k, strider_ir::node::NodeKind::Call { .. })),
+            3
+        );
+        assert_eq!(
+            count(|k| matches!(k, strider_ir::node::NodeKind::Load(_))),
+            2
+        );
         Ok(())
     }
 
