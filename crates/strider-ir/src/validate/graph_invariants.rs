@@ -141,15 +141,16 @@ pub(super) fn check_arith_widths(
 ) {
     let graph = function.graph();
     let out = first_output_type(graph, node);
-    // The real input slot, not a position in the filtered list.
-    let operands: Vec<(usize, ValueType)> = graph
-        .node_inputs(node)
-        .into_iter()
-        .enumerate()
-        .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t)))
-        .collect();
-    let first = operands.first().map(|&(_, t)| t);
-    for &(slot, got) in &operands {
+    // The real input slot, not a position among the typed ones.
+    let operands = || {
+        graph
+            .node_inputs(node)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t)))
+    };
+    let first = operands().next().map(|(_, t)| t);
+    for (slot, got) in operands() {
         let want = match width_tie(kind, slot, out, first) {
             WidthTie::Tied(want) => want,
             WidthTie::Conversion(Conversion::SameSize) => match out {
