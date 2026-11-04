@@ -4,10 +4,7 @@
 //! dominator, itself included, that clobbers the location or is a `MemPhi`
 //! whose region holds a clobber, and `InitialMemory` when there is none.  The
 //! region of a phi is every def that reaches it without passing its immediate
-//! dominator.  A clean region passes the dominator's answer through, since
-//! every arm reaches the same dominator or cycles back to the phi; a dirty one
-//! is the boundary, since some arm then names a def that does not dominate the
-//! merge.
+//! dominator.
 //!
 //! Positions are a topological order in which every natural loop is one
 //! contiguous block opened by its header.  A dominator precedes what it
@@ -34,9 +31,8 @@ const NONE: u32 = u32::MAX;
 
 #[cfg(test)]
 thread_local! {
-    /// Climb iterations, dominator and loop skip hops, region-walk visits and
-    /// candidate asks, the unit the scaling tests count beside the def
-    /// verdicts.
+    /// Climb steps, hops, region-walk visits and candidate asks, counted by
+    /// the scaling tests.
     pub(crate) static CLIMB_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -69,8 +65,7 @@ pub(crate) trait ClobberProbe {
 pub(crate) struct Answers {
     nearest: FxHashMap<u32, u32>,
     dirty: FxHashMap<u32, bool>,
-    /// What a range scan learned below each def it passed or stopped at, so a
-    /// later scan crosses a run of rejected defs in one hop.
+    /// What a range scan learned below each def it passed or stopped at.
     below: FxHashMap<u32, Below>,
 }
 
@@ -96,8 +91,7 @@ pub(crate) struct MemLayout {
 /// What a position means beyond its order: a range of them is a set of defs
 /// the climb can pass at once.
 pub(crate) struct Positions {
-    /// Skip pointer up the dominator tree, `O(log depth)` hops to any
-    /// ancestor.
+    /// Skip pointer up the dominator tree.
     dom_jump: Vec<u32>,
     /// Innermost loop header whose block holds the node, the node itself
     /// excluded; `NONE` at top level.
@@ -106,8 +100,7 @@ pub(crate) struct Positions {
     loop_jump: Vec<u32>,
     /// Last position of a header's block; the node itself otherwise.
     end: Vec<u32>,
-    /// In an irreducible loop's block, where no header dominates the block and
-    /// the climb steps one dominator at a time.
+    /// In an irreducible loop's block.
     tangled: Vec<bool>,
 }
 
@@ -148,8 +141,7 @@ impl MemLayout {
         let positions = {
             // The top level, `n` in the forest, is `NONE` here.
             let at = |v: u32| pos.get(v as usize).copied().unwrap_or(NONE);
-            // Parents before children: preorder reaches an enclosing header
-            // first.
+            // Preorder reaches an enclosing header first.
             let mut tangled_node = vec![false; n];
             for &v in &dfs.vertex {
                 let v = v as usize;
@@ -172,7 +164,7 @@ impl MemLayout {
                 tangled.push(tangled_node[v]);
             }
 
-            // Parents before children: preorder reaches a dominator first.
+            // Preorder reaches a dominator first.
             let mut dom_depth = vec![0u32; n];
             let mut dom_jump = vec![NONE; n];
             for &v in &dfs.vertex {
@@ -209,8 +201,8 @@ impl MemLayout {
         !self.pos.tangled.contains(&true)
     }
 
-    /// `None` on an irreducible memory graph.  Kept for a test outside this
-    /// module; [`Self::is_reducible`] replaces it.
+    /// `None` on an irreducible memory graph; superseded by
+    /// [`Self::is_reducible`].
     #[cfg(test)]
     pub(crate) fn positions(&self) -> Option<&Positions> {
         self.is_reducible().then_some(&self.pos)
@@ -242,8 +234,7 @@ impl MemLayout {
         probe: &mut dyn ClobberProbe,
         answers: &mut Answers,
     ) -> Option<NodeId> {
-        // Unreachable from `InitialMemory`, so nothing above it is proven and
-        // the caller bounds the answer at `start` itself.
+        // Unreachable from `InitialMemory`: the caller bounds it.
         let start = self.position(start)?;
         Some(self.node_at(self.climb(function, start, probe, answers)))
     }
@@ -292,10 +283,9 @@ impl MemLayout {
         probe: &mut dyn ClobberProbe,
         answers: &mut Answers,
     ) -> u32 {
-        // Each frame above the first climbs an entry arm of the merge the
-        // frame below stands on, as far as that merge's immediate dominator;
-        // arms precede their merge, so the stack ends.  The positions every
-        // frame passed share one path, each frame's from its `base` up.
+        // Each frame above the first climbs an entry arm of the merge below it,
+        // as far as that merge's immediate dominator; arms precede their
+        // merge, so the stack ends.  Frames share one path from their `base`.
         let mut path: SmallVec<[u32; 8]> = SmallVec::new();
         let mut frames = vec![Climb::new(start, None, 0)];
         loop {
@@ -462,10 +452,8 @@ impl MemLayout {
         Ok(false)
     }
 
-    /// The outermost loop header from `header` outward whose whole block past
-    /// the header is free of clobbers, or `header` itself.  The climb may move
-    /// there: every def reaching the start without passing it lies in that
-    /// block.
+    /// The outermost loop header from `header` outward whose block past the
+    /// header is free of clobbers, or `header` itself.
     fn outermost_clean_loop(
         &self,
         function: &Function,
@@ -490,9 +478,8 @@ impl MemLayout {
         farthest(x, &self.pos.dom_jump, |a| self.idom[a as usize], |a| a > c)
     }
 
-    /// The highest position in `lo..=hi` whose def clobbers.  Every
-    /// candidate passed takes what the scan found below it, so a def rejected
-    /// once is crossed, never asked again.
+    /// The highest position in `lo..=hi` whose def clobbers.  A def rejected
+    /// once is never asked again.
     fn highest_clobber(
         &self,
         function: &Function,
@@ -509,8 +496,7 @@ impl MemLayout {
         let found = loop {
             #[cfg(test)]
             step();
-            // Nothing between a candidate and `hi` may clobber, whatever
-            // range asked.
+            // Nothing between a candidate and `hi` may clobber.
             let Some(c) = probe.candidate(lo, hi) else {
                 break Below::CleanFrom(lo);
             };
@@ -582,13 +568,12 @@ fn skip(depth: &[u32], jump: &[u32], parent: u32) -> u32 {
 struct Climb {
     /// Where the climb stands.
     x: u32,
-    /// For an arm's climb, its merge's immediate dominator: reaching it or
-    /// above answers the arm, which then has no clobber below it.
+    /// For an arm's climb, its merge's immediate dominator, where it ends.
     stop: Option<u32>,
     /// Where the positions this frame passed start on the shared path.
     base: usize,
-    /// Standing on a merge whose entry arms decide it, the first arm not yet
-    /// checked and the path's length when the merge was reached.
+    /// On a merge its arms decide: the first unchecked arm and the path's
+    /// length at the merge.
     arm: Option<(usize, usize)>,
 }
 
@@ -664,8 +649,6 @@ impl Discovered {
             let mut ps = SmallVec::new();
             for input in inputs {
                 let u = index[function.producer(input)];
-                // Discovery is forward from `InitialMemory`, so a def it
-                // reached has every memory input in reach too.
                 debug_assert_ne!(u, NONE, "a reached def is fed from the reach");
                 ps.push(u);
                 succs[u as usize].push(v as u32);
@@ -889,7 +872,7 @@ impl LoopForest {
                     continue;
                 }
                 let lv = level(v);
-                // A header's edges into its own block leave from its level.
+                // A header's out-edges leave from inside its own loop.
                 let lu = if self.is_header[u as usize] {
                     u
                 } else {
@@ -908,9 +891,8 @@ impl LoopForest {
 
         let mut order = Vec::with_capacity(n);
         let mut block_end = vec![NONE; n];
-        // One frame per open level: its header (`top` at the root) and the
-        // members still ready to place.
-        // `InitialMemory`, discovered first, opens the top level.
+        // One frame per open level: its header (`top` at the root, opened by
+        // `InitialMemory`) and its members ready to place.
         let mut frames: Vec<(u32, Vec<u32>)> = vec![(top, vec![0])];
         while let Some((lvl, ready)) = frames.last_mut() {
             let lvl = *lvl;
