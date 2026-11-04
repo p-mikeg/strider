@@ -7,42 +7,31 @@ use crate::capture::Capture;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Binding {
-    /// Value-less-root capture (`If`, `Return`, `IndirectBranch`, `Switch`,
-    /// `Unreachable`): only the owning node is meaningful. `Call` / `CallOther`
-    /// do NOT land here: they anchor on their memory-token output and bind a
-    /// `Value`.
+    /// A capture on a node with no anchor output (`If`, `Return`, `Switch`, ...).
+    /// `Call` / `CallOther` anchor on their memory token, so bind a `Value`.
     Node(NodeId),
-    /// Value-producing capture (`int_add`, `int_const`, the `any_*`
-    /// constructors). The owning node comes back via
-    /// [`strider_ir::Graph::producer`].
+    /// A capture on an output value.
     Value(ValueId),
 }
 
-/// Bindings accumulated during one match attempt. Append-only: rebinding a
-/// `Capture` to a different value fails the containing match.
-///
-/// Backtracking is journal-based: a speculative sub-match calls `mark` first
-/// and `restore` on failure, which drops the entry `Vec`'s tail.
+/// The captures bound by one match attempt. Rebinding a `Capture` to something
+/// else fails the match; backtracking truncates back to a `mark`.
 #[derive(Clone, Default)]
 pub struct Bindings {
     /// In production order, one entry per capture.
     entries: Vec<(Capture, Binding)>,
-    /// The match's structural footprint: root, interior and captured leaves.
-    /// Shares the `entries` journal's mark / restore lifecycle. May hold
-    /// duplicates when a DAG sub-pattern matched twice.
+    /// Every node the match covered; may hold duplicates.
     matched: Vec<NodeId>,
 }
 
-/// The binding state at the moment of marking. Rolling back to it discards
-/// both the capture entries and the matched nodes appended since.
+/// A [`Bindings`] length to roll back to.
 #[derive(Clone, Copy)]
 pub(crate) struct BindingsMark {
     entries: usize,
     matched: usize,
 }
 
-// The `NodeKind` variant name doubles as the returned op type, so one
-// `$variant` token drives both.
+// `$variant` names both the `NodeKind` variant and the returned op type.
 macro_rules! op_extractor {
     ($(#[$attr:meta])* $fn:ident => $variant:ident) => {
         $(#[$attr])*
@@ -64,13 +53,12 @@ impl Bindings {
         }
     }
 
-    /// Idempotent: restoring to an already-current mark is a no-op.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
         self.entries.truncate(mark.entries);
         self.matched.truncate(mark.matched);
     }
 
-    /// Call only once a pat node has *fully* matched `node`.
+    /// Call only once a pattern node has fully matched `node`.
     pub(crate) fn record_matched(&mut self, node: NodeId) {
         self.matched.push(node);
     }
@@ -79,8 +67,7 @@ impl Bindings {
         &self.matched
     }
 
-    /// `true` on a new or idempotent bind, `false` on conflict, which leaves
-    /// the existing binding untouched.
+    /// `false` on a conflicting rebind, which keeps the existing binding.
     pub(crate) fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
         if let Some(bound) = self.get_binding(c) {
             return bound == binding;
@@ -90,13 +77,10 @@ impl Bindings {
     }
 
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
-        // A pattern binds a handful of captures, so a lookup scans the journal.
         self.entries.iter().find(|(e, _)| *e == c).map(|&(_, b)| b)
     }
 
-    /// `None` for an unbound capture or one bound to a NODE (`Binding::Node`,
-    /// the value-less roots). A captured control edge is a `Binding::Value`
-    /// and comes back.
+    /// The bound value; `None` if unbound or bound to a node.
     pub fn get_value(&self, c: Capture) -> Option<ValueId> {
         match self.get_binding(c)? {
             Binding::Value(out) => Some(out),
@@ -104,30 +88,20 @@ impl Bindings {
         }
     }
 
-    /// A match's identity, keying [`crate::Matcher::find_all`]'s dedup: two
-    /// configurations binding the same captures to the same things are one
-    /// match (`int_add(x, x)` swapped is one, not two). The root is the
-    /// enclosing key, the dedup set being per candidate node, so a
-    /// capture-free pattern reports one match per root.
-    ///
-    /// Sorted by capture id, making the key independent of bind order.
-    ///
-    /// Visible captures only, as [`Self::iter`]: a builder-minted identity pin
-    /// is invisible to the caller, so two configurations that differ only in
-    /// which operand a pin landed on are one match, not two.
+    /// The visible bindings sorted by capture id: the per-root dedup key of
+    /// [`crate::Matcher::find_all`].
     pub(crate) fn binding_signature(&self) -> Vec<(u32, Binding)> {
         let mut sig: Vec<(u32, Binding)> = self.iter().map(|(c, b)| (c.id(), b)).collect();
         sig.sort_unstable_by_key(|&(id, _)| id);
         sig
     }
 
-    /// Graph-free.
+    /// Whether `c` is bound.
     pub fn is_bound(&self, c: Capture) -> bool {
         self.get_binding(c).is_some()
     }
 
-    /// A `Binding::Value` resolves its owning node via
-    /// [`strider_ir::Graph::producer`].
+    /// The bound node, or the bound value's producer.
     pub fn get_node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         match self.get_binding(c)? {
             Binding::Node(node) => Some(node),
@@ -135,8 +109,7 @@ impl Bindings {
         }
     }
 
-    /// In bind order. Builder-minted identity pins are skipped: a caller holds
-    /// no handle to one, so reporting it would only pollute what it sees.
+    /// In bind order, skipping internal captures.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (Capture, Binding)> + '_ {
         self.entries
             .iter()
@@ -144,12 +117,9 @@ impl Bindings {
             .map(|(c, b)| (*c, *b))
     }
 
-    // Every typed extractor below returns `None` for an unbound capture, a
-    // control-flow binding, or a producer whose `NodeKind` is the wrong
-    // shape.
+    // The extractors below return `None` when unbound, node-bound or the wrong kind.
 
-    /// Masked to the output type's bit width. Unbounded: a constant at any
-    /// declared width comes back whole.
+    /// The bound `IntConst`'s value, at any width.
     pub fn get_uint(
         &self,
         c: Capture,
@@ -158,8 +128,7 @@ impl Bindings {
         function.int_const(self.get_value(c)?).cloned()
     }
 
-    /// `None` for a non-value output kind (`Control` / `Memory` /
-    /// `PhiToken`) as well as for the usual unbound / control-flow cases.
+    /// The bound value's type; `None` for control, memory and phi-token outputs.
     pub fn get_type(
         &self,
         c: Capture,
@@ -168,7 +137,7 @@ impl Bindings {
         function.value_kind(self.get_value(c)?).as_value()
     }
 
-    /// The raw IEEE 754 bit pattern.
+    /// The bound `FloatConst`'s raw IEEE 754 bits.
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
         let value = self.get_value(c)?;
         match graph.kind_of_value(value) {
@@ -190,8 +159,6 @@ impl Bindings {
     }
 }
 
-// `Binding` and `bind_capture` are `pub(crate)`, out of reach of an
-// integration test.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,8 +248,7 @@ mod tests {
         );
     }
 
-    /// The reader is unbounded: a 4-limb `I256` constant comes back whole,
-    /// not as a `None` a carrier width would answer.
+    /// A 4-limb `I256` constant comes back whole.
     #[test]
     fn get_uint_reads_a_constant_past_the_carrier() {
         use strider_ir::UBig;
@@ -398,9 +364,7 @@ mod tests {
         assert!(bindings.get_binding(dropped_a).is_some());
     }
 
-    /// Pins the capture index against the entry journal: a stale or
-    /// mis-keyed index would resurface a dropped binding or mis-resolve a
-    /// kept one.
+    /// A partial restore keeps earlier bindings and drops later ones.
     #[test]
     fn partial_restore_keeps_survivors_and_reindexes_cleanly() {
         // Two distinct nodes so kept and dropped bindings differ.
