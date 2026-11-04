@@ -10,7 +10,6 @@ pub struct PyVnSpace {
 
 #[pymethods]
 impl PyVnSpace {
-    // Python class constants, hence the four `non_snake_case` allows.
     /// The RAM (main memory) address space.
     #[classattr]
     #[allow(non_snake_case)]
@@ -59,8 +58,7 @@ impl PyVnSpace {
         .unwrap_or("OTHER")
     }
 
-    /// `VnSpace.<NAME>`, its class constant, or `<VnSpace OTHER 'c'>` for a
-    /// space with none, `c` being the shortcut its `Vn`s print with.
+    /// `VnSpace.<NAME>`, or `<VnSpace OTHER 'c'>` with the space's shortcut.
     fn __repr__(&self) -> String {
         match self.name() {
             "OTHER" => format!("<VnSpace OTHER {:?}>", self.inner.shortcut()),
@@ -69,11 +67,8 @@ impl PyVnSpace {
     }
 }
 
-/// A Sleigh varnode: `(space, offset, size_in_bytes)`.
-///
-/// Construct via:
-/// * `SleighArch.reg("RAX")`, or `None` if the name isn't a register.
-/// * `Vn(space, off, size)`, for stack varnodes and custom spaces.
+/// A Sleigh varnode: `(space, offset, size_in_bytes)`. Construct via
+/// `SleighArch.reg("RAX")` or `Vn(space, off, size)`.
 #[pyclass(name = "Vn", module = "strider.sleigh", frozen, eq, hash)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyVn {

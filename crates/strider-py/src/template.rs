@@ -1,5 +1,4 @@
-//! The free functions here construct the build-valid shapes; `.when()`, the
-//! commutativity toggle and `.ordered()` are match-only.
+//! `strider.template`: the build-valid rewrite RHS shapes.
 
 use pyo3::prelude::*;
 use strider_pattern as sp;
@@ -7,9 +6,8 @@ use strider_pattern as sp;
 use crate::pattern::{Kind, PyCapture, Repr, bin, ex, un};
 use crate::value_ops::value_ops;
 
-/// A type-checked rewrite-RHS expression. Construct via the free functions in
-/// `strider.template` (`var(c)`, `int_add(...)`, `int_const`, ...); pass as
-/// `replace` to `Function.rewrite` / `rewrite_all`.
+/// A type-checked rewrite-RHS expression, passed as `replace` to
+/// `Function.rewrite` / `rewrite_all`.
 #[pyclass(name = "Template", module = "strider.template", frozen)]
 pub struct PyTemplate {
     pub(crate) repr: Repr,
@@ -29,8 +27,7 @@ impl Drop for PyTemplate {
 
 #[pymethods]
 impl PyTemplate {
-    /// Exposes the operand sub-templates, `Py` handles the collector cannot
-    /// otherwise see.
+    /// Exposes the operand sub-templates to the collector.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         self.repr.args.iter().try_for_each(|a| visit.call(a))
     }
@@ -41,15 +38,13 @@ impl PyTemplate {
 }
 
 /// Substituted at rewrite time by the node bound to `c` on the matched LHS.
-/// The one build-valid wildcard.
 #[pyfunction]
 pub fn var(c: PyRef<'_, PyCapture>) -> PyTemplate {
     PyTemplate::from(crate::pattern::var_repr(c.inner))
 }
 
 /// Build an `IntConst` whose stored value, masked to the output width, is
-/// `value`. Bit-pattern equality; negatives use the sign-extended form. Where
-/// nothing gives it a width, type it with `capture_typed`.
+/// `value`. Where nothing gives it a width, type it with `capture_typed`.
 #[pyfunction]
 pub fn int_const(value: crate::bigint::PyBigInt) -> PyResult<PyTemplate> {
     Ok(PyTemplate::from(crate::pattern::int_const_repr(
@@ -58,16 +53,14 @@ pub fn int_const(value: crate::bigint::PyBigInt) -> PyResult<PyTemplate> {
 }
 
 /// Type `inner`'s output at the width of the value `c` bound on the matched
-/// LHS, for an operand nothing else gives a width (a `Popcount` operand). A
-/// capture or `var()` as `inner` is refused: it keeps the type of the value it
-/// bound.
+/// LHS (for a `Popcount` operand, say). A capture or `var()` as `inner` is
+/// refused.
 #[pyfunction]
 pub fn capture_typed(
     py: Python<'_>,
     c: PyRef<'_, PyCapture>,
     inner: Py<PyAny>,
 ) -> PyResult<PyTemplate> {
-    // A nested `capture_typed` was checked when it was built.
     let bound = inner.bind(py);
     let is_capture = bound.downcast::<PyCapture>().is_ok()
         || bound

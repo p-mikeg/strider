@@ -14,12 +14,9 @@ fn cleared() -> PyErr {
     ))
 }
 
-/// A `custom(...)` convention or user-op ABI froze varnodes resolved against
-/// one arch's register table; the same name denotes a different varnode under
-/// another sla (x86-64 `EDI` is `%[0x38]:4`, x86 `EDI` is `%[0x1c]:4`), so
-/// consuming it there silently mismatches every register. Two presets with
-/// one register table (`arm` / `arm_thumb` / `arm_be_kernel`) resolve alike.
-/// The preset compare comes first: the table compare walks every register.
+/// Refuses a `custom(...)` convention or user-op ABI frozen against another
+/// arch's register table: one register name is a different varnode per sla.
+/// Presets sharing a table (`arm` / `arm_thumb`) resolve alike.
 fn check_source_arch(
     source_arch: Option<strider_target::SleighArch>,
     target: strider_target::SleighArch,
@@ -73,8 +70,6 @@ fn build_cc(
     }
 }
 
-/// Borrowed: the table is read once per analyse and consuming it would cost a
-/// copy of every `CallingConvention` in it.
 pub(crate) fn build_per_address_ccs(
     per_address_ccs_py: &std::collections::HashMap<u64, PyCallingConvention>,
     regs: &rsleigh::SleighRegs,
@@ -86,13 +81,10 @@ pub(crate) fn build_per_address_ccs(
         .collect::<PyResult<_>>()
 }
 
-/// Borrow the handle, raising the re-entrant `StriderError` when the borrow
-/// conflicts with a call in flight on it, from this thread or another:
-/// `analyze`, `build_cfg` and `add_elf` borrow exclusively, the rest shared.
-///
-/// Every method borrows through this: a `&self` receiver's failed borrow is
-/// PyO3's bare `RuntimeError`, and `Py::borrow` panics, which surfaces as
-/// `PanicException`, a `BaseException` no `except Exception` catches.
+/// Borrow the handle, raising the re-entrant `StriderError` on a conflict
+/// with a call in flight (rather than PyO3's `RuntimeError` or a
+/// `PanicException`). `analyze`, `build_cfg` and `add_elf` borrow
+/// exclusively, the rest shared.
 fn try_borrow_lifter<'py>(slf: &Bound<'py, PyLifter>) -> PyResult<pyo3::PyRef<'py, PyLifter>> {
     slf.try_borrow().map_err(|_| reentrant_lifter_err())
 }
@@ -111,11 +103,8 @@ fn reentrant_lifter_err() -> PyErr {
     ))
 }
 
-/// `entry` as an address, the same way for every entry point that takes one:
-/// `build_cfg` answered a bare `OverflowError` where this names the cause.
-///
-/// An int that does not fit is a different mistake from a str, and saying "you
-/// need an ElfLifter" to someone holding one sends them the wrong way.
+/// `entry` as an address, with distinct errors for an out-of-range int and a
+/// non-int.
 fn entry_addr(entry: &Bound<'_, PyAny>) -> PyResult<u64> {
     entry.extract().map_err(|_| {
         if entry.is_instance_of::<pyo3::types::PyInt>() {
@@ -158,10 +147,8 @@ pub(crate) fn function_bound(
     Ok(strider_cfg::FunctionBound::Size(size))
 }
 
-/// The claims an `optimize` adds to `function`'s: none without `given`, and
-/// otherwise `given`, which must hold every claim already in force and may not
-/// add `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`, which only the
-/// lift reads.
+/// The claims an `optimize` adds: none without `given`, else `given`, which
+/// must hold every claim in force and may not add a lift-read claim.
 fn claims_to_add(
     function: &PyFunction,
     given: Option<&crate::options::PyAssumptionOptions>,
@@ -227,9 +214,8 @@ fn claims_to_add(
     Ok(given)
 }
 
-/// `Function.optimize`: `pipeline` (the default when `None`) over `function`
-/// in place, against `lifter`'s rom, after adding the claims `assumptions`
-/// holds (see [`claims_to_add`]).
+/// `Function.optimize`: `pipeline` (default when `None`) over `function` in
+/// place, after adding [`claims_to_add`].
 pub(crate) fn optimize_function(
     lifter: &Bound<'_, PyLifter>,
     function: &PyFunction,
@@ -238,8 +224,7 @@ pub(crate) fn optimize_function(
 ) -> PyResult<()> {
     let py = lifter.py();
     let this = try_borrow_lifter(lifter)?;
-    // `LoadReadOnly` reads the rom, and a mapping shortened under us takes
-    // a SIGBUS there, which no Python `except` can catch.
+    // A mapping shortened under us SIGBUSes on the rom read.
     crate::reader::check_mem_unchanged(py, &[&this.mem_obj, &this.rom_obj])?;
     let claims = claims_to_add(function, assumptions)?;
     let rom = this.strider()?.rom();
@@ -265,9 +250,8 @@ pub(crate) fn build_strider(
         .map_err(into_strider_err)
 }
 
-/// Python dict keys are unique, so the duplicate-name rejection cannot fire
-/// from this surface; it is surfaced rather than unwrapped so a future caller
-/// that is not a dict gets the message instead of a panic.
+/// Dict keys are unique, so the duplicate-name error cannot fire from Python;
+/// it is surfaced rather than unwrapped.
 pub(crate) fn overrides_from(
     call_other_abis: &std::collections::HashMap<String, crate::call_other_abi::PyCallOtherAbi>,
     target: strider_target::SleighArch,
@@ -288,8 +272,8 @@ pub(crate) fn overrides_from(
     .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-/// Seat caller-supplied indirect-branch answers at the CFG level, so they apply
-/// whether or not the classifier runs.
+/// Caller-supplied indirect-branch answers, seated at the CFG level so they
+/// apply whether or not the classifier runs.
 pub(crate) fn seat_known_targets(
     known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
 ) -> crate::options::SeatedTargets {
@@ -308,13 +292,11 @@ pub(crate) fn seat_known_targets(
 }
 
 /// What an `ElfLifter` call adds to its options, read off the ELF before the
-/// build, so no borrow of the ELF outlives the read.
+/// build.
 struct ElfSeat {
     /// A symbol's recorded size, bounding a lift the options leave open.
     size: Option<std::num::NonZeroU64>,
-    /// The ELF's `$d` spans.
     data_ranges: Option<strider_cfg::DataRanges>,
-    /// The ELF's ppc64 local entries.
     local_entries: Option<std::sync::Arc<strider_cfg::LocalEntries>>,
 }
 
@@ -335,10 +317,8 @@ impl ElfSeat {
     }
 }
 
-/// Every `CfgOptions` field, spelled out. No `..default()` here: a field added
-/// later has to be handled rather than silently dropped, which is how
-/// `build_cfg` came to ignore `known_targets` entirely.
-/// `call_other_overrides` is `opts`' own, from
+/// Every `CfgOptions` field spelled out, no `..default()`, so a new field
+/// must be handled. `call_other_overrides` is from
 /// [`PyCfgOptions::call_other_overrides`].
 fn cfg_options_from<'a>(
     opts: &'a PyCfgOptions,
@@ -366,8 +346,6 @@ fn cfg_options_from<'a>(
     }
 }
 
-/// `addr` is not a machine-instruction boundary on the linear path from
-/// `entry`, which a sweep only discovers by stepping over it.
 fn stepped_past(entry: u64, addr: u64) -> PyErr {
     into_strider_err(anyhow::anyhow!(
         "pcode_at: linear sweep from entry {entry:#x} stepped past target {addr:#x} \
@@ -391,18 +369,13 @@ pub(crate) fn machine_addrs(
 }
 
 /// Run `f`, then drain the pending-exception cell: an exception a Python
-/// callback stashed rather than raised (a `KeyboardInterrupt` / `SystemExit`
-/// from a `read`, or anything a `.when()` predicate raised) wins over `f`'s
-/// result, its error or its success alike. Raising it directly would have been
-/// destroyed by the next callback.
-///
-/// Every entry point that can reach a Python callback goes through this, so a
-/// later, unrelated call cannot inherit a stashed exception.
+/// callback stashed (a `KeyboardInterrupt` / `SystemExit` from a `read`, or
+/// anything a `.when()` predicate raised) wins over `f`'s result. Every entry
+/// point that can reach a callback goes through this, so a later call cannot
+/// inherit a stashed exception.
 pub(crate) fn with_pending_control_flow<T>(f: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
     let out = f();
-    // The same boundary drops a swallowed callback cause: any `StriderError`
-    // that wanted it was synthesized before this runs, and a survivor would
-    // chain itself onto an unrelated later error and pin its traceback.
+    // A surviving callback cause would chain onto an unrelated later error.
     crate::errors::clear_callback_cause();
     match crate::pattern::take_pending_query_error() {
         Some(err) => Err(err),
@@ -410,9 +383,8 @@ pub(crate) fn with_pending_control_flow<T>(f: impl FnOnce() -> PyResult<T>) -> P
     }
 }
 
-/// The `collections.namedtuple` type backing `strider.lift.AnalyzeResult`,
-/// created once and cached so its identity (hence `isinstance`) is stable
-/// across calls.
+/// The namedtuple type behind `strider.lift.AnalyzeResult`, cached so
+/// `isinstance` is stable.
 static ANALYZE_RESULT_TYPE: pyo3::sync::GILOnceCell<PyObject> = pyo3::sync::GILOnceCell::new();
 
 fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
@@ -440,42 +412,30 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 /// convention is an argument of every `analyze` call.
 #[pyclass(name = "Lifter", module = "strider.lift", subclass)]
 pub struct PyLifter {
-    /// Owns the Sleigh and optional rom; `None` once `__clear__` has released
-    /// it. A call borrows the handle for its whole run: `analyze`, `build_cfg`
-    /// and `add_elf` exclusively, so any other call while one is in flight, on
-    /// this thread or another, raises; the rest share it and may overlap each
-    /// other.
+    /// `None` once `__clear__` has released it.
     inner: Option<strider_orchestrator::Strider<AnyMemReader>>,
-    /// The exact `mem` object the handle was built from, returned by
-    /// `reader()`. A callback's is the one its adapter holds, which
-    /// `__traverse__` visits for the cyclic GC. `None` only after `__clear__`
-    /// during GC.
+    /// The exact `mem` object, returned by `reader()` and visited by
+    /// `__traverse__`. `None` only after `__clear__`.
     mem_obj: Option<std::sync::Arc<Py<PyAny>>>,
-    /// The exact `rom` object the handle was built from, returned by `rom()`.
-    /// `None` when no rom was supplied, or after `__clear__` during GC.
+    /// The exact `rom` object, returned by `rom()`. `None` when none was
+    /// supplied, or after `__clear__`.
     rom_obj: Option<std::sync::Arc<Py<PyAny>>>,
     /// `mem` or `rom` is a Python callback.
     reader_calls_python: bool,
-    /// The engine `pcode_at` sweeps with, kept between calls with everything
-    /// it has decoded: `Sleigh::clone` is a whole `Sleigh::new` plus a commit
-    /// replay, and walking an instruction stream is one call per address.
+    /// The `pcode_at` engine, kept between calls: a `Sleigh::clone` is a whole
+    /// `Sleigh::new` plus a commit replay.
     sweep_sleigh: std::cell::RefCell<Option<SweepSleigh>>,
-    /// Bumped by `analyze` and `build_cfg`, the only callers that reach
-    /// `set_context_at`, so a cached sweep engine built before a commit is
-    /// discarded rather than decoding in a mode the current one has moved past.
+    /// Bumped by `analyze` and `build_cfg`, which can commit context, so a
+    /// cached sweep engine built before a commit is discarded.
     context_gen: std::cell::Cell<u64>,
 }
 
 /// A `pcode_at` sweep engine plus everything it has already decoded.
 ///
-/// Decoding writes flow context back into the engine, so this is NOT a clean
-/// clone after its first sweep, and re-decoding an address it has already
-/// passed would answer in whatever mode a LATER instruction pinned (an ARM
-/// backward `blx` pins Thumb at its target). So an address the sweep already
-/// decoded is answered out of `answers` and the engine only ever moves forward
-/// from `cursor`, which is what makes an answer independent of the order the
-/// calls came in. A different entry, or a context commit on the owning
-/// `Lifter`, gets a fresh engine.
+/// Decoding writes flow context back into the engine, so re-decoding a passed
+/// address would answer in whatever mode a LATER instruction pinned. A passed
+/// address is answered from `answers` and the engine only moves forward from
+/// `cursor`, so an answer does not depend on call order.
 struct SweepSleigh {
     context_gen: u64,
     entry: u64,
@@ -483,20 +443,10 @@ struct SweepSleigh {
     /// `sleigh`'s own, which its LOAD / STORE space ids resolve against.
     space_ids: rsleigh::SpaceIds,
     /// `machine addr -> joined p-code`, for every address this sweep decoded.
-    ///
-    /// Unbounded, so RSS grows with the number of instructions swept: one
-    /// rendered-p-code `String` per address. It cannot
-    /// simply be capped: an address already passed is answered from here
-    /// precisely BECAUSE re-decoding it would answer in whatever mode a later
-    /// instruction pinned, so an evicted entry has to drop the engine with it
-    /// and re-sweep from `entry`, and a cap alone turns a sequential sweep
-    /// into O(range^2). The bounded form is a window plus a reset on a miss
-    /// below `cursor`, which also has to stay distinguishable from the
-    /// genuinely-mid-instruction case `stepped_past` reports. A fresh
-    /// `Lifter` releases it meanwhile.
+    /// Unbounded: an evicted entry would force a re-sweep from `entry`, since
+    /// re-decoding it alone can answer in the wrong mode.
     answers: std::collections::HashMap<u64, String>,
-    /// Where the engine will decode next: `entry` before the first sweep, one
-    /// past the last instruction decoded after that.
+    /// Where the engine decodes next.
     cursor: u64,
 }
 
@@ -513,14 +463,11 @@ impl PyLifter {
         Ok(self.strider()?.sleigh())
     }
 
-    /// The arch this handle decodes with, whose register table a `custom(...)`
-    /// CC / `CallOtherAbi` must share.
     fn target(&self) -> PyResult<strider_target::SleighArch> {
         Ok(self.strider()?.arch())
     }
 
-    /// Retires any cached `pcode_at` sweep engine, for a caller about to
-    /// decode through the persistent Sleigh and so possibly commit context.
+    /// Retires any cached `pcode_at` sweep engine.
     fn bump_context_gen(&self) {
         self.context_gen.set(self.context_gen.get().wrapping_add(1));
     }
@@ -545,11 +492,10 @@ fn build_lifter(
 
 #[pymethods]
 impl PyLifter {
-    /// The `SleighArch` this handle decodes with. Enough, with `reader()` and
-    /// `rom()`, to build a second handle over the same memory, which is how
-    /// two threads analyse in parallel; read all three before an `analyze`,
-    /// `build_cfg` or `add_elf` on this handle is in flight, since they raise
-    /// while one is.
+    /// The `SleighArch` this handle decodes with. With `reader()` and `rom()`,
+    /// enough to build a second handle over the same memory for a parallel
+    /// thread. Raises while an `analyze`, `build_cfg` or `add_elf` is in
+    /// flight.
     #[getter]
     fn arch(slf: &Bound<'_, Self>) -> PyResult<crate::arch::PySleighArch> {
         let inner = try_borrow_lifter(slf)?.target()?;
@@ -589,9 +535,8 @@ impl PyLifter {
         Ok(format!("{}(...)", slf.get_type().name()?))
     }
 
-    /// Without this, a cycle from a user's `read()`-callback object back
-    /// to the `Lifter` runs through the Sleigh, where the collector can't
-    /// see it, and leaks.
+    /// Exposes the reader objects, else a cycle from a `read()` callback back
+    /// to the `Lifter` runs through the Sleigh unseen and leaks.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         if let Some(o) = &self.mem_obj {
             visit.call(&**o)?;
@@ -603,21 +548,15 @@ impl PyLifter {
     }
 
     fn __clear__(&mut self) {
-        // The engine's adapters and the sweep engine's reader clone share a
-        // callback's `Arc<Py<PyAny>>`, so the reference drops only with all
-        // three.
+        // The engine, the sweep engine and `mem_obj` share a callback's `Arc`.
         self.inner = None;
         self.sweep_sleigh.get_mut().take();
         self.mem_obj = None;
         self.rom_obj = None;
     }
 
-    /// Rebuilds this handle's Sleigh and orchestrator state from
-    /// `arch`/`mem`/`rom`, discarding the engine and the reader it holds.
-    ///
-    /// Only the pytest suite installs a reader after construction, which is
-    /// the one way to close a collectable cycle back onto the handle, so this
-    /// is behind `test-hooks` rather than in the shipped wheel.
+    /// Rebuilds this handle from `arch`/`mem`/`rom`. Test-only: installing a
+    /// reader after construction closes a collectable cycle onto the handle.
     #[cfg(feature = "test-hooks")]
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
     fn rebuild(
@@ -633,11 +572,8 @@ impl PyLifter {
     }
 
     /// INTERNAL. Merge the ELF at `path` into `elf` and rebuild over the
-    /// merged image, under one exclusive borrow: a handle in use refuses
-    /// before anything is merged, so `symbol` and `read` never see an ELF
-    /// the decoder does not. The rebuild follows the merge because an engine
-    /// reads a snapshot of the regions; it rebuilds an arch that already
-    /// built over the same readers, so only allocation can fail it.
+    /// merged image, under one exclusive borrow, so a handle in use refuses
+    /// before anything is merged.
     #[pyo3(name = "_merge_elf")]
     fn merge_elf(
         slf: &Bound<'_, Self>,
@@ -698,9 +634,7 @@ impl PyLifter {
 
     /// Build the control-flow graph of the function at `entry`, without
     /// lifting or optimising.  Raises `StriderError` on a build failure.
-    ///
-    /// Holds the GIL for the whole build, unlike `analyze`: decoding is short
-    /// next to a full analysis.
+    /// Holds the GIL throughout.
     #[pyo3(signature = (entry, opts=None))]
     fn build_cfg(
         slf: Py<Self>,
@@ -737,20 +671,10 @@ impl PyLifter {
     /// complete answer. Check `Cfg.incomplete` before trusting an absence
     /// ("no store to X"): code behind a listed address may be missing.
     ///
-    /// Runs the fixed-point loop with the GIL released, so other Python
-    /// threads keep running, except where `mem` or `rom` is a Python object,
-    /// whose adapter takes the GIL back on every read anyway; there the GIL
-    /// is held.
-    ///
-    /// A DAEMON thread inside this call when the interpreter starts
-    /// finalizing aborts the process either way. With the GIL released it is
-    /// killed holding no GIL, and the forced unwind out of the released
-    /// region aborts. With a Python `mem` or `rom` it is terminated inside
-    /// your `read` callback, and the unwind through the Rust frames below it
-    /// aborts or segfaults. CPython hangs a pure-Python daemon thread safely
-    /// instead, so this is a cost of the Rust frames and no exception can be
-    /// raised for it. Analyse on non-daemon threads and join them, which is
-    /// clean.
+    /// Releases the GIL for the analysis unless `mem` or `rom` is a Python
+    /// object, which needs it on every read. A daemon thread inside this call
+    /// at interpreter shutdown aborts the process; analyse on non-daemon
+    /// threads and join them.
     #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
         slf: Py<Self>,
@@ -791,25 +715,21 @@ impl PyLifter {
     /// instruction that lifts to none).
     ///
     /// Each call resumes where the last one from the same `entry` stopped, so
-    /// walking a whole instruction stream decodes it once.
+    /// walking a whole instruction stream decodes it once. Works for an `addr`
+    /// outside any analysed CFG.
     ///
-    /// A stand-alone sweep, so it works for an `addr` outside any analysed
-    /// CFG.  `addr` must be reachable through the linear instruction stream
-    /// from `entry`; raises `StriderError` otherwise. On an ISA-mode arch
+    /// Raises `StriderError` unless `addr` is reachable through the linear
+    /// instruction stream from `entry`. On an ISA-mode arch
     /// `entry`'s low bit selects the mode, as for `analyze`, and the sweep
     /// starts at `entry & ~1`.
     ///
     /// Also raises once this `Lifter` has committed more decode modes than the
-    /// sweep engine can carry over, which on an ISA-mode arch is the only
-    /// alternative to answering in the wrong mode.
+    /// sweep engine can carry over, rather than answer in the wrong mode.
     fn pcode_at(slf: &Bound<'_, Self>, entry: &Bound<'_, PyAny>, addr: u64) -> PyResult<String> {
         let entry = entry_addr(entry)?;
         let py = slf.py();
         let this = try_borrow_lifter(slf)?;
-        // A mapping shortened under us takes a SIGBUS on the read, which no
-        // Python `except` can catch.
         crate::reader::check_mem_unchanged(py, &[&this.mem_obj])?;
-        // The entry's ISA bit selects the mode, as in `DecodeEngine::build_cfg`.
         let entry_mode = this.target()?.entry_mode_context(entry);
         let start = if entry_mode.is_some() {
             entry & !1
@@ -821,21 +741,11 @@ impl PyLifter {
                 "pcode_at: addr {addr:#x} is before entry {entry:#x}"
             )));
         }
-        // `Sleigh::lift_one` carries context-register state across calls, so
-        // sweeping through the persistent Sleigh would dirty it for a later
-        // `analyze`/`build_cfg`. The clone is that one-way isolation; it is not
-        // a clean engine, and must not be one. `Sleigh::clone` replays the
-        // pinned `set_context_at` commits, which is what makes this sweep decode
-        // an address in the ISA mode the CFG decoded it in rather than in the
-        // pspec default. Past `MAX_CONTEXT_COMMITS` the log is gone and the
-        // clone would pin nothing, so the sweep would answer in the pspec
-        // default for an address the analysis decoded in another mode:
-        // `clone_would_replay_context` is what tells the two apart, and the
-        // answer it cannot vouch for is refused rather than returned.
+        // The sweep runs on a clone, so it cannot dirty the persistent
+        // Sleigh's context; the clone replays the pinned commits so it decodes
+        // in the analysis's ISA mode, and refuses once that log is gone.
         let context_gen = this.context_gen.get();
-        // Taken OUT of the cell for the sweep: `lift_one` reaches a Python
-        // `MemReader.read`, which can call back in here, and a borrow held
-        // across that would raise `PanicException` from the nested call.
+        // Taken out of the cell: a Python `read` can re-enter `pcode_at`.
         let cached = this
             .sweep_sleigh
             .try_borrow_mut()
@@ -874,8 +784,6 @@ impl PyLifter {
             if let Some(text) = sweep.answers.get(&addr) {
                 return Ok(text.clone());
             }
-            // Already swept past it without landing on it, so the linear path
-            // from entry does not start an instruction there.
             if addr < sweep.cursor {
                 return Err(stepped_past(entry, addr));
             }
@@ -888,8 +796,7 @@ impl PyLifter {
             } = &mut sweep;
             let mut decoded: u64 = 0;
             loop {
-                // The sweep holds the GIL for its whole run, so Ctrl-C reaches
-                // the caller only where this asks for it.
+                // Holds the GIL, so Ctrl-C lands only here.
                 decoded += 1;
                 if decoded.is_multiple_of(1024) {
                     py.check_signals()?;
@@ -962,8 +869,8 @@ impl PyLifter {
         Ok(PyCfg::new(inner, slf, target))
     }
 
-    /// `analyze`, with `elf` read for an `ElfLifter`'s options, and a symbol's
-    /// recorded size.
+    /// `analyze`, with `elf` read for an `ElfLifter`'s options and a symbol's
+    /// size.
     fn analyze_at(
         slf: Py<Self>,
         py: Python<'_>,
@@ -1017,27 +924,12 @@ impl PyLifter {
             assumptions: opts.assumptions.get().inner.clone(),
             compact: opts.compact,
         };
-        // The fixed-point loop runs without the GIL where it can: a pipeline's
-        // boxed passes are `Send`, so a closure capturing one satisfies
-        // `allow_threads`'s `Ungil` bound. Holding it would stall every other
-        // Python thread for the length of an analysis, which is what an
-        // explorer serving in the background would feel.
-        //
-        // Not where the reader is a Python object. Such an adapter takes the
-        // GIL back on EVERY memory read, so dropping it buys almost no
-        // parallelism there, and doing so lets a worker thread call into the
-        // interpreter while the main thread finalises it: `Python::with_gil`
-        // after `Py_Finalize` aborts or segfaults the process, which no
-        // `StriderError` can catch. Holding the GIL instead makes
-        // finalisation wait for the analysis, the way any other Python call
-        // does.
+        // A Python reader keeps the GIL so finalisation waits for the analysis.
         let result = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(slf.bind(py))?;
             lifter.bump_context_gen();
             let reader_calls_python = lifter.reader_calls_python;
-            // Reborrow before the closure so its captured type is a plain
-            // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
-            // `!Send` `Python<'_>` marker and would fail `Ungil`.
+            // A plain `&mut Strider`, not the `!Ungil` `PyRefMut`.
             let inner = lifter.strider_mut()?;
             let outcome = if reader_calls_python {
                 inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline)
@@ -1062,9 +954,8 @@ impl PyLifter {
     }
 }
 
-/// Create a lifter for `arch` that can lift and analyze functions.  `mem`
-/// supplies the code bytes; `rom` is the optional read-only memory for
-/// constant folding.
+/// Create a lifter for `arch`. `mem` supplies the code bytes; `rom` is the
+/// optional read-only memory for constant folding.
 #[pyfunction]
 #[pyo3(name = "lifter", signature = (arch, mem, rom = None))]
 pub fn lifter(
