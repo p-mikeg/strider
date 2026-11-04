@@ -15,26 +15,18 @@ hashbrown.workspace = true
 smallvec.workspace = true
 
 [features]
-# Test-only graph internals: `Graph::corrupt_clear_first_use`, which breaks a
-# use-list on purpose for strider-ir's validator tests,
-# `Graph::next_node_id`, the arena's next unallocated key, and
-# `Graph::remove_node_input`, the single-slot removal.
+# Test-only internals: `corrupt_clear_first_use`, `next_node_id`,
+# `remove_node_input`.
 test-injectors = []
-# `edge_reads`: `Inputs` / `InputIter` reads, `nth_input` calls and
-# `value_uses` steps on the current thread, the unit strider-ir's
-# validate-cost test counts. Enabled only by strider-ir's dev-dependency, which
-# a workspace-wide test or bench build unifies in; a per-package bench or
-# example, and the wheel, never pay for it.
+# `edge_reads`: per-thread count of input and use reads, for strider-ir's
+# validate-cost test.
 edge-read-count = []
 
 [dev-dependencies]
-# The producer-before-consumer order the invariant tests check use lists
-# against.
+# `acyclic_postorder`, the order the invariant tests check against.
 graph-algorithms = { workspace = true, features = ["test-util"] }
 proptest.workspace = true
-# `tests/` is an integration test, so `cfg(test)` does not reach the library:
-# without this `cargo test -p strider-graph` alone fails to compile, and the
-# workspace run hides it by unifying the feature from another crate.
+# Gives `tests/` the feature `cfg(test)` cannot reach.
 strider-graph = { path = ".", features = ["test-injectors"] }
 
 [lints]

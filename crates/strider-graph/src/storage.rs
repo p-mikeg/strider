@@ -96,7 +96,7 @@ impl<N, V> RawStore<N, V> {
         }
     }
 
-    /// ALWAYS allocates a fresh [`NodeId`]; never deduplicates.
+    /// Always allocates a fresh [`NodeId`]; never deduplicates.
     pub(crate) fn alloc_node(
         &mut self,
         kind: N,
