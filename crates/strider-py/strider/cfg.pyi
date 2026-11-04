@@ -107,8 +107,8 @@ class Cfg:
         - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
           it as data.
         - `"past_function_end"`: code falls through past `function_max_size`
-          (a tail call to this address), or a call not to a
-          `no_return_targets` entry would return here.
+          or a `fragment_ranges` end (a tail call to this address), or a call
+          not to a `no_return_targets` entry would return here.
 
         A seeded arm that falls through into an unmapped, undecodable or
         past-the-end target is dropped and named there, unless a call precedes
@@ -162,6 +162,14 @@ class CfgOptions:
     `ElfLifter.analyze` and `ElfLifter.build_cfg` fill it from the ELF's
     mapping symbols when empty. A range that ends at or below its start
     raises `ValueError`.
+
+    `fragment_ranges` lists `(start, end)` address ranges, end exclusive,
+    outside the bound that are still this function's code (GCC's
+    `<name>.cold` partitions): a branch into one is followed rather than
+    tail-called, and a fall-through past one's end is `"past_function_end"`.
+    `ElfLifter.analyze` and `ElfLifter.build_cfg` fill it when empty from the
+    sized `<name>.cold` / `<name>.cold.N` symbols of each function symbol at
+    the entry. A range that ends at or below its start raises `ValueError`.
     """
 
     @property
@@ -176,6 +184,8 @@ class CfgOptions:
     @property
     def data_ranges(self) -> list[tuple[int, int]]: ...
     @property
+    def fragment_ranges(self) -> list[tuple[int, int]]: ...
+    @property
     def no_return_targets(self) -> frozenset[int]: ...
     def __init__(
         self,
@@ -185,6 +195,7 @@ class CfgOptions:
         known_targets: Mapping[int, Union[Sequence[int], Literal["return"]]] = ...,
         call_other_abis: Mapping[str, CallOtherAbi] = ...,
         data_ranges: Sequence[tuple[int, int]] = ...,
+        fragment_ranges: Sequence[tuple[int, int]] = ...,
         no_return_targets: Iterable[int] = ...,
     ) -> None:
         """Build the options. Raises `ValueError` for

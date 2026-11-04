@@ -5,12 +5,18 @@ use super::types::{Region, RegionTerminator};
 use super::{Cfg, RegionId};
 use anyhow::anyhow;
 
-use crate::{FunctionBound, Result};
+use crate::{DataRanges, FunctionBound, Result};
 
-/// Whether `target` lies outside the function `bound` describes from
-/// `start_addr`. A `Size` window that overflows is `[start_addr, u64::MAX]`.
-pub(crate) fn is_addr_tail_call(target: u64, start_addr: u64, bound: FunctionBound) -> bool {
-    match bound {
+/// Whether `target` lies outside both the function `bound` describes from
+/// `start_addr` and every `fragments` range. A `Size` window that overflows
+/// is `[start_addr, u64::MAX]`.
+pub(crate) fn is_addr_tail_call(
+    target: u64,
+    start_addr: u64,
+    bound: FunctionBound,
+    fragments: &DataRanges,
+) -> bool {
+    let outside = match bound {
         FunctionBound::Size(size) => {
             target < start_addr
                 || start_addr
@@ -18,7 +24,8 @@ pub(crate) fn is_addr_tail_call(target: u64, start_addr: u64, bound: FunctionBou
                     .is_some_and(|end| target >= end)
         }
         FunctionBound::Open { code_before_start } => !code_before_start && target < start_addr,
-    }
+    };
+    outside && !fragments.overlaps(target, target.saturating_add(1))
 }
 
 /// The user-op a `CallOther` names: its CONST input 0, as an index into
@@ -145,16 +152,23 @@ mod tests {
     fn is_addr_tail_call_by_bound() {
         let open = |code_before_start| FunctionBound::Open { code_before_start };
         let size = FunctionBound::size(0x100);
-        for (target, bound, tail) in [
-            (0x0800, open(false), true),
-            (0x0800, open(true), false),
-            (0x1200, open(false), false),
-            (0x0800, size, true),
-            (0x10ff, size, false),
-            (0x1100, size, true),
+        let none = DataRanges::default();
+        let cold = DataRanges::new([0x0800..0x0810, 0x1200..0x1210]);
+        for (target, bound, fragments, tail) in [
+            (0x0800, open(false), &none, true),
+            (0x0800, open(true), &none, false),
+            (0x1200, open(false), &none, false),
+            (0x0800, size, &none, true),
+            (0x10ff, size, &none, false),
+            (0x1100, size, &none, true),
+            (0x0800, open(false), &cold, false),
+            (0x080f, size, &cold, false),
+            (0x0810, size, &cold, true),
+            (0x1200, size, &cold, false),
+            (0x1210, size, &cold, true),
         ] {
             assert_eq!(
-                is_addr_tail_call(target, 0x1000, bound),
+                is_addr_tail_call(target, 0x1000, bound, fragments),
                 tail,
                 "{target:#x} {bound:?}"
             );
@@ -169,15 +183,15 @@ mod tests {
         // Overflows when added to start.
         let bound = FunctionBound::size(0x1000);
         assert!(
-            !is_addr_tail_call(u64::MAX, start, bound),
+            !is_addr_tail_call(u64::MAX, start, bound, &DataRanges::default()),
             "u64::MAX is the top of the non-wrapping window, must be in-range"
         );
         assert!(
-            !is_addr_tail_call(start + 0x10, start, bound),
+            !is_addr_tail_call(start + 0x10, start, bound, &DataRanges::default()),
             "interior of an overflowing window must be in-range"
         );
         assert!(
-            is_addr_tail_call(start - 1, start, bound),
+            is_addr_tail_call(start - 1, start, bound, &DataRanges::default()),
             "below start is still a tail call"
         );
     }

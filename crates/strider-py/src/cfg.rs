@@ -136,8 +136,8 @@ impl PyCfg {
     /// - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
     ///   it as data.
     /// - `"past_function_end"`: code falls through past `function_max_size`
-    ///   (a tail call to this address), or a call not to a
-    ///   `no_return_targets` entry would return here.
+    ///   or a `fragment_ranges` end (a tail call to this address), or a call
+    ///   not to a `no_return_targets` entry would return here.
     ///
     /// A seeded arm that falls through into an unmapped, undecodable or
     /// past-the-end target is dropped and named there, unless a call precedes
