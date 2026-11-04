@@ -136,6 +136,11 @@ impl NodeCache {
         None
     }
 
+    #[cfg(any(test, feature = "test-injectors"))]
+    pub(crate) fn contains(&self, node: NodeId) -> bool {
+        self.node_hashes[node] != HASH_NONE
+    }
+
     /// Drops the dedup entry for a node whose structure is about to change.
     pub(crate) fn invalidate(&mut self, node: NodeId) {
         let hash = self.node_hashes[node];
