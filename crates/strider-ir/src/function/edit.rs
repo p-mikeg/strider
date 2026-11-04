@@ -217,6 +217,10 @@ impl<'g> EditFunction<'g> {
     /// Walked once per [`Self::edits`] reading, so the passes of one pipeline
     /// iteration that leave the graph alone share one walk.
     pub fn live_postorder(&self) -> Vec<NodeId> {
+        self.with_live_postorder(<[NodeId]>::to_vec)
+    }
+
+    fn with_live_postorder<R>(&self, f: impl FnOnce(&[NodeId]) -> R) -> R {
         let at = self.edits();
         let mut memo = self.order_memo.borrow_mut();
         if memo.as_ref().is_none_or(|&(stamp, _)| stamp != at) {
@@ -227,15 +231,13 @@ impl<'g> EditFunction<'g> {
             let order: Vec<NodeId> = PostOrder::new(succs, self.state.roots.iter()).collect();
             *memo = Some((at, order));
         }
-        memo.as_ref().expect("filled above").1.clone()
+        f(&memo.as_ref().expect("filled above").1)
     }
 
     /// Every producer precedes its consumers unless the use closes a def-use
     /// cycle.  Same entry-global contract as [`Self::live_postorder`].
     pub fn live_reverse_postorder(&self) -> Vec<NodeId> {
-        let mut v = self.live_postorder();
-        v.reverse();
-        v
+        self.with_live_postorder(|o| o.iter().rev().copied().collect())
     }
 
     /// Same reachable SET as `Self::walk_kind`; only the ORDER differs (RPO).
@@ -243,9 +245,14 @@ impl<'g> EditFunction<'g> {
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        self.live_reverse_postorder()
-            .into_iter()
-            .filter(move |&n| pred(self.function.node_kind(n)))
+        let kept: Vec<NodeId> = self.with_live_postorder(|o| {
+            o.iter()
+                .rev()
+                .copied()
+                .filter(|&n| pred(self.function.node_kind(n)))
+                .collect()
+        });
+        kept.into_iter()
     }
 
     pub fn graph_ref(&self) -> &Graph {
