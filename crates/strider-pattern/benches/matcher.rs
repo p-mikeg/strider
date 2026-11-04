@@ -27,12 +27,8 @@ fn build_chain() -> strider_ir::Function {
 }
 
 /// `n` diamonds in sequence, each with a `Call` in its true arm, false arm
-/// and merge region. The matcher runs on the raw built function, so no DCE
-/// eats the filler and every call is a real hit.
-///
-/// The merge of diamond `i` dominates every node of diamond `i+1`, giving a
-/// deep dominator chain; without that depth the node-vs-split tree depth
-/// difference isn't visible at all.
+/// and merge region, unoptimized so every call is a hit. The merge of diamond
+/// `i` dominates every node of diamond `i+1`: a deep dominator chain.
 fn build_diamond_chain(n: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
 

@@ -1,6 +1,3 @@
-//! Rewrite templates. [`instantiate`] creates every `Build` node through
-//! [`strider_ir::IRBuilder::create_node_attributed`].
-
 mod builder;
 mod ctx;
 mod graph;
@@ -11,7 +8,6 @@ mod tests;
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
 pub use graph::Template;
-/// The vertex payloads behind a [`Template`]'s graph.
 pub(crate) use graph::{TmplNodeKind, TmplValue};
 
 pub use crate::typed::value_ops::ops::*;
@@ -60,23 +56,17 @@ pub(crate) enum TemplateTy {
 
 /// Materialises `template` as an IR sub-graph rooted at the returned output.
 ///
-/// `root_ty` types the value the root replaces. `lhs_root` is
-/// [`TemplateCtx::root`] for [`TemplateKind::Fn`] closures. `proof_nodes` is
-/// unioned into every created node's asm-fingerprint. Returns the root node's
-/// first value output.
-///
-/// Each node is checked against its `expected_signature` (output kinds, input
-/// count, input kinds, operand widths, slot wiring); [`strider_ir::validate`]
-/// is not run.
+/// `root_ty` types the value the root replaces. `lhs_root` is [`TemplateCtx::root`] for
+/// [`TemplateKind::Fn`] closures. `proof_nodes` is unioned into every created node's
+/// asm-fingerprint. Returns the root node's first value output. Each node is checked against its
+/// `expected_signature`; [`strider_ir::validate`] is not run.
 ///
 /// # Errors
 ///
-/// If the template is rootless, references an unbound capture, has a closure
-/// that errors, has gapped or duplicate slots, has an `IntConst` built from a
-/// `NodeKind`, has a node no width reaches, or gives a node something its
-/// signature refuses. Signature and wiring refusals are found mid-build, so
-/// nodes created before them stay in `builder`'s function, dead; every other
-/// refusal comes before any node is built.
+/// If the template is rootless, references an unbound capture, has a closure that errors, has
+/// gapped or duplicate slots, has an `IntConst` built from a `NodeKind`, has a node no width
+/// reaches, or gives a node something its signature refuses. Only a signature or wiring refusal
+/// comes mid-build, leaving the nodes created before it dead in `builder`'s function.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
