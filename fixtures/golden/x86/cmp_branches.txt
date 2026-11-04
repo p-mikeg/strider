@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x8049050
 cfg
   0x8049050 217 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c800:4]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8ca00:4]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[ESP]
@@ -104,7 +104,7 @@ unresolved_branch [0x8049110.2]
 cfg
   0x80490e0 0 ops goto -> [0x80490e4]
   0x80490e4 69 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4, u:0x8c800:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4, u:0x8ca00:4]
 frame_address_in_call_register reach=4
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -466,7 +466,7 @@ cfg
   0x8049380 13 ops cbranch 0x8049390 -> [0x8049388, 0x8049390]
   0x8049388 12 ops return -> []
   0x8049390 4 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xba700:4]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xba900:4]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory

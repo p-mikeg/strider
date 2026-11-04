@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x120000a30
 cfg
   0x120000a30 125 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x13600:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x14600:4]
 arg 2 [%v14]
 arg 3 [%v15]
 arg 4 [%v16]
@@ -162,7 +162,7 @@ cfg
   0x120000d20 4 ops cbranch 0x120000d38 -> [0x120000d2c, 0x120000d38]
   0x120000d2c 7 ops return -> []
   0x120000d38 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0xad00:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0xbc00:1]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -184,7 +184,7 @@ cfg
   0x120000d40 4 ops cbranch 0x120000d58 -> [0x120000d4c, 0x120000d58]
   0x120000d4c 7 ops return -> []
   0x120000d58 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xad00:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xbc00:1]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -206,7 +206,7 @@ cfg
   0x120000d60 4 ops cbranch 0x120000d78 -> [0x120000d6c, 0x120000d78]
   0x120000d6c 7 ops return -> []
   0x120000d78 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0xad00:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0xbc00:1]
 arg 0 [%v2]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -228,7 +228,7 @@ cfg
   0x120000d80 4 ops cbranch 0x120000d98 -> [0x120000d8c, 0x120000d98]
   0x120000d8c 7 ops return -> []
   0x120000d98 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xad00:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xbc00:1]
 arg 0 [%v2]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -250,7 +250,7 @@ cfg
   0x120000da0 4 ops cbranch 0x120000db8 -> [0x120000dac, 0x120000db8]
   0x120000dac 7 ops return -> []
   0x120000db8 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0xb300:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0xc200:1]
 arg 0 [%v2]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -272,7 +272,7 @@ cfg
   0x120000dc0 4 ops cbranch 0x120000dd8 -> [0x120000dcc, 0x120000dd8]
   0x120000dcc 7 ops return -> []
   0x120000dd8 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xb300:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xc200:1]
 arg 0 [%v2]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -294,7 +294,7 @@ cfg
   0x120000de0 4 ops cbranch 0x120000df8 -> [0x120000dec, 0x120000df8]
   0x120000dec 7 ops return -> []
   0x120000df8 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0xb300:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0xc200:1]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -316,7 +316,7 @@ cfg
   0x120000e00 4 ops cbranch 0x120000e18 -> [0x120000e0c, 0x120000e18]
   0x120000e0c 7 ops return -> []
   0x120000e18 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xb300:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xc200:1]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry

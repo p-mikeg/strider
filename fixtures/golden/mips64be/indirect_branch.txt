@@ -7,7 +7,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x1200008a0
 cfg
   0x1200008a0 67 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x7200:4, u:0x13600:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x8100:4, u:0x14600:4]
 arg 1 [%v17]
 arg 2 [%v18]
 arg 3 [%v19]
@@ -75,7 +75,7 @@ return %v63, %v92, %v93, %v90, %v67, %v68
 unresolved_branch [0x120000b28.5]
 cfg
   0x120000af0 36 ops unresolved@0x120000b28.5 -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, sp, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x13600:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, sp, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x14600:4]
 arg 0 [%v15]
 %v0:ctrl = entry
 %v1:mem = initial_memory

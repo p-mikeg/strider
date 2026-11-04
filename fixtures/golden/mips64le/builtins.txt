@@ -12,7 +12,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x120000970
 cfg
   0x120000970 148 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x7200:4, u:0x13600:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x8100:4, u:0x14600:4]
 arg 1 [%v17]
 arg 2 [%v18]
 arg 3 [%v19]
@@ -110,7 +110,7 @@ return %v190, %v219, %v220, %v217, %v194, %v195
 == popcount32 @0x120000c40
 cfg
   0x120000c40 40 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x13600:4, u:0x114500:8, u:0x114600:1, u:0x114700:8]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x14600:4, u:0x115500:8, u:0x115600:1, u:0x115700:8]
 arg 0 [%v12]
 arg 1 [%v15]
 arg 2 [%v16]
@@ -163,7 +163,7 @@ return %v30, %v31, %v32, %v33, %v34, %v35
 == clz32 @0x120000c78
 cfg
   0x120000c78 8 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x12800:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x13800:4]
 arg 0 [%v2]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -179,7 +179,7 @@ return %v0, %v1, %v5, %v6, %v7, %v8
 == ctz32 @0x120000c80
 cfg
   0x120000c80 14 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x12800:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x13800:4]
 arg 0 [%v2]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -202,7 +202,7 @@ return %v0, %v1, %v12, %v13, %v14, %v15
 == popcount64 @0x120000c98
 cfg
   0x120000c98 34 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x13600:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x14600:4]
 arg 0 [%v12]
 arg 1 [%v13]
 arg 2 [%v14]
@@ -269,7 +269,7 @@ cfg
   0x120000cd8 4 ops cbranch 0x120000cf0 -> [0x120000ce4, 0x120000cf0]
   0x120000ce4 8 ops return -> []
   0x120000cf0 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xaf00:1]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xbe00:1]
 arg 0 [%v1]
 %v0:ctrl = entry
 %v1:i64 = initial_var[a0]
@@ -291,7 +291,7 @@ return %v5, %v6, %v14, %v11, %v12, %v13
 == __popcountdi2 @0x120000d00
 cfg
   0x120000d00 51 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1800:1, u:0x1a00:1, u:0x1c00:8, u:0x1f00:8, u:0x13600:4, u:0x115100:8, u:0x115200:1, u:0x115300:8, u:0x11cb00:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1800:1, u:0x1a00:1, u:0x1c00:8, u:0x1f00:8, u:0x14600:4, u:0x116100:8, u:0x116200:1, u:0x116300:8, u:0x11db00:4]
 arg 0 [%v2]
 %v0:ctrl = entry
 %v1:mem = initial_memory
