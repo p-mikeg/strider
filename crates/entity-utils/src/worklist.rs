@@ -1,5 +1,5 @@
-use alloc::collections::VecDeque;
 use cranelift_entity::{EntityRef, SecondaryMap};
+use std::collections::VecDeque;
 
 /// FIFO queue for fixed-point iteration, holding each entity at most once:
 /// enqueueing one already queued is a no-op, but an entity may be re-enqueued
@@ -20,7 +20,7 @@ impl<E: EntityRef> Worklist<E> {
     }
 
     pub fn enqueue(&mut self, entity: E) {
-        if !core::mem::replace(&mut self.workset[entity], true) {
+        if !std::mem::replace(&mut self.workset[entity], true) {
             self.worklist.push_back(entity);
         }
     }
