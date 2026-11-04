@@ -78,14 +78,10 @@ pub struct IfRegionSuccessors {
 }
 
 impl Cfg {
-    /// The taken side is the successor STARTING at `true_target`, else the one
-    /// CONTAINING it (a target off an instruction boundary, seated onto its
-    /// owner and reported `InteriorTarget`); the other edge is the
+    /// The taken side is the successor starting at `true_target`, else the one
+    /// containing it (an `InteriorTarget` seat); the other edge is the
     /// fall-through. `if (c) goto L else goto L` answers L for both; a
     /// non-`CondBranch` region `None` for both.
-    ///
-    /// Start wins over containment: a size bound cutting the last instruction
-    /// leaves the fall-through's span overhanging a stub that starts there.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionSuccessors> {
         let region = self
             .region_graph
@@ -141,9 +137,9 @@ impl Cfg {
         self.region_graph.node_indices()
     }
 
-    /// Every successor of `switch_region`, keyed by its full `start_addr`: a
-    /// wired arm begins exactly at its target, a machine-instruction start, so
-    /// a successor starting mid-pcode at that address does not answer for it.
+    /// Every successor of `switch_region`, keyed by its full `start_addr`. An
+    /// arm starts at p-code index 0, so a mid-instruction successor at the same
+    /// machine address does not answer for it.
     pub fn switch_arm_regions(
         &self,
         switch_region: RegionId,

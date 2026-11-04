@@ -37,8 +37,9 @@ pub(crate) fn neighborhood_regions(
 }
 
 impl Cfg {
-    /// Pretty render around `center`.  Node ids are region indices; `center`
-    /// gets a gold border, and is rendered whatever `max_nodes` is.
+    /// Pretty render of the regions within `depth` edges of `center`, at most
+    /// `max_nodes` but always `center` (gold border). Node ids are region
+    /// indices.
     ///
     /// # Errors
     /// `center` is not a region of this CFG, or the render fails.
