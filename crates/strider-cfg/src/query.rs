@@ -7,15 +7,10 @@ use anyhow::anyhow;
 
 use crate::{FunctionBound, Result};
 
-/// True when `target` lies outside the function `bound` describes from
-/// `start_addr`.
-///
-/// A `Size` window is non-wrapping: when `start_addr + size` overflows, the
-/// upper bound is dropped and the window is `[start_addr, u64::MAX]`.
+/// Whether `target` lies outside the function `bound` describes from
+/// `start_addr`. A `Size` window that overflows is `[start_addr, u64::MAX]`.
 pub(crate) fn is_addr_tail_call(target: u64, start_addr: u64, bound: FunctionBound) -> bool {
     match bound {
-        // `checked_add`, NOT `saturating_add`: a saturating end would put
-        // `u64::MAX` outside an overflowing window.
         FunctionBound::Size(size) => {
             target < start_addr
                 || start_addr
@@ -40,8 +35,7 @@ pub fn user_op_of<'n>(insn: &rsleigh::Insn, names: &'n [String]) -> Option<(u32,
 }
 
 /// A direct `Call`'s target address: its first operand, when that names the
-/// code space. Any other operand is no address (a register offset would read
-/// as one).
+/// code space.
 #[must_use]
 pub fn direct_call_target(insn: &rsleigh::Insn, code_space: rsleigh::VnSpace) -> Option<u64> {
     if insn.opcode != rsleigh::Opcode::Call {
@@ -60,25 +54,14 @@ pub struct IfRegionSuccessors {
 }
 
 impl Cfg {
-    /// The outgoing edge to the region that STARTS at the terminator's
-    /// `true_target` is the taken side, failing that the one that merely
-    /// CONTAINS it; the remaining edge is the fall-through.  A degenerate
-    /// `if (c) goto L else goto L` reports that region for both; a
-    /// non-`CondBranch` region reports `None` for both.
+    /// The taken side is the successor STARTING at `true_target`, else the one
+    /// CONTAINING it (a target off an instruction boundary, seated onto its
+    /// owner and reported `InteriorTarget`); the other edge is the
+    /// fall-through. `if (c) goto L else goto L` answers L for both; a
+    /// non-`CondBranch` region `None` for both.
     ///
-    /// Containment is the fallback, not the test: a `true_target` off an
-    /// instruction boundary is seated as an edge to the region that OWNS it,
-    /// which starts elsewhere.  It also covers an intra-machine-instruction
-    /// target at a non-zero pcode index.  That seating can also make both arms
-    /// answer one region; such a target is reported as
-    /// `InteriorTarget`, so a caller that needs to tell it from a real
-    /// `goto L` / `goto L` reads that reason.
-    ///
-    /// A start compare has to win over containment because the two can name
-    /// different successors: a size bound cutting through the last instruction
-    /// leaves the fall-through region's span overhanging the bound, and an
-    /// out-of-bounds `true_target` inside that overhang is owned both by that
-    /// region and by the stub that starts at it.
+    /// Start wins over containment: a size bound cutting the last instruction
+    /// leaves the fall-through's span overhanging a stub that starts there.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionSuccessors> {
         let region = self
             .region_graph
@@ -99,9 +82,7 @@ impl Cfg {
         {
             let target = edge.target();
             let successor = &self.region_graph[target];
-            // Each bucket takes at most one edge, so the degenerate
-            // both-arms-same-region case stays sane: the second edge falls
-            // through to a later bucket instead of overwriting the taken side.
+            // One edge per bucket, for the both-arms-one-region case.
             if successor.start_addr == true_target && starts_at_taken.is_none() {
                 starts_at_taken = Some(target);
             } else if successor.contains_addr(true_target) && contains_taken.is_none() {
@@ -136,17 +117,9 @@ impl Cfg {
         self.region_graph.node_indices()
     }
 
-    /// Every arm of `switch_region`, keyed by the address it starts at: the
-    /// regions the CFG builder wired for that jump-table's targets.  One pass,
-    /// for a caller resolving all of a table's targets at once.
-    ///
-    /// Keyed by successor edge rather than a global start-address lookup, which
-    /// stays correct across a later `split_region` that re-targets the incoming
-    /// edge.  Keyed on the full `start_addr`: a target landing inside an
-    /// already-decoded region splits it, so a wired arm always begins exactly at
-    /// the target, and a target is always a machine-instruction start.  A
-    /// successor beginning MID-pcode at the same machine address (a `CondBranch`
-    /// into a pcode sequence) is a different region and does not answer for it.
+    /// Every successor of `switch_region`, keyed by its full `start_addr`: a
+    /// wired arm begins exactly at its target, a machine-instruction start, so
+    /// a successor starting mid-pcode at that address does not answer for it.
     pub fn switch_arm_regions(
         &self,
         switch_region: RegionId,

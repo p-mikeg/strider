@@ -43,8 +43,7 @@ pub struct Cfg {
     pub(crate) space_ids: rsleigh::SpaceIds,
 }
 
-/// What a build reports beside its graph, each read through its [`Cfg`]
-/// accessor.
+/// What a build reports beside its graph.
 #[derive(Debug, Default)]
 pub(crate) struct BuildReport {
     pub(crate) incomplete: Incompleteness,
@@ -63,14 +62,12 @@ impl Cfg {
         self.entry
     }
 
-    /// The space ids of the engine that decoded this CFG, which every LOAD /
-    /// STORE in it carries; see [`insn_text`].
+    /// The space ids of the engine that decoded this CFG.
     pub fn space_ids(&self) -> &rsleigh::SpaceIds {
         &self.space_ids
     }
 
-    /// The region owning `addr`: of the regions containing it, the one with
-    /// the greatest start, the rule the build routes every edge by.
+    /// The region owning `addr`: of those containing it, the greatest start.
     #[must_use]
     pub fn region_containing(&self, addr: PcodeInsnAddr) -> Option<RegionId> {
         self.index
@@ -78,35 +75,20 @@ impl Cfg {
             .map(|(id, _)| id)
     }
 
-    /// Caller-seeded or classifier-derived targets that failed to decode, or
-    /// led to code that did, so their edge is absent from this CFG.
-    ///
-    /// "Led to" stops at the next dispatch: an arm that reaches the bad bytes
-    /// only back through another `Switch` (an outer table's arm into an inner
-    /// one, an arm looping to its own header) says nothing about its own bound.
-    ///
-    /// The ARM is what each entry names, and an arm that led to the bytes
-    /// decodes fine; the bytes are reported as [`Reason::UndecodableTarget`].
-    ///
-    /// Each carries the site it was seated from: the same address reached from
-    /// another site decodes in that site's own committed context, so the
-    /// failure is no verdict there.
+    /// Seeded or derived arms dropped because they, or code they lead to
+    /// without passing another `Switch`, failed to decode. Each names the arm
+    /// and the site it was seated from; the failing bytes are reported as
+    /// [`Reason::UndecodableTarget`].
     pub fn undecodable_seeded_targets(&self) -> &[UndecodableTarget] {
         &self.report.undecodable_seeded
     }
 
     /// What this build cannot vouch for, each address with its [`Reason`].
-    ///
-    /// A build resolves nothing, so its site reasons are every dispatch it
-    /// left without an edge and every answer it seated. The CFG
-    /// `Strider::analyze` returns carries that analysis's set instead.
     pub fn incomplete(&self) -> &Incompleteness {
         &self.report.incomplete
     }
 
-    /// This CFG reporting `incomplete` in place of its own build's: how
-    /// `Strider::analyze`, over several builds, reports through the one it
-    /// returns. For that caller only.
+    /// This CFG reporting `incomplete` in place of its own build's.
     #[doc(hidden)]
     #[must_use]
     pub fn with_incompleteness(mut self, incomplete: Incompleteness) -> Self {
@@ -114,32 +96,23 @@ impl Cfg {
         self
     }
 
-    /// Sites seated as a `Return` because the answer was `LinkRegister`.
-    ///
-    /// Seating one consumes the site at CFG-build time: no placeholder and no
-    /// `Switch` anchor survive, so nothing later can tell that a caller's seed
-    /// replaced whatever the classifier would have derived there.
+    /// Live sites seated as a `Return` because the answer was `LinkRegister`.
+    /// The seat leaves no trace in the graph.
     pub fn link_register_seated(&self) -> &[PcodeInsnAddr] {
         &self.report.link_register_seated
     }
 
-    /// Sites seated as a `TailCall` because the answer was a single target
-    /// outside the function.
-    ///
-    /// Seating one consumes the site at CFG-build time, as
-    /// [`Self::link_register_seated`] does, so a dispatch collapsed to its
-    /// first derived answer looks like a genuine tail call.
+    /// Live sites seated as a `TailCall` because the answer was a single
+    /// target outside the function; like [`Self::link_register_seated`], a
+    /// trace the graph does not keep.
     pub fn tail_call_seated(&self) -> &[PcodeInsnAddr] {
         &self.report.tail_call_seated
     }
 
-    /// The ISA-mode bit that flowed into the indirect branch at `site`, sampled
-    /// while that site's region was decoded: the mode a target seated there
-    /// with no mode of its own decodes in.
-    ///
-    /// `None` for an address no indirect branch was sealed at, and on an arch
-    /// with no ISA-mode var. Where the branch address carries no readable
-    /// context, the sample is the function's own mode.
+    /// The ISA-mode bit flowing into the indirect branch at `site`, sampled
+    /// while its region decoded: the mode a mode-less target seated there
+    /// decodes in. `None` off a sealed indirect branch, or with no ISA-mode
+    /// var.
     pub fn flowing_isa_bit_at_site(&self, site: PcodeInsnAddr) -> Option<bool> {
         self.report.flowing_isa_bits.get(&site).copied()
     }

@@ -4,9 +4,8 @@ use rsleigh::{Insn, Opcode, SpaceIds};
 use strider_target::ArchNames;
 
 /// `insn` in rsleigh's contextual spelling (`Store ram, RSP, RAX`), a LOAD /
-/// STORE space id rendered as its space's name rather than the host address of
-/// the engine's `AddrSpace`. `space_ids` must come from the engine that decoded
-/// `insn`, and `names` must be the decoding arch's.
+/// STORE space id spelled as its space's name. `space_ids` and `names` must be
+/// those of the engine and arch that decoded `insn`.
 pub fn insn_text<'a>(
     insn: &'a Insn,
     space_ids: &'a SpaceIds,
