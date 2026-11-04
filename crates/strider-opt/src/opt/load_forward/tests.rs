@@ -1628,3 +1628,55 @@ fn an_opaque_store_blocks_as_the_global_it_forwards_to() -> Result<()> {
     );
     Ok(())
 }
+
+/// A store on a region joining a constant `If`'s untaken arm with a live
+/// predecessor stays on the merge's path. Mutation: let `never_taken` walk
+/// a multi-predecessor region through its first input.
+#[test]
+fn an_untaken_arm_joining_a_live_path_keeps_its_store() -> Result<()> {
+    let sp = sp32_vn();
+    let ty = ValueType::int(32);
+    let mut b = sp_frame(sp).build_fn()?;
+    let [entry, guard, taken, untaken, live, join, merge] = [(); 7].map(|()| b.create_region_all());
+    let [entry, guard, taken, untaken, live, join, merge] =
+        [entry?, guard?, taken?, untaken?, live?, join?, merge?];
+    b.set_entry_region_all(entry)?;
+
+    b.set_region(entry);
+    let sp_v = b.read_variable(&sp)?;
+    let slot = i32_slot(&mut b, sp_v, 4)?;
+    store32(&mut b, slot, 1)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let unknown = b.build_int_cmp_operation(sp_v, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    b.build_if(unknown, guard, live)?;
+    b.set_region(guard);
+    let yes = b.build_boolean_const(true);
+    b.build_if(yes, taken, untaken)?;
+    b.set_region(taken);
+    b.build_branch(merge)?;
+    // `join`'s first predecessor is the untaken arm.
+    for region in [untaken, live] {
+        b.set_region(region);
+        b.build_branch(join)?;
+    }
+    b.set_region(join);
+    let sp_v = b.read_variable(&sp)?;
+    let slot = i32_slot(&mut b, sp_v, 4)?;
+    store32(&mut b, slot, 2)?;
+    b.build_branch(merge)?;
+
+    b.set_region(merge);
+    let sp_v = b.read_variable(&sp)?;
+    let slot = i32_slot(&mut b, sp_v, 4)?;
+    let loaded = load32(&mut b, slot)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    run_passes(
+        &mut fg,
+        &[&PhiCollapse, &crate::RegionCollapse, &LoadForward],
+    )?;
+    assert_eq!(outcome(&fg), None);
+    Ok(())
+}
