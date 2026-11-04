@@ -1,26 +1,15 @@
 //! The memory graph laid out for a nearest-clobber climb.
 //!
-//! The nearest clobber of a location at a memory value is its nearest
-//! dominator, itself included, that clobbers the location or is a `MemPhi`
-//! whose region holds a clobber, and `InitialMemory` when there is none.  The
-//! region of a phi is every def that reaches it without passing its immediate
-//! dominator.
+//! A location's nearest clobber at a memory value is its nearest dominator,
+//! itself included, that clobbers it or is a `MemPhi` whose region (the defs
+//! reaching it without passing its immediate dominator) holds a clobber;
+//! `InitialMemory` when there is none.
 //!
 //! Positions are a topological order in which every natural loop is one
-//! contiguous block opened by its header.  A dominator precedes what it
-//! dominates, and every def that reaches `x` without passing a dominator `a`
-//! lies above `a` and at most at the end of the outermost loop holding `x` but
-//! not `a`.  A position range with no clobber in it passes every dominator it
-//! covers at once.  A merge's region holds a clobber iff its loop block does
-//! or an arm from outside the block has its own nearest clobber below the
-//! merge's immediate dominator; an arm precedes its merge, so deciding a merge
-//! from its arms' answers ends.
-//!
-//! An irreducible loop is one block too, opened by its DFS-first node, but
-//! that node dominates none of it.  The climb crosses such a block from
-//! outside as any other, and inside it steps one dominator at a time, passing
-//! a run of defs each the only predecessor of the next at once and walking
-//! each merge's region whole.
+//! contiguous block opened by its header, so a clobber-free position range
+//! passes every dominator it covers at once. An irreducible loop is one block
+//! opened by its DFS-first node; inside it the climb steps one dominator at a
+//! time.
 
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -54,12 +43,12 @@ pub(crate) trait ClobberProbe {
     /// The exact verdict for a def.
     fn clobbers(&mut self, function: &Function, def: NodeId) -> bool;
 
-    /// The highest position in `lo..=hi` holding a def that may clobber.  A
+    /// The highest position in `lo..=hi` holding a def that may clobber. A
     /// superset of the defs [`Self::clobbers`] accepts is enough.
     fn candidate(&mut self, lo: u32, hi: u32) -> Option<u32>;
 }
 
-/// One location's memoised climb results, by position.  Valid while no def's
+/// One location's memoised climb results, by position. Valid while no def's
 /// verdict for the location changes.
 #[derive(Default)]
 pub(crate) struct Answers {
@@ -298,7 +287,7 @@ impl MemLayout {
     ) -> u32 {
         // Each frame above the first climbs an entry arm of the merge below it,
         // as far as that merge's immediate dominator; arms precede their
-        // merge, so the stack ends.  Frames share one path from their `base`.
+        // merge, so the stack ends. Frames share one path from their `base`.
         let mut path: SmallVec<[u32; 8]> = SmallVec::new();
         let mut frames = vec![Climb::new(start, None, 0)];
         loop {
@@ -451,10 +440,9 @@ impl MemLayout {
     }
 
     /// Whether some entry arm of merge `phi`, from the `first`-th, has its
-    /// nearest clobber strictly below `phi`'s immediate dominator, which holds
-    /// iff `phi`'s region outside its own block holds a clobber.  An arm that
-    /// is the dominator itself has none.  `Err` names the first arm whose
-    /// answer is not known yet, with its index.
+    /// nearest clobber strictly below `phi`'s immediate dominator, i.e. the
+    /// region outside `phi`'s own block holds a clobber. `Err` names the first
+    /// arm whose answer is not known yet, with its index.
     fn arms_dirty(&self, phi: u32, first: usize, answers: &Answers) -> Result<bool, (usize, u32)> {
         let stop = self.idom[phi as usize];
         for (i, &u) in self.preds[phi as usize].iter().enumerate().skip(first) {
@@ -499,7 +487,7 @@ impl MemLayout {
         farthest(x, &self.pos.dom_jump, |a| self.idom[a as usize], |a| a > c)
     }
 
-    /// The highest position in `lo..=hi` whose def clobbers.  A def rejected
+    /// The highest position in `lo..=hi` whose def clobbers. A def rejected
     /// once is never asked again.
     fn highest_clobber(
         &self,
@@ -548,8 +536,8 @@ impl MemLayout {
 }
 
 /// The farthest ancestor of `x` that `ok` accepts, up `parent` with the skip
-/// pointers `jump`, or `x` itself.  `ok` accepts every node between `x` and
-/// any ancestor it accepts.  `NONE` and a self-pointer end a chain.
+/// pointers `jump`, or `x` itself. `ok` accepts every node between `x` and
+/// any ancestor it accepts. `NONE` and a self-pointer end a chain.
 fn farthest(
     mut x: u32,
     jump: &[u32],
@@ -752,7 +740,7 @@ impl DepthFirst {
 }
 
 /// Loops, found by collapsing each header's body into it innermost first
-/// (Havlak).  A header is the DFS-first node of its loop; the loop is
+/// (Havlak). A header is the DFS-first node of its loop; the loop is
 /// irreducible when some body node is entered from outside the header's DFS
 /// subtree.
 struct LoopForest {
@@ -844,15 +832,11 @@ impl LoopForest {
         }
     }
 
-    /// Nodes in position order, and each header's last position.  Each level
-    /// (the top, or one loop's body with inner loops collapsed into their
-    /// headers) is ordered topologically from its entry, and an inner loop's
-    /// block is spliced in where its header falls.
-    ///
-    /// An edge entering an irreducible loop away from its header counts at
-    /// the innermost level holding both ends, between their representatives.
-    /// Every node in `preds` is reachable from node 0, and with the DFS back
-    /// edges dropped every level is acyclic, so every level has an order.
+    /// Nodes in position order, and each header's last position. Each level
+    /// (the top, or one loop body with inner loops collapsed into their
+    /// headers) is ordered topologically, an inner loop's block spliced in
+    /// where its header falls. An edge entering an irreducible loop away from
+    /// its header counts at the innermost level holding both ends.
     fn nested_order(&self, preds: &[SmallVec<[u32; 2]>], dfs: &DepthFirst) -> (Vec<u32>, Vec<u32>) {
         let n = preds.len();
         let top = n as u32;
@@ -881,7 +865,7 @@ impl LoopForest {
         };
 
         // Edges between the representatives of one level: a node at its own
-        // level, or the header of the inner loop holding it.  A header opens
+        // level, or the header of the inner loop holding it. A header opens
         // its own level as the source and sits in its parent's as a member.
         let mut member_succs: Vec<SmallVec<[u32; 2]>> = vec![SmallVec::new(); n];
         let mut source_succs: Vec<SmallVec<[u32; 2]>> = vec![SmallVec::new(); n];

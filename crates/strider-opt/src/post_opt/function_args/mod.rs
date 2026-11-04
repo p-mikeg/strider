@@ -7,14 +7,9 @@ use crate::pipeline::Optimizer;
 
 /// Registers the function's stack-passed arguments as argument values.
 ///
-/// A candidate is a `Load[InitialVar(sp) + K]` with `K` in a stack slot and no
-/// shadowing def on its memory chain. Ordinals start at
-/// `arg_passing_regs.len()`; the first slot with no anchored load ends the
-/// prefix, as does an argument some dirty load reaches past.
-///
-/// Known limit: stack arguments are numbered after the integer argument
-/// registers whatever their class, so an integer-arg query can bind a
-/// stack-passed float; telling them apart needs the signature.
+/// A candidate is an unshadowed `Load[InitialVar(sp) + K]` with `K` in a stack
+/// slot. Ordinals start at `arg_passing_regs.len()` whatever the argument's
+/// class, so an integer-arg query can bind a stack-passed float.
 pub struct FunctionArgDetect;
 
 impl Optimizer for FunctionArgDetect {
@@ -47,14 +42,11 @@ impl Optimizer for FunctionArgDetect {
     }
 }
 
-/// Groups qualifying loads by the slot their first byte occupies, then walks
-/// slots from 0 assigning one ordinal per anchored argument; a wider-than-slot
-/// argument spans several slots but one ordinal.
-///
-/// The span is the widest load anchored at the cursor, so adjacent arguments
-/// read by one wide and one narrow load merge into one ordinal and shift every
-/// later index down (a wrong index, not a surplus one). A dirty load reaching
-/// past the argument it starts in ends the prefix after that argument.
+/// Walks slots from 0 assigning one ordinal per anchored argument, spanning
+/// the widest load anchored at the cursor, so adjacent arguments read by one
+/// wide and one narrow load merge into one ordinal. The first slot with no
+/// anchored load ends the prefix, as does a dirty load reaching past its
+/// argument (after that argument).
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
     query: &MemQuery,

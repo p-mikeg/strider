@@ -1,14 +1,10 @@
-//! Braun redundant-phi elimination for `Phi` and `MemPhi` ("Simple and
-//! Efficient Construction of SSA Form", section 3.2).
+//! Braun redundant-phi elimination ("Simple and Efficient Construction of SSA
+//! Form", section 3.2) for `Phi` and `MemPhi`.
 //!
-//! A strongly connected component of the phi graph whose value inputs from
-//! outside itself are exactly one value is replaced by that value. With two or
-//! more, the test reruns over the components of its phis that take no outside
-//! value; with zero it is left alone. Every value input counts, dead
-//! predecessor edge or not.
-//!
-//! A phi over a `Region` unreachable from entry is skipped: Braun's argument
-//! needs each arm to dominate the phi, and collapsing there can close a non-phi
+//! A strongly connected phi component whose outside value inputs are exactly
+//! one value is replaced by it; with more, the test reruns over its phis that
+//! take no outside value. Dead predecessor edges count. Phis over a `Region`
+//! unreachable from entry are skipped: collapsing there can close a non-phi
 //! data cycle.
 
 use cranelift_entity::SecondaryMap;

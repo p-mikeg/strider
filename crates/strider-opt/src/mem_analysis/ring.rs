@@ -1,4 +1,4 @@
-//! Address-width arithmetic: offsets wrap at the address's bit width.  Where
+//! Address-width arithmetic: offsets wrap at the address's bit width. Where
 //! the width is unknown or past the `i128` carrier, a reduction leaves the
 //! offset as it is and an overlap test answers `true`; at or past the carrier,
 //! a split leaves the range whole.
@@ -26,7 +26,7 @@ pub(crate) fn wrap_to_addr_width(function: &Function, addr: ValueId, offset: i12
 }
 
 /// `[start, end)` as at most two ranges inside `ty`'s signed range, a range
-/// past the top resuming at the bottom.  `start` is reduced, `end` need not
+/// past the top resuming at the bottom. `start` is reduced, `end` need not
 /// be.
 pub(super) fn wrapped_ranges(ty: Option<ValueType>, start: i128, end: i128) -> [(i128, i128); 2] {
     let whole = [(start, end), (0, 0)];
@@ -76,7 +76,7 @@ pub(super) fn ring_overlap_at(bits: u32, a: i128, a_len: i128, b: i128, b_len: i
 }
 
 /// The inclusive window `[lo, hi]` as at most two ranges of reduced offsets,
-/// or `None` when it covers every offset.  `bits` is below 128.
+/// or `None` when it covers every offset. `bits` is below 128.
 pub(super) fn ring_window(bits: u32, lo: i128, hi: i128) -> Option<[Option<(i128, i128)>; 2]> {
     debug_assert!(lo <= hi, "a window runs upwards");
     if (hi as u128).wrapping_sub(lo as u128) >= mask_below(bits) {

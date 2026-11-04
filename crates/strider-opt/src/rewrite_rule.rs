@@ -6,37 +6,21 @@ use strider_pattern::{
     is_skip,
 };
 
-/// Builds a rewrite-rule closure from a typed LHS and a buildable typed RHS.
+/// Builds a rule that matches `lhs` at a root and redirects the root's single
+/// value output to the built `rhs`.
 ///
-/// The closure matches at a candidate root and redirects the root's single
-/// value output to the built RHS. It returns `Ok(Some(new_out))` when a use
-/// was redirected, and `Ok(None)` for a failed match, a skipped RHS, nothing
-/// to redirect, a replacement of another width, or, for a match through a
-/// join, a replacement that would read the root or is not available wherever
-/// the root is read.
-///
-/// # Errors (of the closure)
-///
-/// Before building anything, when the RHS would build nodes and no matched
-/// node carries an asm-fingerprint; when a match below its root would have
-/// the replacement read it; and when the root has more than one value output.
-///
-/// # Panics
-///
-/// Panics if either side is refused, or the RHS references a [`Capture`] the
-/// LHS does not bind.
+/// The closure declines with `Ok(None)` on no match, a skipped RHS, an unused
+/// root, a width change, or a through-join replacement that would read the
+/// root or is unavailable at its uses. It errs when built nodes would carry no
+/// asm-fingerprint, when the replacement would read the root, or when the root
+/// has more than one value output. Panics if either side is refused, or the
+/// RHS reads a [`Capture`] the LHS does not bind.
 pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs: T) -> BoxedRule {
     Rewrite::typed(lhs, rhs).boxed()
 }
 
-/// [`rewrite_rule`] over an already-built [`Pattern`] and [`Template`].
-/// Template nodes are checked against their kind's signature only; anything
-/// it does not pin (such as which address a `Load` reads) is unchecked.
-///
-/// # Errors
-///
-/// Errors if either side is refused, or the RHS references a capture the LHS
-/// does not bind. The returned closure errors as [`rewrite_rule`]'s does.
+/// [`rewrite_rule`] over a built [`Pattern`] and [`Template`], erring where
+/// that panics. Template nodes are checked against their kind's signature only.
 pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Template) -> Result<BoxedRule> {
     Ok(Rewrite::checked(lhs, rhs)?.boxed())
 }
@@ -144,10 +128,9 @@ impl Rewrite {
             return Ok(None);
         }
 
-        // `replace_value` also redirects the RHS's own uses, so an RHS reading
-        // the root would close a data cycle. Through a join the walk is
-        // unpruned and a failure declines; otherwise every bound value sits
-        // below the root, so the walk prunes at the footprint.
+        // An RHS reading the root would close a cycle under `replace_value`.
+        // Through a join that declines; otherwise it errs, and the walk prunes
+        // at the footprint.
         if new_value != root_value {
             let f = edit.function();
             let crosses_join = self.through_join
@@ -329,9 +312,6 @@ impl RuleTable {
     }
 
     /// The output of the first rule to fire at `root`, or `None` if none does.
-    ///
-    /// # Errors
-    /// Propagates the first error returned by a rule.
     pub(crate) fn first_match(
         &self,
         edit: &mut EditFunction<'_>,
@@ -442,12 +422,8 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
 }
 
 /// Applies the first matching rule at every reachable node in one walk (no
-/// fixed point), returning the fire count. Re-derives the memory classes
-/// `stack_only()` / `heap_only()` read on every exit.
-///
-/// # Errors
-///
-/// Propagates the first error returned by any rule.
+/// fixed point), returning the fire count. Refreshes the memory classes on
+/// every exit, including the first rule error's.
 pub fn apply_rules_count<R>(edit: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
 where
     R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,

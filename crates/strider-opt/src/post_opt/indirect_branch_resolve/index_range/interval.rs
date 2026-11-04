@@ -75,7 +75,7 @@ impl Interval {
                 && (other.count() == 1 || other.stride.is_multiple_of(self.stride)))
     }
 
-    /// Number of values in the set.  `0` if `hi < lo`.  Saturates: a full-width
+    /// Number of values in the set. `0` if `hi < lo`. Saturates: a full-width
     /// top spans `u128::MAX + 1` values.
     pub(crate) fn count(&self) -> u128 {
         if self.is_empty() {

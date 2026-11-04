@@ -7,7 +7,7 @@ use super::query::{Policy, store_value_byte_size};
 use super::ring::{addr_bit_width, ring_overlap_at, wrap_to_addr_width};
 use super::{AddrClass, AliasVerdict, MemExpr, MemKind};
 
-/// The class of `addr`.  Every offset it carries is reduced at the address
+/// The class of `addr`. Every offset it carries is reduced at the address
 /// width, so offsets compare on the ring; an address past the `i128` carrier
 /// has no reduction and is an `Anchor`.
 pub(super) fn classify_addr(function: &Function, addr: ValueId) -> AddrClass {
@@ -97,7 +97,7 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
     }
     let distinct_sp_bases_disjoint = policy.distinct_sp_bases_disjoint;
     match (load.class, store.class) {
-        // Different SP bases differ by an unknown amount.  Under
+        // Different SP bases differ by an unknown amount. Under
         // `distinct_sp_bases_disjoint` the probe is at the entry SP
         // (asserted in `MemQuery::nearest`), and incoming-arg slots above it
         // do not overlap frame locals rooted at an alignment-masked SP.
@@ -120,7 +120,7 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
             }
         }
         // Distinct noalias-allocator bases are disjoint, by the
-        // `noalias_allocators` claim.  Against an `Anchor` a heap base stays
+        // `noalias_allocators` claim. Against an `Anchor` a heap base stays
         // may-alias (the `_` arm).
         (
             HeapRooted {

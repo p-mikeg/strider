@@ -47,7 +47,7 @@ pub(crate) enum AddrClass {
     /// Offsets are comparable only within one `base`: distinct bases (say
     /// `sp` and `sp & -16`) differ by the caller-dependent `sp mod align`.
     StackRooted { base: ValueId, offset: i128 },
-    /// Rooted at a pure allocator's return pointer.  Distinct allocations
+    /// Rooted at a pure allocator's return pointer. Distinct allocations
     /// are disjoint from each other, the stack and globals.
     HeapRooted { base: ValueId, offset: i128 },
     /// Rooted at a `Phi` of heap bases: an allocation, but which one is
@@ -55,7 +55,7 @@ pub(crate) enum AddrClass {
     HeapOpaque,
     /// Literal `.data` / `.rodata` / `.bss` / MMIO pointer.
     Constant { addr: i128 },
-    /// Anything else.  Only `ValueId` equality proves two equal.
+    /// Anything else. Only `ValueId` equality proves two equal.
     Anchor { value: ValueId },
 }
 

@@ -1,26 +1,11 @@
-//! Whole-function frame-escape analysis: does any stack address reach a
-//! callee?  When none does, every spill slot is private, so a `Load` may
-//! forward across a `Call`.
+//! Frame-escape analysis: does any stack address reach a callee? If none
+//! does, every spill slot is private and a `Load` may forward across a `Call`.
 //!
-//! `U` is the set of values [`decompose()`] reduces to `sp + k`.  The frame
-//! escapes iff some member of `U` is used other than as a `Load` / `Store`
-//! address, an input to an `Add` / `And` whose output is again in `U`, or a
-//! `Call`'s SP anchor.  An address reaches callee-readable memory only through
-//! such a use, so detection is at that boundary.  A stack-derived value held
-//! in a register the convention clobbers at a call (i386 `regparm`, a static
-//! chain, AArch64 X8) escapes too; the builder records it.
-//!
-//! `decompose` under-approximates `U` (`sp + (5 ^ 3)` before folding), which
-//! is sound: the `Add` producing the unrecognised value is itself an exposing
-//! use.  One leak poisons every call, since a leaked pointer can be stored to
-//! a global and reloaded by a later callee.  A stored entry SP (PowerPC back
-//! chain, ARM APCS frame record) is such a leak.
-//!
-//! [`incoming_area_escapes`] asks whether the incoming-argument memory may be
-//! reached.  A use that hands the address over (call argument, stored value,
-//! return) counts unless it is the entry SP plus a constant below the area;
-//! every other exposing use counts whatever its offset.  A base below the
-//! area that is spilled, reloaded and offset into it is missed.
+//! `U` is the set of values [`decompose()`] reduces to `sp + k`. The frame
+//! escapes iff a member of `U` is used other than as a `Load` / `Store`
+//! address, an `Add` / `And` input whose output is again in `U`, or a `Call`'s
+//! SP anchor, or is held in a register the call clobbers. One leak poisons
+//! every call.
 //!
 //! Sound modulo two claims: a callee writes the caller's frame outside the
 //! argument area only through a pointer it was handed, and no pointer is
@@ -51,7 +36,8 @@ fn frame_address_escapes(function: &Function) -> bool {
 }
 
 /// Whether a callee may hold a pointer into the incoming arguments' memory,
-/// register homes included.
+/// register homes included. A handed-over entry SP plus a constant below the
+/// area does not count.
 pub(crate) fn incoming_area_escapes(function: &Function) -> bool {
     let Some(area_start) = function.default_cc().incoming_args_start() else {
         return false;
@@ -107,7 +93,7 @@ fn hands_over(kind: NodeKind, idx: usize) -> bool {
     }
 }
 
-/// Whether input `idx` keeps a member of `U` in `U`.  By slot, not value:
+/// Whether input `idx` keeps a member of `U` in `U`. By slot, not value:
 /// `Store(V, V)` exposes `V` as its data.
 fn use_is_address_only(function: &Function, node: NodeId, kind: NodeKind, idx: usize) -> bool {
     match kind {

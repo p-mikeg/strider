@@ -10,9 +10,7 @@ mod tests;
 /// The contiguous prefix of stack-arg slots the call's [`ArgPrefix`] anchors,
 /// stopping at the first slot no whole store of its own reaches. Offsets are
 /// relative to the call-time SP; a store wider than one slot is one argument.
-///
-/// Over-collects: argument pushes are indistinguishable from incidental stack
-/// writes. A `Call` on the chain ends collection.
+/// Over-collects incidental stack writes; a `Call` on the chain ends it.
 fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
@@ -51,7 +49,7 @@ fn register_arity(
     NodeKind::Call { cc: None }.input_head_len() + cc.arg_passing_regs.len() + float_args
 }
 
-/// Wires positional stack args into each `Call`.  A per-`Call` CC override
+/// Wires positional stack args into each `Call`. A per-`Call` CC override
 /// wins over the convention default.
 pub struct CallStackArgCollect;
 

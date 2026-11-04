@@ -1,9 +1,9 @@
 //! Abstract evaluation of a jump-table dispatch cone: the concrete target for
 //! a concrete index.
 //!
-//! A value is a constant or SP-relative.  Four foldings: constant arithmetic, a
-//! constant-address ROM read, an SP-relative load of the store reaching it, and
-//! a `Phi` whose arms agree.  Anything else, or a cycle, yields `None`.
+//! A value is a constant or SP-relative, folded through constant arithmetic,
+//! ROM reads, SP-relative loads of the reaching store, and agreeing `Phi`s.
+//! Anything else, or a cycle, yields `None`.
 
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -55,7 +55,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Pins `idx_value` to `idx`, dropping every fold that read the previous
-    /// pin, or every fold when the pinned value changes.  A pin-free fold is a
+    /// pin, or every fold when the pinned value changes. A pin-free fold is a
     /// function of the graph alone, so it is kept across indices and roots.
     pub(crate) fn begin_index(&mut self, idx_value: ValueId, idx: u128) {
         if self.pinned == Some(idx_value) {
@@ -68,7 +68,7 @@ impl<'a> Evaluator<'a> {
             .insert(idx_value, (Abs::Const(UBig::from(idx)), true));
     }
 
-    /// Evaluates `dispatch` over `order` against the open index.  Bailing on
+    /// Evaluates `dispatch` over `order` against the open index. Bailing on
     /// the first non-folding node is exact: every fold needs every operand.
     pub(crate) fn eval_root(&mut self, order: &[ValueId], dispatch: ValueId) -> Option<u64> {
         for &val in order {
@@ -91,7 +91,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// The SP layer: the entry SP, an `Add` of a constant to an SP-relative
-    /// value, an alignment mask of one, and a RAM load at one.  A value reading
+    /// value, an alignment mask of one, and a RAM load at one. A value reading
     /// no SP-relative input folds as a constant.
     fn eval_node(&mut self, value: ValueId) -> Option<Abs> {
         let f = self.function;
@@ -169,7 +169,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// `v`, a store's data, as the `load_ty` load in `space` at the store's
-    /// address reads it. Equal widths pass through.  `None` for a load wider
+    /// address reads it. Equal widths pass through. `None` for a load wider
     /// than the store, a same-size type mismatch, and any non-integer pair.
     fn reshape(
         &self,

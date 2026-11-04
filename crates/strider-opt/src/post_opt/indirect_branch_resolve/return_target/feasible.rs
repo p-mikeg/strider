@@ -5,12 +5,9 @@ use super::{Path, ReturnTargets};
 
 impl<'f> ReturnTargets<'f> {
     /// Each arm of `phi` control can have taken to reach `path`, observed on
-    /// the edge it enters by.
-    ///
-    /// An arm entering a `Region` whose two inputs are one `If`'s edges is cut
-    /// when an `If` on the same condition, below the region, takes the other
-    /// edge on the way to `path`: the region is no loop header (the `If`
-    /// dominates it), so both test one evaluation of the condition.
+    /// the edge it enters by. An arm entering a `Region` of one `If`'s two
+    /// edges is cut when an `If` on the same condition below the region takes
+    /// the other edge on the way to `path`.
     pub(super) fn arms(
         &mut self,
         path: Path,

@@ -1,9 +1,8 @@
 //! Folds `And(phi, C)` to `v` when every arm of the phi, masked by `C`, is
 //! `v`, an arm reaching the `And` or the phi itself agreeing with any `v`.
 //!
-//! Each arm is peeled through a bounded chain of `And` / `Or` / `Xor` with a
-//! constant or known-zero operand, never through a phi, at most
-//! [`PEEL_VISITS_PER_ARM`] steps per arm of each phi per run.
+//! Arms peel through `And` / `Or` / `Xor` with a constant or known-zero
+//! operand, never a phi, at most [`PEEL_VISITS_PER_ARM`] steps per arm.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp};
@@ -72,11 +71,7 @@ enum Masked {
 
 /// The value every arm of `phi` masked by `mask` agrees on, built if needed;
 /// `None` when two arms disagree, every arm is [`Masked::Itself`], or the
-/// peel `budget` runs out.
-///
-/// Every non-`Itself` arm, and what it peels to, is available on its edge; an
-/// `Itself` arm's edge is dominated by the phi's `Region`, so the agreed value
-/// dominates the `Region`.
+/// peel `budget` runs out. The agreed value dominates the phi's `Region`.
 fn masked_phi_value(
     edit: &mut crate::EditFunction<'_>,
     phi: NodeId,

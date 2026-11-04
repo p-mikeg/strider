@@ -1,15 +1,10 @@
 //! Store-to-load forwarding.
 //!
 //! Forwards a store's value to a later load when the nearest may-aliasing
-//! memory def is a store at the same address whose bytes cover the load (a
-//! wider store is sliced with `ShiftRight` / `Truncate`).  Anything else
-//! blocks, including a `MemPhi` whose arms reach different defs; no value
-//! `Phi` is synthesized.  Which calls a load passes is
-//! [`crate::mem_analysis::Policy`]'s.
-//!
-//! A `MemPhi` whose arms agree once the arms a constant `If` never takes are
-//! dropped reads as that one arm, so a chain of guards on one constant settles
-//! in one sweep.
+//! memory def is a store at the same address covering the load's bytes (a
+//! wider store is sliced). Anything else blocks; no value `Phi` is
+//! synthesized. A `MemPhi` whose arms agree once a constant `If`'s untaken
+//! arms are dropped reads as that one arm.
 
 use std::cell::Cell;
 
@@ -32,7 +27,7 @@ pub(crate) struct Sweep {
 }
 
 // Not `PROPAGATE`: a forward reaches a consumer only through an address
-// edge, which the next pipeline iteration picks up.  One query per sweep: the
+// edge, which the next pipeline iteration picks up. One query per sweep: the
 // pass changes only `Load` edges and outputs, so every memory def stands.
 impl crate::peephole::PeepholePass for LoadForward {
     type Sweep = Sweep;

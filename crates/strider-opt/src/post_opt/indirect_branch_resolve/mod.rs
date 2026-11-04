@@ -34,12 +34,8 @@ type LazyRanges<'f> =
     LazyCell<index_range::RangeMap<'f>, Box<dyn FnOnce() -> index_range::RangeMap<'f> + 'f>>;
 
 /// One function's dispatch-site recogniser, with the memos its sites share.
-///
-/// # Soundness
-///
-/// Every recogniser fails closed on a partial proof, never under-approximating
-/// the target set. The IR it reads was forwarded under the function's claims, so
-/// a claim wrong for the input can still seat a wrong edge.
+/// Every recogniser fails closed on a partial proof; a claim wrong for the
+/// input can still seat a wrong edge.
 pub(crate) struct SiteClassifier<'f> {
     function: &'f strider_ir::Function,
     /// Built on the first table query.
@@ -52,7 +48,7 @@ pub(crate) struct SiteClassifier<'f> {
 }
 
 impl<'f> SiteClassifier<'f> {
-    /// The recogniser for `function`'s dispatch sites.  `rom` is the binary's
+    /// The recogniser for `function`'s dispatch sites. `rom` is the binary's
     /// read-only image, read only by the rodata jump-table shape; `None`
     /// disables it.
     pub(crate) fn new(
@@ -72,13 +68,10 @@ impl<'f> SiteClassifier<'f> {
         self.function
     }
 
-    /// The target set of `site`, an `IndirectBranch` or a seated `Switch`, by
-    /// the first recogniser to match its dispatch value: a literal `IntConst`
-    /// address, an `InitialVar(lr)` return, a `Load(RAM)` return
-    /// [`ReturnTargets::returns_to_caller`] follows back to the saved link
-    /// register, then the table arm.  `None` defers the site.
-    ///
-    /// A `Switch` is re-derived from its retained selector and is never a return.
+    /// The target set of `site`, an `IndirectBranch` or a seated `Switch`
+    /// (never a return), from the first recogniser to match: a literal
+    /// address, an `InitialVar(lr)` or [`ReturnTargets::returns_to_caller`]
+    /// return, then the table arm. `None` defers the site.
     #[must_use]
     pub(crate) fn classify(&mut self, site: NodeId) -> Option<ResolvedTargets> {
         let f = self.function();
@@ -122,7 +115,7 @@ impl<'f> SiteClassifier<'f> {
 
     /// A return through the link register, directly or popped from the stack
     /// (ARM `ldr pc,[sp],#4`); [`ReturnTargets`] tells the latter from a
-    /// `push X; pop pc` tail call.  `None` on ABIs with no link register.
+    /// `push X; pop pc` tail call. `None` on ABIs with no link register.
     fn link_register_return(
         &mut self,
         branch: NodeId,
@@ -183,11 +176,7 @@ impl ClassifiedSites {
 }
 
 /// Classifies every live `IndirectBranch` and re-derives every live `Switch` of
-/// `f`, the optimized function.
-///
-/// # Errors
-///
-/// Never.
+/// `f`, the optimized function. Never errs.
 pub fn classify_sites(
     f: &strider_ir::Function,
     rom: Option<&dyn ReadOnlyMemory>,

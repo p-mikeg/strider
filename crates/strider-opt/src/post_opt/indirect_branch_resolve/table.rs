@@ -4,10 +4,8 @@
 //! [`eval`](super::eval). Every value must fold, or the site defers: a
 //! `Multiple` missing a runtime target drops an edge.
 //!
-//! Known limit (hand-written asm only): a range a read guard narrows is
-//! trusted as the table's bound, though an unread test or a guard a later
-//! truncate loses may be tighter, and a test reading the cell through a phi
-//! reads no bits of it. Each seats cells the code rules out.
+//! Known limit (hand-written asm only): a read guard's range is trusted as the
+//! table's bound even where an unread or lost test is tighter.
 
 use super::index_range::{Interval, MAX_WALK, ScaleOp, Step, scale_of, strip_to_cell, width_mask};
 use super::{MAX_TABLE_ENTRIES, SiteClassifier};
@@ -22,7 +20,7 @@ use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 const FIRST_PAGE_END: u64 = 0x1000;
 
 /// The value the enumeration pins: `index` takes `x - rebase` for each `x` in
-/// `range`.  A non-zero `rebase` means the bound is on a guarded sibling
+/// `range`. A non-zero `rebase` means the bound is on a guarded sibling
 /// `Add(index, rebase)`, in whose coordinate `range` is.
 #[derive(Clone, Copy)]
 struct PinnedIndex {
@@ -73,10 +71,9 @@ impl SiteClassifier<'_> {
     }
 
     /// The value to pin for `target` and the values to pin it to: the constants
-    /// of the phi every input of the dispatch cone passes through, which are
-    /// exact where a range is only their hull, else a bounded index across its
-    /// range.  With both, a constant the index range excludes is dropped; where
-    /// the index does not fold under some constant, the range alone is used.
+    /// of the phi every dispatch-cone input passes through, else a bounded
+    /// index across its range. With both, constants outside the index range are
+    /// dropped; if the index does not fold under some constant, the range wins.
     fn dispatch_domain(&mut self, target: ValueId, site: NodeId) -> Option<(ValueId, Vec<u128>)> {
         let function = self.function();
         let chain = dominator_chain(function, target)?;
@@ -138,7 +135,7 @@ impl SiteClassifier<'_> {
     }
 
     /// The bounded index nearest the target in `chain`, the target's dominators
-    /// in its variability cone.  Dominance excludes a bypassed sub-branch: in a
+    /// in its variability cone. Dominance excludes a bypassed sub-branch: in a
     /// rotate `(x<<2) | (x>>30)`, `x>>30` is tightest but does not dominate.
     fn decompose_index(&mut self, chain: &[ValueId], site: NodeId) -> Option<PinnedIndex> {
         let function = self.function();
@@ -159,7 +156,7 @@ impl SiteClassifier<'_> {
     }
 
     /// Can a table index be enumerated over `iv`, the range of `value` at
-    /// `site`?  `mask` is the index type's mask.
+    /// `site`? `mask` is the index type's mask.
     fn enumerable(&mut self, site: NodeId, mask: u128, value: ValueId, iv: Interval) -> bool {
         if !index_bound_ok(mask, iv) {
             return false;
@@ -224,15 +221,12 @@ impl SiteClassifier<'_> {
     }
 
     /// Does `iv` cover every value `v`'s cell can produce, making `v` table
-    /// DATA rather than an index?  A field read through a pointer
-    /// ([`Self::loads_a_field`]) is instead asked
-    /// [`RangeMap::cell_test_left_unread`](super::index_range::RangeMap::cell_test_left_unread).
-    ///
-    /// The steps [`strip_to_cell`] strips are replayed over the cell's `1 << w`
-    /// values, tracking their spacing and wrapping at each truncate and the
-    /// output width ([`wrap`]): `zext(i8) << 25` at `I32` has 128 values.  Any
-    /// step that leaves no countable progression, or a strip longer than
-    /// [`MAX_WALK`], answers `true`.
+    /// data rather than an index? Replays the [`strip_to_cell`] steps over the
+    /// cell's values, wrapping per [`wrap`] (`zext(i8) << 25` at `I32` has 128
+    /// values); an uncountable step or a strip past [`MAX_WALK`] answers `true`.
+    /// A field read through a pointer asks
+    /// [`RangeMap::cell_test_left_unread`](super::index_range::RangeMap::cell_test_left_unread)
+    /// instead.
     fn is_width_only(&mut self, site: NodeId, v: ValueId, iv: Interval, narrowed: bool) -> bool {
         let function = self.function();
         let Some(strip) = strip_to_cell(function, v, |and| {
@@ -393,7 +387,7 @@ fn foldable_cell_load(function: &strider_ir::Function, v: ValueId) -> Option<Val
 /// Whether the constant offsets applied to `index` on its way to the address
 /// keep `range` a contiguous unsigned interval.
 ///
-/// `shallower` is the dominator chain above `index`, target-rooted.  An offset
+/// `shallower` is the dominator chain above `index`, target-rooted. An offset
 /// wrapping `range` past zero (`(x & 7) - 2`) names slots below the table.
 fn offsets_keep_range(
     function: &strider_ir::Function,
@@ -459,7 +453,7 @@ fn index_bound_ok(mask: u128, iv: Interval) -> bool {
 }
 
 /// `count` values `spacing` apart from 0, taken modulo `mask + 1`: their count
-/// and spacing, or `None` where that is no arithmetic progression.  Past the
+/// and spacing, or `None` where that is no arithmetic progression. Past the
 /// `u128` carrier nothing wraps.
 fn wrap(count: u128, spacing: u128, mask: u128) -> Option<(u128, u128)> {
     if mask == u128::MAX
