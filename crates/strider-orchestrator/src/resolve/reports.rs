@@ -11,14 +11,11 @@ use super::round::Anchors;
 use super::sites::SiteTable;
 use super::visit;
 
-/// Sites whose seated `Switch` holds FEWER arms than their seat asked for.
+/// Sites whose seated `Switch` holds fewer arms than their seat asked for.
 ///
-/// The cfg drops a target it cannot express as an arm (one interior to a
-/// region but off every instruction boundary, which it only discovers once the
-/// sibling arm it lands in has been decoded) and leaves the rest of the table
-/// seated. The fold cannot see that: it compares its own result against the
-/// previous round, so the loss reads as convergence. Comparing against the CFG
-/// the round actually built is what keeps a converged answer honest.
+/// The cfg drops an arm it cannot seat (one off every instruction boundary)
+/// and keeps the rest; the fold compares rounds, not the cfg, so it would
+/// read the loss as convergence.
 pub(super) fn seated_arm_losses(cfg: &Cfg, sites: &SiteTable<'_>) -> Vec<PcodeInsnAddr> {
     let mut out = Vec::new();
     for region in cfg.regions() {
@@ -38,28 +35,13 @@ pub(super) fn seated_arm_losses(cfg: &Cfg, sites: &SiteTable<'_>) -> Vec<PcodeIn
 
 /// The sites whose seat this round's cfg refused, each with the seat it keeps.
 ///
-/// Two ways a target goes bad, and they carry different verdicts.
+/// An undecodable arm, or one reaching undecodable code, means the bound is
+/// wrong: the whole seat goes. An ISA-mode clash, raised by any two edges
+/// reaching one address, condemns only the arm naming it.
 ///
-/// A classifier that over-approximates a jump-table bound reaches past the
-/// table and names addresses that are not code. The bound is what is wrong, so
-/// no arm of that answer is trustworthy and the whole seat of the SITE that
-/// named it goes. The same verdict covers an arm whose own target decodes but
-/// which reaches code that does not, through a direct branch out of it: the
-/// cfg reports the arm, not the address that failed, so the failing address
-/// is reported under no reason. The same address seated from another site
-/// decodes in that site's own committed context, so its failure there is no
-/// verdict here.
-///
-/// An address two edges reach in different ISA modes is decoded once, in
-/// whichever mode won the work queue, so the other edge's arm is not the
-/// instruction stream it believes. ANY two edges raise that, direct ones
-/// included (`Builder::explore` and `RegionBuilder::note_isa_mode_clash`), so
-/// it is no verdict on the rest of the table: only the arm naming the clashing
-/// address goes, and the site keeps the arms it still seats.
-///
-/// The candidates are `anchors`, the sites `undecodable` names and the loop's
-/// own seats, never the rest of the caller's table: a binary-wide table holds
-/// other functions' sites, and a clash here is no verdict on them.
+/// Candidates are `anchors`, the sites `undecodable` names and the loop's
+/// own seats, never other seeds: a binary-wide table holds other functions'
+/// sites.
 pub(super) fn refusals(
     undecodable: &[UndecodableTarget],
     clashing: &[PcodeInsnAddr],
@@ -106,13 +88,8 @@ pub(super) fn refusals(
         .collect()
 }
 
-/// Whether `site`'s settled successor set is still exactly what the caller
-/// seeded, with nothing beyond it. An unseeded site is not covered.
-///
-/// A seed asserts the site is complete, and that assertion is what suppresses
-/// the unclassifiable-`Switch` report. Outgrowing the seed disproves it: the
-/// arms past the seed came from a classifier that has since stopped deriving,
-/// so nothing vouches for the set that ended up seated.
+/// Whether `site`'s settled successors are all ones the caller seeded. An
+/// unseeded site is not covered; outgrowing the seed disproves it.
 pub(super) fn seed_still_covers(sites: &SiteTable<'_>, site: PcodeInsnAddr) -> bool {
     let Some(seed) = sites.seed(site) else {
         return false;
@@ -123,13 +100,9 @@ pub(super) fn seed_still_covers(sites: &SiteTable<'_>, site: PcodeInsnAddr) -> b
         .is_none_or(|settled| visit(settled.arms()).all(|t| seeded.contains(&t.addr)))
 }
 
-/// Seated `Switch` sites whose arms are exactly what the caller seeded and
-/// nothing more, with the classifier silent about them.
-///
-/// Seating a seed changes the CFG the classifier reads, so a stale or wrong
-/// seed can stop the selector deriving and then suppress the report of the arms
-/// that cost. Such a site is not "unresolved" (the caller asserted the
-/// answer), but nothing verified it, so it is named separately.
+/// Sites seated from the caller's answer alone: an unclassified `Switch`
+/// still within its seed, a caller-seeded `LinkRegister` return, and every
+/// `TailCall` seat.
 pub(super) fn unverified_seeded_sites(
     cfg: &Cfg,
     switches: &Anchors,
@@ -142,36 +115,24 @@ pub(super) fn unverified_seeded_sites(
             if !unclassified.contains(node) {
                 return false;
             }
-            // Anything beyond the seed means the classifier did contribute,
-            // and then the site is reported as unresolved instead.
             seed_still_covers(settled, *addr)
         })
         .map(|(addr, _node)| *addr)
         .collect();
-    // A `LinkRegister` seed is consumed at CFG-build time: it becomes a
-    // `Return`, leaving no placeholder and no `Switch` anchor, so the filter
-    // above cannot see it and no other reason names it either. The seat is
-    // the only record that a caller's answer replaced whatever the classifier
-    // would have derived. Only a CALLER's here: a seat the classifier derived
-    // was its own answer, not an unchecked assertion, and `settle_return_sites`
-    // re-checks every seat against the round's own IR either way.
+    // Consumed at cfg build, so no anchor names them. A classifier-derived
+    // return seat is re-checked by `settle_return_sites` instead.
     out.extend(
         cfg.link_register_seated()
             .iter()
             .filter(|addr| caller_seeded_return(settled, **addr)),
     );
-    // A `TailCall` seat consumes the site the same way: an answer of one
-    // target outside the function replaces the dispatch, and any other arm it
-    // had is gone with no placeholder and no anchor left behind.
     out.extend_from_slice(cfg.tail_call_seated());
     out.sort_unstable();
     out.dedup();
     out
 }
 
-/// Whether the caller seeded `site`'s `Return`. A `[]` seed does not: it
-/// adds nothing to the classifier's answer, so a `Return` seated there is the
-/// classifier's.
+/// Whether the caller seeded `site` with `LinkRegister`.
 pub(super) fn caller_seeded_return(settled: &SiteTable<'_>, site: PcodeInsnAddr) -> bool {
     matches!(settled.seed(site), Some(ResolvedTargets::LinkRegister))
 }
@@ -186,38 +147,13 @@ pub(super) struct DerivedChannels<'a> {
     pub(super) incomplete_derived: &'a [PcodeInsnAddr],
 }
 
-/// Sites the analysis cannot claim a complete successor set for (sorted,
-/// deduplicated):
+/// Sites with no complete successor set, sorted and deduplicated: live
+/// placeholders, seated `Switch`es whose selector no longer derives, and both
+/// derived channels.
 ///
-/// - a lift-time deferred site whose placeholder is still live. Classification
-///   alone does not exclude one: the cfg layer re-emits the placeholder for a
-///   target set it cannot seat, and `function` then still holds an
-///   `IndirectBranch`.
-/// - a seated `Switch` whose selector no longer derives (`unclassified`). Its
-///   arms are whatever the round that seated them proved, which may be a
-///   proper subset, and seating consumed the placeholder, so this list is its
-///   only report.
-/// - `budget_exhausted`, the sites still growing when the iteration cap ran out.
-/// - `incomplete_derived`, the sites whose fold dropped a successor the
-///   classifier proved, whose answer stopped being a superset, or that the loop
-///   withdrew.
-///
-/// A caller seed asserts the site is complete, which suppresses the second of
-/// those, the unclassified seated `Switch`, but only while `settled`, the
-/// site's final successor set, holds nothing the seed did not name. A site that
-/// outgrew its seed disproves the assertion, and the arms past the seed came
-/// from a classifier that has since gone silent, so nothing vouches for them.
-/// [`unverified_seeded_sites`] applies the same test the other way round, so
-/// the `switches` half of the two reports is complementary. The derived
-/// channels below are appended unconditionally, so a site can still reach
-/// both.
-///
-/// The seed suppresses nothing else. A live placeholder means the cfg could
-/// not seat the seeded set (empty, or a target out of range or interior to an
-/// instruction), so the seed did not settle the site. Outgrowing the seed is
-/// itself evidence it was incomplete, which leaves `budget_exhausted` standing.
-/// And `incomplete_derived` reports what the classifier proved, which a seed is
-/// no licence to drop.
+/// A seed suppresses only the unclassified `Switch`, and only while
+/// [`seed_still_covers`] holds; [`unverified_seeded_sites`] reports the
+/// complement.
 pub(super) fn live_unresolved_branches(
     live_indirect: &FxHashSet<NodeId>,
     placeholders: &Anchors,
@@ -226,9 +162,6 @@ pub(super) fn live_unresolved_branches(
     settled: &SiteTable<'_>,
     derived: DerivedChannels<'_>,
 ) -> Vec<PcodeInsnAddr> {
-    // `live_indirect` holds every reachable placeholder AND seated `Switch` of
-    // the round that produced `function`. Intersecting it with `placeholders`
-    // selects the live ones.
     let mut out: Vec<PcodeInsnAddr> = placeholders
         .iter()
         .filter(|(_addr, node)| live_indirect.contains(node))
@@ -242,9 +175,6 @@ pub(super) fn live_unresolved_branches(
             })
             .map(|(addr, _node)| *addr),
     );
-    // Neither is seed-suppressed: a seed cannot vouch for a site the classifier
-    // was still GROWING when the budget ran out, nor for one whose derived
-    // answer lost ground.
     out.extend(derived.budget_exhausted.iter().copied());
     out.extend(derived.incomplete_derived);
     out.sort_unstable();

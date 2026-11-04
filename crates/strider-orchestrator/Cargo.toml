@@ -11,10 +11,7 @@ publish.workspace = true
 [dependencies]
 strider-opt = { workspace = true }
 strider-ir = { workspace = true }
-# strider-cfg: the Cfg `Lifter::build_cfg` returns, plus the address and
-# ResolvedTargets types the rebuild fixed-point threads.
 strider-cfg = { workspace = true }
-# strider-lift: the CFG -> IR lift (lift::Lifter, LiftOutcome).
 strider-lift = { workspace = true }
 rsleigh.workspace = true
 strider-target.workspace = true

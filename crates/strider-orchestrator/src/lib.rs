@@ -36,15 +36,11 @@ pub struct AnalyzeOptions<'a> {
     /// registers and fitting its arch, as the default CC must
     /// ([`Lifter::build_ir_with`]).
     pub per_address_ccs: &'a FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// Run the indirect-branch classifier.  Off leaves every unseeded site an
-    /// `IndirectBranch` placeholder, so a caller can hand its own answers in
-    /// through `CfgOptions::known_targets` instead, or see the raw dispatch
-    /// shape when a resolution looks wrong.  Caller-supplied targets still
-    /// seat: they are read by the CFG builder, not the classifier.
+    /// Run the indirect-branch classifier. Off leaves every unseeded site an
+    /// `IndirectBranch` placeholder; `CfgOptions::known_targets` still seat.
     pub resolve_indirect_branches: bool,
-    /// The claims each round's fresh lift holds
-    /// ([`strider_ir::Function::assumptions`]): the lift reads them, as the
-    /// optimizer does.
+    /// The claims each round's lift holds
+    /// ([`strider_ir::Function::assumptions`]).
     pub assumptions: AssumptionOptions,
     /// Drops unreachable nodes once the loop settles.
     pub compact: bool,
@@ -68,8 +64,8 @@ where
     R: rsleigh::MemReader,
 {
     lifter: Lifter<R>,
-    /// The read-only image `LoadReadOnly` folds against and the indirect-branch
-    /// classifier reads jump tables from; `None` disables both.
+    /// What `LoadReadOnly` and the jump-table classifier read; `None`
+    /// disables both.
     rom: Option<Box<dyn ReadOnlyMemory>>,
 }
 
@@ -115,16 +111,14 @@ where
         self.lifter.sleigh()
     }
 
-    /// The engine `analyze` lifts with, the only one that can lift the CFG it
-    /// returns.
+    /// The engine `analyze` lifts with, the only one that can lift the CFGs
+    /// it returns.
     #[must_use]
     pub fn lifter(&self) -> &Lifter<R> {
         &self.lifter
     }
 
-    /// The read-only image `LoadReadOnly` folds against and the
-    /// indirect-branch classifier reads jump tables from, so a caller running
-    /// its own pipeline builds the same `OptCtx` `analyze` does.
+    /// The image `analyze`'s `OptCtx` reads.
     #[must_use]
     pub fn rom(&self) -> Option<&dyn ReadOnlyMemory> {
         self.rom.as_deref()
@@ -148,41 +142,21 @@ where
 
     /// Lift, optimise, and resolve indirect branches at `entry`.
     ///
-    /// Resolution is a fixed-point re-lift loop: each round classifies indirect
-    /// branches against the optimised IR, folds the targets into the seats the
-    /// next round's cfg is built from and re-lifts, until the induced edge set
-    /// stops changing.
-    /// `MAX_RESOLUTION_ITERATIONS` caps the folds (so at most one round more)
-    /// and with them the discovery depth.
-    /// Every narrowing is reported, and a site that narrows twice has an
-    /// unstable answer: it is withdrawn.
+    /// Each round builds the cfg from the seats, lifts, runs `pipeline`
+    /// (default [`strider_opt::default_pipeline`]) and classifies dispatch
+    /// sites with [`strider_opt::classify_sites`], until the seats stop
+    /// changing or the iteration cap, the discovery depth limit, runs out. A
+    /// site that narrows twice is withdrawn.
     ///
-    /// Returns even when it cannot vouch for every path: check
-    /// [`AnalyzeResult::incomplete`] before trusting an absence ("no store to
-    /// X"), since code behind a listed address may be missing. An unresolved
-    /// site keeps its placeholder in the function. A site the CFG consumed as
-    /// a `Return` or `TailCall` leaves no placeholder, so it is
-    /// [`Reason::UnverifiedSeed`] (a `TailCall` whichever source derived it, a
-    /// `Return` only where the CALLER seeded it), and also
-    /// [`Reason::UnresolvedBranch`] if it grew before narrowing to
-    /// `LinkRegister`.
+    /// Returns whatever it cannot vouch for: check
+    /// [`AnalyzeResult::incomplete`] before trusting an absence. An unresolved
+    /// site keeps its placeholder. A site the cfg consumed as a `TailCall`, or
+    /// as a `Return` the caller seeded, is [`Reason::UnverifiedSeed`].
     ///
-    /// `opts.cfg.known_targets` is borrowed and never copied or mutated: the
-    /// loop keeps its own answers in a layer above it
-    /// ([`strider_cfg::CfgOptions::derived_targets`]), and a site it gives up
-    /// on is withdrawn there, which defers it over the caller's seed. A seed
-    /// suppresses the unresolved report of an unclassifiable seated `Switch` at
-    /// its address only while the settled answer names nothing the seed did
-    /// not, and a `LinkRegister` seed reports a p-code `RETURN` it covers whose
-    /// target is unproven as [`Reason::UnverifiedSeed`] instead; it never
-    /// suppresses what the classifier derives. `opts.compact` applies once,
-    /// after the loop.
-    ///
-    /// `pipeline` defaults to [`strider_opt::default_pipeline`]. Every round
-    /// optimizes a fresh lift under `opts.assumptions` and classifies its
-    /// dispatch sites with [`strider_opt::classify_sites`] after the pipeline,
-    /// whatever pipeline it is; with `opts.resolve_indirect_branches` off it
-    /// lists them unresolved instead ([`strider_opt::ClassifiedSites::unresolved`]).
+    /// `opts.cfg.known_targets` is borrowed, never mutated; a seed suppresses
+    /// the report of an unclassifiable seated `Switch` only while the settled
+    /// answer names nothing beyond it. `opts.compact` applies once, after the
+    /// loop.
     ///
     /// # Errors
     ///
@@ -229,9 +203,8 @@ pub struct AnalyzeResult {
 }
 
 impl AnalyzeResult {
-    /// What this analysis cannot vouch for: every round's target reasons,
-    /// since an inexact or stubbed edge fed the classifier whatever later
-    /// rounds rebuild, and the final round's site reasons.
+    /// What this analysis cannot vouch for: every round's target reasons and
+    /// the final round's site reasons.
     #[must_use]
     pub fn incomplete(&self) -> &Incompleteness {
         self.cfg.incomplete()
