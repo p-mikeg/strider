@@ -61,8 +61,7 @@ pub struct Unsupported(pub String);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Slot {
     Known(UBig),
-    /// A division by zero, `INT_MIN / -1`, or a value computed from one. Any
-    /// value refines it.
+    /// A division by zero, or a value computed from one. Any value refines it.
     Undefined,
     /// A value the interpreter cannot produce.
     Unsupported(String),
@@ -697,9 +696,10 @@ fn binary(op: IntBinaryOp, a: &UBig, b: &UBig, ty: ValueType) -> Option<UBig> {
         }
         IntBinaryOp::Sdiv | IntBinaryOp::Srem => {
             let (sa, sb) = (signed(a, ty), signed(b, ty));
-            if sb == IBig::ZERO || (sa == signed_min(ty) && sb == IBig::NEG_ONE) {
+            if sb == IBig::ZERO {
                 return None;
             }
+            // `INT_MIN / -1` wraps to `INT_MIN`, remainder 0, as p-code does.
             let q = if op == IntBinaryOp::Sdiv {
                 sa / sb
             } else {
@@ -778,6 +778,32 @@ mod tests {
         })
         .expect("a shift with a wider count is valid IR");
         assert_eq!(returned(&f, &env(&|_| UBig::ZERO, None)), vec![known(0)]);
+    }
+
+    /// P-code defines `INT_MIN s/ -1` as the wrapped quotient `INT_MIN` and
+    /// `INT_MIN s% -1` as 0; a fault is the sla's to model.
+    #[test]
+    fn signed_int_min_by_minus_one_wraps() {
+        for bits in [8u16, 32, 64] {
+            let ty = ValueType::int(bits);
+            let min = UBig::ONE << (usize::from(bits) - 1);
+            for (op, want) in [
+                (IntBinaryOp::Sdiv, Slot::Known(min.clone())),
+                (IntBinaryOp::Srem, known(0)),
+            ] {
+                let f = make_empty_fn(|b| {
+                    let l = b.build_int_const(min.clone(), ty)?;
+                    let r = b.build_int_const(eval::all_ones(ty), ty)?;
+                    b.build_int_binary_operation(l, r, op, ty)
+                })
+                .unwrap();
+                assert_eq!(
+                    returned(&f, &env(&|_| UBig::ZERO, None)),
+                    vec![want],
+                    "{op:?} at {bits} bits"
+                );
+            }
+        }
     }
 
     /// An `I1` counts over 8 bits, as `strider_ir::eval::lzcount` does.
