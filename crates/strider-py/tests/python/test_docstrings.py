@@ -141,3 +141,31 @@ def test_each_pass_doc_is_its_stub_text():
         if " ".join((getattr(strider.opt, name).__doc__ or "").split()) != stubs.get(name)
     }
     assert not differ, differ
+
+
+def test_each_value_op_doc_is_its_stub_text():
+    """A value-op builder's runtime `__doc__` is its stub docstring, up to
+    line wrapping, in both `strider.pattern` and `strider.template`."""
+    import strider.template
+
+    pkg = pathlib.Path(strider.__file__).parent
+    differ = {}
+    for mod, stub in (
+        (strider.pattern, pkg / "pattern" / "__init__.pyi"),
+        (strider.template, pkg / "template.pyi"),
+    ):
+        stubs = {
+            n.name: " ".join((ast.get_docstring(n) or "").split())
+            for n in ast.parse(stub.read_text()).body
+            if isinstance(n, ast.FunctionDef)
+        }
+        for name in stubs:
+            if not name.startswith(("int_", "bool_", "float_")) or name in (
+                "int_const", "int_const_any_width", "bool_const", "float_const",
+                "int_binary", "bool_binary", "float_binary", "bool_inputs",
+            ):
+                continue
+            runtime = " ".join((getattr(mod, name).__doc__ or "").split())
+            if runtime != stubs[name]:
+                differ[f"{mod.__name__}.{name}"] = (runtime, stubs[name])
+    assert not differ, differ
