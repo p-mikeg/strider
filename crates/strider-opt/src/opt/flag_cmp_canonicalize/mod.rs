@@ -110,19 +110,21 @@ fn negation_fits(b: &Bindings, f: &Function, n: Capture, width_src: Capture) -> 
     eval::mask(&n, ty) != UBig::ONE << (ty.bit_width() - 1)
 }
 
-/// `M == C1 - N` at `width_src`'s width.
+/// `M == minuend - subtrahend` at `width_src`'s width.
 fn sub_relation(
     b: &Bindings,
     f: &Function,
     m: Capture,
-    n: Capture,
-    c1: Capture,
+    minuend: Capture,
+    subtrahend: Capture,
     width_src: Capture,
 ) -> bool {
-    let Some(([m, n, c1], ty)) = uints(b, f, [m, n, c1], width_src) else {
+    let Some(([m, minuend, subtrahend], ty)) = uints(b, f, [m, minuend, subtrahend], width_src)
+    else {
         return false;
     };
-    negate(&n, ty).is_some_and(|neg| eval::mask(&m, ty) == eval::mask(&(c1 + neg), ty))
+    negate(&subtrahend, ty)
+        .is_some_and(|neg| eval::mask(&m, ty) == eval::mask(&(minuend + neg), ty))
 }
 
 fn build_rules() -> Vec<Rule> {
@@ -220,7 +222,7 @@ fn build_rules() -> Vec<Rule> {
                 int_const(n),
             )),
         )
-        .when_match(move |edit, _ty, binds| sub_relation(binds, edit.function(), m, n, c1, b)),
+        .when_match(move |edit, _ty, binds| sub_relation(binds, edit.function(), m, c1, n, b)),
         template::bool_not(template::int_slt(var(x), var(n))),
     ));
 
@@ -232,7 +234,7 @@ fn build_rules() -> Vec<Rule> {
     // `C3 == N - C1`: a switch whose cases start at a nonzero base. The `less`
     // operand and the `Equal` base are distinct nodes, so these key on `b`.
     let offset_guard = move |edit: &strider_pattern::Matcher, _ty, binds: &Bindings| {
-        sub_relation(binds, edit.function(), m, c1, n, b)
+        sub_relation(binds, edit.function(), m, n, c1, b)
     };
     macro_rules! combiners {
         ($less:ident) => {
