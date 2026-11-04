@@ -482,3 +482,39 @@ fn a_float_to_int_conversion_raises_vxcvi() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// Whether `v`'s input cone holds `target` or a value `op` produces.
+fn reads(f: &Function, v: ValueId, target: Option<ValueId>, op: Option<NodeId>) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![v];
+    while let Some(v) = stack.pop() {
+        let n = f.producer(v);
+        if Some(v) == target || Some(n) == op {
+            return true;
+        }
+        if seen.insert(n) {
+            stack.extend(f.node_inputs(n));
+        }
+    }
+    false
+}
+
+/// `vcmpequb. v6, v0, v18; mfcr r3; blr`: the record form writes CR6, so
+/// the CR that `mfcr` reads carries the compare, not the incoming CR6.
+#[test]
+fn vcmpequb_record_form_writes_cr6() {
+    for arch in [Arch::Ppc32be, Arch::Ppc32le, Arch::Ppc64be, Arch::Ppc64le] {
+        let f = analyze(arch, &[0x10c0_9406, 0x7c60_0026, BLR]);
+        let r3 = common::returned(&f)[0];
+        let cmp = the_call_other(&f, "vectorCompareEqualToUnsignedByte");
+        assert!(
+            reads(&f, r3, None, Some(cmp)),
+            "{arch:?}: r3 misses the compare"
+        );
+        let cr6 = initial(arch, &f, "cr6");
+        assert!(
+            !reads(&f, r3, cr6, None),
+            "{arch:?}: r3 reads the incoming cr6"
+        );
+    }
+}
