@@ -58,8 +58,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
     /// A register-space STORE whose address names no register: mirror the
     /// registers into the space, store, and re-read every tracked register
-    /// from it. O(tracked registers), and a def site for each in
-    /// `collect_def_sites`.
+    /// from it.
     fn opaque_register_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let addr = self.read_input(insn, 1)?;
         let data = self.read_input(insn, 2)?;

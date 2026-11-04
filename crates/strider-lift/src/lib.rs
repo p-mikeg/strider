@@ -204,20 +204,16 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         )
     }
 
-    /// Lifts `cfg`, which must have been built with `cfg_opts`. `cc` is the
-    /// default convention; a direct Call to a key of `per_address_ccs` uses
-    /// that override. `cc` and every override must be built against this
-    /// engine's registers. The function holds `claims`; the lift itself reads
-    /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`] and
-    /// [`strider_ir::AssumptionOptions::fp_rounding_mode_is_nearest`].
-    /// Incompleteness is [`strider_cfg::Cfg::incomplete`], not an error.
+    /// Lifts `cfg`, built with `cfg_opts`, under default convention `cc`; a
+    /// direct call to a `per_address_ccs` key uses its override. The function
+    /// holds `claims`, of which the lift reads `msr_register_keeps_mode` and
+    /// `fp_rounding_mode_is_nearest`. Incompleteness is not an error.
     ///
     /// # Errors
     ///
-    /// Among others, when `cc` fails
-    /// [`strider_target::BuiltCallingConvention::validate`], or `cc` or an
-    /// override this `cfg` selects fails
-    /// [`strider_target::BuiltCallingConvention::check_addr_size`] for this arch.
+    /// Among others, when a convention it uses fails
+    /// [`strider_target::BuiltCallingConvention::validate`] or `check_addr_size`
+    /// for this arch.
     pub fn build_ir_with(
         &self,
         cfg: &strider_cfg::Cfg,
