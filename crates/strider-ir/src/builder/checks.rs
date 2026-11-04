@@ -1,6 +1,5 @@
-//! The checks a builder runs on its operands before it creates a node.
-//!
-//! Free functions over `&Function`, not `IRViewer` methods:
+//! Operand checks a builder runs before creating a node, as free functions
+//! over `&Function` rather than `IRViewer` methods:
 //!
 //! ```compile_fail,E0599
 //! use strider_ir::node::ValueId;
@@ -17,8 +16,7 @@ use crate::IRViewer;
 use crate::function::Function;
 use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
 
-/// Each generated function errors unless `value_id`'s kind satisfies the
-/// named predicate.
+/// Each errors unless `value_id`'s kind satisfies the predicate.
 macro_rules! value_kind_requirements {
     ($($name:ident => $pred:ident, $noun:literal;)+) => { $(
         pub(crate) fn $name(f: &Function, value_id: ValueId) -> crate::Result<()> {
@@ -38,7 +36,7 @@ value_kind_requirements! {
     require_memory_kind => is_memory, "a memory edge";
 }
 
-/// Errors unless `value_id`'s type is exactly `expected`; never coerces.
+/// Never coerces.
 pub(crate) fn require_value_type(
     f: &Function,
     value_id: ValueId,

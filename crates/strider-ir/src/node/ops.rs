@@ -1,5 +1,4 @@
-// Each op enum and its `ALL` come from one variant list, so a roster built on
-// `ALL` cannot miss a new op.
+// Derives `ALL` from the variant list.
 macro_rules! op_enum {
     (
         $(#[$meta:meta])*
@@ -26,15 +25,12 @@ op_enum! {
 }
 
 op_enum! {
-    /// Every variant outputs `I1`. The lifter lowers `IntLessEqual(a, b)` to
-    /// `Xor(Less(b, a), IntConst(1)):I1` and `IntSlessEqual` likewise through
-    /// `Sless`, so both arrive as this set.
+    /// Outputs `I1`. `a <= b` arrives as `Xor(Less(b, a), 1)`, signed likewise.
     pub enum IntCmpOp {
         Equal,
         /// Signed less-than.
         Sless,
-        /// Unsigned less-than, and equally the unsigned-subtraction borrow
-        /// predicate (`l - r` borrows iff `l < r`), matching rsleigh's `IntLess`.
+        /// Unsigned less-than, which is also the `l - r` borrow.
         Less,
         /// `l + r` overflows the unsigned range.
         Carry,
@@ -46,7 +42,7 @@ op_enum! {
 }
 
 op_enum! {
-    /// Arithmetic wraps. `IntSub(a, b)` arrives lowered to `Add(a, Neg(b))`.
+    /// Wrapping. Subtraction arrives as `Add(a, Neg(b))`.
     pub enum IntBinaryOp {
         Add,
         And,
@@ -88,14 +84,14 @@ impl IntBinaryOp {
 }
 
 op_enum! {
-    /// `Neg` is two's-complement negation `-x`, not bitwise complement.
+    /// `Neg` is two's-complement `-x`, not complement.
     pub enum IntUnaryOp {
         Neg,
     }
 }
 
 op_enum! {
-    /// `FloatSub(a, b)` arrives lowered to `Add(a, Neg(b))`.
+    /// Subtraction arrives as `Add(a, Neg(b))`.
     pub enum FloatBinaryOp {
         Add,
         Mul,
@@ -104,7 +100,6 @@ op_enum! {
 }
 
 op_enum! {
-    /// Float in, float out.
     pub enum FloatUnaryOp {
         Neg,
         Abs,
@@ -113,19 +108,14 @@ op_enum! {
         Ceil,
         /// Round toward negative infinity.
         Floor,
-        /// Round to nearest, ties AWAY FROM ZERO, matching GHIDRA's
-        /// `FloatFormat::opRound`.
+        /// Round to nearest, ties away from zero (GHIDRA `opRound`).
         Round,
     }
 }
 
 op_enum! {
-    /// Every variant outputs `I1`. The remaining float predicates arrive lowered:
-    ///
-    /// - `FloatNotEqual(a, b)` -> `Xor(FloatEqual(a, b), IntConst(1)):I1`.
-    /// - `FloatLessEqual(a, b)` -> `Or(FloatLess(a, b), FloatEqual(a, b))`.
-    /// - `FLOAT_NAN(x)` -> `Xor(FloatEqual(x, x), IntConst(1)):I1`, so a
-    ///   `FloatEqual(x, x)` in the IR is a NaN test, not a tautology.
+    /// Outputs `I1`. `FLOAT_NAN(x)` arrives as `Xor(FloatEqual(x, x), 1)`, so
+    /// `FloatEqual(x, x)` is a NaN test, not a tautology.
     pub enum FloatCmpOp {
         /// False if either operand is NaN.
         Equal,

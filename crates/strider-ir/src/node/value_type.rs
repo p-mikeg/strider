@@ -1,27 +1,20 @@
 use anyhow::anyhow;
 
-/// A value's type: an integer or an IEEE float, by its width in bits.
-///
-/// Only [`Self::SUPPORTED`] widths are valid: [`Self::int`], [`Self::float`],
-/// the `*_from_bytes` constructors and `FromStr` refuse any other, and
-/// `validate` rejects a value carrying one. Integers order before floats,
-/// each by width.
+/// An integer or IEEE float type, by width in bits. Only [`Self::SUPPORTED`]
+/// widths are valid. Integers order before floats, each by width.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ValueType {
     Int(u16),
     Float(u16),
 }
 
-// `SUPPORTED` and `is_supported` read one width list.
 macro_rules! supported_widths {
     (int: $($i:literal)*; float: $($f:literal)*) => {
         impl ValueType {
-            /// Every type: integers, then floats, each by width (`Ord`
-            /// order).
+            /// Every type, in `Ord` order.
             pub const SUPPORTED: [Self; [$($i,)* $($f,)*].len()] =
                 [$(Self::Int($i),)* $(Self::Float($f),)*];
 
-            /// Whether this width is one of [`Self::SUPPORTED`].
             #[inline]
             pub(crate) const fn is_supported(self) -> bool {
                 match self {
@@ -33,24 +26,18 @@ macro_rules! supported_widths {
     };
 }
 
-// Past the powers of two, each width is one a vendored sla spec puts on a
-// varnode or temporary: i24 x86 `SegmentLimit` (`tmp:3`); i40 and i72 the x86
-// `adcx`/`adox` carry accumulators (`tmp:5`, `tmp:9`), i72 also AArch64
-// fixed-point `ucvtf`; i48 some ARM instructions; i56 AArch64 `cmpp`/`subp`;
-// i80 the x87 ST bit pattern; i96 and i112 x86-64 `GDTR`/`IDTR` and
-// `LDTR`/`TR`; i512 AVX-512 `zmm`; f16 AArch64 FPR16 and ARM `vcvt.f16`; f80
-// x87 extended precision; f128 the destination of ARM `vcvt.f32.f16 Qd,Dm`.
+// Each width is one some vendored sla spec puts on a varnode or temporary
+// (e.g. i24 x86 `tmp:3`, i72 x86 `adcx`, i80 x87 ST).
 supported_widths! {
     int: 1 8 16 24 32 40 48 56 64 72 80 96 112 128 256 512;
     float: 16 32 64 80 128
 }
 
 impl ValueType {
-    /// The boolean type: a comparison or logical-op result, 0 or 1.
+    /// Boolean.
     pub const I1: Self = Self::Int(1);
 
-    /// The integer type `bits` wide. Panics on an unsupported width, which in
-    /// a `const` is a compile error.
+    /// Panics on an unsupported width (a compile error in a `const`).
     #[inline]
     pub const fn int(bits: u16) -> Self {
         let ty = Self::Int(bits);
@@ -58,7 +45,7 @@ impl ValueType {
         ty
     }
 
-    /// The float type `bits` wide; panics as [`Self::int`] does.
+    /// Panics on an unsupported width.
     #[inline]
     pub const fn float(bits: u16) -> Self {
         let ty = Self::Float(bits);
@@ -66,13 +53,12 @@ impl ValueType {
         ty
     }
 
-    /// The integer type of an `n`-byte varnode: one byte is `I8`, never `I1`.
+    /// One byte is `I8`, never `I1`.
     pub fn int_from_bytes(n: u32) -> crate::Result<Self> {
         Self::from_bytes(n, Self::Int)
             .ok_or_else(|| anyhow!("unsupported integer varnode size: {n} bytes"))
     }
 
-    /// The float type of an `n`-byte varnode.
     pub(crate) fn float_from_bytes(n: u32) -> crate::Result<Self> {
         Self::from_bytes(n, Self::Float)
             .ok_or_else(|| anyhow!("unsupported float varnode size: {n} bytes"))
@@ -111,8 +97,7 @@ impl ValueType {
         matches!(self, Self::Float(_))
     }
 
-    /// This integer type's all-ones value, the modulus less one. `None` for a
-    /// float, and past the `u128` carrier, where no `u128` is that value.
+    /// The all-ones value. `None` for a float or past 128 bits.
     #[inline]
     pub const fn int_mask_u128(self) -> Option<u128> {
         match self {
@@ -121,24 +106,22 @@ impl ValueType {
         }
     }
 
-    /// Masks a raw IEEE 754 pattern to this float type's width. Widths at or
-    /// past the `u64` carrier pass `bits` through unchanged.
+    /// Masks raw IEEE 754 bits to this width; 64 bits and wider pass through.
     pub fn mask_float_bits(self, bits: u64) -> u64 {
         (u128::from(bits) & crate::eval::mask_below(self.bit_width() as u32)) as u64
     }
 
-    /// Sign-extends `val`, read as this type's narrow representation, to a
-    /// full `i128`. `None` for floats and for widths past the carrier.
+    /// Sign-extends `val` from this width to `i128`. `None` for floats and past
+    /// 128 bits.
     pub fn get_signed_int(self, val: u128) -> Option<i128> {
         let Self::Int(w @ 1..=128) = self else {
             return None;
         };
-        // The sign bit to the carrier's top, then an arithmetic shift back.
         let spare = 128 - u32::from(w);
         Some(((val << spare) as i128) >> spare)
     }
 
-    /// The `Display` spelling read back; `None` for any other text.
+    /// Inverse of `Display`.
     fn parse(s: &str) -> Option<Self> {
         let (of_bits, digits): (fn(u16) -> Self, &str) = match s.split_at_checked(1)? {
             ("i", digits) => (Self::Int, digits),
@@ -154,7 +137,7 @@ impl ValueType {
     }
 }
 
-/// `I32` / `F64`: the spelling Python's `Node.value_type()` returns.
+/// `I32` / `F64`, as Python's `Node.value_type()` spells it.
 impl std::fmt::Debug for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -164,7 +147,7 @@ impl std::fmt::Debug for ValueType {
     }
 }
 
-/// `i32` / `f64`: the IR text spelling.
+/// `i32` / `f64`.
 impl std::fmt::Display for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -174,7 +157,7 @@ impl std::fmt::Display for ValueType {
     }
 }
 
-/// The inverse of `Display`: `"i32"`, `"f64"`, lowercase only.
+/// Inverse of `Display`, lowercase only.
 impl std::str::FromStr for ValueType {
     type Err = anyhow::Error;
 
