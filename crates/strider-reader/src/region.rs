@@ -21,8 +21,7 @@ pub(crate) struct Patch {
 pub(crate) const MAX_PATCH_LEN: u64 = 8;
 
 impl Patch {
-    /// The low `size_bytes` of `value` at `addr`, in the target's
-    /// endianness.
+    /// The low `size_bytes` of `value` at `addr`, in the target's endianness.
     ///
     /// # Panics
     ///
@@ -56,9 +55,8 @@ impl Patch {
     }
 }
 
-/// One mapping (ELF segment or section) at a fixed virtual address: a window
-/// into a shared immutable buffer, with relocations as a sorted patch list
-/// applied on read.
+/// One mapping at a fixed virtual address: a window into a shared immutable
+/// buffer, with relocations as a sorted patch list applied on read.
 #[derive(Clone)]
 pub struct MemRegion {
     start_addr: u64,
@@ -163,8 +161,8 @@ impl MemRegion {
     }
 
     /// One `stat` of the file these bytes were mapped from, compared against
-    /// map time; `Ok` with no syscall over owned bytes. A change racing a
-    /// [`read`] is still a torn read or a SIGBUS.
+    /// map time; `Ok` over owned bytes. A change racing a [`read`] is still a
+    /// torn read or a SIGBUS.
     ///
     /// # Errors
     ///
@@ -176,9 +174,7 @@ impl MemRegion {
         self.bytes.check_unchanged()
     }
 
-    /// Which mapping backs this region, for deduping [`check_unchanged`].
-    ///
-    /// [`check_unchanged`]: Self::check_unchanged
+    /// Which mapping backs this region; `None` for owned bytes.
     pub(crate) fn mapping_id(&self) -> Option<usize> {
         self.bytes.mapping_id()
     }
@@ -204,7 +200,6 @@ impl MemRegion {
         &self.bytes.as_slice()[self.offset..self.offset + self.len]
     }
 
-    /// One past the last address covered.
     pub fn end_addr(&self) -> u64 {
         self.start_addr + self.len as u64
     }
@@ -213,11 +208,9 @@ impl MemRegion {
         addr >= self.start_addr && addr < self.end_addr()
     }
 
-    /// Reads bytes at `addr` into `out`, possibly partially.
-    ///
-    /// `Some(n)` when [`contains(addr)`](Self::contains), short when the
-    /// request runs past the end or into a hole. `None` otherwise, including
-    /// an `addr` in a hole and any read at `end_addr`.
+    /// Reads bytes at `addr` into `out`: `Some(n)`, short when the request
+    /// runs past the end or into a hole, or `None` when `addr` is outside the
+    /// region or in a hole.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let (offset, available) = self.available_at(addr)?;
         let mut to_copy = available.min(out.len());
@@ -242,7 +235,7 @@ impl MemRegion {
             .and_then(|h| h.unmodelled)
     }
 
-    /// This region's patches from the first that can overlap `addr` on.
+    /// This region's patches from the first that can overlap `addr`.
     fn patches_from(&self, addr: u64) -> &[Patch] {
         let patches = self.patches();
         let first = patches.partition_point(|p| p.addr < addr.saturating_sub(MAX_PATCH_LEN - 1));
@@ -285,8 +278,8 @@ impl MemRegion {
     }
 }
 
-/// The patches of `near`, which starts at the first that can overlap `addr`,
-/// overlapping `[addr, addr + len)`, in address order.
+/// The patches of `near` overlapping `[addr, addr + len)`, in address order;
+/// `near` starts at the first that can overlap `addr`.
 fn overlapping(near: &[Patch], addr: u64, len: usize) -> impl Iterator<Item = &Patch> {
     let end = addr.saturating_add(len as u64);
     near.iter()
