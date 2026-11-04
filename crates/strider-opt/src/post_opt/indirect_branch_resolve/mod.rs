@@ -1,5 +1,3 @@
-//! Classifies the targets of `BranchIndirect` placeholders and seated `Switch`es.
-
 use std::cell::LazyCell;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -44,8 +42,7 @@ type LazyRanges<'f> =
 /// a claim wrong for the input can still seat a wrong edge.
 pub(crate) struct SiteClassifier<'f> {
     function: &'f strider_ir::Function,
-    /// Built on the first table query: a constant or link-register site never
-    /// reads it.
+    /// Built on the first table query.
     ranges: LazyRanges<'f>,
     eval: eval::Evaluator<'f>,
     returns: ReturnTargets<'f>,
@@ -190,7 +187,7 @@ impl ClassifiedSites {
 ///
 /// # Errors
 ///
-/// None; the `Result` is the orchestrator's classifier-hook shape.
+/// Never.
 pub fn classify_sites(
     f: &strider_ir::Function,
     rom: Option<&dyn ReadOnlyMemory>,
