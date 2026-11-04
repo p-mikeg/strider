@@ -90,7 +90,8 @@ impl<'f> Matcher<'f> {
     /// `int_add(var(x), var(x))` is one match, `int_add(anything().capture(k),
     /// anything())` two. `n` commutative nodes whose operands each satisfy both
     /// sub-patterns yield up to 2^n; pin them with `.ordered()`. Natural operand
-    /// order comes before swapped.
+    /// order comes before swapped. The work, not only the result count, can be
+    /// 2^depth over nested commutative nodes, even when nothing matches.
     ///
     /// # Errors
     /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
