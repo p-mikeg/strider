@@ -16,7 +16,8 @@ class BufferReader:
     def __init__(self, base_addr: int, data: Union[bytes, bytearray, Sequence[int]]) -> None:
         """Serve `data` as the bytes mapped starting at `base_addr`. Raises
         `ValueError` for a region that runs past the end of the address
-        space."""
+        space. A buffer (`memoryview`, `array`, numpy) serves its raw bytes
+        and must have one-byte items, else `TypeError`."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Up to `size` bytes at `addr` (fewer near a region edge, or before a
@@ -38,8 +39,8 @@ class MemReader:
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Return up to `size` bytes at `addr` (a short read near a region edge
-        is allowed), or `None` when `addr` is unmapped. The base
-        implementation raises `NotImplementedError`.
+        is allowed), or `None` when `addr` is unmapped. A buffer must have
+        one-byte items. The base implementation raises `NotImplementedError`.
 
         An exception here, a return of another type or of more than `size`
         bytes fails the lift with `StriderError`, an exception chained as its
