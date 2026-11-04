@@ -1457,11 +1457,11 @@ fn a_forward_into_a_store_address_drops_the_memoised_answers() -> Result<()> {
         fg.producer(l1_value.expect("built")),
     );
 
-    let query = MemQuery::default();
+    let mut sweep = Sweep::default();
     let mut edit = crate::EditFunction::new(&mut fg);
-    try_forward_load(&mut edit, a, &query)?;
+    try_forward_load(&mut edit, a, &mut sweep)?;
     let before = edit.generation();
-    try_forward_load(&mut edit, l1, &query)?;
+    try_forward_load(&mut edit, l1, &mut sweep)?;
     assert_ne!(edit.generation(), before, "the address load forwards");
     let f = edit.function();
     let policy = Policy::forward(f);
@@ -1472,7 +1472,7 @@ fn a_forward_into_a_store_address_drops_the_memoised_answers() -> Result<()> {
         "the store through the forwarded address no longer aliases the global"
     );
     assert_eq!(
-        query.reaching(f, a, policy).node(),
+        sweep.query.reaching(f, a, policy).node(),
         fresh,
         "the query answers what a fresh one does"
     );
