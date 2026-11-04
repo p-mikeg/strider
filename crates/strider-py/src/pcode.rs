@@ -2,11 +2,8 @@ use pyo3::prelude::*;
 
 use crate::errors::into_strider_err;
 
-/// Lift the machine instruction at `addr`, returning
-/// `(text, machine_insn_len)`.
-///
-/// An instruction that lifts to zero p-code ops (`endbr64`, say) yields empty
-/// text but still advances by its byte length.
+/// The p-code text and byte length of the instruction at `addr`. One with no
+/// ops (`endbr64`) yields empty text.
 pub(crate) fn lift_one_text<R: rsleigh::MemReader>(
     sleigh: &mut rsleigh::Sleigh<R>,
     space_ids: &rsleigh::SpaceIds,
@@ -18,7 +15,7 @@ pub(crate) fn lift_one_text<R: rsleigh::MemReader>(
     Ok((pcode_text(&lift.insns, space_ids), lift.machine_insn_len))
 }
 
-/// One machine instruction's p-code ops, joined with `"; "` in order.
+/// The ops joined with `"; "`.
 pub(crate) fn pcode_text<'a>(
     insns: impl IntoIterator<Item = &'a rsleigh::Insn>,
     space_ids: &rsleigh::SpaceIds,
