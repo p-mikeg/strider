@@ -1,12 +1,16 @@
 //! Detects stack-passed function arguments and records them in
-//! `FunctionSideTables::arg_index_to_values`.  Must run as a post-pass: it needs the
+//! `FunctionSideTables::arg_index_to_values`. A post-pass: it needs the
 //! optimized memory graph.
 //!
 //! A candidate is a `Load[InitialVar(sp) + K]` with `K` in a stack slot and no
-//! shadowing def on its memory chain.  Ordinals start at
-//! `first_stack_arg = arg_passing_regs.len()`, and the first slot with no
-//! anchored load ends the gap-free prefix, as does an argument some dirty
-//! load reaches past.
+//! shadowing def on its memory chain. Ordinals start at
+//! `arg_passing_regs.len()`; the first slot with no anchored load ends the
+//! prefix, as does an argument some dirty load reaches past.
+//!
+//! Known limit: stack-passed arguments are numbered positionally across
+//! register classes, so a stack-passed float takes the next ordinal after the
+//! integer argument registers (`arg_passing_regs.len() + n`) and an
+//! integer-arg query can bind it; telling them apart needs the signature.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -32,8 +36,8 @@ impl Optimizer for FunctionArgDetect {
         let Some(stack_args) = cc.stack_args else {
             return Ok(());
         };
-        // A second run over the same `Function` re-detects from scratch; the
-        // register carriers the lifter recorded sit below `first_stack_arg`.
+        // Re-detect from scratch; the lifter's register carriers sit below
+        // `first_stack_arg`.
         edit.clear_arg_values_from(first_stack_arg as u32);
         let policy = Policy::incoming_args(edit.function());
         detect_stack_args(
@@ -47,21 +51,14 @@ impl Optimizer for FunctionArgDetect {
     }
 }
 
-/// Groups qualifying loads by the byte-position slot their first byte occupies,
-/// then walks slots from 0 assigning one ordinal per anchored argument.  A
-/// wider-than-slot argument advances the cursor across every slot it spans but
-/// the ordinal by one.
+/// Groups qualifying loads by the slot their first byte occupies, then walks
+/// slots from 0 assigning one ordinal per anchored argument; a wider-than-slot
+/// argument spans several slots but one ordinal.
 ///
-/// The span comes from the widest load anchored at the cursor, so two adjacent
-/// arguments read by one wide load and one narrow load (a 16-byte load at slot
-/// 0 plus an 8-byte load at slot 1 on x86-64) merge into ONE ordinal and shift
-/// every later index down by one.  Separating them needs the callee's
-/// signature; unlike [`CallStackArgCollect`](crate::CallStackArgCollect)'s
-/// over-collection, the failure mode is a wrong index, not a surplus one.
-///
-/// A dirty load's span says nothing of where the arguments lie: it may read
-/// the function's own wide store.  One reaching past the argument it starts
-/// in ends the prefix after that argument.
+/// The span is the widest load anchored at the cursor, so adjacent arguments
+/// read by one wide and one narrow load merge into one ordinal and shift every
+/// later index down (a wrong index, not a surplus one). A dirty load reaching
+/// past the argument it starts in ends the prefix after that argument.
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
     query: &MemQuery,
@@ -69,8 +66,8 @@ fn detect_stack_args(
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
 ) {
-    // Per start slot: the furthest slot a load anchored there reaches, and
-    // the clean ones among those loads, by space.
+    // Per start slot: the furthest slot reached, and the clean loads with
+    // their kind.
     let mut groups: rustc_hash::FxHashMap<usize, (usize, Vec<(NodeKind, ValueId)>)> =
         rustc_hash::FxHashMap::default();
     let mut dirty_reach: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
@@ -88,26 +85,21 @@ fn detect_stack_args(
         else {
             continue;
         };
-        // Incoming stack args sit at fixed offsets from the ENTRY stack
-        // pointer, so a load rooted at a different SP terminal is none, even
-        // when its offset coincides with a convention slot.
+        // Incoming stack args sit at fixed offsets from the entry SP.
         if !edit.function().is_entry_sp(base) {
             continue;
         }
         let Some(start_slot) = stack_args.slot_of(offset) else {
             continue;
         };
-        // A pathological offset/size can overflow here; treat that as "not a
-        // stack arg" rather than panicking.
         let Some(last_byte) = offset.checked_add(load_size).and_then(|e| e.checked_sub(1)) else {
             continue;
         };
         let Some(end_slot) = stack_args.slot_of(last_byte) else {
             continue;
         };
-        // A load some def may have written over reads no incoming value; the
-        // slot's clean loads still do.  The query narrows the load's edge as
-        // it answers.
+        // A load some def may have overwritten reads no incoming value. The
+        // query narrows the load's edge as it answers.
         if !matches!(
             query.reach_and_narrow(edit, node_id, policy),
             ReachingDef::Clean(_)
@@ -120,7 +112,7 @@ fn detect_stack_args(
         *reach = (*reach).max(end_slot);
         loads.push((*edit.node_kind(node_id), load_value));
     }
-    // A slot with no clean load ends the prefix like a genuine gap does.
+    // A slot with no clean load ends the prefix.
     let mut cursor = 0usize;
     let mut ordinal = first_stack_arg as u32;
     while let Some(&(reach, _)) = groups.get(&cursor) {
@@ -128,8 +120,7 @@ fn detect_stack_args(
             .filter_map(|s| groups.get(&s))
             .flat_map(|(_, loads)| loads.iter().copied())
             .collect();
-        // One argument's carriers must share a Load space.  A mismatch skips
-        // registration but still consumes the ordinal.
+        // A Load-space mismatch skips registration but consumes the ordinal.
         if arg_loads.iter().all(|&(kind, _)| kind == arg_loads[0].0) {
             for (_, load_value) in arg_loads {
                 edit.register_arg_value(ordinal, load_value);
