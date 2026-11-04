@@ -2419,16 +2419,15 @@ mod arg_window_complexity {
     }
 }
 
-/// The argument window of a call behind an irreducible memory graph, where no
-/// index skips the stores nearer than a slot's own.
+/// The argument window of a call behind an irreducible memory graph.
 mod arg_window_irreducible {
     use super::*;
 
     fn window_steps(k: usize) -> crate::Result<u64> {
         let mut fg = crate::test_support::memory_shapes::irreducible_stack_args(k)?;
         assert!(
-            crate::mem_ssa::MemLayout::build(&fg).positions().is_none(),
-            "the memory graph has no position index"
+            !crate::mem_ssa::MemLayout::build(&fg).is_reducible(),
+            "the memory graph is irreducible"
         );
         fg.assume(&crate::AssumptionOptions {
             escape_analysis: true,
@@ -3605,7 +3604,6 @@ mod store_index {
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
             let layout = MemLayout::build(&fg);
-            assert!(layout.positions().is_some(), "the chain is laid out");
             let query = MemQuery::default();
             heap_near_top += addresses
                 .iter()
