@@ -1,10 +1,6 @@
-//! Sinks for control cycles that never leave: a `while (1)` body, a spin
-//! loop, a `panic` helper ending in a self-jump.
-//!
-//! Such a cycle reaches no `Return` / `IndirectBranch` / `Unreachable`, so it
-//! roots nothing: `Function::compact` walks data inputs backward from
-//! terminators, and without one the cycle's whole body, stores included, is
-//! dropped. `validate` rejects the shape outright.
+//! Sinks for control cycles that never leave (`while (1)`, a spin loop).
+//! Such a cycle reaches no terminator, so `Function::compact` would drop its
+//! body and `validate` rejects it.
 
 use anyhow::{Result, anyhow};
 use strider_ir::graph::Graph;
@@ -16,7 +12,7 @@ use super::FunctionLifter;
 
 #[cfg(test)]
 thread_local! {
-    /// Node visits exit-free-sink seating performed since a test last cleared it.
+    /// Node visits by sink seating since a test last cleared it.
     pub(crate) static SINK_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -33,16 +29,11 @@ struct BackEdge {
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Seats `If(true) { back edge } { Unreachable(mem) }` on one edge of every
-    /// exit-free control cycle.
-    ///
-    /// The `If` is what supplies the extra control output: every control output
-    /// inside the cycle already has its one permitted consumer, and `Region`'s
-    /// signature has no spare.
+    /// exit-free control cycle; the `If` supplies the spare control output.
     pub(crate) fn seat_exit_free_sinks(&mut self) -> Result<()> {
         let function = self.builder.function();
         let mut stranded = stranded_nodes(function.graph(), function.entry());
-        // The one whole-function scan. Seating a sink makes exactly the nodes
-        // reaching that cycle escape, and they leave the set incrementally.
+        // The only whole-function scan; escaped nodes leave the set as seated.
         #[cfg(test)]
         SINK_VISITS.with(|v| v.set(v.get() + function.graph().all_node_ids().count()));
         let seeds: Vec<NodeId> = stranded.iter().collect();
@@ -78,8 +69,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// The control edge closing `cycle`.
     fn exit_free_back_edge(&self, cycle: &NodeIdSet) -> Result<BackEdge> {
         let graph = self.builder.function().graph();
-        // Only a `Region` takes more than one control input, so a cycle
-        // reachable from `Entry` is entered through one.
+        // A cycle reachable from `Entry` is entered through a `Region`.
         let seat = cycle
             .iter()
             .find(|&n| matches!(graph.node_kind(n), NodeKind::Region))
@@ -98,9 +88,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         })
     }
 
-    /// The machine address of the branch producing `control`: the region it
-    /// leaves when that producer is a `Region`, otherwise the producer's own
-    /// asm fingerprint, else the region `seat`, a `Region`, leaves.
+    /// The machine address of the branch producing `control`, falling back to
+    /// the producer's fingerprint, then to `seat`'s last address.
     fn back_branch_addr(&self, producer: NodeId, seat: NodeId) -> u64 {
         self.region_last_addrs
             .get(&producer)
@@ -117,9 +106,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 }
 
-/// The memory value paired with `region`'s `index`-th control predecessor:
-/// `MemPhi`'s inputs are its `PhiToken` then one memory value per predecessor,
-/// in the order `link_region` appends them.
+/// The memory value on `region`'s `index`-th control predecessor (`MemPhi`
+/// input `index + 1`, after its `PhiToken`).
 fn region_memory_input(graph: &Graph, region: NodeId, index: usize) -> Result<ValueId> {
     let phi_token = graph
         .node_outputs(region)
@@ -136,10 +124,9 @@ fn region_memory_input(graph: &Graph, region: NodeId, index: usize) -> Result<Va
         .ok_or_else(|| anyhow!("MemPhi of {region:?} has no operand for predecessor {index}"))
 }
 
-/// Walks control forward from `start` until a node repeats, and returns that
-/// cycle. Every successor of a stranded node is stranded (a successor that
-/// reached a terminator would carry its predecessor with it), so the walk
-/// stays inside the set and, being finite, must close.
+/// Walks control forward from `start` through stranded nodes until one
+/// repeats, and returns that cycle. A stranded node always has a stranded
+/// successor, so the walk closes.
 fn walk_to_cycle(graph: &Graph, stranded: &NodeIdSet, start: NodeId) -> NodeIdSet {
     let mut path: Vec<NodeId> = Vec::new();
     let mut on_path = NodeIdSet::new();
@@ -154,9 +141,7 @@ fn walk_to_cycle(graph: &Graph, stranded: &NodeIdSet, start: NodeId) -> NodeIdSe
             .find(|&succ| stranded.contains(succ));
         match next {
             Some(succ) => node = succ,
-            // Unreachable for a stranded node, which always has a stranded
-            // successor; the empty result makes the caller's `Region` search
-            // fail loudly instead of looping.
+            // Unreachable; an empty cycle makes the caller fail.
             None => return NodeIdSet::new(),
         }
     }
@@ -164,9 +149,8 @@ fn walk_to_cycle(graph: &Graph, stranded: &NodeIdSet, start: NodeId) -> NodeIdSe
     path[closed..].iter().copied().collect()
 }
 
-/// Drops every stranded node reaching `cycle`: the sink seated there is now
-/// their terminator. Each node leaves the set once, so the whole seating
-/// loop stays linear in the function.
+/// Drops every stranded node reaching `cycle`, now terminated by its sink.
+/// Each node leaves once, so seating is linear overall.
 fn drop_escaped(graph: &Graph, stranded: &mut NodeIdSet, cycle: &NodeIdSet) {
     let mut work: Vec<NodeId> = cycle.iter().collect();
     for &node in &work {

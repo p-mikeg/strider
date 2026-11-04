@@ -20,11 +20,8 @@ pub(crate) fn nth_input_or_err(insn: &rsleigh::Insn, n: usize) -> Result<&rsleig
     })
 }
 
-/// Sleigh encodes a literal as `addr_space == CONST` with the value in
-/// `addr_off`.  A handler reading `addr_off` directly would silently mis-decode
-/// a non-CONST input, producing structurally valid but semantically wrong IR.
-/// GHIDRA always emits CONST here; this catches a malformed `.sla` or a
-/// hand-built `Insn`.
+/// Rejects a non-CONST varnode in a slot Sleigh fills with a literal, which
+/// only a malformed `.sla` or a hand-built `Insn` produces.
 pub(crate) fn ensure_const_space(
     vn: &rsleigh::Vn,
     opcode: rsleigh::Opcode,
@@ -42,16 +39,9 @@ pub(crate) fn ensure_const_space(
 }
 
 impl<R: rsleigh::MemReader> super::Lifter<R> {
-    /// P-code puts the target space in a CONST varnode at `inputs[0]` whose
-    /// offset is the decoding engine's id for a Sleigh `AddrSpace`.  Reading
-    /// `.addr_space` gives `CONST`, the ENCODING's space, not the target, hence
-    /// this decode, through this engine's own space table.
-    ///
-    /// `Self::check_cfg_space_ids` rejects a `Cfg` holding an id outside that
-    /// table before any lift, so the error here answers only a hand-built
-    /// `Insn`.  Matching by id does not identify the space: a foreign id at an
-    /// address this engine reused resolves to whichever space this engine has
-    /// there.
+    /// The target space of a LOAD/STORE: `inputs[0]` is a CONST varnode whose
+    /// offset is this engine's space id. `Self::check_cfg_space_ids` rejects
+    /// unknown ids before any lift, so the error answers a hand-built `Insn`.
     pub(crate) fn decode_space_id(&self, insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
         let vn = *nth_input_or_err(insn, 0)?;
         ensure_const_space(&vn, insn.opcode, "input 0")?;

@@ -1,26 +1,10 @@
-//! Three comparisons are lowered at lift time so `IntCmpOp` holds only
-//! primitive predicates:
+//! Integer and boolean lowerings. The negated comparisons become
+//! `Xor(cmp, IntConst(1)):I1`, with `<=` swapped to `not(b < a)`; boolean ops
+//! are integer ops at `I1`.
 //!
-//! - `IntNotEqual(a, b)` -> `Xor(IntEqual(a, b), IntConst(1)):I1`
-//! - `IntLessEqual(a, b)` -> `Xor(IntLess(b, a), IntConst(1)):I1`
-//! - `IntSlessEqual(a, b)` -> `Xor(IntSless(b, a), IntConst(1)):I1`
-//!
-//! Logical negation of an `I1` is `Xor(_, IntConst(1))`; bitwise complement is
-//! `Xor(_, all_ones)` everywhere.
-//!
-//! Booleans are the 1-bit integer `I1`, so the boolean ops lower to ordinary
-//! integer ops: and/or/xor at `I1`, and `BoolNeg` to `Xor(x, IntConst(1)):I1`.
-//!
-//! The boolean operands are 1-BYTE varnodes, which read back as `I8`, so the
-//! narrowing to `I1` is load-bearing.  It is exact only under the ASSUMPTION
-//! that a p-code boolean is 0 or 1: `OpBehaviorBoolOr` and friends are the
-//! bitwise ops over the WHOLE varnode (`opbehavior.cc`), so `BOOL_OR(2, 0)` is
-//! TRUE there and FALSE here.  The assumption holds across the vendored specs,
-//! whose every `&&` / `||` / `!` operand is a comparison, `carry()`/`scarry()`,
-//! or a one-bit bitrange the SLEIGH compiler lowers to shift-and-mask
-//! (`ARM.sinc:20-22`, `:278`; `AARCH64instructions.sinc:2031-2032`).  A spec
-//! carrying a wider value in a boolean needs the boolean ops lowered as `!= 0`
-//! at the operand width instead.
+//! Narrowing a 1-byte p-code boolean to `I1` assumes it is 0 or 1 (p-code's
+//! boolean ops act on the whole varnode, so `BOOL_OR(2, 0)` differs). Every
+//! vendored spec feeds them comparisons, carry flags or one-bit bitranges.
 
 use strider_ir::node::ValueId;
 use strider_ir::{
@@ -31,10 +15,8 @@ use strider_ir::{
 use crate::FunctionLifter;
 use crate::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
-/// Sleigh's contract guarantees `a` and `b` equal widths wherever this runs.
-/// The lift resizes operands to one width before the builder sees them, so
-/// this is the only check: without it a malformed `.sla` lifts silently.
-/// `what` names the op in the error.
+/// Errs unless `a` and `b` have the width Sleigh guarantees them; the lift
+/// resizes operands afterwards, so a malformed `.sla` fails only here.
 pub(super) fn require_same_size(a: &rsleigh::Vn, b: &rsleigh::Vn, what: &str) -> Result<()> {
     if a.size != b.size {
         return Err(anyhow::anyhow!(
@@ -46,8 +28,7 @@ pub(super) fn require_same_size(a: &rsleigh::Vn, b: &rsleigh::Vn, what: &str) ->
     Ok(())
 }
 
-/// Only the wider direction is rejected: a narrower operand extends correctly,
-/// which is the intended semantics.
+/// A narrower operand extends correctly; only a wider one is rejected.
 fn reject_operand_wider_than_output(operand: &rsleigh::Vn, output: &rsleigh::Vn) -> Result<()> {
     if operand.size > output.size {
         return Err(anyhow::anyhow!(
@@ -64,11 +45,9 @@ fn reject_operand_wider_than_output(operand: &rsleigh::Vn, output: &rsleigh::Vn)
 #[derive(Clone, Copy)]
 enum WidthGuard {
     Any,
-    /// Coercion would truncate a wider operand, and the op's low bits do not
-    /// survive that.
+    /// Truncating a wider operand would change the op's low bits.
     NotWider,
-    /// The lowering agrees with p-code only at the output width:
-    /// `SShiftRight`'s sign fill lands at the operand's.
+    /// `SShiftRight`'s sign fill matches p-code only at equal widths.
     Equal,
 }
 
@@ -85,9 +64,7 @@ impl WidthGuard {
 /// How one operand is brought to the output width.
 #[derive(Clone, Copy)]
 enum Coerce {
-    /// Truncate a wider operand, zero-extend a narrower one: what an unsigned
-    /// op reads, and for `Add`, `Mul`, the bitwise ops and the left shift the
-    /// result's low bits do not depend on the fill.
+    /// Truncate a wider operand, zero-extend a narrower one.
     Convert,
     /// Sign-extend a narrower operand; never truncates.
     SignExtend,
@@ -102,8 +79,7 @@ impl Coerce {
     }
 }
 
-/// How one raw p-code operand reaches the output width: the guard is checked
-/// on the raw operand, then the coercion applied to the value read.
+/// The guard checks the raw operand; the coercion applies to the value read.
 #[derive(Clone, Copy)]
 struct OperandPolicy {
     guard: WidthGuard,
@@ -115,9 +91,8 @@ const PLAIN: OperandPolicy = OperandPolicy {
     coerce: Coerce::Convert,
 };
 
-/// Each operand's policy, `[lhs, rhs]`. A shift's rhs is its count: p-code
-/// leaves it any width (`sar reg, cl`), so it is saturated, then converted,
-/// and zero-extends even under `SShiftRight`.
+/// `[lhs, rhs]` policies. A shift count may be any width, so it is saturated
+/// then converted, zero-extending even under `SShiftRight`.
 fn binary_lift_policy(op: IntBinaryOp) -> [OperandPolicy; 2] {
     use IntBinaryOp as Op;
     let unsigned = OperandPolicy {
@@ -134,10 +109,7 @@ fn binary_lift_policy(op: IntBinaryOp) -> [OperandPolicy; 2] {
         }
         Op::Div | Op::Rem => [unsigned, unsigned],
         Op::Sdiv | Op::Srem => [signed, signed],
-        // The value sign-extends to the OUTPUT width, while
-        // `OpBehaviorIntSright` fills at the INPUT width (sizein=4/sizeout=8
-        // over 0xFFFFFFFF gives GHIDRA 0xFFFFFFFF, this lowering
-        // 0xFFFFFFFFFFFFFFFF): the two agree only at equal widths.
+        // p-code fills at the input width, this lowering at the output's.
         Op::SShiftRight => [
             OperandPolicy {
                 guard: WidthGuard::Equal,
@@ -157,8 +129,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.lift_int_unary(insn, true, |b, v, t| b.build_int_unary_operation(v, op, t))
     }
 
-    /// Sleigh's `IntNeg` is bitwise complement `~x`, which canonicalises to
-    /// `Xor(x, all_ones)` at any width, a SIMD-wide (YMM, ZMM) one included.
+    /// Sleigh's `IntNeg` is `~x`, lowered to `Xor(x, all_ones)`.
     pub(super) fn handle_int_neg_as_xor(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         self.lift_int_unary(insn, true, |b, v, t| {
             let all_ones = b.build_all_ones(t)?;
@@ -166,12 +137,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         })
     }
 
-    /// Shared envelope for single-input integer unary ops.
-    ///
-    /// `enforce_equal_io_width` is on for the `Int2Comp` / `IntNeg`-as-xor
-    /// lowerings, which require matching widths, and gates the input coercion
-    /// with it: `popcount` / `lzcount` count over the INPUT's width, so
-    /// widening their operand would shift the result by the width difference.
+    /// Single-input integer op. `enforce_equal_io_width` requires and coerces
+    /// to the output width; off for `popcount` / `lzcount`, which count over
+    /// the input's own width.
     pub(super) fn lift_int_unary(
         &mut self,
         insn: &rsleigh::Insn,
@@ -201,20 +169,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.lift_int_unary(insn, false, |b, v, t| b.build_lzcount(v, t))
     }
 
-    /// A shift count wider than the output, clamped so it still reads as
-    /// out-of-range after truncation.
-    ///
-    /// P-code tests the FULL count against `8 * sizeout` (`opbehavior.cc`
-    /// `OpBehaviorIntRight` / `IntSright` / `IntLeft`), so truncating
-    /// `0x1_0000_0000` to `I32` yields 0 and the shift silently does nothing.
-    /// x86 SIMD shift-by-register (`psrad xmm, xmm` and friends) is exactly
-    /// this shape: a 4-byte lane shifted by the 8-byte count the ISA reads
-    /// from `SRC[63:0]`, where an over-large count means "fill with zero / the
-    /// sign bit".
-    ///
-    /// OR-ing `out_bits` in leaves every one of its bits set, so the result is
-    /// `>= out_bits` whatever the truncation kept. That holds for the widths
-    /// that are not powers of two (`I24`, `I48`, `I80`, ...) as well.
+    /// Narrows a shift count wider than the output so an out-of-range count
+    /// stays out of range (p-code tests the full count; x86 `psrad xmm, xmm`).
+    /// OR-ing in `out_bits` keeps the result `>= out_bits` at any width.
     fn saturate_shift_count(&mut self, count: ValueId, out_ty: ValueType) -> Result<ValueId> {
         let count_ty = self.builder.value_type(count)?;
         if count_ty.bit_width() <= out_ty.bit_width() {
@@ -240,9 +197,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .build_int_binary_operation(narrow, addend, IntBinaryOp::Or, out_ty)
     }
 
-    /// Permissive about mixed input widths: real Sleigh on 64-bit arches
-    /// mixes an 8-byte register with a 4-byte spill or immediate, so each
-    /// operand is brought to the output width by [`binary_lift_policy`].
+    /// Inputs may differ in width; [`binary_lift_policy`] brings each to the
+    /// output's.
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
@@ -273,11 +229,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.lift_int_cmp(insn, op, false, false)
     }
 
-    /// Compares at the MAX of the two input widths so neither operand is
-    /// truncated, extending the narrower one sign-correctly for the predicate.
-    /// `negate` wraps the `I1` result in a logical NOT, the lowering of the
-    /// three negated comparisons; `swap` covers the `a <= b` iff `not(b < a)`
-    /// rewrite.
+    /// Compares at the wider input width, extending per the predicate's
+    /// signedness. `negate` wraps the result in a logical NOT; `swap` swaps
+    /// the operands.
     fn lift_int_cmp(
         &mut self,
         insn: &rsleigh::Insn,
@@ -287,12 +241,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ) -> Result<()> {
         let a = nth_input_or_err(insn, 0)?;
         let b = nth_input_or_err(insn, 1)?;
-        // Carry / Scarry / Sborrow are width-RELATIVE: they report overflow of
-        // THIS width, so widening their operands makes the flag constant-false
-        // (a wider add never carries out of the narrow width).  Sleigh always
-        // emits them, and the negated comparisons, equal-width; fail loud if
-        // not.  The value comparisons legitimately take mixed widths, so they
-        // are unguarded.
+        // The overflow flags are relative to the operand width, so widening
+        // would make them false; Sleigh emits them and the negated compares
+        // at equal widths.
         if negate || matches!(op, IntCmpOp::Carry | IntCmpOp::Scarry | IntCmpOp::Sborrow) {
             require_same_size(a, b, "input")?;
         }
@@ -318,9 +269,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, result)
     }
 
-    /// Canonical logical NOT: `Xor(x, IntConst(1)):I1`, since at `I1` the
-    /// all-ones constant of a bitwise complement is `1`.  `x` must already be
-    /// `I1`.  Shared by the boolean, integer-cmp and float-cmp lowerings.
+    /// Logical NOT of an `I1`: `Xor(x, IntConst(1)):I1`.
     pub(super) fn build_logical_not(&mut self, x: ValueId) -> Result<ValueId> {
         let one = self.builder.build_boolean_const(true);
         self.builder
@@ -369,13 +318,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.lift_int_cmp(insn, IntCmpOp::Sless, true, true)
     }
 
-    /// Lowers `IntSub(a, b)` to `Add(a, Neg(b))`, the one canonical shape
-    /// patterns see.  Exact: `a - b` equals `a + (-b)` mod 2^W, and `Add`
-    /// wraps identically.
+    /// Lowers `IntSub(a, b)` to `Add(a, Neg(b))`.
     pub(super) fn handle_int_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        // Sleigh requires all three widths to agree here, unlike the
-        // comparison lowerings, whose I1 output makes only the input check
-        // apply.
         let a = nth_input_or_err(insn, 0)?;
         require_same_size(a, nth_input_or_err(insn, 1)?, "input")?;
         let lhs = self.read_vn(a)?;

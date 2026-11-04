@@ -46,37 +46,30 @@ pub struct LiftOutcome {
 /// The control sites a lift records against their nodes, for the resolver.
 #[derive(Default)]
 pub struct LiftSites {
-    /// One entry per region that terminated in an unresolved indirect branch,
-    /// mapping the `BranchIndirect`'s pcode address to the `IndirectBranch`
-    /// placeholder anchoring its dispatch varnode.
+    /// Each unresolved `BranchIndirect`'s pcode address and its
+    /// `IndirectBranch` placeholder.
     pub unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 
-    /// Seated `Switch` sites, keyed like `unresolved_branches`.  A seated site
-    /// keeps its selector, so the resolver re-derives it each round and can
-    /// WIDEN a table that resolved before the CFG finished growing.
+    /// Seated `Switch` sites, keyed like `unresolved_branches`. The resolver
+    /// re-derives each round, so it can widen a table resolved early.
     pub switch_anchors: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 
-    /// Every Sleigh `RETURN` op lifted to a `Return`: where the jump back to the
-    /// caller is taken from is a value like any other, and only a check against
-    /// the optimised IR can tell it is the caller's return address.
+    /// Every Sleigh `RETURN` lifted to a `Return`; only the optimised IR can
+    /// show its target is the caller's return address.
     pub return_sites: Vec<ReturnSite>,
 }
 
-/// A Sleigh `RETURN` op's pcode address, the `Return` node lifted for it, and
-/// the address it jumps to, which that node does not consume and which is
-/// therefore dead until something anchors it.
+/// A `RETURN`'s pcode address, its `Return` node, and its target, which the
+/// node does not consume (dead until something anchors it).
 pub type ReturnSite = (
     strider_cfg::PcodeInsnAddr,
     strider_ir::node::NodeId,
     strider_ir::node::ValueId,
 );
 
-/// The CFG-to-IR lift engine, built once and reused across every function and
-/// rebuild iteration.  The calling convention is per-function, hence a per-call
-/// argument.
+/// The CFG-to-IR lift engine, reused across functions and rebuild rounds.
 pub struct Lifter<R: rsleigh::MemReader> {
-    /// The Sleigh and the decode context it carries across functions: `&mut`
-    /// to build a CFG, `&` to lift one.
+    /// `&mut` to build a CFG, `&` to lift one.
     engine: strider_cfg::DecodeEngine<R>,
 }
 
@@ -100,27 +93,17 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
     /// [`strider_target::BuiltCallingConvention::validate`] and
     /// [`strider_target::BuiltCallingConvention::check_addr_size`] against
-    /// this engine's `ram`: the intra-convention half of what every
-    /// convention reaching the lift is checked by, default
-    /// ([`Self::build_ir_with`]) or per-address override
-    /// ([`Self::check_override_cc`]). A preset or Python `custom` is
-    /// validated already; a Rust struct literal is not.
+    /// this engine's `ram`. A Rust struct literal is not validated otherwise.
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
         cc.validate()
             .and_then(|()| cc.check_addr_size(self.arch().names().ram_addr_size()))
             .map_err(|e| anyhow!("{:?}: {e}", self.arch().preset()))
     }
 
-    /// [`Self::check_cc`] plus the one CROSS-convention rule: a per-address
-    /// override must name `stack_ptr`, the stack pointer of the function it is
-    /// used in. `strider_ir::FunctionBuilder::build_call` applies the post-call
-    /// adjust to the FUNCTION's stack pointer while the clobber split
-    /// ([`strider_target::BuiltCallingConvention::ret_and_clobber_vns`]) and
-    /// the def-site mirror read the OVERRIDE's, so two names leave the
-    /// function's SP a clobber: its writeback overwrites the adjust with the
-    /// opaque `Call` output and every stack offset past the call is lost.
-    /// Analysis never leaves the function, and SP is its frame anchor, so an
-    /// override renaming it describes another frame.
+    /// [`Self::check_cc`], plus: an override must name the function's own
+    /// stack pointer. `build_call` adjusts the function's SP while the clobber
+    /// split reads the override's, so a different SP would be clobbered and
+    /// every stack offset past the call lost.
     pub(crate) fn check_override_cc(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -169,9 +152,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 .any(|r| r.start < end && start < r.end)
     }
 
-    /// The CFG of the function at `entry`; see
-    /// [`strider_cfg::DecodeEngine::build_cfg`]. The resolve loop calls it
-    /// every round.
+    /// See [`strider_cfg::DecodeEngine::build_cfg`].
     pub fn build_cfg(
         &mut self,
         entry: strider_cfg::MachineInsnAddr,
@@ -180,19 +161,10 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.engine.build_cfg(entry, cfg_opts)
     }
 
-    /// Rejects a `Cfg` whose Load / Store space ids were not produced by this
-    /// engine, before [`Self::decode_space_id`] reads any.
-    ///
-    /// A `Cfg` holds cloned `rsleigh::Insn`s and carries no lifetime, so it
-    /// outlives the engine that decoded it; the space id in a Load / Store's
-    /// `inputs[0]` is that engine's raw `AddrSpace` pointer.
-    ///
-    /// What it establishes is that the id is one of THIS engine's live space
-    /// pointers; it is not proof of origin.  A dropped engine's id whose
-    /// address this engine's allocator handed back names a live space of this
-    /// engine, so it passes and the Load / Store silently takes that space.
-    /// Distinguishing the two needs an id rsleigh derives from the space
-    /// rather than from its address.
+    /// Rejects a `Cfg` whose Load / Store space ids (raw `AddrSpace` pointers
+    /// of the engine that decoded it) are not live spaces of this engine,
+    /// before [`Self::decode_space_id`] reads any. Not proof of origin: a
+    /// dropped engine's reused address passes.
     fn check_cfg_space_ids(&self, cfg: &strider_cfg::Cfg) -> Result<()> {
         for wrapped in cfg.regions().flat_map(|region| region.insns.iter()) {
             if !matches!(
@@ -201,8 +173,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             ) {
                 continue;
             }
-            // A missing or non-CONST slot is a malformed encoding rather than a
-            // foreign one; `decode_space_id` names it precisely at lift time.
+            // A malformed slot is left for `decode_space_id` to report.
             let Some(space_id) = wrapped.insn.inputs.first() else {
                 continue;
             };
@@ -239,19 +210,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         )
     }
 
-    /// `cfg_opts` classifies each `CallOther`'s footprint under its
-    /// `call_other_overrides`; whether one ends control is the `cfg`'s own
-    /// `NoReturn` seal. Pass the options `cfg` was built with. `cc` is
-    /// the function default; a direct Call whose target is in
-    /// `per_address_ccs` is built with that override instead. The overrides
-    /// must be built against this engine's registers and fit its arch, as
-    /// `cc` must. The lifted function holds `claims`
-    /// ([`strider_ir::Function::assumptions`]), and the lift itself reads
+    /// Lifts `cfg`, which must have been built with `cfg_opts`. `cc` is the
+    /// default convention; a direct Call to a key of `per_address_ccs` uses
+    /// that override. The function holds `claims`
+    /// ([`strider_ir::Function::assumptions`]); the lift itself reads
     /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`] and
     /// [`strider_ir::AssumptionOptions::fp_rounding_mode_is_nearest`].
-    ///
-    /// Never errs on incompleteness:
-    /// [`strider_cfg::Cfg::incomplete`] reports that.
+    /// Incompleteness is reported by [`strider_cfg::Cfg::incomplete`], not
+    /// as an error.
     ///
     /// # Errors
     ///
@@ -274,19 +240,15 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         let mut driver = FunctionLifter::new(self, cc, cfg, tracked, per_address_ccs, cfg_opts)?;
         driver.builder.function_mut().assume(claims);
 
-        // Semi-pruned SSA phi placement: iterated dominance frontier of each
-        // variable's definition sites, less the region-local temporaries.  This
-        // is what stops the lifter minting a value `Phi` for every varnode at
-        // every region.
+        // Semi-pruned SSA: phis at the iterated dominance frontier of each
+        // variable's def sites, less region-local temporaries.
         let graph = cfg.region_graph();
         let doms = graph_algorithms::dominance::dominators(cfg.entry(), |r| graph.neighbors(r));
-        // Where a definition in `r` first stops dominating, hence where a phi
-        // may be needed.  An absent key means an empty frontier.
+        // An absent key means an empty frontier.
         let frontiers =
             graph_algorithms::dominance::dominance_frontiers(&doms, |r| cfg.region_predecessors(r));
         let (mut def_sites, nonlocal) = driver.collect_def_sites()?;
-        // The write funnel checks against the FULL map, hence the copy before
-        // the narrowing below.
+        // The write funnel checks against the unnarrowed map.
         #[cfg(debug_assertions)]
         {
             driver.def_sites = def_sites.clone();
@@ -296,9 +258,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
         let region_map = driver.build_region_map(&placement)?;
 
-        // Dominator-tree pre-order, so each region inherits reaching variable
-        // values from its already-processed immediate dominator.  Then wire the
-        // fallthrough edges the per-insn loop didn't reach.
+        // Dominator-tree pre-order: each region inherits values from its
+        // already-lifted immediate dominator.
         driver.translate_regions(&region_map, &doms)?;
         driver.link_region_edges(&region_map)?;
         driver.seat_exit_free_sinks()?;

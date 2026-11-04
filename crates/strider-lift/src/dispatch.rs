@@ -15,15 +15,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         addr: strider_cfg::PcodeInsnAddr,
         region_map: &super::RegionMap,
     ) -> Result<()> {
-        // Funnel: every IR node born here picks up the parent machine
-        // instruction's address in its asm-fingerprint side-table.
+        // Every node built here is fingerprinted with this machine address.
         let machine_addr = addr.machine_addr.addr;
         let res = self.with_lift_addr(Some(machine_addr), |s| {
             s.process_insn_inner(region_id, insn, addr, region_map)
         });
-        // Width / shape errors raised deep in the IR builders carry no asm
-        // context, so a failed whole-function lift could not otherwise be tied
-        // back to an instruction.
+        // IR builder errors carry no instruction context of their own.
         res.map_err(|e| {
             e.context(format!(
                 "lifting opcode {:?} at machine address {machine_addr:#x}",
@@ -40,8 +37,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         region_map: &super::RegionMap,
     ) -> Result<()> {
         match insn.opcode {
-            // GHIDRA documents Cast as "semantically equivalent to a COPY", so
-            // it shares the Copy handler verbatim.
+            // GHIDRA: Cast is "semantically equivalent to a COPY".
             Opcode::Copy | Opcode::Cast => self.handle_copy(insn)?,
             Opcode::IntSub => self.handle_int_sub(insn)?,
             Opcode::IntLessEqual => self.handle_int_less_equal(insn)?,
@@ -51,23 +47,16 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::Popcount => self.handle_popcount(insn)?,
             Opcode::Lzcount => self.handle_lzcount(insn)?,
             Opcode::Piece => self.handle_piece(insn)?,
-            // Bit-field ops no sla emits: `CPUI_INSERT` / `CPUI_EXTRACT` are
-            // decompiler-internal, registered with the base no-op `OpBehavior`
-            // (GHIDRA calls it "Dummy behavior"), and the SLEIGH translator
-            // never produces them: a bitrange assignment lowers to
-            // shift-and-mask in `pcodecompile.cc` instead.  Lowering them needs
-            // limb-wise masks to stay exact past 128 bits, so fail closed
-            // rather than carry an untested path.
+            // Decompiler-internal; SLEIGH lowers bitrange assignments to
+            // shift-and-mask instead.
             Opcode::Extract | Opcode::Insert => {
                 bail!(
                     "opcode {:?} is a bit-field op no supported sla emits; rsleigh::lift_one is contracted not to emit it",
                     insn.opcode
                 );
             }
-            // Decompiler-internal pointer arithmetic; raw SLEIGH lifting uses
-            // INT_ADD/INT_MULT instead, so `lift_one` never emits these.  One
-            // showing up means rsleigh's contract changed.  Fail closed rather
-            // than guess: CPUI_PTRSUB is `base + offset`, not a subtraction.
+            // Decompiler-internal pointer arithmetic (PTRSUB is `base +
+            // offset`, not a subtraction).
             Opcode::PtrAdd | Opcode::PtrSub => {
                 bail!(
                     "opcode {:?} is a decompiler-internal pointer op; rsleigh::lift_one is contracted not to emit it",
@@ -77,23 +66,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::FloatSub => self.handle_float_sub(insn)?,
             Opcode::FloatNotEqual => self.handle_float_not_equal(insn)?,
             Opcode::FloatLessEqual => self.handle_float_less_equal(insn)?,
-            // Lowered to `Xor(FloatEqual(x, x), 1):I1`, exact because IEEE 754
-            // guarantees NaN != NaN.
+            // `Xor(FloatEqual(x, x), 1):I1`: NaN != NaN.
             Opcode::FloatNan => self.handle_float_nan(insn)?,
-            // Bitwise complement, lowered to `Xor(x, all_ones)`.
+            // Bitwise complement: `Xor(x, all_ones)`.
             Opcode::IntNeg => self.handle_int_neg_as_xor(insn)?,
-            // Logical NOT, lowered to `Xor(x, IntConst(1)):I1`.
+            // `Xor(x, IntConst(1)):I1`.
             Opcode::BoolNeg => self.process_bool_unary_op(insn)?,
             Opcode::FloatInt2Float => self.handle_float_int_to_float(insn)?,
             Opcode::FloatFloat2Float => self.handle_float_float_to_float(insn)?,
             Opcode::FloatTrunc => self.handle_float_trunc(insn)?,
             Opcode::Load => self.handle_load(insn)?,
-            // Decompiler-internal, like PtrAdd / PtrSub above.  No SLEIGH
-            // production emits SEGMENTOP; its only producer is the decompiler
-            // action `ActionSegmentize`, which puts a host `AddrSpace*` in
-            // input 0.  CPUI_INDIRECT marks a value an unmodelled call or store
-            // may have changed, which only the decompiler's SSA construction
-            // mints.
+            // Decompiler-internal: minted by `ActionSegmentize` and the
+            // decompiler's SSA construction, never by SLEIGH.
             Opcode::SegmentOp | Opcode::Indirect => {
                 bail!(
                     "opcode {:?} is decompiler-internal; rsleigh::lift_one is contracted not to emit it",
@@ -105,34 +89,24 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // JVM object allocation; opaque.
             Opcode::New => self.handle_new(insn)?,
 
-            // Every unconditional successor, branch or fall-through alike, is
-            // wired uniformly by `link_region_edges`.  Emitting an IR branch
-            // here too would double-link the successor and its `Phi`
-            // predecessor inputs.
+            // `link_region_edges` wires every unconditional successor.
             Opcode::Nop | Opcode::Branch => {}
             Opcode::CondBranch => self.handle_cond_branch(region_id, insn, region_map)?,
             Opcode::Store => self.handle_store(insn)?,
-            // Both emit a CC `Return`, correct for the link-register return
-            // (ARM `bx lr`).  Tail calls, jump tables and computed gotos never
-            // reach here: the cfg builder gives them dedicated terminators,
-            // handled in the special-terminator post-pass.  A `BranchIndirect`
-            // reaches here only where a `LinkRegister` answer seated the region
-            // as a `Return`, and records its site like a Sleigh `RETURN` so the
-            // seat is re-checked against each round's IR.
+            // A `BranchIndirect` reaches here only where a `LinkRegister`
+            // answer seated the region as a `Return`; other indirect branches
+            // get dedicated terminators. Both record a return site.
             Opcode::Return | Opcode::BranchIndirect => self.handle_sleigh_return(insn, addr)?,
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,
-            // Decompiler-internal phi; `lift_one` never emits it.  Same
-            // fail-closed reasoning as PtrAdd / PtrSub above.
+            // Decompiler-internal phi.
             Opcode::MultiEqual => {
                 bail!(
                     "opcode {:?} is a decompiler-internal phi; rsleigh::lift_one is contracted not to emit it",
                     insn.opcode
                 );
             }
-            // User-defined CPU intrinsic (cpuid, rdtsc, syscall).  inputs[0] is
-            // a CONST user-op id, the rest are arguments.  May clobber memory,
-            // per the target ABI table's `clobbers_memory` flag.
+            // CPU intrinsic: inputs[0] is the CONST user-op id.
             Opcode::CallOther => {
                 self.handle_call_other(insn, self.ends_no_return_region(region_id, addr))?;
             }
@@ -155,12 +129,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::IntSless => self.process_int_cmp_op(insn, IntCmpOp::Sless)?,
             Opcode::IntScarry => self.process_int_cmp_op(insn, IntCmpOp::Scarry)?,
             Opcode::IntSborrow => self.process_int_cmp_op(insn, IntCmpOp::Sborrow)?,
-            // `Int2Comp` is the only integer unary left; `IntNeg` (bitwise
-            // complement) was lowered to a Xor above.
             Opcode::Int2Comp => self.process_int_unary_op(insn, IntUnaryOp::Neg)?,
             Opcode::IntZext => self.process_extend(insn, ExtendOp::ZeroExtend)?,
             Opcode::IntSext => self.process_extend(insn, ExtendOp::SignExtend)?,
-            // Booleans are `I1`, so logical and/or/xor are the integer ops at I1.
             Opcode::BoolAnd => self.process_bool_binary_op(insn, IntBinaryOp::And)?,
             Opcode::BoolOr => self.process_bool_binary_op(insn, IntBinaryOp::Or)?,
             Opcode::BoolXor => self.process_bool_binary_op(insn, IntBinaryOp::Xor)?,
@@ -175,8 +146,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::FloatRound => self.process_float_unary_op(insn, FloatUnaryOp::Round)?,
             Opcode::FloatEqual => self.process_float_cmp_op(insn, FloatCmpOp::Equal)?,
             Opcode::FloatLess => self.process_float_cmp_op(insn, FloatCmpOp::Less)?,
-            // Exhaustive over `rsleigh::Opcode`: a new one is a compile error
-            // here rather than a runtime "unimplemented opcode".
         }
         Ok(())
     }
