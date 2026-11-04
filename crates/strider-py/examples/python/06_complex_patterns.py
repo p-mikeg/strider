@@ -35,10 +35,9 @@ for h in hits[:3]:
     )
 
 
-# Reusing one Capture in both positions forces the two operands to be the same
-# node. Add is the operator this function has most of, and none of its Adds
-# doubles a value, so the back-reference filters every row out; the two stack
-# stores off one base register are a back-reference that does bind.
+# Reusing one Capture in both positions forces both operands to be the same
+# node. No Add here doubles a value, so that filters every row out; two stack
+# stores off one base register do bind.
 print("\n=== 2. back-reference (one Capture in two positions) ===")
 a, b, v = Capture("a"), Capture("b"), Capture("v")
 print(
