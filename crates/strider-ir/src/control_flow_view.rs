@@ -16,9 +16,7 @@ pub struct DominatorTree<K: EntityRef> {
 }
 
 impl<K: EntityRef + Hash> DominatorTree<K> {
-    /// Over the vertices `succs` reaches from `root`, numbered by
-    /// graph-algorithms' interval tree and copied into a `SecondaryMap` once,
-    /// so a query stays a dense index rather than a hash lookup.
+    /// Over the vertices `succs` reaches from `root`.
     fn compute<I: IntoIterator<Item = K>>(root: K, succs: impl FnMut(K) -> I) -> Self {
         let doms = graph_algorithms::dominance::dominators(root, succs);
         let intervals = doms.intervals();
@@ -65,10 +63,8 @@ impl<K: EntityRef + Hash> DominatorTree<K> {
         a == b || (a_pre != 0 && b_pre != 0 && a_pre <= b_pre && b_post <= a_post)
     }
 
-    /// [`Self::dominates`], three-valued: `None` when either vertex is absent,
-    /// so a caller negating the answer does not turn "cannot say" into "yes".
-    /// Kinds with no control edge (`Load`, `Store`, arithmetic) are never in
-    /// the tree.
+    /// [`Self::dominates`], `None` when either vertex is absent from the tree
+    /// (as every non-control node is).
     pub fn dominance_verdict(&self, a: K, b: K) -> Option<bool> {
         (self.contains(a) && self.contains(b)).then(|| self.dominates(a, b))
     }
@@ -130,9 +126,8 @@ fn split_succs(graph: &Graph, a: CtrlKey) -> SmallVec<[CtrlKey; 2]> {
                 .value_uses(value)
                 .map(|(succ, _)| CtrlKey::Node(succ))
                 .collect();
-            // Zero consumers makes this vertex a dead end, so every
-            // dominance query past it silently answers `false`; the
-            // validator rejects that graph as `UnusedControlOutput`.
+            // Zero consumers would make every query past it answer `false`;
+            // the validator rejects that as `UnusedControlOutput`.
             debug_assert_eq!(
                 succs.len(),
                 1,
@@ -177,9 +172,7 @@ mod tests {
         }
     }
 
-    // petgraph's Cooper-Harvey-Kennedy `simple_fast` is the independent oracle
-    // the interval trees below are matched against; nothing in production
-    // computes dominance this way.
+    // petgraph's `simple_fast` is the independent oracle for the interval trees.
     impl GraphBase for ControlFlowView<'_> {
         type NodeId = NodeId;
         type EdgeId = (NodeId, NodeId);
@@ -616,9 +609,7 @@ mod tests {
                 }
             }
 
-            // Guards a vacuous pass where both trees answer `false` for
-            // everything, e.g. an entry-key mismatch yielding an empty tree:
-            // every node dominates itself and the entry dominates all.
+            // Guards against both trees vacuously answering `false`.
             assert!(
                 agreed_true >= 2 * nodes.len() - 1,
                 "{name}: expected at least the reflexive pairs plus the entry's \
