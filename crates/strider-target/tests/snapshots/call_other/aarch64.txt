@@ -234,7 +234,7 @@ NEON_ushl call reads=[] writes=[] mem=false noret=false
 NEON_usmmla call reads=[] writes=[] mem=false noret=false
 NEON_usqadd call reads=[] writes=[] mem=false noret=false
 RandomizePtrTag_Exclude UNCLASSIFIED
-SIMD_PIECE UNCLASSIFIED
+SIMD_PIECE call reads=[] writes=[] mem=false noret=false
 SVE_abs UNCLASSIFIED
 SVE_add UNCLASSIFIED
 SVE_addpl UNCLASSIFIED
