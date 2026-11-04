@@ -110,9 +110,9 @@ claims! {
         /// Where a stack address that may point there reaches a callee (a call argument, a
         /// stored value, a return, a clobbered register at a call, or any use the analysis
         /// cannot place), every call blocks; entry SP plus a constant below the area does not
-        /// count. Missed: such a base spilled and reloaded, an address in a callee-preserved
-        /// register, and a memory-clobbering `CallOther`. Code that stores its entry SP (the
-        /// ARM APCS frame record) blocks at every call.
+        /// count. Missed: such a base spilled and reloaded, and an address in a callee-preserved
+        /// register. Code that stores its entry SP (the ARM APCS frame record) blocks at every
+        /// call.
         ///
         /// A custom convention that homes or splits register arguments next to the stack ones
         /// (ARM, MIPS, PPC64, riscv, Win64) must set
