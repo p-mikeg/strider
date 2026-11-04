@@ -386,7 +386,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(InsnOutcome::Continue)
     }
 
-    /// Seats a terminator from this site's `known_targets` entry: `LinkRegister`
+    /// Seats a terminator from [`crate::CfgOptions::seated`] at this site: `LinkRegister`
     /// as `Return`, an out-of-range `Single` as `TailCall`, anything else as a
     /// `Switch`, but only when EVERY arm seats.  One out-of-range or
     /// off-boundary arm defers the whole site via `UnresolvedIndirectBranch`,
