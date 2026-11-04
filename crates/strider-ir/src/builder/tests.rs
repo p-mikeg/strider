@@ -167,6 +167,18 @@ fn truncate_const_folds_to_const() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn truncate_folds_a_constant_past_u128() -> Result<()> {
+    let mut b = empty_builder()?;
+    let value = b.build_int_const(
+        (UBig::ONE << 200) + UBig::from(0x1234u32),
+        ValueType::int(256),
+    )?;
+    let truncated = b.truncate_if_needed(value, ValueType::int(16))?;
+    assert_const_folded(&b, truncated, 0x1234);
+    Ok(())
+}
+
 /// The no-op path applies only to non-const values: a constant always folds
 /// into a fresh node whichever direction the width moves.
 #[test]
