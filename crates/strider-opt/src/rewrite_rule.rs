@@ -1,11 +1,6 @@
-//! RHS buildability is a COMPILE-TIME property: [`rewrite_rule`] bounds its
-//! RHS on [`TemplatePat`], implemented only by buildable typed structs, so a
-//! wildcard RHS fails to compile.  [`rewrite_rule_runtime`] is the dynamic
-//! (FFI) counterpart taking an already-built [`Pattern`] and [`Template`].
-//!
-//! Asm-fingerprint absorption holds by construction: every RHS node absorbs
-//! the matched footprint's fingerprints once the rewrite is accepted
-//! (superset-only).
+//! LHS -> RHS rewrite rules over [`Pattern`] and [`Template`]. Every RHS node
+//! absorbs the matched footprint's asm-fingerprints once the rewrite is
+//! accepted.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{EditFunction, IRBuilder, IRViewer, IRWalker};
@@ -15,26 +10,21 @@ use strider_pattern::{
     is_skip,
 };
 
-/// Builds a rewrite-rule closure from a typed LHS and a buildable typed
-/// RHS. A wildcard RHS does not implement [`TemplatePat`], so it is a
-/// compile error.
+/// Builds a rewrite-rule closure from a typed LHS and a buildable typed RHS
+/// (a wildcard RHS does not implement [`TemplatePat`]).
 ///
-/// The returned closure attempts the match at a candidate root and on
-/// success materialises the RHS and redirects the root's value output to
-/// it. Returns `Ok(Some(new_out))` when at least one use was redirected,
-/// `Ok(None)` for a failed match, a skipped RHS, nothing to redirect, or a
-/// replacement this site cannot take: one of another width than the root,
-/// or, for a match through a join, one that would read the root or is not
-/// available wherever the root is read.
-/// It errors, before building anything, when the RHS would build nodes and
-/// no matched node carries an asm-fingerprint (an `InitialVar` or `Phi`
-/// root), even where a built constant would dedup onto a fingerprinted node,
-/// and when a match below its root would have the replacement read it.
+/// The closure matches at a candidate root and redirects the root's single
+/// value output to the built RHS. It returns `Ok(Some(new_out))` when a use
+/// was redirected, and `Ok(None)` for a failed match, a skipped RHS, nothing
+/// to redirect, a replacement of another width, or, for a match through a
+/// join, a replacement that would read the root or is not available wherever
+/// the root is read.
 ///
-/// # Single-value-output constraint
+/// # Errors (of the closure)
 ///
-/// The LHS root must have exactly one value output, since the rule
-/// redirects that output's uses. Rooting on a multi-output node errors.
+/// Before building anything, when the RHS would build nodes and no matched
+/// node carries an asm-fingerprint; when a match below its root would have
+/// the replacement read it; and when the root has more than one value output.
 ///
 /// # Panics
 ///
@@ -44,22 +34,15 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs
     Rewrite::typed(lhs, rhs).boxed()
 }
 
-/// The dynamic (FFI / scripted) counterpart of [`rewrite_rule`], taking an
-/// already-built [`Pattern`] and [`Template`].
-///
-/// # What the node signature leaves open is author-owned
-///
-/// [`instantiate`](strider_pattern::instantiate) checks every template node
-/// against its `NodeKind`'s `expected_signature`: the declared outputs, the
-/// input count, each input slot's value kind and the operand widths. It also
-/// errors on a gapped or duplicate input slot. What the signature does not pin
-/// is left to the RHS author, such as which address a `Load` reads.
+/// The dynamic (FFI) counterpart of [`rewrite_rule`], taking an already-built
+/// [`Pattern`] and [`Template`]. Template nodes are checked against their
+/// kind's signature; anything it does not pin (such as which address a `Load`
+/// reads) is the RHS author's.
 ///
 /// # Errors
 ///
 /// Errors if either side is refused, or the RHS references a capture the LHS
-/// does not bind. The returned closure errors as [`rewrite_rule`]'s does,
-/// including when the match holds no node with an asm-fingerprint.
+/// does not bind. The returned closure errors as [`rewrite_rule`]'s does.
 pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Template) -> Result<BoxedRule> {
     Ok(Rewrite::checked(lhs, rhs)?.boxed())
 }
@@ -70,8 +53,7 @@ pub(crate) struct Rewrite {
     lhs: Pattern,
     rhs: Template,
     through_join: bool,
-    /// A rule of a built-in table, whose replacement of another width is a
-    /// bug in the rule, not a site to decline.
+    /// A built-in table rule, whose replacement of another width is a bug.
     built_in: bool,
 }
 
@@ -88,8 +70,7 @@ impl Rewrite {
         })
     }
 
-    /// [`Self::checked`] over typed sides, whose capture coverage is the
-    /// rule author's to get right.
+    /// [`Self::checked`] over typed sides.
     fn typed<L: MatchPat, T: TemplatePat>(lhs: L, rhs: T) -> Self {
         Self::checked(lhs.into_pattern(), rhs.into_template()).expect("rewrite_rule")
     }
@@ -97,8 +78,7 @@ impl Rewrite {
     /// The rule closure: [`Self::apply`] behind the root-kind check.
     fn boxed(self) -> BoxedRule {
         Box::new(move |edit: &mut EditFunction<'_>, node: NodeId| {
-            // The root check before anything is allocated: `Matcher::new` plus
-            // `match_at` allocate per attempt.
+            // Checked before `Matcher::new` / `match_at` allocate.
             if !self.lhs.root_admits_kind(edit.function().node_kind(node)) {
                 return Ok(None);
             }
@@ -110,10 +90,8 @@ impl Rewrite {
     /// instantiated RHS.
     fn apply(&self, edit: &mut EditFunction<'_>, node: NodeId) -> Result<Option<ValueId>> {
         let (lhs, rhs) = (&self.lhs, &self.rhs);
-        // Keep the matcher borrow tight so the function can be mutated
-        // afterwards. The snapshotted footprint (root, interior, captured
-        // leaves) is the rewrite's proof: the interior nodes get culled, so
-        // their asm-fingerprints must be carried onto the RHS.
+        // The footprint is the rewrite's proof: its interior gets culled, so
+        // its asm-fingerprints are carried onto the RHS.
         let (bindings, matched_nodes) = {
             let matcher = Matcher::new(edit.function());
             match matcher.match_at(node, lhs)? {
@@ -123,14 +101,12 @@ impl Rewrite {
         };
 
         let (root_value, root_ty) = edit.function().single_value_output(node)?;
-        // Nothing to redirect, so nothing to build or attribute.
         if edit.value_uses(root_value).next().is_none() {
             return Ok(None);
         }
 
-        // A fresh node's fingerprint is the footprint's, so a footprint of
-        // exempt nodes only (an `InitialVar` or `Phi` root) would leave every
-        // built node with none, which `validate` rejects.
+        // A footprint of exempt nodes only (an `InitialVar` or `Phi` root)
+        // would leave every built node unfingerprinted, which `validate` rejects.
         let attributable = |f: &strider_ir::Function| {
             let side = f.side_tables();
             if matched_nodes
@@ -146,9 +122,8 @@ impl Rewrite {
             Ok(())
         };
 
-        // A closure in the tree may opt out via `skip()`, which becomes "no
-        // change" here. The build can dedup onto a live node, so the footprint
-        // is unioned in only once the rewrite is accepted.
+        // The build can dedup onto a live node, so the footprint is unioned in
+        // only once the rewrite is accepted.
         let mut build = Unattributed {
             edit,
             built: Vec::new(),
@@ -168,12 +143,8 @@ impl Rewrite {
         };
         let Unattributed { edit, built } = build;
 
-        // A replacement of a different width is not a narrower spelling of the
-        // same value, it IS a different value: every use of the root silently
-        // starts reading the wrong number of bits. Reachable whenever the RHS
-        // hands back an LHS-bound value that the match reached THROUGH a cast
-        // (`ignore_casts`), or a template that pins its own root width, so it
-        // is this site's to decline.
+        // Reachable through `ignore_casts` or a template pinning its own root
+        // width.
         if edit.function().value_type(new_value)? != root_ty {
             debug_assert!(
                 !self.built_in,
@@ -182,20 +153,12 @@ impl Rewrite {
             return Ok(None);
         }
 
-        // `replace_value` redirects EVERY use of the root, the RHS's own fresh
-        // edges included, so an RHS reading the root closes a data cycle: the
-        // node becomes its own input and nothing downstream rejects it.
-        //
-        // A match through a join binds values that need not sit below the
-        // root: a loop's back-edge value reads the header, and a merge arm's
-        // value is defined on one path only. Such a match gets the unpruned
-        // walk and an availability check. A phi bound as a leaf is harmless: a
-        // cycle back through it passes through that phi. Which values such a match binds is the site's, so a cycle
-        // or an unavailable value declines it.
-        //
-        // Otherwise every LHS-bound value other than the root sits strictly
-        // below it, so in an acyclic graph none of them reaches it: the walk
-        // prunes at the matched footprint and is left with the fresh RHS.
+        // `replace_value` redirects every use of the root, the RHS's own
+        // included, so an RHS reading the root would close a data cycle.
+        // A match through a join gets the unpruned walk and an availability
+        // check, and declines on failure; a phi leaf breaks a cycle. Otherwise
+        // every bound value sits below the root, so the walk prunes at the
+        // footprint.
         if new_value != root_value {
             let f = edit.function();
             let crosses_join = self.through_join
@@ -236,11 +199,8 @@ impl Rewrite {
             }
         }
 
-        // EVERY built node takes the matched subgraph's fingerprints, not just
-        // the root output. A BARE-CAPTURE RHS such as `add(x, 0) -> x` builds
-        // nothing and returns the LHS-bound value verbatim, so its survivor
-        // takes them too: nothing else carries the culled interior nodes'
-        // addresses onto it.
+        // Every built node takes the footprint's fingerprints, and so does the
+        // survivor of a bare-capture RHS such as `add(x, 0) -> x`.
         let new_producer = edit.producer(new_value);
         for into in built.into_iter().chain([new_producer]) {
             for &matched in &matched_nodes {
@@ -248,15 +208,12 @@ impl Rewrite {
             }
         }
 
-        // `replace_value` absorbs the old root's fingerprint, redirects every
-        // use, and enqueues the orphaned old root for the cull.
         let changed = edit.replace_value(root_value, new_value);
         Ok(changed.then_some(new_value))
     }
 }
 
-/// The RHS build: through the edit, but recording each node instead of
-/// unioning the matched footprint into it.
+/// The RHS build: records each built node instead of attributing it.
 struct Unattributed<'e, 'g> {
     edit: &'e mut EditFunction<'g>,
     built: Vec<NodeId>,
@@ -348,8 +305,7 @@ impl Rule {
 }
 
 /// An ordered rule list tried first-fire-wins at a root, each kind seeing
-/// only the rules whose root admits it: most fold rules are rooted on one
-/// `IntBinaryOp` variant.
+/// only the rules whose root admits it.
 pub(crate) struct RuleTable {
     rules: Vec<Rule>,
     /// Per root kind, the indices of the rules it admits, in table order.
@@ -383,10 +339,7 @@ impl RuleTable {
         })
     }
 
-    /// The output of the FIRST rule to fire at `root`, or `None` if none does.
-    ///
-    /// Later rules do not run: the first firing rule redirects every use of
-    /// the root's output, so a later match sits on a node nothing consumes.
+    /// The output of the first rule to fire at `root`, or `None` if none does.
     ///
     /// # Errors
     /// Propagates the first error returned by a rule.
@@ -421,8 +374,8 @@ impl RuleTable {
     }
 }
 
-/// Whether `kind`'s payload names an entity of one function, which the
-/// thread-long memo would gain an entry for per value.
+/// Whether `kind`'s payload names a per-function entity, kept out of the
+/// `by_kind` memo.
 fn names_an_entity(kind: &NodeKind) -> bool {
     matches!(
         kind,
@@ -462,9 +415,8 @@ fn reads(
     false
 }
 
-/// Whether `value` is computable wherever `replaced` is: its early position
-/// dominates `replaced`'s, which dominates every use. A `replaced` with no
-/// position has no use on a path that runs.
+/// Whether `value`'s early position dominates `replaced`'s. A `replaced` with
+/// no position has no use on a path that runs.
 fn available_at(edit: &EditFunction<'_>, value: ValueId, replaced: ValueId) -> bool {
     let tree = edit.control_dominator_tree();
     let at = |v| strider_ir::early_position(edit.function(), &tree, v);
@@ -475,17 +427,8 @@ fn available_at(edit: &EditFunction<'_>, value: ValueId, replaced: ValueId) -> b
 /// appears in the LHS.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     rhs.root()?;
-    // GUARANTEED, not merely present: under a `one_of` only one arm fires, so a
-    // capture bound in some arms but not all leaves the RHS with nothing to
-    // instantiate. Accepting it here would defer the failure to the first node
-    // where a non-binding arm happens to match, and `instantiate`'s unbound
-    // -capture error is not a skip, so it aborts the whole pipeline for that
-    // function. Reject at construction instead: deterministic, and independent
-    // of which binary the rule is later run against.
-    //
-    // A capture the RHS declared OPTIONAL reads as `Option`, so an arm that
-    // leaves it unbound is a value the body handles, not a failure. Mere
-    // presence is then enough, which still catches a capture no arm binds.
+    // Only one alternation arm fires, so a capture must be bound on every arm,
+    // unless the RHS declared it optional, which needs only some arm.
     let lhs_caps = lhs.guaranteed_captures()?;
     let present: rustc_hash::FxHashSet<Capture> = lhs.bound_captures().collect();
     let optional: rustc_hash::FxHashSet<Capture> = rhs.optional_captures().collect();
@@ -509,20 +452,9 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     Ok(())
 }
 
-/// Applies the FIRST matching rule at every reachable node, returning the fire
-/// count.
-///
-/// Rules are tried in order and the first fire ends the node: it redirects the
-/// matched root's uses, leaving the root itself detached, and a later rule
-/// would still instantiate a full RHS and union the discarded match's
-/// fingerprints into what can be a live node.  Same rule as the fold tables'
-/// `first_match`.
-///
-/// One call walks the graph once, so a rule whose output its own LHS matches
-/// needs the caller to loop to a fixed point.
-///
-/// Ends, on every exit, by re-deriving the memory classes `stack_only()` /
-/// `heap_only()` read, under the claims the function holds.
+/// Applies the first matching rule at every reachable node in one walk (no
+/// fixed point), returning the fire count. Re-derives the memory classes
+/// `stack_only()` / `heap_only()` read on every exit.
 ///
 /// # Errors
 ///
@@ -532,10 +464,7 @@ where
     R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
 {
     let applied = fire_rules(edit, rules);
-    // A rule can rewire an address value's inputs, so a surviving memory
-    // class names the wrong slot and a fresh `Load` has none; `RegionFilter`
-    // reads that table directly, so a stale entry changes what `stack_only()`
-    // / `heap_only()` match. An error exit hands the function back too.
+    // A rule can rewire an address, staling its memory class.
     crate::refresh_memory_classes(edit);
     applied
 }
@@ -548,12 +477,8 @@ where
     let candidates: Vec<NodeId> = edit.walk().collect();
     let mut applied: usize = 0;
     for node in candidates {
-        // The walk visits consumers first, so a fire can leave a later
-        // candidate with only dead consumers. `clean` culls it, and a culled
-        // node keeps its kind and fingerprints, so an LHS that pins no input
-        // would still match it. `clean` never culls a side-effecting value
-        // producer (`CPoolRef`, `New`), so one orphaned here stays a
-        // candidate.
+        // A fire can leave a later candidate dead, and a culled node still
+        // matches an LHS that pins no input.
         if !edit.is_live(node) {
             continue;
         }
@@ -584,10 +509,8 @@ mod tests {
         Capture, CaptureExt, MatchPat, Matcher, int_add, int_const, int_const_with,
     };
 
-    /// A sub-pattern the match reached THROUGH a cast matches at the pre-cast
-    /// width, so an RHS rebuilt from its captures is narrower than the root it
-    /// replaces. Installing it would redirect every I64 use at an I32 value,
-    /// so the site is declined.
+    /// A capture bound through a cast is narrower than the root it would
+    /// replace, so the site is declined.
     #[test]
     fn a_rewrite_may_not_replace_a_value_with_a_narrower_one() {
         narrower_replacement(false);
@@ -624,9 +547,8 @@ mod tests {
         b.build_return(Some(sum), &[]).unwrap();
         let mut function = b.build().unwrap();
 
-        // `add(mul(a,b), 0) -> a`, written to see through casts. The `mul`
-        // exists only BELOW the zero-extend, so the ladder engages and binds
-        // `a` at the pre-cast width.
+        // The `mul` sits below the zero-extend, so `a` binds at the pre-cast
+        // width.
         let lhs = int_add(int_mul(var(a), var(bcap)), int_const_match(0u64))
             .into_pattern()
             .ignore_casts();
@@ -662,8 +584,7 @@ mod tests {
         );
     }
 
-    /// A built-in rule replacing its root at another width is a bug in the
-    /// rule, so a test build fails loudly instead of declining.
+    /// A built-in rule replacing its root at another width fails a test build.
     /// Mutation: decline it as a user rule's.
     #[test]
     #[cfg(debug_assertions)]
@@ -772,10 +693,8 @@ mod tests {
         assert_eq!(edit.function().graph().all_node_ids().count(), nodes_before);
     }
 
-    /// A match made only of fingerprint-exempt nodes has no instruction
-    /// address to stamp on a fresh node, so building one is refused before
-    /// anything is created; an RHS that skips or is a bare capture builds
-    /// nothing and is no change.
+    /// A match of fingerprint-exempt nodes only refuses to build; an RHS that
+    /// skips or is a bare capture is no change.
     #[test]
     fn a_rewrite_of_an_exempt_only_match_builds_nothing() {
         use strider_pattern::initial_var_for;
@@ -1112,9 +1031,8 @@ mod tests {
         assert_live_matches_reachable(&edit);
     }
 
-    /// A bare-capture identity fold must carry the culled INTERIOR matched
-    /// nodes' asm-fingerprints onto the survivor, per the superset-only
-    /// proof contract.
+    /// A bare-capture identity fold carries the culled interior's
+    /// asm-fingerprints onto the survivor.
     #[test]
     fn identity_fold_carries_interior_fingerprint_onto_survivor() {
         let vn = reg_vn(0x1000, 8);
@@ -1214,9 +1132,7 @@ mod tests {
         assert_live_matches_reachable(&edit);
     }
 
-    /// Every rule is tried at every node, so a node a rule already rewrote is
-    /// still offered to the rest: the first fire is what the graph keeps, and a
-    /// later rule at the same node redirects nothing.
+    /// Of two rules matching one node, only the first takes effect.
     #[test]
     fn apply_rules_count_keeps_the_first_fire_at_a_node() {
         let vn = reg_vn(0x1000, 8);
@@ -1309,8 +1225,7 @@ mod tests {
         assert_eq!(table.first_match(&mut edit, mul).unwrap(), Some(xv));
     }
 
-    /// The memo outlives every function a thread folds, so a kind naming
-    /// one function's constant or variable gets no entry of its own.
+    /// A kind naming one function's constant or variable gets no memo entry.
     /// Mutation: memoize every kind.
     #[test]
     fn rule_table_memo_stays_bounded_over_distinct_constants() {
@@ -1423,9 +1338,8 @@ mod tests {
     }
 
     /// A multi-output template: the RHS root `Load` consumes a fresh
-    /// `Store`'s memory output. Both fresh interior nodes must be tracked.
-    /// The rewrite facade roots a template at a value, so it cannot put the
-    /// Store on the exit chain; the test threads it to the `Return` itself.
+    /// `Store`'s memory output, and both fresh nodes must be tracked. The test
+    /// threads the Store to the `Return` itself.
     #[test]
     fn track_multi_output_template_interior() {
         use super::rewrite_rule_runtime;
@@ -1446,7 +1360,6 @@ mod tests {
 
         let load_node = function.producer(loaded);
 
-        // Capture the Load's address so the RHS can re-use it.
         let addr_cap = Capture::new();
         let lhs = load()
             .addr(strider_pattern::anything().capture(addr_cap))
@@ -1458,8 +1371,6 @@ mod tests {
             let a = tb.capture(addr_cap);
             let data = tb.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(UBig::from(7u8)))));
             tb.set_value_ty(data, VT::int(64));
-            // The store needs an incoming memory token; this leaf is
-            // input-less, so it becomes a root.
             let init_mem_node = tb.node(NodeKind::InitialMemory);
             let init_mem = tb.memory_output(init_mem_node, 0);
             // Store(RAM): inputs [mem, addr, data], output [mem_out].
