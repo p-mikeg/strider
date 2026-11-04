@@ -22,7 +22,8 @@ prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 Symbols and memory:
 
 ```python
-prog.symbol("array_sum")     # a Symbol: name, address, size, end, is_function, is_thumb, region
+prog.symbol("array_sum")     # a Symbol: name, address, size, end, is_function, is_thumb,
+                             # local_entry, region
 prog.symbols()               # {name: Symbol} for all of them
 prog.functions()             # one Symbol per function address, address order
 prog.symbol_at(0x401234)     # the Symbol covering an address, or None
