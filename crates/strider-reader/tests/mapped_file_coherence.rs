@@ -108,8 +108,7 @@ fn replacing_the_path_leaves_the_mapping_coherent() {
 }
 
 /// Unlinking the path does not disturb the mapping: the inode outlives the
-/// name. Analysing a build-system temp file that is cleaned up mid-run used to
-/// fail here.
+/// name.
 #[test]
 fn unlinking_the_path_leaves_the_mapping_coherent() {
     if mapping_disabled() {

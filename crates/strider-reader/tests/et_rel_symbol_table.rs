@@ -1,11 +1,8 @@
 //! An object file's relocations index the symbol table its `sh_link` names.
 //!
-//! `object`'s `dynamic_symbol_table` is the first `SHT_DYNSYM` SECTION in the
-//! file, populated whatever the `e_type`. Preferring it meant an `ET_REL`
-//! carrying any such section resolved every relocation against the wrong
-//! table, patching in an unrelated symbol's `st_value`. The patch is silent,
-//! and the attacker chooses both the value and the section it is rebased
-//! against.
+//! `object`'s `dynamic_symbol_table` is the first `SHT_DYNSYM` section in the
+//! file whatever the `e_type`, so an `ET_REL` carrying one must still resolve
+//! against `.symtab`.
 //!
 //! The two objects below differ in one section header's `sh_type`
 //! (`SHT_STRTAB` vs `SHT_DYNSYM`). Both hold `.text` = `e8 00 00 00 00`
