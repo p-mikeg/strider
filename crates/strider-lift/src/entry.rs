@@ -4,10 +4,8 @@ use crate::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Binds [`strider_target::BuiltCallingConvention::entry_address`] to
-    /// the entry address, so a TOC / GOT prologue folds. The ABI guarantees it
-    /// only at a global entry, but code entered below the prologue never reads
-    /// the register first. At a loop-header entry, only the phi's entry-edge
-    /// operand is bound.
+    /// the entry address, so a TOC / GOT prologue folds; at a loop-header
+    /// entry, only the phi's entry-edge operand.
     pub(crate) fn bind_entry_address_register(&mut self) -> Result<()> {
         use strider_ir::{IRBuilderExt as _, IRViewer as _, VnTypeExt as _};
         let Some(vn) = self.builder.function().default_cc().entry_address else {
@@ -46,12 +44,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 
     /// Records each argument register's entry value as the carrier of its ABI
-    /// position. Integer carriers are containers
-    /// ([`strider_ir::FunctionBuilder::record_register_arg_carriers`]); float
-    /// carriers are indexed separately, leave a gap for an untracked register,
-    /// and take their own slice when several share a container (`d0`/`d1` in
-    /// `q0`). No shipped CC puts two integer argument registers in one
-    /// container.
+    /// position: integer carriers are containers; float carriers leave a gap
+    /// for an untracked register and take their own slice of a shared
+    /// container (`d0`/`d1` in `q0`).
     pub(crate) fn record_register_arg_carriers(&mut self) -> Result<()> {
         self.builder.record_register_arg_carriers();
         let float_slots = {

@@ -39,9 +39,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// The stack pointer, plus the argument registers of each
-    /// `per_address_ccs` override `cfg` selects (checked by
-    /// [`Self::check_override_cc`]). `FunctionBuilder::new` seeds only the
-    /// function's own convention.
+    /// `per_address_ccs` override `cfg` selects, each checked by
+    /// [`Self::check_override_cc`].
     pub(crate) fn convention_vns(
         &self,
         cfg: &strider_cfg::Cfg,
@@ -59,10 +58,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         Ok(vns)
     }
 
-    /// The declared register enclosing each REGISTER-space LOAD / STORE
-    /// address (see [`Self::register_slot_of`]); an enclosing register, not the
-    /// slice, so the set stays nested. An unresolved address is skipped: the
-    /// lift takes its opaque path there.
+    /// The declared register enclosing each resolved REGISTER-space LOAD /
+    /// STORE address ([`Self::register_slot_of`]), not the slice, so the set
+    /// stays nested.
     fn register_space_vns<'s>(
         &'s self,
         cfg: &'s strider_cfg::Cfg,
