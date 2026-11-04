@@ -327,8 +327,7 @@ impl Expr {
         ordered: bool,
     ) -> PatValueRef {
         // Each arm is its own function: an unoptimised frame holds every local it names, and this
-        // one is on the stack once per recursion step. The same holds for the frame-size notes
-        // below.
+        // one is on the stack once per recursion step.
         let out = match self.take() {
             Inner::Leaf(l) => {
                 let out = l.lower(b);
