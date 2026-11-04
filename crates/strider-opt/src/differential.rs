@@ -734,7 +734,7 @@ fn input_value(rng: &mut Rng, ty: ValueType) -> UBig {
 
 /// Returns the number of compared (trial, return value) pairs, or a
 /// description of the first mismatch. A pair whose reference value is
-/// undefined -- division by zero, `INT_MIN / -1` -- is not counted.
+/// undefined (division by zero) is not counted.
 pub(crate) fn check_seed(
     seed: u64,
     steps: usize,
