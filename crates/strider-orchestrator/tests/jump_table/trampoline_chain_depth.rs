@@ -132,7 +132,7 @@ fn the_iteration_cap_is_the_chain_depth_it_seats() {
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
         vec![BASE + 256 * LINK + 5],
-        "the frontier `jmp rax` is the one still growing when the cap ran out",
+        "the unfolded frontier `jmp rax` stays a live placeholder",
     );
     assert_eq!(over_rounds, 257);
 }
@@ -192,5 +192,60 @@ fn a_seat_refused_on_the_cap_round_is_not_published() {
             .any(|a| a.machine_addr.addr == frontier),
         "{}",
         result.incomplete(),
+    );
+}
+
+/// A seated table that gains an arm every round is still growing when the cap
+/// runs out: classified and seated, so only the cap reports it.
+#[test]
+fn a_table_still_growing_at_the_cap_is_reported() {
+    use strider_cfg::{RegionTerminator, ResolvedTarget, ResolvedTargets};
+    use strider_orchestrator::opt::{ClassifiedSites, ReadOnlyMemory, classify_sites};
+
+    // `jmp rax`, then a `ret` at every arm.
+    let mut bytes = vec![0xc3u8; 0x200];
+    bytes[..2].copy_from_slice(&[0xff, 0xe0]);
+    let calls = std::cell::Cell::new(0u64);
+    let classify = |f: &strider_ir::Function,
+                    rom: Option<&dyn ReadOnlyMemory>|
+     -> anyhow::Result<ClassifiedSites> {
+        let mut found = classify_sites(f, rom)?;
+        calls.set(calls.get() + 1);
+        let arms: Vec<_> = (0..calls.get())
+            .map(|k| ResolvedTarget::new(BASE + 2 + k, None))
+            .collect();
+        let targets = ResolvedTargets::table(arms);
+        found.resolved = found
+            .sites
+            .iter()
+            .map(|&site| (site, targets.clone()))
+            .collect();
+        Ok(found)
+    };
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
+    let result = strider
+        .analyze_with_classifier(
+            BASE,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+            &classify,
+        )
+        .expect("a site growing at the cap is a result, not an error");
+    assert_eq!(calls.get(), 257, "precondition: the cap was reached");
+    assert!(
+        result.cfg.regions().any(|r| matches!(
+            r.terminator,
+            RegionTerminator::Switch { addr, .. } if addr.machine_addr.addr == BASE
+        )),
+        "precondition: the site is a seated switch, not a placeholder",
+    );
+    assert_eq!(
+        result
+            .incomplete()
+            .iter()
+            .map(|(a, r)| (a.machine_addr.addr, r))
+            .collect::<Vec<_>>(),
+        vec![(BASE, strider_orchestrator::Reason::UnresolvedBranch)],
     );
 }
