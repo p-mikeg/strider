@@ -3,28 +3,22 @@ use pyo3::types::PyType;
 
 use strider_target::call_other_abi::{CallOtherClass, CallOtherOverride};
 
-/// `Class` is a table row resolved at lift time; `Built` is resolved eagerly,
-/// so a name typo raises at construction.
+/// `Built` resolves at construction, so a name typo raises there.
 #[derive(Clone)]
 pub(crate) enum AbiImpl {
     Class(CallOtherClass),
     Built(Box<strider_target::BuiltCallOtherAbi>),
 }
 
-/// How one Sleigh user-op is lifted: its implicit register footprint, memory
-/// effect and whether control returns, none of which the pcode encodes.
-///
-/// Construct via `pure()` / `noop()` / `mem_clobber()` / `no_return()`, or
-/// `custom(...)` to name registers; pass to
-/// `CfgOptions(call_other_abis={name: abi})`.
+/// How one Sleigh user-op is lifted: implicit registers, memory effect and
+/// whether control returns. Pass to `CfgOptions(call_other_abis={name: abi})`.
 #[pyclass(name = "CallOtherAbi", module = "strider.sleigh", frozen)]
 #[derive(Clone)]
 pub struct PyCallOtherAbi {
     pub(crate) inner: AbiImpl,
-    /// The register names as given.
     reads: Vec<String>,
     writes: Vec<String>,
-    /// The arch a `custom(...)` ABI resolved against; `None` for a class.
+    /// `None` for a class.
     pub(crate) source_arch: Option<strider_target::SleighArch>,
 }
 
@@ -43,8 +37,6 @@ impl PyCallOtherAbi {
         }
     }
 
-    /// The classification `preset` gives `name`, or `None` for a name no
-    /// built-in table answers for.
     pub(crate) fn builtin(preset: strider_target::ArchPreset, name: &str) -> Option<Self> {
         strider_target::call_other_abi::classify(preset, name).map(Self::from_class)
     }
@@ -56,7 +48,6 @@ impl PyCallOtherAbi {
         }
     }
 
-    /// `source_arch`'s preset.
     fn source_preset(&self) -> Option<strider_target::ArchPreset> {
         self.source_arch.map(|a| a.preset())
     }
@@ -64,8 +55,7 @@ impl PyCallOtherAbi {
 
 #[pymethods]
 impl PyCallOtherAbi {
-    /// The op is dropped: no IR node, control and memory unchanged, and any
-    /// pcode result ignored.
+    /// The op is dropped: no IR node, any pcode result ignored.
     #[classmethod]
     fn noop(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::NoOp)
@@ -83,29 +73,26 @@ impl PyCallOtherAbi {
         Self::from_class(CallOtherClass::MEM_CLOBBER)
     }
 
-    /// Control does not pass the op, which ends its region. Empty footprint;
-    /// use `custom(..., no_return=True)` for one.
+    /// Control does not pass the op. Empty footprint; use
+    /// `custom(..., no_return=True)` for one.
     #[classmethod]
     fn no_return(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::NO_RETURN)
     }
 
-    /// Build an ABI naming implicit registers. Names are resolved here; a bad
-    /// one raises `StriderError`.
+    /// An ABI naming implicit registers; a bad name raises `StriderError`.
     ///
     /// Args:
     ///     sleigh: The `SleighArch` to resolve register names against.
-    ///     implicit_reads: Registers read beyond the pcode-explicit operands.
-    ///         They lead the lifted call's argument list.
-    ///     implicit_writes: Registers written or clobbered beyond the
-    ///         pcode-explicit result.
+    ///     implicit_reads: Registers read beyond the explicit operands; they
+    ///         lead the lifted call's arguments.
+    ///     implicit_writes: Registers written beyond the explicit result.
     ///     clobbers_memory: `True` for anything touching memory (atomics,
-    ///         barriers, port I/O, syscalls); `False` for pure compute.
+    ///         barriers, port I/O, syscalls).
     ///     no_return: `True` when control does not pass the op.
     ///
     /// Usable only with a `Lifter` sharing `sleigh`'s register table (`arm`,
-    /// `arm_thumb` and `arm_be_kernel` share one); any other raises
-    /// `StriderError`.
+    /// `arm_thumb` and `arm_be_kernel` share one).
     #[classmethod]
     #[pyo3(signature = (
         sleigh,
@@ -174,14 +161,12 @@ impl PyCallOtherAbi {
         }
     }
 
-    /// Whether the op lifts to nothing at all (the `noop()` class).
+    /// Whether this is `noop()`.
     #[getter]
     fn is_noop(&self) -> bool {
         matches!(self.inner, AbiImpl::Class(CallOtherClass::NoOp))
     }
 
-    /// The constructor call that produces this ABI, less the `sleigh` a
-    /// footprint was resolved against.
     fn __repr__(&self) -> String {
         if self.is_noop() {
             return "CallOtherAbi.noop()".to_owned();
@@ -206,8 +191,8 @@ impl PyCallOtherAbi {
         )
     }
 
-    /// Equality on the footprint, memory effect, no-return flag and a
-    /// `custom`'s arch preset. A `custom` never equals a class.
+    /// Equal footprint, memory effect, no-return flag and `custom` arch
+    /// preset; a `custom` never equals a class.
     fn __eq__(&self, other: &Self) -> bool {
         self.source_preset() == other.source_preset()
             && self.is_noop() == other.is_noop()
@@ -217,7 +202,6 @@ impl PyCallOtherAbi {
             && self.is_no_return() == other.is_no_return()
     }
 
-    /// Hash consistent with `__eq__`.
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
