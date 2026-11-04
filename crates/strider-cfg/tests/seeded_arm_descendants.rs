@@ -497,3 +497,44 @@ fn an_arm_onto_a_stub_a_direct_edge_reported_keeps_it() {
         assert_no_dangling_successor(&cfg);
     }
 }
+
+/// A seat made off a refused arm goes with the arm.
+///
+/// ```text
+/// 1000  jmp rax        ; seeded [0x1010]
+/// 1010  test eax, eax
+/// 1012  je 0x1020
+/// 1014  jmp rcx        ; seeded LinkRegister
+/// 1020  (not code)
+/// ```
+#[test]
+fn a_seat_inside_a_refused_arm_is_not_reported() {
+    let mut code = vec![0xcc; 0x24];
+    code[0..2].copy_from_slice(&[0xff, 0xe0]);
+    code[0x10..0x16].copy_from_slice(&[0x85, 0xc0, 0x74, 0x0c, 0xff, 0xe1]);
+    code[0x20..0x24].copy_from_slice(&[0x06; 4]);
+    let lr_site = PcodeInsnAddr::at_machine_start(0x1014);
+    let known = FxHashMap::from_iter([
+        (
+            PcodeInsnAddr::at_machine_start(BASE),
+            ResolvedTargets::table([strider_cfg::ResolvedTarget::from(0x1010)]),
+        ),
+        (lr_site, ResolvedTargets::LinkRegister),
+    ]);
+    let opts = CfgOptions {
+        known_targets: &known,
+        ..CfgOptions::default()
+    };
+    let cfg = DecodeEngine::new(SleighArch::x86_64(), BufMemReader::new(code, BASE))
+        .expect("decode engine")
+        .build_cfg(BASE.into(), &opts)
+        .expect("build");
+    assert_eq!(undecodable(&cfg), [0x1010]);
+    assert!(cfg.link_register_seated().is_empty());
+    assert!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UnverifiedSeed)
+            .next()
+            .is_none()
+    );
+}
