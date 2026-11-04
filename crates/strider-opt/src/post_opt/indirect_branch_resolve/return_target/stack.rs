@@ -1,5 +1,3 @@
-//! Where a value sits on the entry stack, and what each store does to it.
-
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, IntBinaryOp};

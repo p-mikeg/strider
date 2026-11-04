@@ -1,16 +1,14 @@
-//! Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`.
-
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;
 use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 
+/// Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`.
 pub struct IfCondInversion;
 
 thread_local! {
-    /// Built once per thread; held outside the pass so it stays
-    /// `Sync`, as `Optimizer` requires.
+    /// Outside the pass so it stays `Sync`.
     static PATTERN: (Pattern, Capture) = {
         let capture = Capture::new();
         (bool_not(var(capture)).into_pattern(), capture)

@@ -1,8 +1,3 @@
-//! Nearest-clobber queries over the memory graph.
-//!
-//! [`layout`] answers one by climbing the memory dominator tree over an index
-//! built once per graph state.
-
 mod layout;
 
 #[cfg(test)]
