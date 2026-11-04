@@ -157,8 +157,8 @@ fn build_reassoc_and_mask_rules() -> Vec<Rule> {
     reassoc!(int_xor, int_const_with!([c1: uint, c2: uint] => c1 ^ c2));
 
     // `shift(shift(x, C1), C2) -> shift(x, C1 + C2)` while the sum is below the
-    // width; past it known bits fold the logical shifts to 0 at widths up to
-    // 128.
+    // width. Past it, known bits fold the logical shifts to 0 only up to 128
+    // bits; a wider chain is left as is.
     macro_rules! shift_chain {
         ($op:ident) => {
             rules.push(Rule::rewrite(
