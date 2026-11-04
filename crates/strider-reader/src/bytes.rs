@@ -78,13 +78,8 @@ impl FileBytes {
     }
 
     /// Maps `path` read-only, reading it instead when mapping fails or
-    /// `STRIDER_NO_MMAP` is set to anything but `0` (a mapping turns a paging
-    /// error on a network or 9p mount into SIGBUS).
-    ///
-    /// # Errors
-    ///
-    /// When the file cannot be opened or stat'd, is not a regular file, or
-    /// cannot be read.
+    /// `STRIDER_NO_MMAP` is set to anything but `0`. Errs when the file cannot
+    /// be opened, stat'd or read, or is not a regular file.
     pub(crate) fn map_path<P: AsRef<std::path::Path>>(path: P) -> crate::Result<Self> {
         let path = path.as_ref();
         // Before the open, which blocks on a FIFO. A stat failure falls
@@ -124,13 +119,8 @@ impl FileBytes {
         }
     }
 
-    /// One `stat` of the mapped file against its identity when mapped; `Ok`
-    /// for owned bytes.
-    ///
-    /// # Errors
-    ///
-    /// When the file no longer stats, or no longer looks like the file that
-    /// was mapped.
+    /// Re-stats the mapped file against its identity when mapped; `Ok` for
+    /// owned bytes. Errs when it no longer stats or its identity changed.
     pub(crate) fn check_unchanged(&self) -> crate::Result<()> {
         let Store::Mapped(m) = &self.0 else {
             return Ok(());

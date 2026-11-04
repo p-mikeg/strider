@@ -428,15 +428,10 @@ pub(super) struct Target {
     ppc64_local_entry: u64,
 }
 
-/// Symbol `idx`, resolved: from `.dynsym` for a linked image, `.symtab` for
-/// an ET_REL, rebased through `layout` (an undefined or `SHN_COMMON` ET_REL
-/// symbol resolves to its [`ElfSectionLayout::extern_address`]).
-///
-/// `None` for an index that does not resolve, a linked image with no
-/// `.dynsym`, an `st_shndx` naming no section, or a linked image's undefined
-/// zero-valued or `SHN_COMMON` symbol.
-///
-/// [`ElfSectionLayout::extern_address`]: crate::elf::sections::ElfSectionLayout::extern_address
+/// Symbol `idx` from `.dynsym` (linked image) or `.symtab` (ET_REL), rebased
+/// through `layout`; an ET_REL extern resolves to its `extern_address`.
+/// `None` when it has no address: unresolved, no `.dynsym`, a bad
+/// `st_shndx`, a linked image's zero-valued undefined or `SHN_COMMON` one.
 pub(super) fn resolve_symbol_target(
     obj: &object::File<'_>,
     layout: &crate::elf::sections::ElfSectionLayout,
