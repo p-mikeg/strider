@@ -15,6 +15,8 @@
 //! reading the cell through a phi reads no bits of it. Each seats cells the
 //! code rules out.
 
+use std::cell::LazyCell;
+
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker};
 
@@ -45,6 +47,9 @@ pub fn classify_target(
 ) -> Option<ResolvedTargets> {
     SiteClassifier::new(function, rom).classify(branch)
 }
+
+type LazyRanges<'f> =
+    LazyCell<index_range::RangeMap<'f>, Box<dyn FnOnce() -> index_range::RangeMap<'f> + 'f>>;
 
 /// One function's dispatch-site recogniser.
 ///
@@ -77,7 +82,10 @@ pub fn classify_target(
 /// allocator.  A dispatch value forwarded that way arrives here folded, so a
 /// claim that is wrong for the input seats a wrong edge.
 pub(crate) struct SiteClassifier<'f> {
-    ranges: index_range::RangeMap<'f>,
+    function: &'f strider_ir::Function,
+    /// Built on the first table query: a constant or link-register site never
+    /// reads it.
+    ranges: LazyRanges<'f>,
     eval: eval::Evaluator<'f>,
     returns: ReturnTargets<'f>,
     /// Per value, the `Add(value, k)` siblings [`index_range::RangeMap::may_bound_sum`]
@@ -94,7 +102,8 @@ impl<'f> SiteClassifier<'f> {
         rom: Option<&'f dyn ReadOnlyMemory>,
     ) -> Self {
         Self {
-            ranges: index_range::RangeMap::new(function),
+            function,
+            ranges: LazyCell::new(Box::new(move || index_range::RangeMap::new(function))),
             eval: eval::Evaluator::new(function, rom),
             returns: ReturnTargets::new(function),
             sums: rustc_hash::FxHashMap::default(),
@@ -102,7 +111,7 @@ impl<'f> SiteClassifier<'f> {
     }
 
     pub(crate) fn function(&self) -> &'f strider_ir::Function {
-        self.ranges.function()
+        self.function
     }
 
     /// The recognisers, in order, against the dispatch value of `site`, an
