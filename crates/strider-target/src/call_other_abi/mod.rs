@@ -30,7 +30,6 @@ pub type BuiltCallOtherAbi = OpAbi<Vec<rsleigh::Vn>>;
 
 impl CallOtherAbi {
     /// # Errors
-    ///
     /// The first register name `sleigh_regs` does not resolve.
     pub fn build(&self, sleigh_regs: &rsleigh::SleighRegs) -> crate::Result<BuiltCallOtherAbi> {
         Ok(BuiltCallOtherAbi {
@@ -152,7 +151,6 @@ impl<'a> CallOtherLookup<'a> {
     /// The resolved footprint, `None` for [`CallOtherClass::NoOp`].
     ///
     /// # Errors
-    ///
     /// The first register name `sleigh_regs` does not resolve.
     pub fn built(
         self,
@@ -224,18 +222,16 @@ pub fn trap_is_unconditional(name: &str, to_mask: Option<u128>) -> bool {
 
 /// Whether `name` is ARM `msrRegisterMode(new, current)`, which the lifter
 /// lowers to `new`, or to `current` under `msr_register_keeps_mode`. A caller
-/// override of the name classifies it as any user-op instead.
+/// override takes precedence.
 #[must_use]
 pub fn is_msr_register_mode(preset: crate::ArchPreset, name: &str) -> bool {
     preset.family().msr_mode_op == Some(name)
 }
 
-/// Whether `name` is an op yielding the rounding mode a conversion uses
-/// (`mxcsrRoundingControl(rc)`, `fpscrRoundingControl(rn)`, ...), which the
-/// lifter lowers to its input, or to 0 (round to nearest) under
-/// `fp_rounding_mode_is_nearest`. An input-less one reads
-/// [`rounding_mode_register`]. A caller override of the name classifies it as
-/// any user-op instead.
+/// Whether `name` yields the rounding mode a conversion uses
+/// (`mxcsrRoundingControl(rc)`, ...), which the lifter lowers to its input,
+/// or to 0 (nearest) under `fp_rounding_mode_is_nearest`; an input-less one
+/// reads [`rounding_mode_register`]. A caller override takes precedence.
 #[must_use]
 pub fn is_rounding_mode_control(preset: crate::ArchPreset, name: &str) -> bool {
     preset.family().rounding_ops.contains(&name)

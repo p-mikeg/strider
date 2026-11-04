@@ -44,11 +44,9 @@ pub struct DecodeTables {
 
 impl DecodeTables {
     /// # Errors
-    ///
-    /// When `sleigh`, which may be another arch's, and `arch` disagree: the
-    /// sla does not flow the ISA-mode var, does not declare a var the arch
-    /// re-derives, pairs `ISAModeSwitch` differently, or its `ram` space is
-    /// missing, misnamed or not byte-addressed.
+    /// When `sleigh` and `arch` disagree: the ISA-mode var does not flow, a
+    /// re-derived var is undeclared, `ISAModeSwitch` pairs differently, or the
+    /// `ram` space is missing, misnamed or not byte-addressed.
     pub(super) fn from_sleigh<R: MemReader>(
         arch: SleighArch,
         sleigh: &Sleigh<R>,
@@ -133,9 +131,7 @@ impl SleighArch {
     /// This arch's [`DecodeTables`], built once per preset per process.
     ///
     /// # Panics
-    ///
-    /// When the compiled-in sla does not load or disagrees with the preset's
-    /// own tables.
+    /// When the compiled-in sla does not load or disagrees with the preset.
     #[must_use]
     pub fn decode_tables(self) -> &'static DecodeTables {
         &self.probe().1
