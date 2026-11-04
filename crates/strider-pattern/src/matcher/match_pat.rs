@@ -43,11 +43,10 @@ pub trait CaptureExt: MatchPat + 'static {
         Captured(self.into_expr().capture(c), PhantomData)
     }
     /// Run `f` after the whole sub-pattern matches; `false` fails the match.
-    /// `f` is typed, so a root with no value output (a control, memory or
-    /// `PhiToken` edge, or a zero-output node) is REFUSED at build time and
-    /// every query on the pattern errors. Guard those through
-    /// [`Pattern::with_root_post_match`](crate::Pattern::with_root_post_match),
-    /// which sees the missing type.
+    /// Below the root, `f` sees only the captures of its own cone and of
+    /// operands written before it; put a cross-operand condition on the root.
+    /// A root with no value output is refused at build time; guard it through
+    /// [`Pattern::with_root_post_match`](crate::Pattern::with_root_post_match).
     fn when_match<F>(self, f: F) -> MatchOnly
     where
         F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool

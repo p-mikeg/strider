@@ -92,15 +92,11 @@ impl<'f> Matcher<'f> {
     ///
     /// # Several matches per root
     ///
-    /// A root can match more than one way, most often a commutative node whose
-    /// two operands each satisfy a captured sub-pattern. Every distinct way is
-    /// yielded, deduplicated by the capture-to-binding map (see
-    /// `Bindings::binding_signature`): `int_add(var(x), var(x))` swapped binds
-    /// `x` identically and is ONE match, while
-    /// `int_add(anything().capture(k), anything())` binds
-    /// `k` to each operand in turn and is TWO. A pattern with no captures on
-    /// commutative operands never duplicates. Ordering is deterministic:
-    /// natural operand order before swapped.
+    /// Every distinct capture-to-binding map is yielded once:
+    /// `int_add(var(x), var(x))` is one match, `int_add(anything().capture(k),
+    /// anything())` two. `k` commutative nodes whose operands each satisfy both
+    /// sub-patterns yield up to 2^k; pin them with `.ordered()`. Natural operand
+    /// order comes before swapped.
     ///
     /// # Errors
     /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
