@@ -131,7 +131,7 @@ signalDebugBreakpointException UNCLASSIFIED
 signalReservedInstruction UNCLASSIFIED
 special2 UNCLASSIFIED
 synch call reads=[] writes=[] mem=true noret=false
-syscall call reads=["v0", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"] writes=["v0", "v1", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"] mem=true noret=false
+syscall call reads=["v0", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"] writes=["at", "v0", "v1", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "hi", "lo"] mem=true noret=false
 tlbop UNCLASSIFIED
 trap call reads=[] writes=[] mem=false noret=true
 wait call reads=[] writes=[] mem=true noret=false

@@ -67,15 +67,16 @@ const CALL_OTHER: &[Row] = &[
     // a3 = error flag, v1 = the second half of a two-value return (`pipe`).
     // Sleigh's `:syscall is ... breakcode { tmp:4=breakcode; syscall(tmp); }`
     // passes only the encoded code field, so the whole register ABI is
-    // implicit here.  The caller-saved temporaries are listed as written
-    // because the ABI does not preserve them across the kernel entry.
+    // implicit here. The kernel's partial exit restores neither the
+    // temporaries nor `at`, `hi`, `lo` (glibc's `__SYSCALL_CLOBBERS`).
     Row {
         names: &["syscall"],
         only: Some(MIPS32_BOTH),
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["v0", "a0", "a1", "a2", "a3"],
             implicit_writes: &[
-                "v0", "v1", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9",
+                "at", "v0", "v1", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9",
+                "hi", "lo",
             ],
             // A kernel entry can read or write any user memory, the user stack
             // frame included.
@@ -92,7 +93,8 @@ const CALL_OTHER: &[Row] = &[
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["v0", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
             implicit_writes: &[
-                "v0", "v1", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9",
+                "at", "v0", "v1", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9",
+                "hi", "lo",
             ],
             clobbers_memory: true,
             no_return: false,
