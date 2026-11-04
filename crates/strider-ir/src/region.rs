@@ -128,7 +128,6 @@ impl FunctionBuilder {
             variables[vn_id] = value.into();
         }
 
-        // Minted two statements up with these exact kinds.
         debug_assert!(self.function().value_kind(memory).is_memory());
         debug_assert!(self.function().value_kind(control).is_control());
         Ok(self.regions.push(Region {
@@ -205,10 +204,8 @@ impl FunctionBuilder {
         cur_region: RegionId,
     ) -> Result<()> {
         self.link_edges(region, control, memory);
-        // `cur_region`'s current variable map, so a self-loop (`cur_region ==
-        // region`, an entry that is its own loop header) takes the values
-        // reaching the back edge. An unset variable means `cur_region` is one
-        // the dominator pre-order rename walk never reached.
+        // A self-loop takes the values reaching the back edge. An unset
+        // variable means the rename walk never reached `cur_region`.
         let reaching = &self.regions[cur_region].variables;
         append_phi_operands(
             self.function.graph_mut(),

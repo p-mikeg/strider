@@ -1054,11 +1054,8 @@ fn graph_invariants_comparison_and_bitcast_widths_detected() {
     });
 }
 
-/// A zero-arm `Switch` is the one `ValidationError` with no test, and it can
-/// never be the only error: `Switch`'s signature head is one Control, so the
-/// arity check reports `NodeOutputCountMismatch` for the same node in the
-/// same call. Both are pinned so a signature change cannot silently leave
-/// only one of them.
+/// A zero-arm `Switch` reports both `EmptySwitchTargets` and the arity
+/// check's `NodeOutputCountMismatch`.
 #[test]
 fn graph_invariants_empty_switch_targets_detected_beside_the_arity_error() {
     let mut s = spine();

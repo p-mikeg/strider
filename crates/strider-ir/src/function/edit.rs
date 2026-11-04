@@ -1,6 +1,4 @@
-//! Every mutation of an [`EditFunction`] must route through one of the curated
-//! verbs below, which keep its cached live/roots state accurate without a
-//! re-walk.
+//! [`EditFunction`]: mutation verbs that keep the cached live/roots state current.
 
 use entity_utils::{DenseEntitySet, Worklist};
 
@@ -13,10 +11,8 @@ use crate::walk::{FnSuccs, PostOrder, def_use_succs, live_def_use_succs};
 use crate::{Function, Graph, IRViewer};
 
 bitflags::bitflags! {
-    /// `OUTPUT_KILLED`: the node lost the last use of one of its outputs, so
-    /// it may now be dead.  `NEEDS_RECANON`: its inputs changed, so it may now
-    /// be a structural twin of an existing node.  Both are re-examined when the
-    /// queue drains.
+    /// `OUTPUT_KILLED`: an output lost its last use, so the node may be dead.
+    /// `NEEDS_RECANON`: its inputs changed, so it may be a structural twin.
     #[derive(Clone, Copy, Default)]
     pub(crate) struct NodeFlags: u8 {
         const OUTPUT_KILLED = 0b01;
@@ -36,8 +32,7 @@ pub(crate) struct FunctionState {
 }
 
 impl FunctionState {
-    /// Seeds `live_nodes` + `roots` from the entry-reachable walk.  Culls
-    /// nothing; queue and flags start empty.
+    /// Seeds `live_nodes` and `roots` from the entry-reachable walk; culls nothing.
     pub(crate) fn populate(function: &Function) -> Self {
         let entry = function.entry();
         let info = crate::walk::GraphWalkInfo::compute_full(function.graph(), entry);
@@ -67,14 +62,13 @@ pub struct EditFunction<'g> {
     /// [`Self::control_dominator_tree`] and the [`Self::control_edits`]
     /// reading it was built at.
     dom_memo: std::cell::RefCell<Option<(u64, DominatorTree<NodeId>)>>,
-    /// Dominator trees actually built, the unit the memo test counts.
+    /// Dominator trees built.
     #[cfg(any(test, feature = "test-util"))]
     dom_builds: std::cell::Cell<u64>,
-    /// Def-use post-order walks actually performed, the unit the order-memo
-    /// test counts.
+    /// Def-use post-order walks performed.
     #[cfg(test)]
     postorder_walks: std::cell::Cell<u64>,
-    /// Maybe-dead queue pops, the unit the clean-cost test counts.
+    /// Maybe-dead queue pops.
     #[cfg(test)]
     queue_pops: u64,
     /// Use edges [`Self::update_input`] and [`Self::replace_value`] redirected.
@@ -105,9 +99,8 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Counts the edits that moved, added or removed a use, or killed a node.
-    /// Creating a node is not one, since it rewires nothing, and neither is a
-    /// write through [`Self::function_mut`] such as an asm-fingerprint union.
+    /// Edits that moved, added or removed a use, or killed a node. Creating a
+    /// node and [`Self::function_mut`] writes do not count.
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -124,9 +117,8 @@ impl<'g> EditFunction<'g> {
         self.generation + self.live_entries
     }
 
-    /// Two equal readings bracket no change to the control graph: every verb
-    /// below counts an edge it adds or removes on a `Control` value, and
-    /// [`Self::function_mut`] counts itself.
+    /// Two equal readings bracket no change to the control graph.
+    /// [`Self::function_mut`] counts as a change.
     pub fn control_edits(&self) -> u64 {
         self.control_edits
     }
@@ -162,9 +154,8 @@ impl<'g> EditFunction<'g> {
         self.control_edits += u64::from(self.function.value_kind(value).is_control());
     }
 
-    /// Kills everything outside `state.live_nodes`, walking the **raw** forward
-    /// def->use graph from `roots` so dead consumers of still-live producers are
-    /// reached.  Idempotent.
+    /// Kills everything outside the live set, walking the raw def->use graph
+    /// from `roots` so dead consumers of live producers are reached. Idempotent.
     pub fn cull_dead(&mut self) {
         let graph = self.function.graph();
         let succs = FnSuccs::new(|n| def_use_succs(graph, n));
@@ -176,12 +167,10 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Recompute the cached live/roots bookkeeping from a fresh entry walk,
-    /// then cull what the walk no longer reaches, restoring "every cached-live
-    /// node is entry-reachable".  Clears the queue and flags.
-    ///
-    /// O(graph).  The incremental bookkeeping tracks **data** orphaning only,
-    /// so call this after a control edit that detached a subgraph.
+    /// Recomputes live/roots from a fresh entry walk and culls the rest;
+    /// clears the queue and flags. O(graph). The incremental bookkeeping tracks
+    /// data orphaning only, so call this after a control edit detaches a
+    /// subgraph.
     pub fn resync_live_set(&mut self) {
         self.live_entries += 1;
         self.state = FunctionState::populate(self.function);
@@ -192,30 +181,18 @@ impl<'g> EditFunction<'g> {
         self.function
     }
 
-    /// ESCAPE HATCH: bypasses the cached live/roots bookkeeping.  Structural
-    /// mutation through this handle leaves a later `postorder()` /
-    /// `reverse_postorder()` / `roots` read STALE; call `resync_live_set`
-    /// before relying on one.  Payload edits are safe only when the payload is
-    /// outside the dedup key; `NodeKind` is its first component, so rewriting a
-    /// cacheable node's kind needs `graph.rebuild_cache()` after.  Every borrow
-    /// counts as a control edit.
+    /// Bypasses the live/roots bookkeeping: after a structural edit, call
+    /// [`Self::resync_live_set`] before reading an order. Rewriting a cacheable
+    /// node's kind needs `graph.rebuild_cache()`. Counts as a control edit.
     pub fn function_mut(&mut self) -> &mut Function {
         self.control_edits += 1;
         self.function
     }
 
-    /// Post-order over the cached live def->use graph: every node is yielded
-    /// after its consumers unless the use closes a def-use cycle.  Roots are
-    /// SEEDED in ascending `NodeId` order, so the derived RPO starts at the
-    /// lowest-id root; the post-order itself reaches the highest-id root first.
-    ///
-    /// Entry-global: covers only the entry-rooted graph.  A post-order seeded
-    /// at a non-entry node must recompute roots from scratch (e.g.
-    /// [`GraphWalkInfo::compute_full`](crate::walk::GraphWalkInfo::compute_full)
-    /// from the seed).
-    ///
-    /// Walked once per [`Self::edits`] reading, so the passes of one pipeline
-    /// iteration that leave the graph alone share one walk.
+    /// Post-order over the live def->use graph of the entry: a node follows its
+    /// consumers unless the use closes a cycle. Roots are seeded in ascending
+    /// `NodeId` order, so the RPO starts at the lowest-id root. Walked once per
+    /// [`Self::edits`] reading.
     pub fn live_postorder(&self) -> Vec<NodeId> {
         self.with_live_postorder(<[NodeId]>::to_vec)
     }
@@ -234,13 +211,12 @@ impl<'g> EditFunction<'g> {
         f(&memo.as_ref().expect("filled above").1)
     }
 
-    /// Every producer precedes its consumers unless the use closes a def-use
-    /// cycle.  Same entry-global contract as [`Self::live_postorder`].
+    /// Reverse of [`Self::live_postorder`].
     pub fn live_reverse_postorder(&self) -> Vec<NodeId> {
         self.with_live_postorder(|o| o.iter().rev().copied().collect())
     }
 
-    /// Same reachable SET as `Self::walk_kind`; only the ORDER differs (RPO).
+    /// [`Self::live_reverse_postorder`] filtered by kind.
     pub fn live_reverse_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
@@ -263,10 +239,8 @@ impl<'g> EditFunction<'g> {
         self.function.entry()
     }
 
-    // Dead-node cleanup: edits that might orphan a producer enqueue it; `clean`
-    // drains the queue.  A side-effecting node is never enqueued AS DEAD, and
-    // `clean` never kills one; only `cull_dead` and an explicit `kill_node`
-    // remove one.
+    // Edits that might orphan a producer enqueue it; `clean` drains the queue.
+    // A side-effecting node dies only by `cull_dead` or `kill_node`.
 
     pub fn is_live(&self, node: NodeId) -> bool {
         self.state.live_nodes.contains(node)
@@ -287,50 +261,39 @@ impl<'g> EditFunction<'g> {
         self.state.roots.clone()
     }
 
-    /// Call BEFORE rewiring, while the about-to-be-removed use still counts: if
-    /// this was the value's last use its producer may now be dead, so enqueue it.
+    /// Call before rewiring: enqueues the producer if this is the value's last use.
     fn will_detach_value(&mut self, value: ValueId) {
-        // `nth(1).is_none()` means at most one use remains, the one being
-        // detached.  Zero uses enqueues harmlessly; `is_node_dead` confirms.
+        // At most one use remains, the one being detached.
         if self.value_uses(value).nth(1).is_none() {
             let def = self.function.producer(value);
             self.enqueue_killed_def_node(def);
         }
     }
 
-    /// Mirror of [`Self::will_detach_value`]: `value` is about to GAIN a use,
-    /// so mark its producer and transitive input cone live (input-less ones as
-    /// roots).  Control-flow producers are exempt from resurrection.
-    ///
-    /// Assumes the consumer gaining the use is itself live.
+    /// `value` is about to gain a use from a live consumer: marks its producer's
+    /// input cone live (input-less ones as roots). Control-flow producers are
+    /// never resurrected.
     fn will_attach_value(&mut self, value: ValueId) {
         let producer = self.function.producer(value);
         if self.state.live_nodes.contains(producer) {
             return;
         }
-        // A `Worklist`'s workset would span the whole arena; `live_nodes`
-        // below is already the seen set, so a duplicate entry here is a
-        // no-op on its second turn.
+        // `live_nodes` is the seen set.
         let mut worklist = std::collections::VecDeque::from([producer]);
         while let Some(node) = worklist.pop_front() {
-            // Control corpses only.  A memory Store (side-effecting but NOT
-            // control flow) reached as a genuine data input of a resurrected
-            // pure node MUST come live, else the cached live set omits an in-use
-            // Store and cull_dead corrupts the graph.
+            // A Store reached here must come live, or `cull_dead` would kill
+            // an in-use Store.
             if self.function.node_kind(node).has_control_flow() {
                 continue;
             }
-            // `insert` returning false doubles as the seen-set check.
             if !self.state.live_nodes.insert(node) {
                 continue;
             }
             self.live_entries += 1;
-            // A structural twin may have been minted while this node was dead,
-            // so flag it for re-canon rather than leaking a duplicate.
+            // A structural twin may have been minted while this node was dead.
             if self.function.node_kind(node).is_cacheable() {
                 self.enqueue_for_recanon(node);
             }
-            // Snapshot inputs before touching `self.state` (borrow).
             let inputs: smallvec::SmallVec<[ValueId; 4]> =
                 self.function.node_inputs(node).into_iter().collect();
             if inputs.is_empty() {
@@ -345,8 +308,7 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Enqueue a node whose last output use was just removed, unless it is
-    /// side-effecting (those are never culled).
+    /// Enqueues `def` as maybe-dead unless it is side-effecting.
     fn enqueue_killed_def_node(&mut self, def: NodeId) {
         if self.function.node_kind(def).has_side_effects() {
             return;
@@ -355,8 +317,7 @@ impl<'g> EditFunction<'g> {
         self.enqueue(def);
     }
 
-    /// Run AFTER the detach, over values snapshotted before it: enqueues the
-    /// producer of every value now at zero uses.
+    /// After a detach: enqueues the producer of every value now unused.
     fn enqueue_orphaned_producers(&mut self, values: impl IntoIterator<Item = ValueId>) {
         for value in values {
             if self.value_uses(value).next().is_none() {
@@ -380,14 +341,10 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// If the node's changed structure matches an existing cacheable node, merge
-    /// it into that twin; otherwise it re-enters the cache as the canonical
-    /// representative.
+    /// Merges `node` into its structural twin, or re-enters it into the cache.
     fn canonicalize_node(&mut self, node: NodeId) {
         if let Some(twin) = self.function.graph_mut().canonicalize_node(node) {
-            // `canonicalize_node` returns `Some` only on a structural dedup,
-            // and every cacheable kind has ONE output, which for `Store` /
-            // `Entry` / `InitialMemory` is not a `Val`.
+            // Every cacheable kind has one output (not always a `Val`).
             let [node_out] = self
                 .function
                 .node_outputs_exact::<1>(node)
@@ -400,7 +357,7 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Skips past (but still dequeues) nodes that are no longer live.
+    /// Skips nodes that are no longer live.
     fn dequeue(&mut self) -> Option<NodeId> {
         while let Some(node) = self.state.queue.dequeue() {
             #[cfg(test)]
@@ -414,7 +371,7 @@ impl<'g> EditFunction<'g> {
         None
     }
 
-    /// Dead iff non-side-effecting AND every output is unused.
+    /// Non-side-effecting with every output unused.
     fn is_node_dead(&self, node: NodeId) -> bool {
         if self.function.node_kind(node).has_side_effects() {
             return false;
@@ -425,23 +382,12 @@ impl<'g> EditFunction<'g> {
             .all(|&out| self.value_uses(out).next().is_none())
     }
 
-    /// Detach `node`'s inputs, evict it from the live set and `roots`, clear its
-    /// flags.  `detach_node_inputs` also evicts the dedup-cache entry.
-    ///
-    /// The outputs keep their `ValueId`s but the node is now structurally
-    /// invalid.  Attaching one to a new consumer marks the gutted producer live
-    /// again, and `validate` reports its arity.
-    ///
-    /// Operand deadness is checked AFTER the detach, not per-edge before it.
-    /// With the same value in two or more input slots (`Add(k, k)`), a per-edge
-    /// pre-check sees all N uses on every edge and never fires the last-use
-    /// enqueue, yet the detach drops all N edges at once, stranding the operand
-    /// at zero uses and never enqueued.
-    ///
-    /// Unconditional for the node passed, side-effecting or not; the
-    /// `has_side_effects` gate governs only the operand cascade.
+    /// Detaches `node`'s inputs and evicts it from the live set, roots and dedup
+    /// cache, side-effecting or not. Its outputs keep their `ValueId`s, but the
+    /// node is invalid; attaching one revives it and `validate` reports its
+    /// arity. Operand deadness is checked after the detach, so a value in
+    /// several slots (`Add(k, k)`) is still enqueued.
     pub fn kill_node(&mut self, node: NodeId) {
-        // Snapshot inputs BEFORE detaching (detach clears them).
         let inputs: smallvec::SmallVec<[ValueId; 4]> =
             self.function.node_inputs(node).into_iter().collect();
         for &input in &inputs {
@@ -455,13 +401,9 @@ impl<'g> EditFunction<'g> {
         self.enqueue_orphaned_producers(inputs);
     }
 
-    /// Drain the maybe-dead queue to a fixed point: kill every enqueued node
-    /// that is actually dead, recursively enqueuing its orphaned operands, and
-    /// merge every mutated node into its structural twin.
-    ///
-    /// Runs after every CHANGING pass of the fixed-point loop and after every
-    /// post-pass, so the twins a rewrite leaves behind (`PhiCollapse`
-    /// redirecting two SSA phis to one value) are re-merged here.
+    /// Drains the maybe-dead queue to a fixed point: kills each dead node,
+    /// enqueuing its orphaned operands, and merges each mutated node into its
+    /// structural twin.
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
             let flags = std::mem::take(&mut self.state.flags[node]);
@@ -496,8 +438,8 @@ impl<'g> EditFunction<'g> {
         self.create_node_attributed(kind, inputs, output_kinds, &[])
     }
 
-    /// Create (or dedup to) the node, union every contributor's asm-fingerprint
-    /// into it, then register it into the cached live/roots state.
+    /// Creates (or dedups to) the node, absorbing every contributor's
+    /// asm-fingerprint.
     pub fn create_node_attributed(
         &mut self,
         kind: NodeKind,
@@ -505,8 +447,6 @@ impl<'g> EditFunction<'g> {
         output_kinds: impl IntoIterator<Item = ValueKind>,
         contributors: &[NodeId],
     ) -> NodeId {
-        // Each input gains a use on the fresh node, so resurrect any whose
-        // producer was dead.
         let inputs: smallvec::SmallVec<[ValueId; 4]> = inputs.into_iter().collect();
         for &input in &inputs {
             self.will_attach_value(input);
@@ -523,11 +463,9 @@ impl<'g> EditFunction<'g> {
         node
     }
 
-    /// Point the input edge `input_id` at `output_id`, maintaining the cached
-    /// state on both sides of the rewire.
+    /// Points the input edge `input_id` at `output_id`.
     pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
         let displaced = self.function.graph().value_of_use(input_id);
-        // Self-redirect: nothing displaced, attached, or re-canonicalized.
         if displaced == output_id {
             return;
         }
@@ -557,8 +495,7 @@ impl<'g> EditFunction<'g> {
         self.generation += 1;
     }
 
-    /// Drop the variadic tail of a **non-cacheable** node's inputs, keeping the
-    /// first `len`.  A node already that short is untouched.
+    /// Keeps the first `len` inputs of a **non-cacheable** node.
     pub fn truncate_node_inputs(&mut self, node: NodeId, len: usize) {
         let present = self.function.node_inputs(node).len();
         if present <= len {
@@ -596,15 +533,12 @@ impl<'g> EditFunction<'g> {
         self.absorb_node_fingerprint(into, from);
     }
 
-    /// Redirect every use of `old` to `new`, first absorbing `old`'s producer
-    /// asm-fingerprint into `new`'s (superset-only union).  Returns `true` iff
-    /// a use moved.
+    /// Redirects every use of `old` to `new`, absorbing `old`'s producer
+    /// asm-fingerprint. Returns `true` iff a use moved.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> bool {
         let from = self.function.producer(old);
         self.absorb_fingerprint(new, old);
-        // The raw Graph redirect bypasses `update_input`'s per-edge hooks, so
-        // snapshot the consumers BEFORE it to flag them for re-canon after, and
-        // enqueue the orphaned producer here (side-effect-guarded inside).
+        // The raw redirect bypasses `update_input`'s hooks.
         let consumers: smallvec::SmallVec<[NodeId; 4]> = if old != new {
             self.function
                 .graph()
@@ -632,14 +566,10 @@ impl<'g> EditFunction<'g> {
         changed
     }
 
-    /// Single-slot companion to [`Self::replace_value`]: rewires exactly one
-    /// input edge, absorbing the displaced producer's asm-fingerprint into
-    /// `new`'s producer **iff** the redirect leaves the displaced VALUE
-    /// unused.
+    /// [`Self::update_input`], absorbing the displaced producer's
+    /// asm-fingerprint iff the displaced value is left unused.
     pub fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
         let old_value = self.graph_ref().value_of_use(input_id);
-        // `input_id` is itself one use of `old_value`, so "exactly one use"
-        // means this edge is the only one.
         let only_use = self.value_has_one_use(old_value);
         self.update_input(input_id, new);
         if only_use {
@@ -647,20 +577,14 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// The single structural primitive for dropping dead control edges into a
-    /// join: removes predecessor slots from a `Region` and the matching value
-    /// slots from every `Phi`/`MemPhi` over its phi-token.
-    ///
-    /// `pred_indices` index the Region's predecessors, and may arrive unsorted
-    /// and with duplicates; their order is the order orphaned producers are
-    /// enqueued in.  Pass ALL dead indices at once.
+    /// Removes predecessor slots from a `Region` and the matching slots from
+    /// each of its `Phi`/`MemPhi`s. `pred_indices` may be unsorted and repeat;
+    /// pass every dead index in one call.
     pub fn remove_region_predecessors(&mut self, region: NodeId, pred_indices: &[u32]) {
         debug_assert!(
             matches!(self.node_kind(region), NodeKind::Region),
             "remove_region_predecessors: node is not a Region",
         );
-        // Collected once: the Phi/MemPhi set doesn't change as their value
-        // inputs are removed.
         let phi_nodes: Vec<NodeId> = self
             .node_outputs(region)
             .get(NodeKind::REGION_PHI_OUT_SLOT)
@@ -671,8 +595,7 @@ impl<'g> EditFunction<'g> {
                     .collect()
             });
 
-        // Each Phi/MemPhi loses slots `pred_index + 1`; the Region loses
-        // `pred_index`.
+        // Phi slot 0 is the region token.
         let phi_idxs: Vec<u32> = pred_indices.iter().map(|&i| i + 1).collect();
         for &phi in &phi_nodes {
             self.remove_node_inputs_batch(phi, &phi_idxs);
@@ -680,9 +603,9 @@ impl<'g> EditFunction<'g> {
         self.remove_node_inputs_batch(region, pred_indices);
     }
 
-    /// [`Graph::remove_node_inputs_batch`] for a **non-cacheable** node.  Out-of-range and duplicate indices are ignored.
+    /// [`Graph::remove_node_inputs_batch`] for a **non-cacheable** node.
+    /// Out-of-range and duplicate indices are ignored.
     fn remove_node_inputs_batch(&mut self, node: NodeId, indices: &[u32]) {
-        // Snapshot the values at the removed (in-range) slots BEFORE the edit.
         let inputs: smallvec::SmallVec<[ValueId; 8]> =
             self.function.node_inputs(node).into_iter().collect();
         let displaced: smallvec::SmallVec<[ValueId; 8]> = indices
@@ -696,9 +619,7 @@ impl<'g> EditFunction<'g> {
             .graph_mut()
             .remove_node_inputs_batch(node, indices.iter().map(|&i| i as usize));
         self.generation += u64::from(!displaced.is_empty());
-        // Deadness checked AFTER the removal (as in `kill_node`): a value in
-        // several removed slots only reaches zero uses once ALL its edges are
-        // gone, so a pre-removal per-slot check would miss it.
+        // After the removal, as in `kill_node`.
         self.enqueue_orphaned_producers(displaced);
     }
 }
@@ -733,13 +654,9 @@ impl IRBuilder for EditFunction<'_> {
 
 #[cfg(test)]
 pub(crate) mod test_fixtures {
-    //! Local fixture builders for the `edit` unit tests.
-    //!
-    //! strider-ir's own `#[cfg(test)]` modules cannot use
-    //! `strider_ir_test_utils`' type-returning builders: under `cargo test` the
-    //! dev-dep links a *separate* compilation of strider-ir, so a helper
-    //! returning `strider_ir::Function` mismatches the unit-test crate's own
-    //! `Function`.
+    //! Fixture builders for the `edit` unit tests. `strider_ir_test_utils`
+    //! links a separate compilation of strider-ir, so its `Function` is a
+    //! different type here.
 
     use crate::FunctionBuilder;
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
@@ -977,9 +894,7 @@ mod tests {
         assert_eq!(ctx.control_dominator_builds(), 1);
     }
 
-    /// The walk order is shared by every read taken at one `edits()` reading,
-    /// which is what lets the peephole passes of one pipeline iteration seed
-    /// from one walk; an edit re-walks.
+    /// Every read at one `edits()` reading shares one walk; an edit re-walks.
     #[test]
     fn postorder_is_walked_once_per_edits_reading() {
         let mut b = single_region_builder();
