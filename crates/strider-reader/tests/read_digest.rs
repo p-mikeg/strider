@@ -105,8 +105,6 @@ fn rom_refusal(e: &anyhow::Error) -> u8 {
         2
     } else if msg.contains("not mapped") || msg.contains("spans past mapped memory") {
         3
-    } else if msg.contains("overflows the address space") {
-        4
     } else {
         panic!("unclassified ROM refusal: {msg}")
     }
