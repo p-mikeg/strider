@@ -38,6 +38,20 @@ fn load_elf_rejects_garbage_bytes() {
     );
 }
 
+/// `object` also parses COFF and Mach-O: neither may load as an empty image.
+#[test]
+fn parse_refuses_a_non_elf_object() {
+    use object::write::Object as Writer;
+    use object::{Architecture, BinaryFormat};
+    for format in [BinaryFormat::Coff, BinaryFormat::MachO] {
+        let bytes = Writer::new(format, Architecture::X86_64, Endianness::Little)
+            .write()
+            .unwrap();
+        let err = strider_reader::OwnedElf::parse(bytes).unwrap_err();
+        assert!(err.to_string().contains("not an ELF"), "{format:?}: {err}");
+    }
+}
+
 #[test]
 fn load_elf_missing_path_is_io_error() {
     let err = strider_reader::load_elf("/definitely/not/a/real/path/for/tests").unwrap_err();
