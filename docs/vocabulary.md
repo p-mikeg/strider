@@ -132,7 +132,7 @@ until a rewrite replaces another node with them.
 
 **Capture.** A named hole in a pattern that matches anything and remembers it.
 Write it as `Capture("name")`. A bare string is not a pattern operand; it names
-a capture only as a rewrite's `replace` or a `Match` key.
+a capture only as `.capture(name)`, a rewrite's `replace` or a `Match` key.
 
 **Alternation.** One pattern for several shapes: `one_of` reports every
 matching alternative, `first_of` only the first. Either can sit in any slot.

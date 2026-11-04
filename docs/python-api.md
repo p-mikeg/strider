@@ -116,8 +116,9 @@ _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 ```
 
 A handle works on any thread. `analyze`, `build_cfg` and `add_elf` take it
-exclusively; any other call on it meanwhile raises `StriderError: this
-Lifter is already in use`. For parallelism use one handle per thread, each
+exclusively; a `Lifter` method called on it meanwhile raises `StriderError:
+this Lifter is already in use`, while the `ElfLifter` symbol, `read`,
+`endianness` and `cc` reads keep working. For parallelism use one handle per thread, each
 built over `prog.arch`, `prog.reader()` and `prog.rom()` (gathered before any
 analysis is in flight and after every `add_elf`), and call
 `analyze(addr, prog.cc)`. `analyze` drops the GIL unless a reader is a Python
@@ -331,7 +332,8 @@ n.inputs(), n.outputs()        # neighbouring nodes (Node handles, not ids)
 n.uint(), n.sint(), n.boolean(), n.float_bits()   # constants, at any width
 n.call_other_name()            # a CallOther's user-op name, else None
 n.vn()                         # an InitialVar's register, a Call's return
-                               # register (first value output), else None
+                               # register (first value output), a CallOther's
+                               # result varnode, else None
 n.asm_fingerprint()            # machine addresses this node was lifted or folded from
 ```
 
@@ -730,7 +732,7 @@ builds the value ops and reuses the match's captures (`var(c)`); `float_le`,
 
 A match is skipped, uncounted, when the replacement has another width, or (for
 a `find` through a phi or region) would read the matched value or is not
-available where it is read.
+available where it is read. A `.when()` guard on `find` raises.
 
 `rewrite_all` makes one walk; at each node the first rule that fires wins.
 Neither runs to a fixed point. Both stale every `Node` handle, even when they
@@ -966,7 +968,7 @@ unsupported arch or ABI (microMIPS included, as does `add_elf`), and
 `StriderError` for a malformed ELF. Range-checked constructor arguments
 raise `ValueError`: `CfgOptions(function_max_size=0)`, a size with
 `allow_code_before_start_addr=True`, a `known_targets` string other than
-`"return"`, a string `call_other_abis` value or a repeated name, an empty
+`"return"`, a string `call_other_abis` value, an empty
 `data_ranges` range, a `BufferReader` region past the address space. Every
 other bad value is a `StriderError`: `add_elf` / `add_symbol_file` on a bad
 path, an unknown `style=`, a reserved capture name, an unknown node id, an
