@@ -194,13 +194,9 @@ impl SleighArch {
     }
 
     /// Context vars a constructor commits at an address, which a CFG build
-    /// erases and re-derives by re-lifting the committing instruction.
-    ///
-    /// A `noflow` var ([`crate::DecodeTables::flow_commit`]) covers one
-    /// address, so it erases to the pspec default. A flowing one paints
-    /// forward to persist, so it erases to the predecessor's value. Both
-    /// must be listed: a forward pin stops at the var's next change point,
-    /// exactly where a stale commit sits.
+    /// erases and re-derives by re-lifting the committing instruction: a
+    /// `noflow` var to the pspec default, a flowing one to the predecessor's
+    /// value ([`crate::DecodeTables::flow_commit`]).
     ///
     /// Only ARM (`condit`, `TEEMode`) needs any. PowerPC `linkreg` is
     /// committed but cannot change the lift
