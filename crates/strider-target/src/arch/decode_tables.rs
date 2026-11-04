@@ -1,5 +1,4 @@
-//! What an arch's sla says about decoding and lifting: the per-preset facts a
-//! decode engine and a lift engine read, built and checked once per process.
+//! What an arch's sla says about decoding and lifting.
 
 use std::ops::Range;
 
@@ -33,8 +32,7 @@ pub struct DecodeTables {
     /// The pspec default of each [`SleighArch::transient_decode_vars`] var the
     /// sla declares.
     pub transient_defaults: Vec<(&'static str, u32)>,
-    /// The declared register file as a slice; `SleighRegs` only hands out an
-    /// iterator.
+    /// The declared register file.
     pub declared_reg_vns: Vec<Vn>,
     /// The register a branch commits its target's ISA mode to (ARM's
     /// `setISAMode` reads it, MIPS's `JXWritePC` writes it), `None` exactly
@@ -58,13 +56,9 @@ impl DecodeTables {
         sleigh: &Sleigh<R>,
         regs: &SleighRegs,
     ) -> anyhow::Result<Self> {
-        // Not `unwrap_or_default`: with an empty table the CFG classifies every
-        // `CallOther` as returning, so a no-return one decodes on into whatever
-        // follows it, and the lift rejects every one as an unknown user-op.
         let user_op_names = sleigh.user_op_names()?;
         let flow_vars = sleigh.flow_context_vars()?;
-        // Every region re-imposes its mode through the flowing set; a mode var
-        // the sla does not flow would make that a silent no-op.
+        // A region re-imposes its mode through the flowing set.
         if let Some(var) = arch.isa_mode_var()
             && !flow_vars.iter().any(|n| n == var)
         {
@@ -72,15 +66,12 @@ impl DecodeTables {
                 "{arch:?}: ISA-mode var {var} is not among the sla's flowing context vars"
             );
         }
-        // Read on a fresh engine, so these are the pspec defaults.  The address
-        // is immaterial: a default is committed globally.
+        // A fresh engine: the pspec defaults, committed globally.
         let entry_defaults = flow_vars
             .iter()
             .map(|name| sleigh.get_context_at(0, name))
             .collect::<Result<_, _>>()?;
-        // A hard error, unlike `transient_defaults` below: a named var the sla
-        // does not declare means this preset's list is wrong, and silently
-        // dropping it would leave the leak it exists to close.
+        // An undeclared var is an error here, unlike in `transient_defaults`.
         let flow_commit = arch
             .flow_commit_vars()
             .iter()
@@ -98,11 +89,8 @@ impl DecodeTables {
             .iter()
             .filter_map(|name| Some((*name, sleigh.get_context_at(0, name).ok()?)))
             .collect();
-        // `VnSpace::RAM` is the shortcut byte `b'r'`, which Sleigh derives from
-        // the first character of a space's name, bumping on collision.  A
-        // second processor space named with an `r` would take a bumped
-        // shortcut and leave `RAM` naming whichever of the two was declared
-        // first, silently retargeting every Load / Store the lift emits.
+        // Sleigh derives shortcut `r` from a space's name, bumping on
+        // collision, so it need not be `ram`.
         let ram = sleigh.space_info(VnSpace::RAM).ok_or_else(|| {
             anyhow::anyhow!("{arch:?}: sleigh declares no address space with shortcut 'r'")
         })?;
@@ -111,18 +99,13 @@ impl DecodeTables {
             ram_name == "ram",
             "{arch:?}: the address space with shortcut 'r' is named {ram_name:?}, not \"ram\""
         );
-        // GHIDRA scales a LOAD/STORE offset by the space's word size
-        // (`AddrSpace::addressToByte`, `emulate.cc:243`); the lift uses the
-        // offset as a byte address directly, so a word-addressed space would
-        // read the wrong bytes with no diagnostic.
+        // The lift uses a LOAD / STORE offset as a byte address.
         let ram_word_size = ram.word_size();
         anyhow::ensure!(
             ram_word_size == 1,
             "{arch:?}: \"ram\" has word size {ram_word_size}, and the lift indexes it in bytes"
         );
-        // Capture and carry are paired BOTH ways: `name_to_vn` answers `None`
-        // for a misspelling rather than erroring, so a one-directional check
-        // would pass vacuously while the mode bit is never captured.
+        // Both ways: `name_to_vn` answers a misspelling with `None`.
         let isa_mode_switch_vn = regs.name_to_vn("ISAModeSwitch");
         anyhow::ensure!(
             isa_mode_switch_vn.is_some() == arch.isa_mode_var().is_some(),
@@ -154,8 +137,7 @@ impl SleighArch {
     /// # Panics
     ///
     /// When the compiled-in sla does not load or disagrees with the preset's
-    /// own tables: a preset edit gone wrong, which
-    /// `every_preset_has_a_user_op_table_and_an_ram_named_ram` sweeps.
+    /// own tables.
     #[must_use]
     pub fn decode_tables(self) -> &'static DecodeTables {
         &self.probe().1
