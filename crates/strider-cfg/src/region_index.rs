@@ -14,28 +14,21 @@ thread_local! {
     pub(crate) static REGION_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Region starts, and what an overlap leaves a lookup to re-probe.
+/// Region starts, and the overlaps a lookup must re-probe.
 ///
-/// The greatest start at or below an address need not own it: regions are
-/// disjoint only while every target lands on an instruction boundary, and one
-/// starting inside another region's last instruction shadows that region over
-/// the rest of those bytes. The owner is the containing region with the
-/// greatest start.
+/// A region starting inside another's last instruction shadows it, so the
+/// greatest start at or below an address need not own it. The owner is the
+/// containing region with the greatest start.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RegionIndex {
     /// One region per start address.
     starts: BTreeMap<PcodeInsnAddr, NodeIndex>,
     /// Starts of the regions another region begins inside of: the only ones a
-    /// lookup miss has to re-probe.
+    /// lookup miss re-probes.
     shadowed: BTreeSet<PcodeInsnAddr>,
-    /// Longest span of a shadowed region, which bounds a miss's reverse walk.
-    /// Monotone: a split only shortens both halves.
-    ///
-    /// Non-zero without overlapping instruction streams too: splitting at a
-    /// pcode index INSIDE one machine instruction leaves the first half's last
-    /// entry carrying the whole machine-instruction length, so its span reaches
-    /// past the second half's start.  That shadow is bounded by one instruction
-    /// length.
+    /// Longest span of a shadowed region, bounding a miss's reverse walk.
+    /// Monotone. A split inside one machine instruction also shadows, by at
+    /// most that instruction's length.
     max_shadowed_span: u64,
 }
 
@@ -81,14 +74,9 @@ impl RegionIndex {
     }
 
     /// Indexes `id`, the second half of a split, at `new`; the first half
-    /// re-takes `old` through [`Self::insert`].
-    ///
-    /// A shadowed region keeps its shadower in whichever half now covers it,
-    /// and the halves are known to [`Self::containing`] only through
-    /// `shadowed`. Missing the new start makes the lookup answer `None` for
-    /// bytes that half owns, which decodes a fresh region INSIDE an
-    /// instruction. The old start stays: an extra probe costs nothing, a
-    /// missing one corrupts the graph.
+    /// re-takes `old` through [`Self::insert`]. A shadowed `old` marks `new`
+    /// shadowed too, and stays marked: an extra probe is harmless, a missing
+    /// one answers `None` for owned bytes.
     pub(crate) fn rekey_split(&mut self, old: PcodeInsnAddr, new: PcodeInsnAddr, id: NodeIndex) {
         self.starts.insert(new, id);
         if self.shadowed.contains(&old) {
@@ -97,14 +85,8 @@ impl RegionIndex {
     }
 
     /// The region owning `addr`: of those containing it, the one with the
-    /// greatest start.
-    ///
-    /// Once the greatest start at or below `addr` does not own it, only a
-    /// shadowed region can, and that reaches at most `max_shadowed_span` bytes
-    /// below `addr`, which bounds how far back to look. The walk visits only
-    /// `shadowed`: bounding by a single global span alone would make one
-    /// overlapping address anywhere in the function re-probe every region
-    /// within that span, on every miss.
+    /// greatest start. A miss at the greatest start re-probes only `shadowed`
+    /// starts within `max_shadowed_span` below `addr`.
     pub(crate) fn containing<'g>(
         &self,
         g: &'g RegionGraph,
