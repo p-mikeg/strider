@@ -30,9 +30,7 @@ def test_custom_reader_lifter_cycle_is_collectable():
         pass
 
     r = _Reader()
-    # `MemLike` names the declared bases; the binding takes any object
-    # with a `read(...)` method, which is what this reader is.
-    lift = L(strider.sleigh.SleighArch.x86_64(), r)  # type: ignore[arg-type]
+    lift = L(strider.sleigh.SleighArch.x86_64(), r)
     r.back = lift  # cycle: reader -> lifter -> (held internally) -> reader
 
     wl, wr = weakref.ref(lift), weakref.ref(r)
@@ -55,8 +53,7 @@ def test_custom_rom_lifter_cycle_is_collectable():
 
     mem = strider.reader.BufferReader(0x1000, _CODE)
     rom = _Rom()
-    # `RomLike` names the declared bases; a duck-typed rom is accepted too.
-    lift = L(strider.sleigh.SleighArch.x86_64(), mem, rom=rom)  # type: ignore[arg-type]
+    lift = L(strider.sleigh.SleighArch.x86_64(), mem, rom=rom)
     rom.back = lift  # cycle through the rom callback
 
     wl, wr = weakref.ref(lift), weakref.ref(rom)
