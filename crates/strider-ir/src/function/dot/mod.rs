@@ -158,14 +158,13 @@ pub struct FunctionDotDumperState {
 }
 
 impl FunctionDotDumperState {
-    /// Test-only: `None` for a virtual (`If` branch / `Call` clobber) box,
-    /// which has no `NodeId`.
+    /// `None` for a virtual (`If` branch / `Call` clobber) box.
     #[cfg(test)]
     pub fn node_of_dot_id(&self, dot_id: &str) -> Option<NodeId> {
         self.dot_to_node.get(dot_id).copied()
     }
 
-    /// Test-only: the full emitted-id -> `NodeId` mapping.
+    /// The full emitted-id -> `NodeId` mapping.
     #[cfg(test)]
     pub fn dot_to_node(&self) -> impl Iterator<Item = (&str, NodeId)> {
         self.dot_to_node.iter().map(|(k, &v)| (k.as_str(), v))
