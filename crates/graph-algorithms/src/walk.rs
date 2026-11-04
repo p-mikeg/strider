@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use cranelift_entity::EntityRef;
 
-use entity_utils::set::DenseEntitySet;
+use entity_utils::DenseEntitySet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkPhase {
