@@ -242,8 +242,17 @@ for _proto, _proto_name in (
 # `CallPat.output` names it too.
 _p.CallOutputPat = _p.OutputSlotPat  # type: ignore[attr-defined]
 _export(_p, "CallOutputPat")
-reader.MemLike = _t.Union[reader.MemReader, reader.BufferReader]  # type: ignore[attr-defined]
-reader.RomLike = _t.Union[reader.ReadOnlyMemory, reader.BufferReader]  # type: ignore[attr-defined]
+
+
+class _Readable(_t.Protocol):
+    def read(self, addr: int, size: int, /) -> _t.Optional[bytes]: ...
+
+
+_Readable.__module__ = "strider.reader"
+reader._Readable = _Readable  # type: ignore[attr-defined]
+reader.MemLike = _t.Union[reader.MemReader, reader.BufferReader, _Readable]  # type: ignore[attr-defined]
+reader.RomLike = _t.Union[reader.ReadOnlyMemory, reader.BufferReader, _Readable]  # type: ignore[attr-defined]
+del _Readable
 _export(reader, "MemLike", "RomLike")
 template.TemplateLike = _t.Union[  # type: ignore[attr-defined]
     template.Template, _p.Capture, int
