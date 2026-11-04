@@ -26,13 +26,11 @@ __all__: list[str]
 _ReplaceLike = Union[_Template, Capture, str]
 
 class Node:
-    """A handle on a single node in the IR graph.
+    """A handle on a single node in the IR graph, from `Function.node(id)` or
+    `Match.node(capture)`.
 
-    Returned by `Function.node(id)` and `Match.node(capture)`.
-
-    A handle carries the graph generation it was taken at, so once `compact`,
-    `optimize`, `rewrite` or `rewrite_all` has moved that generation every
-    accessor raises rather than dereferencing whatever now sits at the id.
+    Once `compact`, `optimize`, `rewrite` or `rewrite_all` has run, every
+    accessor raises `StriderError`.
     """
 
     @property
@@ -41,31 +39,25 @@ class Node:
         is stale."""
         ...
     def kind(self) -> str:
-        """The node's kind as a string. An op or a memory space renders with
-        its payload: `"IntBinaryOp(Add)"`, `"IntCmpOp(Less)"`, `"Load(RAM)"`,
-        a memory kind naming its space as `VnSpace` does (`"RAM"`,
-        `"REGISTER"`, `"CONST"`, `"UNIQUE"`, `"OTHER"`). An interned or opaque
-        handle is not rendered: `"IntConst"`, `"InitialVar"`, `"CallOther"`;
-        a kind with no payload renders bare: `"Region"`, `"Phi"`, `"Entry"`;
-        `"FloatConst(<bits>)"` carries its raw bits. Read a constant with
-        `uint()` / `sint()`, a varnode with `vn()` and a user-op with
-        `call_other_name()`. See `op()` for the operation variant alone."""
+        """The node's kind as a string. An op or memory space carries its
+        payload (`"IntBinaryOp(Add)"`, `"Load(RAM)"`, the space named as
+        `VnSpace` names it), a float constant its raw bits
+        (`"FloatConst(<bits>)"`); other kinds are bare (`"IntConst"`,
+        `"InitialVar"`, `"CallOther"`, `"Region"`). Read a constant with
+        `uint()` / `sint()`, a varnode with `vn()`, a user-op with
+        `call_other_name()`."""
         ...
     def inputs(self) -> list[Node]:
-        """The producer behind each input edge, in input-slot order. A producer
-        feeding several slots appears once per slot."""
+        """The producer behind each input edge, in input-slot order (once per
+        slot)."""
         ...
     def sint(self) -> Optional[int]:
-        """This node's signed constant value, sign-extended at its declared
-        width, at any width: a Python `int` is arbitrary-precision, so `I256`
-        and `I512` read back whole. `None` only when it is not an integer
-        constant. A boolean constant is a 1-bit integer, so `True` reads back
-        as `-1`."""
+        """This node's integer constant, sign-extended at its declared width
+        (any width), else `None`. A boolean `True` reads as `-1`."""
         ...
     def uint(self) -> Optional[int]:
-        """This node's unsigned constant value, masked to its declared width,
-        at any width: a Python `int` is arbitrary-precision. `None` only when
-        it is not an integer constant."""
+        """This node's integer constant, masked to its declared width (any
+        width), else `None`."""
         ...
     def boolean(self) -> Optional[bool]:
         """This node's boolean constant value, else `None`."""
@@ -75,19 +67,17 @@ class Node:
         ...
     def vn(self) -> Optional[Vn]:
         """The varnode this node names, else `None`: for `InitialVar` the
-        register read at entry, for a `Call` the register it returns in, and
-        for a `CallOther` whatever varnode the sla assigns its result: a
-        `unique` temporary, a tracked register, or nothing. A node has no bound
-        output, so a multi-output call answers for its FIRST value output, never
-        for one clobber in particular."""
+        register read at entry, for a `Call` its return register (its first
+        value output, not a clobber), for a `CallOther` whatever varnode the
+        sla assigns its result, if any."""
         ...
     def asm_fingerprint(self) -> list[int]:
         """The machine-instruction addresses recorded on this node, sorted
         and deduplicated."""
         ...
     def outputs(self) -> list[Node]:
-        """The consumers of this node's outputs, in output-slot then use order.
-        A consumer appears once per edge it draws from this node."""
+        """The consumers of this node's outputs, in output-slot then use order
+        (once per edge)."""
         ...
     def call_other_name(self) -> Optional[str]:
         """The user-op name attached to a `CallOther` node, else `None`.
@@ -97,23 +87,14 @@ class Node:
     def op(self) -> Optional[str]:
         """The operation variant of an op-carrying node (`"Add"`, `"Less"`,
         `"Neg"`, `"Sqrt"`, `"SignExtend"`), or `None` for a node carrying no
-        operation (`Region`, `Load`, `IntConst`, `Call`).
-
-        One accessor covers every op family; the family itself is already in
-        `kind()`, so `kind() == "IntBinaryOp(Xor)"` and `op() == "Xor"` name
-        the same node from two directions. A boolean op is an `IntBinaryOp`
-        whose output is `I1`, so pair this with `value_type()` to tell a
-        logical NOT (`Xor` at `I1`) from a wide bitwise `Xor`.
+        operation (`Region`, `Load`, `IntConst`, `Call`). A boolean op is an
+        `IntBinaryOp` at `I1`; see `value_type()`.
         """
         ...
     def value_type(self) -> Optional[str]:
-        """The type of this node's value output (`"I1"`, `"I32"`, `"I64"`,
-        `"F64"`), or `None` for a node with no value output (`Region`,
-        `Store`, `Return`).
-
-        Booleans are the 1-bit integer `I1`, so `value_type() == "I1"` is the
-        "this produces a boolean" test. The name is accepted verbatim by
-        `Pat.value_ty(...)`.
+        """The type of this node's value output (`"I1"`, `"I32"`, `"F64"`), or
+        `None` for a node with none (`Region`, `Store`, `Return`). Booleans are
+        `"I1"`. Accepted verbatim by `Pat.value_ty(...)`.
         """
         ...
     def __repr__(self) -> str: ...
@@ -135,11 +116,8 @@ class Function:
         ...
     @property
     def assumptions(self) -> AssumptionOptions:
-        """The claims in force: the ones `analyze` ran under, plus every set
-        `optimize` added since. A copy; no optimize withdraws a claim,
-        so dropping one means analysing again without it, and none adds
-        `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`, which only the
-        lift reads."""
+        """A copy of the claims in force: those `analyze` ran under plus every
+        set `optimize` added since. Dropping one means analysing again."""
         ...
     def entry_node(self) -> int:
         """The node id of the function's `Entry` node."""
@@ -149,26 +127,20 @@ class Function:
         assumptions: Optional[AssumptionOptions] = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None:
-        """Run an optimizer pipeline over this function in place.
-        `pipeline=None` runs the default pipeline; a given pipeline is copied,
-        so it stays usable. The claims `assumptions` holds join
-        `self.assumptions` and none is withdrawn: `assumptions=None` adds
-        nothing, and a set that leaves out a claim already in force, or adds
-        `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest` (read by the
-        lift, so analyse again with it), raises `StriderError` before anything
-        runs. Add one with::
+        """Run an optimizer pipeline (default: the default pipeline) over this
+        function in place. `assumptions` join `self.assumptions`; none is
+        withdrawn. Raises `StriderError` before running if `assumptions`
+        leaves out a claim in force or adds `msr_register_keeps_mode` /
+        `fp_rounding_mode_is_nearest` (lift-time claims: analyse again). Add
+        one with::
 
             function.optimize(assumptions=function.assumptions
                               | AssumptionOptions.none(escape_analysis=True))
 
-        Runs against the `rom` of the `Lifter` that produced this function, so
-        `LoadReadOnly` folds here exactly as it does inside `analyze`, and
-        raises `StriderError` while that `Lifter` is in an `analyze`,
-        `build_cfg` or `add_elf`. Invalidates outstanding `Node` / `Match`
-        handles and every node id for this function.
-
-        Holds the GIL for the whole run, unlike `analyze`: the run borrows the
-        function for mutation."""
+        Reads the producing `Lifter`'s `rom`, and raises `StriderError` while
+        that `Lifter` is in `analyze`, `build_cfg` or `add_elf`. Invalidates
+        outstanding `Node` / `Match` handles and node ids. Holds the GIL
+        throughout."""
         ...
     def to_dot(
         self,
@@ -179,15 +151,11 @@ class Function:
         """Render the IR graph to DOT. Returns the string when `path` is
         `None`, else writes it to `path` and returns `None`.
 
-        `pretty=False` (the default) renders the graph exactly as stored: one
-        node per node id REACHABLE FROM ENTRY (a detached node is omitted), one
-        edge per input edge, side tables inline, no constant inlining or
-        virtual nodes.
-
-        `pretty=True` inlines constants, adds virtual nodes, and resolves
-        register names through the arch's name table, which needs no decoder. A
-        `DotStyle` name in place of `True` picks the theme; an unrecognised
-        name raises `StriderError`.
+        `pretty=False` renders the graph exactly as stored (every node
+        reachable from entry, one edge per input). `pretty=True` inlines
+        constants, adds virtual nodes and names registers; a `DotStyle` name in
+        place of `True` picks the theme, and an unknown name raises
+        `StriderError`.
         """
         ...
     def to_html(
@@ -196,23 +164,17 @@ class Function:
         *,
         pretty: Union[bool, DotStyle] = ...,
     ) -> Optional[str]:
-        """Like `to_dot`, but wraps the DOT in a self-contained HTML page.
-        Same `pretty` argument, same caveats."""
+        """Like `to_dot`, but wraps the DOT in a self-contained HTML page."""
         ...
     def to_text(self, fingerprints: bool = ...) -> str:
-        """The canonical text form: one line per node reachable from entry,
-        `outs = op[payload] ins`, after a header of endianness, tracked
-        varnodes, default convention, an `assumptions` line naming the claims
-        in force that are on, a `frame_address_in_call_register
-        reach=<offset|unbounded>` line when a call's clobbered register held
-        a stack address (the highest offset from the entry SP), and argument
-        carriers. `fingerprints=True`
-        ends each line in its sorted asm address set `  @{..}`, which can be
-        many times the rest on a large function.
+        """The canonical text form: a header (endianness, tracked varnodes,
+        default convention, the claims on, a `frame_address_in_call_register`
+        line if one applies, argument carriers), then one line per node
+        reachable from entry, `outs = op[payload] ins`. `fingerprints=True`
+        appends each node's sorted asm address set `  @{..}`.
 
-        Values are named `%v0`, `%v1`, ... in print order, and the order
-        follows control flow and input slots only, so two builds of the same
-        graph print the same text; diff two runs to see what changed.
+        Values are named `%v0`, `%v1`, ... in print order, so equal graphs
+        print equal text; diff two runs to see what changed.
         """
         ...
     def neighborhood_dot(
@@ -225,10 +187,9 @@ class Function:
         *,
         pretty: bool = ...,
     ) -> str:
-        """DOT for the nodes within `depth` hops of node `center`. A hub
-        (degree over `hub_cap`) is shown and its inputs are followed, but its
-        consumer fan-out is not, and `max_nodes` caps the total. The hub degree
-        is the consumer fan-out; `count_producers` folds a node's inputs in too.
+        """DOT for the nodes within `depth` hops of node `center`, at most
+        `max_nodes`. A hub (consumer fan-out over `hub_cap`, plus its inputs
+        when `count_producers`) is shown but its consumers are not followed.
 
         `pretty=False` draws the nodes exactly as stored; `pretty=True` inlines
         constants, adds virtual nodes and resolves register names."""
@@ -248,11 +209,9 @@ class Function:
         """A `Node` handle on the node at `node_id`. Raises `StriderError`
         for an invalid id.
 
-        A raw id is meaningful only in the graph generation it came from:
-        `compact` renumbers, and `optimize` / `rewrite` rewire nodes out
-        from under it, so an id held across either can name something else or
-        nothing. A `Node` carries its generation and goes stale instead; a bare
-        int cannot."""
+        A raw id is meaningful only until `compact`, `optimize` or `rewrite`;
+        a `Node` then goes stale, while a bare int silently names something
+        else."""
         ...
     def cfg_walk(self) -> list[Node]:
         """The nodes reachable from entry following control edges only (the
@@ -268,12 +227,10 @@ class Function:
         ...
     def mem_walk(self) -> list[Node]:
         """The memory-touching nodes (Load, Store, Call, CallOther, MemPhi,
-        and the InitialMemory root) reached by following memory-token edges
-        forward from InitialMemory, in pre-order, each once. At a `MemPhi`
-        join a node can come before one of its own memory predecessors. A node
-        that only reads the final token without touching memory (`Return`,
-        `IndirectBranch`) is excluded, and the list is empty when no
-        InitialMemory is reachable."""
+        and the InitialMemory root) reached along memory-token edges from
+        InitialMemory, in pre-order, each once; empty when InitialMemory is
+        unreachable. At a `MemPhi` a node can precede one of its memory
+        predecessors. `Return` and `IndirectBranch` are excluded."""
         ...
     def compact(self) -> None:
         """Drop every node unreachable from entry. Invalidates node ids."""
@@ -296,18 +253,14 @@ class Function:
         keys dedup on captures alone. `constraints` filters joined results by
         control-flow relations (`dominates`, `phi_input_from_edge`).
 
-        In a joined query, a pattern whose captures are ALL shared with an
-        earlier one contributes nothing of its own to the dedup key, so rows
-        differing only in THAT pattern's root collapse to one. Giving it a
-        capture of its own reports them separately, which is why adding an
-        otherwise unused capture can raise the number of rows.
+        In a joined query, rows differing only in the root of a pattern whose
+        captures are all shared with an earlier one collapse to one; give it a
+        capture of its own to report them separately.
 
-        A single root can yield several matches, one per distinct binding. A
-        commutative op whose operands both satisfy a captured sub-pattern
-        reports one match per operand: `int_add(anything().capture(k),
-        anything())` on `int_add(x, y)` returns both `k=x` and `k=y`. Call
-        `.ordered()` on a binary op to pin operand slots and suppress the
-        commutative alternative.
+        A root yields one match per distinct binding:
+        `int_add(anything().capture(k), anything())` on `int_add(x, y)`
+        returns both `k=x` and `k=y`. `.ordered()` on a binary op pins operand
+        slots.
         """
         ...
     def find_unique(
@@ -318,17 +271,11 @@ class Function:
         constraints: Optional[Sequence[ConstraintLike]] = ...,
     ) -> Match:
         """The single `Match` for `pat`, raising `StriderError` if there is
-        not exactly one. The count is taken after dedup, so `ignore_root`, a
-        list `pat`, and `constraints` behave as in `find_all`.
+        not exactly one after dedup. Arguments behave as in `find_all`, so an
+        ambiguous commutative capture raises; pin it with `.ordered()`.
 
-        An ambiguous pattern raises here rather than returning one of several:
-        `int_add(anything().capture(k), anything())` binds `k` to either operand,
-        so pin the intent with `.ordered()` or narrow the operands.
-
-        `ignore_root=True` with a pattern that binds NO captures leaves every
-        match keyed identically, so this succeeds on any number of occurrences
-        and returns an arbitrary one. To ask "does this occur exactly once",
-        leave `ignore_root` false or give the pattern a capture.
+        `ignore_root=True` with a pattern that binds no captures succeeds on
+        any number of occurrences, returning an arbitrary one.
         """
         ...
     def find_unique_value(
@@ -339,50 +286,36 @@ class Function:
         constraints: Optional[Sequence[ConstraintLike]] = ...,
         signed: bool = ...,
     ) -> Optional[int]:
-        """The single distinct constant bound to `capture` across all matches
-        of `pat`, deduplicated by VALUE: `None` when no match binds a constant
-        there, the value when every match agrees, and `StriderError` when two
-        or more distinct values are bound.
+        """The constant bound to `capture` across all matches of `pat`,
+        deduplicated by value: `None` when no match binds a constant there,
+        `StriderError` when two or more distinct values are bound. Matches
+        that differ structurally but agree on the value collapse to one.
 
-        Unlike `find_unique`, matches that differ only structurally but agree
-        on the value collapse to one, so this is the tool for "the offset in
-        `base + K`", where several distinct `IntConst` nodes may hold the same
-        `K`.
-
-        `signed=True` reads the constant as two's-complement (`-8` rather than
-        a large unsigned bit pattern), the right choice for a stack or struct
-        offset. `pat` and `constraints` behave as in `find_all`: a list `pat`
-        joins on shared `Capture`s and `constraints` filters the joined
-        results."""
+        `signed=True` reads it as two's-complement (`-8`, not a large unsigned
+        pattern). `pat` and `constraints` behave as in `find_all`."""
         ...
     def rewrite(self, find: _PatLike, replace: _ReplaceLike) -> int:
         """Apply one `find` to `replace` rewrite across the graph, returning
         how many times it fired. `replace` is a `strider.template.Template`,
         a `Capture` or a capture name; a `strider.pattern.Pat` raises
-        `TypeError`, and one nested in a `Template` raises `StriderError`
-        naming its constructor. A `.when()` guard on `find` raises: select the
-        sites with `find_all` instead. A `replace` that builds nodes raises
-        `StriderError` where the match holds no node an instruction produced
-        (an `initial_var` or `phi` root), as those nodes would carry no
-        address, even a constant equal to one already in the graph.
+        `TypeError`, one nested in a `Template` `StriderError`. A `.when()`
+        guard on `find` raises. A `replace` that builds nodes raises
+        `StriderError` where the match holds no instruction-produced node (an
+        `initial_var` or `phi` root), as the new nodes would carry no address.
 
-        A match the replacement cannot stand in for is left alone and not
-        counted: a replacement of another width than the matched value, or,
-        for a `find` that matches through a phi or region, one that would read
-        the matched value or is not available everywhere that value is read.
+        A match is skipped (not counted) when the replacement has another
+        width, or, for a `find` through a phi or region, would read the
+        matched value or is not available everywhere that value is read.
 
-        One walk of the reachable nodes, not a fixed point, so a rule whose
-        output its own `find` matches needs the caller to loop.
-
-        Every outstanding `Node` handle goes stale, a return of 0 included: the
-        graph generation moves before the rule runs."""
+        One walk, not a fixed point. Every outstanding `Node` handle goes
+        stale, even on a return of 0."""
         ...
     def rewrite_all(self, pairs: Sequence[tuple[_PatLike, _ReplaceLike]]) -> int:
         """Apply the first matching `(find, replace)` pair at every reachable
-        node, returning the total fire count. Stales outstanding `Node` handles
-        the same way `rewrite` does, a return of 0 included."""
+        node, returning the total fire count. Stales `Node` handles as
+        `rewrite` does."""
         ...
     def clone(self) -> "Function":
-        """A deep, fully independent copy of this function. The parent `Cfg`
-        handle is shared by reference."""
+        """A deep, independent copy of this function, sharing the parent
+        `Cfg`."""
         ...

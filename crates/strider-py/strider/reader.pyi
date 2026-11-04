@@ -43,17 +43,15 @@ class MemReader:
         `NotImplementedError`.
 
         An exception here fails the lift with `StriderError`, chained as its
-        `__cause__`. `ReadOnlyMemory.read` is the opposite: an exception there
-        is swallowed and the analysis succeeds. `KeyboardInterrupt` and
-        `SystemExit` stop the run in both."""
+        `__cause__`."""
         ...
 
 class ReadOnlyMemory:
-    """Read-only memory backed by Python, read by the constant-load fold
-    (`LoadReadOnly`) and by the indirect-branch classifier's jump-table probes.
+    """Read-only memory backed by Python, read by constant-load folding and
+    jump-table probes.
 
     Subclass and override `read(addr, size)` to return the raw bytes at
-    `addr`. Only RAM loads reach it, so subclasses need not filter on space.
+    `addr`. Only RAM loads reach it.
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -65,19 +63,14 @@ class ReadOnlyMemory:
         endianness. A short return is an error, not a partial read. The base
         implementation raises `NotImplementedError`.
 
-        An exception here is swallowed: the constant-load fold declines,
-        indistinguishable from `None`, and the analysis succeeds. `MemReader.read`
-        is the opposite: an exception there fails the lift with `StriderError`.
-        `KeyboardInterrupt` and `SystemExit` stop the run in both."""
+        An exception here is swallowed, as if `None` were returned, except
+        `KeyboardInterrupt` and `SystemExit`, which stop the run."""
         ...
 
 class Symbol:
     """One ELF symbol: where it is, what the ELF says it spans, and which
     loaded region it falls in."""
 
-    # Read-only: these are `#[getter]`s on a frozen pyclass, so a plain
-    # attribute declaration would let a type checker accept `x.f = ...`,
-    # which raises at runtime.
     @property
     def name(self) -> str:
         """The symbol name as spelled in the ELF symbol table."""
@@ -86,18 +79,15 @@ class Symbol:
     def address(self) -> int:
         """The symbol's virtual address (`st_value`), except for a ppc64
         ELFv1 function, where it is the code the `.opd` descriptor at
-        `st_value` names. An ARM Thumb function keeps the Thumb bit here,
-        which is what `analyze` enters it in Thumb mode on; see `is_thumb`.
-        An undefined symbol of an object file has an address past the image
-        that maps nothing."""
+        `st_value` names. An ARM Thumb function keeps the Thumb bit; see
+        `is_thumb`. An undefined symbol of an object file has an address past
+        the image that maps nothing."""
         ...
     @property
     def size(self) -> Optional[int]:
-        """`None` for `st_size == 0`, which records no extent rather than an
-        empty one: a hand-written `.S` entry point with no `.size` directive is
-        still a whole function. Also `None` for a ppc64 ELFv1 function whose
-        `st_size` measures its `.opd` descriptor rather than its code: a dot
-        symbol names the code, or the size is 16 or 24."""
+        """`None` for `st_size == 0` (no recorded extent), and for a ppc64
+        ELFv1 function whose `st_size` measures its `.opd` descriptor rather
+        than its code."""
         ...
 
     @property
@@ -113,8 +103,9 @@ class Symbol:
     @property
     def is_thumb(self) -> bool:
         """Whether this is an ARM Thumb function: `address` then carries the
-        Thumb bit, and its first instruction is at `address & ~1`, which is
-        also where `symbol_at` and `region` measure it from."""
+        Thumb bit, on which `analyze` enters in Thumb mode, and the first
+        instruction is at `address & ~1`, where `symbol_at` and `region`
+        measure from."""
         ...
     @property
     def region(self) -> Optional[tuple[int, int]]:
@@ -125,10 +116,8 @@ class Symbol:
     @property
     def local_entry(self) -> int:
         """Where a call sharing the symbol's TOC enters: on ppc64 ELFv2,
-        `address` plus the local-entry offset `st_other` encodes (usually 8,
-        past the TOC setup), which is the target of every `bl` sharing its
-        TOC. `address` itself everywhere else, Thumb bit included, and for a
-        symbol with no offset."""
+        `address` plus the local-entry offset `st_other` encodes. `address`
+        itself everywhere else."""
         ...
     def __repr__(self) -> str: ...
     def __eq__(self, other) -> bool:
@@ -142,8 +131,7 @@ class SymbolIter:
     def __iter__(self) -> "SymbolIter": ...
     def __next__(self) -> Symbol: ...
     def __len__(self) -> int:
-        """How many symbols are LEFT, not the total: CPython reads this as a
-        length hint, which a partly consumed iterator must not overstate."""
+        """How many symbols are left, not the total."""
         ...
 
 
