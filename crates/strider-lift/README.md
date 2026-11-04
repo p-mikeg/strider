@@ -4,15 +4,14 @@ Turns one function's `strider_cfg::Cfg` into a `strider_ir::Function`: a
 semi-pruned SSA sea-of-nodes graph with one IR `Region` per CFG region and every
 machine register modelled as an SSA variable.
 
-## What's here
+## API
 
-- `Lifter<R>`: wraps a `strider_cfg::DecodeEngine<R>` and is reused across
-  functions and rebuild rounds. `build_cfg(entry, cfg_opts)` decodes;
+- `Lifter<R>`: wraps a `strider_cfg::DecodeEngine<R>`, reused across functions
+  and rebuild rounds. `build_cfg(entry, cfg_opts)` decodes;
   `build_ir(cfg, cc)` / `build_ir_with(cfg, cc, cfg_opts, per_address_ccs,
-  claims)` lift. The calling convention is a per-call argument.
+  claims)` lift.
 - `LiftOutcome`: the `Function` and its `LiftSites` (`unresolved_branches`,
-  `switch_anchors`, `return_sites`), the control sites the resolver reads.
-- `FunctionLifter`, internal: the per-function lift context.
+  `switch_anchors`, `return_sites`).
 
 ## The tracked varnode set
 
@@ -24,8 +23,10 @@ register outside it fails the function. It holds:
 - the convention's registers (above all the stack pointer), plus the argument
   registers of the `per_address_ccs` overrides this CFG's direct calls select,
 - each `CallOther`'s ABI footprint (x86-64 `syscall` reads `R10`, writes `R11`),
-- every register a register-space LOAD or STORE may reach by computed address,
-- each rounding-mode op's register, unless `fp_rounding_mode_is_nearest`.
+- the declared register enclosing each resolved register-space LOAD / STORE
+  address,
+- each input-less rounding-mode op's register, unless
+  `fp_rounding_mode_is_nearest`.
 
 `Function::new` folds the set into largest containers and sorts it.
 
@@ -79,8 +80,7 @@ All are exact, except that `FloatSub` flips a NaN subtrahend's sign, which IEEE
 NaN.
 
 A shift count wider than the output saturates rather than truncating (p-code
-compares the full count). A float written to a register is bitcast to an
-integer.
+compares the full count).
 
 ## Terminators
 

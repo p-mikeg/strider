@@ -1,6 +1,3 @@
-//! The tracked-varnode set: every varnode a lift reads or writes as an SSA
-//! variable, frozen before the first node is built.
-
 use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
 

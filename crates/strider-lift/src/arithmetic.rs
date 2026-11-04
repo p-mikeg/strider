@@ -1,7 +1,3 @@
-//! Integer and boolean lowerings. The negated comparisons become
-//! `Xor(cmp, IntConst(1)):I1`, with `<=` swapped to `not(b < a)`; boolean ops
-//! are integer ops at `I1`.
-//!
 //! Narrowing a 1-byte p-code boolean to `I1` assumes it is 0 or 1 (p-code's
 //! boolean ops act on the whole varnode, so `BOOL_OR(2, 0)` differs). Every
 //! vendored spec feeds them comparisons, carry flags or one-bit bitranges.
