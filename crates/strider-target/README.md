@@ -36,10 +36,10 @@ Everything one architecture family knows lives in one file under
 its Ghidra ldefs path, decode facts, CallOther rows (exact, prefix, fallback),
 rounding / msr special ops and calling conventions. A preset reaches its
 family through its `arch_presets!` row (`ArchPreset::family()`);
-`family::FAMILIES` is what `CallingConvention::presets()` iterates. `call_other_abi/common.rs` holds the arch-independent rows.
-`src/arch/` holds `SleighArch` and its roster (`mod.rs`), the byte orders
-(`endian.rs`), `ArchNames` (`names.rs`) and `DecodeTables`
-(`decode_tables.rs`).
+`family::FAMILIES` is what `CallingConvention::presets()` iterates.
+`call_other_abi/common.rs` holds the arch-independent rows. `src/arch/` holds
+`SleighArch` and its roster (`mod.rs`), the byte orders (`endian.rs`),
+`ArchNames` (`names.rs`) and `DecodeTables` (`decode_tables.rs`).
 
 The data is checked against the vendored sla and Ghidra:
 `tests/family_facts_against_sla.rs` (`has_delay_slots` against `delayslot(`
