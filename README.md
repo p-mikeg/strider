@@ -1,15 +1,11 @@
 <p align="center">
-  <img src="docs/strider.png" alt="Strider" width="320">
+  <img src="https://media.githubusercontent.com/media/p-mikeg/strider/master/docs/strider.png" alt="Strider" width="320">
 </p>
 
 # Strider
 
-> *"He's one of them Rangers. Dangerous folk they are, wandering the Wilds."*
-> Barliman Butterbur, *The Fellowship of the Ring*
-
-Strider is named after Aragorn's ranger alias: a tracker who finds what others
-miss. It hunts through compiled binaries, letting you ask precise questions
-about how a function behaves with no source and no debug symbols.
+Strider answers precise questions about a compiled function, with no source
+and no debug symbols.
 
 It reads ELF images for x86 and x86-64, ARM/Thumb (little-endian, BE32, BE8),
 AArch64 (LE/BE), MIPS32/64 (LE/BE, MIPS16e) and PowerPC 32/64 (LE/BE).
@@ -56,53 +52,42 @@ strider.explore.shutdown(port)
 
 [CHANGELOG.md](CHANGELOG.md) has the details, breaking changes first.
 
-- **More inputs.** Unlinked `.o` files (relocations applied, undefined symbols
-  given addresses), ppc64 ELFv1 descriptors, stripped images named with
-  `add_symbol_file` / `add_symbols`, and a second image merged with `add_elf`.
+- **More inputs.** Unlinked `.o` files with their relocations applied, ppc64
+  ELFv1 descriptors, `add_symbol_file` / `add_symbols` for stripped images,
+  `Symbol` records (`symbol_at`), and `relocated_got_is_rom`.
 - **Complete or says why.** `cfg.incomplete` lists each address the analysis
   cannot vouch for, under one of seven reasons; empty means complete.
-- **Mixed instruction sets.** ARM/Thumb and MIPS16 code decodes in the mode of
-  the edge that reached it; `$d`-marked literal pools and `data_ranges` are
-  not decoded.
+- **Mixed instruction sets.** A resolved branch target decodes in the
+  ARM/Thumb or MIPS16 mode its edge carries; `$d`-marked literal pools and
+  `data_ranges` are not decoded.
 - **Your own answers.** `known_targets`, `no_return_targets`, `data_ranges`,
-  `call_other_abis`, `per_address_ccs`, and `CallingConvention.custom` /
-  `CallOtherAbi.custom` for targets strider has no table for.
+  `call_other_abis`, `CallOtherAbi.custom` and
+  `resolve_indirect_branches=False`; `user_op_names` / `call_other_abi` show
+  what is in force, and `CallingConvention.preset(name)` builds one of
+  `CC_PRESETS`.
 - **Stated assumptions.** `AssumptionOptions` holds nine claims the analysis
   cannot check (five on by default); `AssumptionOptions.none()` is the sound
-  floor and `function.assumptions` reads them back.
-- **Queries.** `one_of` / `first_of` in any slot, `field`, `code_ptr`,
-  `find_unique_value`, `JoinPredicate`, edge joins (`capture_true`), and
-  constants of any width; rewrites build from `strider.template`.
+  floor, and `function.optimize(assumptions=...)` adds claims, never
+  withdrawing one.
+- **Floats.** Float conversions round and saturate as each ISA does, under
+  the modelled rounding mode.
+- **Queries.** `first_of`, `one_of` in any slot, `field`, `code_ptr`,
+  `find_unique_value`, `JoinPredicate`, constants of any width, and the
+  `hit.uint(c)` / `hit.sint(c)` readers.
 - **Tooling.** `function.to_text()`, `strider.explore.visualize(...,
-  background=True)`, `StriderError.backtrace`; handles work on any thread and
-  `analyze` drops the GIL.
+  background=True)`, `StriderError.backtrace`, and handles that work on any
+  thread.
 
 ## Upgrading
 
 Most renames and removals raise, and [CHANGELOG.md](CHANGELOG.md) says how to
-port each. These change an answer without an error.
-
-From 0.2.0:
-
-- A `one_of` / `first_of` arm in a memory slot, and a `call()` /
-  `call_other()` in a raw slot (`input`, `any_input`, `phi_token`), also match
-  the call's memory or control edge: `store().mem(one_of([call().res()]))`
-  matched nothing and now matches.
-- A builder's `into_pat()` follows later edits to the builder.
-- `m[c] == v` compares at the constant's full width.
-- Rust: a repeated `CallOtherPat::name` or `PhiPat::for_vn` intersects.
-
-From 0.1.0:
+port each. Its [0.3.0 section](CHANGELOG.md#breaking-python) opens with the
+changes that alter an answer without an error. From 0.1.0, these do too:
 
 - `ConstantFold` turns `x + x*2` into `x*3`, and a `Call`'s outputs are
   numbered per clobbered register.
 - Five `AssumptionOptions` claims default on.
 - `hit[c] is None` is always false: test `c in hit`.
-
-Replacements for what is gone: `cfg.is_complete()` is `not cfg.incomplete`;
-`IfPat.true_branch` is an edge join, `[if_else().capture_true(t),
-region().any_input(t)]`; `strider.opt.CfgDetach`'s work is done by
-`DeadBranchElimination`; `entry()` and `region()` as a value operand raise.
 
 ## Documentation
 
