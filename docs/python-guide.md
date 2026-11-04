@@ -20,21 +20,12 @@ import strider
 prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 ```
 
-Symbols and memory:
-
-```python
-prog.symbol("array_sum")     # a Symbol: name, address, size, end, is_function, is_thumb,
-                             # local_entry, region
-prog.symbols()               # {name: Symbol} for all of them
-prog.functions()             # one Symbol per function address, address order
-prog.symbol_at(0x401234)     # the Symbol covering an address, or None
-prog.entry_point()           # the ELF entry point
-prog.read(addr, 16)          # raw bytes, or None if unmapped
-```
-
-For a stripped image, `prog.add_symbol_file(path)` reads symbols from another
-file (a debug object, a `vmlinux`) and `prog.add_symbols({name: addr})` takes
-your own. `prog.add_elf(path)` merges a second image's bytes and symbols.
+`prog.symbol("array_sum")` returns a `Symbol` (name, address, size, ...);
+[ElfLifter metadata](python-api.md#elflifter-metadata) lists the other
+symbol and memory reads. For a stripped image, `prog.add_symbol_file(path)`
+reads symbols from another file (a debug object, a `vmlinux`) and
+`prog.add_symbols({name: addr})` takes your own. `prog.add_elf(path)` merges a
+second image's bytes and symbols.
 
 ## Analyzing a function
 
@@ -66,16 +57,10 @@ cfg, function, unresolved = prog.analyze(addr, opts=opts)
 By name, the symbol's size bounds the lift and drops
 `allow_code_before_start_addr`; hence the address.
 
-Other options ([python-api.md](python-api.md#2-analyzing-a-function)):
-`assumptions=AssumptionOptions(...)` states unchecked claims about the code
-(`AssumptionOptions.none()` makes none); `CfgOptions` takes `known_targets=`
-(your own indirect-branch answers), `call_other_abis=` (an ABI for a Sleigh
-user-op), `data_ranges=` (bytes that are data), `no_return_targets=` (callees
-that never return, at their even decoded address: `addr & ~1` for Thumb or
-MIPS16) and `function_max_size=` (bounds the decode; raises beside
-`allow_code_before_start_addr=True`); `per_address_ccs=` names a callee's
-convention; `pipeline=` replaces the pass list. On ppc64 ELFv2, `ElfLifter`
-also applies a listed `address` to its `Symbol.local_entry`.
+The other options (unchecked claims, your own branch targets, no-return
+callees, per-callee conventions, a custom pipeline) are in
+[python-api.md](python-api.md#liftlifteroptions-per-call-tuning) and
+[§12](python-api.md#12-the-cfg-stridercfg).
 
 **One handle analyzes many functions:**
 
@@ -108,8 +93,9 @@ for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
 ```
 
 `ignore_casts=True` (`CastMask.all()`) matches through extends, truncations,
-`int_bits_to_float` and `float_bits_to_int`; a `CastMask` picks a subset. `find_all` returns every match; `find_unique` raises unless there is
-exactly one.
+`int_bits_to_float` and `float_bits_to_int`; a `CastMask` picks a subset.
+`find_all` returns every match; `find_unique` raises unless there is exactly
+one.
 
 ### Reading a match
 
@@ -261,8 +247,7 @@ class MultipleOfEight(JoinPredicate):
 function.find_all([call().arg(0, int_const(n))], constraints=[MultipleOfEight()])
 ```
 
-`captures()` names the bindings the rule reads; `constraint` runs once they
-are bound.
+[`JoinPredicate`](python-api.md#joinpredicate-your-own-logic) has the rules.
 
 ## Rewriting the graph
 
@@ -295,18 +280,10 @@ a rule whose output its own `find` matches needs a second call.
 
 ## Looking at the graph
 
-`strider.explore.visualize` serves an interactive explorer:
-
-```python
-strider.explore.visualize(function)                # prints a local URL; blocks until interrupted
-strider.explore.visualize(function, whole=False)   # a neighborhood, re-centering as you click
-port = strider.explore.visualize(function, background=True)   # serve and keep querying
-strider.explore.shutdown(port)                     # ...until you stop it
-```
-
-Keys and toolbar: [python-api.md](python-api.md#10-visualizing).
-`function.to_text()` prints a header and one line per node, stable across runs
-for `diff`. For a static, self-contained picture:
+`strider.explore.visualize(function)` serves an interactive explorer at a
+local URL; [python-api.md](python-api.md#10-visualizing) has its options,
+keys and toolbar. `function.to_text()` prints a header and one line per node,
+stable across runs for `diff`. For a static, self-contained picture:
 
 ```python
 function.to_html("graph.html", pretty=True)   # the IR, register names resolved
@@ -353,30 +330,9 @@ cfg, function, unresolved = lft.analyze(0x8000, cc)
 ```
 
 A plain lifter works by address and takes the convention per `analyze`.
-For computed or streamed bytes, subclass `MemReader`:
-
-```python
-class MyCode(strider.reader.MemReader):
-    def read(self, addr, size):
-        # Your bytes here: return exactly `size` bytes at `addr`,
-        # or None if that range is unmapped.
-        ...
-
-lft = strider.lift.lifter(arch, MyCode())
-```
-
-For `LoadReadOnly` to fold fixed-address loads (`.rodata`, a vector table),
-pass a `ReadOnlyMemory` as `rom`:
-
-```python
-class MyRodata(strider.reader.ReadOnlyMemory):
-    def read(self, addr, size):
-        # Your bytes here, but only where they are genuinely immutable:
-        # return `size` bytes at `addr`, or None if that range is not read-only.
-        ...
-
-lft = strider.lift.lifter(arch, MyCode(), rom=MyRodata())
-```
+For computed bytes subclass `MemReader`, and pass a `ReadOnlyMemory` as `rom=`
+so `LoadReadOnly` folds fixed-address loads
+([custom memory](python-api.md#custom-memory-readermemreader--readerreadonlymemory)).
 
 Examples `02` (custom `MemReader`), `07` (ROM folding) and `08` (both) in
 `crates/strider-py/examples/python/` run these end to end.
