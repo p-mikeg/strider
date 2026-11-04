@@ -49,3 +49,24 @@ def test_float_sub_negates_at_the_constant_own_width():
     fn = _analyze(_FSUBF, struct.pack("<f", 1.5))
     assert _count(fn, p.float_sub(p.any_float(), p.float_const(_F32))) == 1
     assert _count(fn, p.float_sub(p.any_float(), p.float_const(_F64))) == 0
+
+
+def test_int_sub_folds_every_uncaptured_constant_form():
+    fn = _analyze(_SUBC)
+    x = p.function_arg(0)
+    assert _count(fn, p.int_sub(x, p.int_const(16).of_width(64))) == 1
+    assert _count(fn, p.int_sub(x, p.int_const([15, 16]))) == 1
+    assert _count(fn, p.int_sub(x, p.int_const([15, 17]))) == 0
+    assert _count(fn, p.int_sub(x, p.int_const_any_width(16))) == 1
+    assert _count(fn, p.int_sub(x, p.int_const_any_width([15, 16]))) == 1
+
+
+def test_int_sub_of_a_captured_constant_matches_only_the_neg_shape():
+    fn = _analyze(_SUBC)
+    assert _count(fn, p.int_sub(p.function_arg(0), p.int_const(16).capture("k"))) == 0
+
+
+def test_float_sub_folds_a_width_pinned_constant():
+    fn = _analyze(_FSUBF, struct.pack("<f", 1.5))
+    assert _count(fn, p.float_sub(p.any_float(), p.float_const(_F32).of_width(32))) == 1
+    assert _count(fn, p.float_sub(p.any_float(), p.float_const(_F32).of_width(64))) == 0
