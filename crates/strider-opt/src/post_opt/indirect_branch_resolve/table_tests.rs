@@ -334,8 +334,7 @@ fn classify_table_dispatch_excludes_a_table_entry_as_the_index() {
 
 /// `0x5000 + 4 * zext(load8(base + offset))`, a jump computed from a byte as
 /// AArch64 `adr; ldrb; add x, x, w, lsl #2; br` does.  `base` is a register,
-/// or with `bounded` a byte loaded from RAM, bounded by its width alone.  No
-/// ROM serves either byte.
+/// or with `bounded` a byte loaded from RAM, bounded by its width alone.
 fn byte_at(fb: &mut FunctionBuilder, bounded: bool, offset: u64) -> ValueId {
     let base = if bounded {
         let at = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
@@ -375,14 +374,26 @@ fn a_width_bounded_byte_of_a_table_is_excluded_as_the_index() {
     assert_eq!(classify(&g, None), None);
 }
 
-/// A byte at an unbounded register plus an offset is a field read through a
-/// pointer: any of its 256 values may pick the target.
-/// Mutation: take every term of the address for a bounded index.
+/// A byte at a ROM-served table base plus an unbounded register is a cell of
+/// that table, as a Thumb `tbb` whose index bound is missed reads it.
+/// Mutation: read no constant term as ROM in `loads_a_field`.
+#[test]
+fn a_width_bounded_byte_of_a_rom_table_is_excluded_as_the_index() {
+    let (g, _) = build_with_target(|fb| byte_at(fb, false, 0xA000));
+    let rom = MockRom::raw_bytes(0xA000, vec![0; 256]);
+    assert_eq!(classify(&g, Some(&rom)), None);
+}
+
+/// A byte at an unbounded register plus an offset no ROM serves is a field
+/// read through a pointer: any of its 256 values may pick the target.
+/// Mutation: take every term of the address for a bounded index, or read
+/// every constant term as ROM.
 #[test]
 fn a_width_bounded_byte_through_a_pointer_is_the_index() {
     let (g, _) = build_with_target(|fb| byte_at(fb, false, 0xcb));
+    let rom = MockRom::raw_bytes(0xA000, vec![0; 256]);
     let want: Vec<u64> = (0..256).map(|i| 0x5000 + 4 * i).collect();
-    assert_eq!(arms(classify(&g, None)), Some(want));
+    assert_eq!(arms(classify(&g, Some(&rom))), Some(want));
 }
 
 #[test]

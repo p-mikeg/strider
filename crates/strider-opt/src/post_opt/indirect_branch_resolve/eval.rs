@@ -50,6 +50,10 @@ impl<'a> Evaluator<'a> {
         }
     }
 
+    pub(crate) fn rom(&self) -> Option<&'a dyn ReadOnlyMemory> {
+        self.rom
+    }
+
     /// Pins `idx_value` to `idx`, dropping every fold that read the previous
     /// pin, or every fold when the pinned value changes.  A pin-free fold is a
     /// function of the graph alone, so it is kept across indices and roots.

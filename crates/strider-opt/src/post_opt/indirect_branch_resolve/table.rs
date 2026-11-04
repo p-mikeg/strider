@@ -284,7 +284,8 @@ impl SiteClassifier<'_> {
     }
 
     /// Whether `v` is a load through a pointer: a non-constant address none of
-    /// whose added terms is bounded at `site` like a table index.
+    /// whose added terms is bounded at `site` like a table index or is a
+    /// constant the ROM serves, a table base.
     fn loads_a_field(&mut self, site: NodeId, v: ValueId) -> bool {
         let function = self.function();
         if !matches!(function.kind_of_value(v), NodeKind::Load(_)) {
@@ -301,7 +302,14 @@ impl SiteClassifier<'_> {
             let Some(term) = stack.pop() else {
                 return true;
             };
-            if function.int_const_u128(term).is_some() {
+            if let Some(c) = function.int_const_u128(term) {
+                let served = u64::try_from(c)
+                    .ok()
+                    .zip(self.eval.rom())
+                    .is_some_and(|(c, rom)| rom.read(c, &mut [0u8]).is_ok());
+                if served {
+                    return false;
+                }
                 continue;
             }
             if matches!(
