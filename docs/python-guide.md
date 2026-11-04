@@ -10,8 +10,9 @@ See [Install](../README.md#install); then `import strider` works under
 
 ## The handle: one object per binary
 
-Everything starts from a *lifter handle*. `load_elf` builds one for an ELF,
-detecting the CPU and calling convention:
+Everything starts from a *lifter handle*. `load_elf` builds one for an ELF
+(an executable, a shared library or an unlinked `.o`), detecting the CPU and
+calling convention:
 
 ```python
 import strider
