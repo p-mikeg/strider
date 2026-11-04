@@ -72,11 +72,11 @@ resolves nothing, so every deferred site is `UnresolvedBranch` and every seat
   It leaves through a `TailCall` stub. An unmapped seeded arm is dropped; an
   unmapped entry fails the build.
 - `UndecodableTarget`: a direct branch to bytes Sleigh rejects or
-  `data_ranges` marks, or a fall-through into them past a call or a run of
-  zero-p-code-op instructions. A branch or a nop run leaves through a stub; a
-  call ends `NoReturn`, dropping what follows it. Any fall-through into a data
-  range is reported; any other into bytes Sleigh rejects fails the build. The
-  entry decodes even inside a data range.
+  `data_ranges` marks, or a fall-through into them past a call, directly or
+  through a run of zero-p-code-op instructions. A branch or a nop run leaves
+  through a stub; a call ends `NoReturn`, dropping what follows it. Any
+  fall-through into a data range is reported; any other into bytes Sleigh
+  rejects fails the build. The entry decodes even inside a data range.
 - `PastFunctionEnd`: a fall-through, not-taken path or conditional
   instruction's skip of itself past a `FunctionBound::Size` end, at the first
   address after the last decoded instruction. It leaves through a stub; a call

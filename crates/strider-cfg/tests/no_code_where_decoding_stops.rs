@@ -88,6 +88,17 @@ fn an_undecodable_word_past_anything_but_a_call_still_fails_the_function() {
 }
 
 #[test]
+fn a_zero_pcode_op_run_no_call_falls_into_still_fails_the_function() {
+    // mov eax, 1 ; nop ; bad
+    let bytes = vec![0xb8, 0x01, 0x00, 0x00, 0x00, 0x90, 0x06, 0x06, 0x06, 0x06];
+    let err = build(&SleighArch::x86_64(), bytes, 0x1000, &CfgOptions::default());
+    assert!(
+        err.is_err(),
+        "a nop between the fall-through and the bad bytes changes nothing"
+    );
+}
+
+#[test]
 fn a_direct_branch_to_an_undecodable_word_is_reported_not_fatal() {
     let cfg = build(
         &SleighArch::ppc32be(),

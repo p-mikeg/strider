@@ -60,8 +60,9 @@ reasons! {
     UnmappedTarget => "unmapped_target",
     /// Holds no instruction: Sleigh rejects the bytes or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks them.
-    /// A branch, a fall-through into data, or a zero-p-code-op run leaves
-    /// through a `TailCall` stub; a call falling into them ends `NoReturn`.
+    /// A branch, a fall-through into data, or a zero-p-code-op run a call
+    /// falls into leaves through a `TailCall` stub; a call falling into them,
+    /// directly or through such a run, ends `NoReturn`.
     /// Any other fall-through into rejected bytes fails the build. Off a
     /// seeded arm, as for [`Self::UnmappedTarget`], the arm is dropped and
     /// named by
