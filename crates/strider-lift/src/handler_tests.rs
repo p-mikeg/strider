@@ -529,29 +529,6 @@ fn a_narrow_operand_takes_its_ops_coercion() {
     }
 }
 
-/// No vendored sla emits `Insert` / `Extract`, and lowering them exactly past
-/// 128 bits needs limb-wise masks, so both fail closed rather than carry an
-/// untested path.
-#[test]
-fn lift_bit_field_opcodes_fail_closed() {
-    for opcode in [Opcode::Insert, Opcode::Extract] {
-        with_test_lifter(|d, rid| {
-            let insn = Insn {
-                opcode,
-                output: Some(reg(0)),
-                inputs: vec![reg(0), reg(8), const_vn(0, 4), const_vn(8, 4)].into(),
-            };
-            let err = d
-                .process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .expect_err("bit-field opcode must be rejected");
-            assert!(
-                format!("{err:#}").contains("no supported sla emits"),
-                "error must name the contract, got: {err:#}"
-            );
-        });
-    }
-}
-
 /// Narrow `IntNeg` lowers to `Xor(x, all_ones)` with the constant inline.
 #[test]
 fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
@@ -703,11 +680,19 @@ fn lift_load_from_an_unknown_space_id_fails() {
     });
 }
 
-/// No SLEIGH production emits `SegmentOp` or `Indirect`; the decompiler mints
-/// both, `SegmentOp` with a host `AddrSpace*` in input 0.
+/// No SLEIGH production emits these; the decompiler mints them, `SegmentOp`
+/// with a host `AddrSpace*` in input 0.
 #[test]
 fn lift_decompiler_internal_opcodes_fail_closed() {
-    for opcode in [Opcode::SegmentOp, Opcode::Indirect] {
+    for opcode in [
+        Opcode::Extract,
+        Opcode::Insert,
+        Opcode::PtrAdd,
+        Opcode::PtrSub,
+        Opcode::SegmentOp,
+        Opcode::Indirect,
+        Opcode::MultiEqual,
+    ] {
         with_test_lifter(|d, rid| {
             let insn = Insn {
                 opcode,

@@ -47,19 +47,19 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::Popcount => self.handle_popcount(insn)?,
             Opcode::Lzcount => self.handle_lzcount(insn)?,
             Opcode::Piece => self.handle_piece(insn)?,
-            // Decompiler-internal; SLEIGH lowers bitrange assignments to
-            // shift-and-mask instead.
-            Opcode::Extract | Opcode::Insert => {
+            // Decompiler-internal: SLEIGH lowers bitrange assignments to
+            // shift-and-mask (and `Insert` / `Extract` past 128 bits would need
+            // limb-wise masks), and the rest come from `ActionSegmentize` and
+            // the decompiler's SSA construction.
+            Opcode::Extract
+            | Opcode::Insert
+            | Opcode::PtrAdd
+            | Opcode::PtrSub
+            | Opcode::SegmentOp
+            | Opcode::Indirect
+            | Opcode::MultiEqual => {
                 bail!(
-                    "opcode {:?} is a bit-field op no supported sla emits; rsleigh::lift_one is contracted not to emit it",
-                    insn.opcode
-                );
-            }
-            // Decompiler-internal pointer arithmetic (PTRSUB is `base +
-            // offset`, not a subtraction).
-            Opcode::PtrAdd | Opcode::PtrSub => {
-                bail!(
-                    "opcode {:?} is a decompiler-internal pointer op; rsleigh::lift_one is contracted not to emit it",
+                    "opcode {:?} is decompiler-internal; rsleigh::lift_one is contracted not to emit it",
                     insn.opcode
                 );
             }
@@ -76,14 +76,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::FloatFloat2Float => self.handle_float_float_to_float(insn)?,
             Opcode::FloatTrunc => self.handle_float_trunc(insn)?,
             Opcode::Load => self.handle_load(insn)?,
-            // Decompiler-internal: minted by `ActionSegmentize` and the
-            // decompiler's SSA construction, never by SLEIGH.
-            Opcode::SegmentOp | Opcode::Indirect => {
-                bail!(
-                    "opcode {:?} is decompiler-internal; rsleigh::lift_one is contracted not to emit it",
-                    insn.opcode
-                );
-            }
             // JVM constant-pool lookup; opaque, variadic refs.
             Opcode::CPoolRef => self.handle_cpool_ref(insn)?,
             // JVM object allocation; opaque.
@@ -99,13 +91,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::Return | Opcode::BranchIndirect => self.handle_sleigh_return(insn, addr)?,
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,
-            // Decompiler-internal phi.
-            Opcode::MultiEqual => {
-                bail!(
-                    "opcode {:?} is a decompiler-internal phi; rsleigh::lift_one is contracted not to emit it",
-                    insn.opcode
-                );
-            }
             // CPU intrinsic: inputs[0] is the CONST user-op id.
             Opcode::CallOther => {
                 self.handle_call_other(insn, self.ends_no_return_region(region_id, addr))?;
