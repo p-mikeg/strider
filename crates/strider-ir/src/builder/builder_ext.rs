@@ -37,10 +37,9 @@ pub trait IRBuilderExt: IRBuilder {
             return Ok(value_id);
         }
 
-        // A constant narrows by re-interning at the target width, which masks;
-        // `Truncate` would take the same low bits through a node.
-        if let Some(val) = self.int_const_u128(value_id) {
-            return self.build_int_const(val, output_type);
+        // Interning at the target width masks.
+        if let Some(v) = self.int_const(value_id).cloned() {
+            return self.build_int_const(v, output_type);
         }
 
         Ok(self.build_single_output_pure(NodeKind::Truncate, [value_id], output_type))
