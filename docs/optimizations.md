@@ -29,11 +29,10 @@ In the order the default pipeline runs them:
 algebraic identities (`x + 0`, `x * 1`, and so on), and folds constant
 truncations and extensions.
 
-It also collects a value against itself: `x + x*2` becomes `x*3`, and the same
-for a shift standing in for a multiply, so `x + (x<<1)` folds too. Thirteen
-pairings of add / subtract with multiply / shift reduce to one `x * K`, which
-means a pattern written against the shape in the source will not match. Search
-for the folded form, or for `int_mul(x, int_const_any_width(K))`.
+It also collects a value against itself: any sum or difference of `x`, `x*C`
+and `x<<C` reduces to one `x * K`, so `x + x*2` and `x + (x<<1)` both become
+`x*3`. A pattern written against the source shape will not match; search for
+`int_mul(x, int_const_any_width(K))`.
 
 The same goes for a few more rewrites, each of which leaves a shape a pattern
 written against the source will not find:
