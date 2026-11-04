@@ -3,8 +3,7 @@ use anyhow::anyhow;
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
-/// Each generated method reads a fixed input slot, panicking on the arity the
-/// validator already guarantees.
+/// Fixed-slot readers that panic on a malformed arity.
 macro_rules! semantic_slot_accessors {
     ($($(#[$m:meta])* $name:ident => $arity:literal [$slot:expr] $msg:literal;)+) => { $(
         $(#[$m])*
@@ -26,8 +25,7 @@ pub trait IRViewer {
         self.function().graph().node_inputs(node)
     }
 
-    /// Every input of a `Phi` / `MemPhi` except the structural `PhiToken`,
-    /// leaving one data input per predecessor.
+    /// A `Phi` / `MemPhi`'s inputs less the `PhiToken`: one per predecessor.
     fn phi_data_inputs(&self, phi: NodeId) -> impl Iterator<Item = ValueId> + '_ {
         let g = self.function().graph();
         g.node_inputs(phi)
@@ -35,13 +33,12 @@ pub trait IRViewer {
             .filter(move |&v| g.value_kind(v) != crate::node::ValueKind::PhiToken)
     }
 
-    /// The `Region` a `Phi` / `MemPhi` joins at, its token's producer.
+    /// The `Region` a `Phi` / `MemPhi` joins at.
     fn phi_region(&self, phi: NodeId) -> NodeId {
         self.producer(self.node_inputs(phi)[NodeKind::PHI_TOKEN_SLOT])
     }
 
-    /// Per input of [`Self::phi_region`], the control edge and the arm value
-    /// `phi` takes on it.
+    /// `(control edge, arm value)` per input of [`Self::phi_region`].
     fn phi_arms(&self, phi: NodeId) -> impl Iterator<Item = (ValueId, ValueId)> + '_ {
         let edges = self.node_inputs(self.phi_region(phi));
         let inputs = self.node_inputs(phi);
@@ -66,8 +63,7 @@ pub trait IRViewer {
         self.node_inputs_exact::<N>(self.producer(value))
     }
 
-    /// Data operands only: the `Control` / `Memory` / `PhiToken` edges are
-    /// dropped.
+    /// Typed inputs only.
     fn value_inputs(&self, node: NodeId) -> impl Iterator<Item = ValueId> + '_ {
         self.node_inputs(node)
             .into_iter()
@@ -95,7 +91,7 @@ pub trait IRViewer {
         self.function().graph().node_input_id_at(node, idx)
     }
 
-    /// The value on input slot `idx`, or `None` when the node is shorter.
+    /// `None` when the node is shorter.
     fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
         self.function().graph().nth_input(node, idx)
     }
@@ -104,7 +100,7 @@ pub trait IRViewer {
         self.function().graph().value_uses(value_id)
     }
 
-    /// O(1): stops after two steps rather than counting the whole use-list.
+    /// O(1).
     fn value_has_one_use(&self, value_id: ValueId) -> bool {
         self.function().graph().value_has_one_use(value_id)
     }
@@ -131,13 +127,9 @@ pub trait IRViewer {
         g.node_kind(g.producer(value_id))
     }
 
-    /// The constant an integer-typed `value` holds. `None` for a value no
-    /// `IntConst` produces, and for a non-integer type.
-    ///
-    /// The one read: the width-aware forms are
-    /// [`Self::int_const_ibig`], [`Self::int_const_u128`],
-    /// [`Self::int_const_i128`] and `eval::le_bytes` (test-util) over the
-    /// answer.
+    /// The constant an integer `value` holds; `None` unless an `IntConst`
+    /// produces it. See also [`Self::int_const_u128`] and
+    /// [`Self::int_const_i128`].
     fn int_const(&self, value: ValueId) -> Option<&dashu_int::UBig> {
         if !self.value_kind(value).as_value()?.is_integer() {
             return None;
@@ -148,13 +140,11 @@ pub trait IRViewer {
         Some(self.function().const_value(id))
     }
 
-    /// [`Self::int_const`] within the `u128` carrier. `None` for an
-    /// `I256`/`I512` value exceeding it.
+    /// `None` for a wide value past `u128`.
     fn int_const_u128(&self, value: ValueId) -> Option<u128> {
         let ty = self.value_kind(value).as_value()?;
         let v = u128::try_from(self.int_const(value)?).ok()?;
-        // Both intern paths mask to the declared width and `validate` reports
-        // `ConstWidthMismatch` on anything above it, so this cannot narrow.
+        // Interning masks to the declared width.
         debug_assert!(
             ty.int_mask_u128().is_none_or(|m| v <= m),
             "unmasked stored constant"
@@ -162,23 +152,20 @@ pub trait IRViewer {
         Some(v)
     }
 
-    /// [`Self::int_const`] read as two's complement at its declared width, at
-    /// every width.
+    /// [`Self::int_const`] read as two's complement at its width.
     fn int_const_ibig(&self, value: ValueId) -> Option<dashu_int::IBig> {
         let ty = self.value_kind(value).as_value()?;
         crate::eval::signed(self.int_const(value)?, ty)
     }
 
-    /// [`Self::int_const_ibig`] within the `i128` carrier, for an offset
-    /// domain the carrier bounds. `None` above 128 bits: an `I256` or `I512`
-    /// constant that [`Self::int_const_u128`] reads back still answers `None`
-    /// here.
+    /// [`Self::int_const_ibig`] as `i128`; `None` for types wider than 128
+    /// bits, even when [`Self::int_const_u128`] answers.
     fn int_const_i128(&self, value: ValueId) -> Option<i128> {
         let v = self.int_const_u128(value)?;
         self.value_kind(value).as_value()?.get_signed_int(v)
     }
 
-    /// [`Self::int_const_u128`] under an `I1` guard.
+    /// `None` unless `value` is an `I1` constant.
     fn bool_const_val(&self, value: ValueId) -> Option<bool> {
         if !self.value_kind(value).is_bool() {
             return None;
@@ -209,11 +196,9 @@ pub trait IRViewer {
         found.ok_or_else(|| anyhow!("node {node_id:?} has no Memory output"))
     }
 
-    /// The incoming memory token of a memory-chain node: `None` for every kind
-    /// but `Store` / `Load` / `Call` / `CallOther`. The exit sinks (`Return`,
-    /// `IndirectBranch`, `Unreachable`) take a memory token at
-    /// [`NodeKind::CTRL_MEM_SLOT`] but produce none, so no backward walk off a
-    /// memory value reaches them.
+    /// The memory input of a `Store` / `Load` / `Call` / `CallOther`; `None`
+    /// for every other kind, exit sinks included (they produce no memory, so
+    /// no backward memory walk reaches them).
     fn memory_input_of(&self, node: NodeId) -> Option<ValueId> {
         let inputs = self.node_inputs(node);
         match *self.node_kind(node) {
@@ -256,28 +241,20 @@ pub trait IRViewer {
         }
     }
 
-    // Each panics on an arity the validator guarantees for a well-formed node
-    // of that kind.
     semantic_slot_accessors! {
-        /// `If` input [`NodeKind::IF_COND_SLOT`] of `[control, cond]`.
         if_cond => 2[NodeKind::IF_COND_SLOT] "If node has [control, cond] inputs";
 
-        /// `Store` input [`NodeKind::ACCESS_ADDR_SLOT`] of `[memory, addr, data]`.
         store_addr => 3[NodeKind::ACCESS_ADDR_SLOT] "Store node has [memory, addr, data] inputs";
 
-        /// `Store` input [`NodeKind::STORE_DATA_SLOT`] of `[memory, addr, data]`.
         store_data => 3[NodeKind::STORE_DATA_SLOT] "Store node has [memory, addr, data] inputs";
 
-        /// `Load` input [`NodeKind::ACCESS_MEM_SLOT`] of `[memory, addr]`.
         load_mem => 2[NodeKind::ACCESS_MEM_SLOT] "Load node has [memory, addr] inputs";
 
-        /// `Load` input [`NodeKind::ACCESS_ADDR_SLOT`] of `[memory, addr]`.
         load_addr => 2[NodeKind::ACCESS_ADDR_SLOT] "Load node has [memory, addr] inputs";
     }
 
-    /// The address of a `Load` / `Store`; `None` for any other kind, and for a
-    /// short input list, since whole-graph sweeps reach malformed and dead
-    /// nodes.
+    /// The address of a `Load` / `Store`; `None` for any other kind or a short
+    /// input list (sweeps reach malformed dead nodes).
     fn access_address(&self, node: NodeId) -> Option<ValueId> {
         if !matches!(self.node_kind(node), NodeKind::Load(_) | NodeKind::Store(_)) {
             return None;
@@ -287,9 +264,6 @@ pub trait IRViewer {
             .copied()
     }
 
-    /// `IndirectBranch` dispatch value, input
-    /// [`NodeKind::INDIRECT_BRANCH_TARGET_SLOT`] of `[control, memory, target,
-    /// isa_mode?]` (arity 3 or 4).
     fn indirect_branch_target(&self, node: NodeId) -> ValueId {
         assert!(
             matches!(self.node_kind(node), NodeKind::IndirectBranch),
@@ -301,11 +275,8 @@ pub trait IRViewer {
             .expect("IndirectBranch has a [control, memory, target] head")
     }
 
-    /// The interworking ISA-mode value the `IndirectBranch`'s instruction
-    /// commits for its target(s) (the optional input past the head), or `None`
-    /// for a non-switching branch. Carried as a live input so the optimizer
-    /// maintains its cone; the resolver mode-tags each resolved target off it,
-    /// arch-agnostically.
+    /// The ISA-mode value the branch commits for its targets; `None` for a
+    /// non-switching branch.
     fn indirect_branch_isa_mode(&self, node: NodeId) -> Option<ValueId> {
         assert!(
             matches!(self.node_kind(node), NodeKind::IndirectBranch),
@@ -316,9 +287,7 @@ pub trait IRViewer {
             .copied()
     }
 
-    /// The ISA-mode value a `Switch`'s instruction commits for its arms (the
-    /// optional input past the head), as [`Self::indirect_branch_isa_mode`] is
-    /// for the placeholder it replaced.
+    /// As [`Self::indirect_branch_isa_mode`], for a `Switch`.
     fn switch_isa_mode(&self, node: NodeId) -> Option<ValueId> {
         assert!(
             matches!(self.node_kind(node), NodeKind::Switch(_)),
@@ -329,8 +298,6 @@ pub trait IRViewer {
             .copied()
     }
 
-    /// `Switch` dispatch value, input [`NodeKind::SWITCH_SELECTOR_SLOT`] of
-    /// `[control, selector, isa_mode?]`.
     fn switch_selector(&self, node: NodeId) -> ValueId {
         assert!(
             matches!(self.node_kind(node), NodeKind::Switch(_)),
@@ -349,15 +316,13 @@ pub trait IRViewer {
             .ok_or_else(|| anyhow!("output {value_id:?} is not a value edge (got {kind:?})"))
     }
 
-    /// Float values keep their type; integers map to the float of the same
-    /// byte size, so the result is always bitcastable from `value`. Errors on a
-    /// byte size with no float counterpart.
+    /// The float type of `value`'s byte size (bitcastable from it). Errors on
+    /// a size with no float type.
     fn infer_float_type(&self, value: ValueId) -> crate::Result<ValueType> {
         let ty = self.value_type(value)?;
         if ty.is_float() {
             return Ok(ty);
         }
-        // `byte_size()` is at most 64.
         ValueType::float_from_bytes(ty.byte_size() as u32)
             .map_err(|e| anyhow!("infer_float_type of {ty}: {e}"))
     }
@@ -384,7 +349,7 @@ impl IRViewer for crate::EditFunction<'_> {
     }
 }
 
-/// Control-aware traversals of a function's IR graph.
+/// Control-aware walks.
 pub trait IRWalker: IRViewer {
     /// Pre-order over everything reachable from entry, following control-out
     /// forward and data-in backward.
@@ -405,9 +370,8 @@ pub trait IRWalker: IRViewer {
         self.walk().filter(move |&n| pred(self.node_kind(n)))
     }
 
-    /// Every producer reachable from entry before its consumers unless the
-    /// use closes a def-use cycle, a root first, filtered by `pred`. Empty
-    /// only when `pred` matches nothing reachable from entry.
+    /// Reachable nodes matching `pred`, producers before consumers except
+    /// across a def-use cycle.
     fn reverse_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,

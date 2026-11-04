@@ -3,22 +3,18 @@
 use crate::node::NodeKind;
 use crate::node::signature::{Conversion, OperandWidth};
 
-/// Where input slot's width comes from, over whatever a caller uses to stand
-/// for a value: a vertex id, or the type itself.
+/// Where an input slot's width comes from. `T` stands for a value: an id or
+/// its type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WidthTie<T> {
-    /// It is this head's width.
     Tied(T),
     /// The rule names a head the graph does not supply.
     NoHead,
-    /// Input and output are related by a conversion, not by equality.
     Conversion(Conversion),
-    /// Nothing is pinned.
     Free,
 }
 
-/// The width input `slot` of `kind` owes, given the node's first value output
-/// `out` and its first operand `first`.
+/// `out` is the node's first value output, `first` its first operand.
 #[must_use]
 pub fn width_tie<T>(kind: &NodeKind, slot: usize, out: Option<T>, first: Option<T>) -> WidthTie<T> {
     match kind.operand_width(slot) {
@@ -41,7 +37,7 @@ mod tests {
         width_tie(kind, slot, Some(OUT), Some(FIRST))
     }
 
-    /// One rule per `OperandWidth` arm, read through the one interpreter.
+    /// One rule per `OperandWidth` arm.
     #[test]
     fn each_width_rule_names_its_own_head() {
         let add = NodeKind::IntBinaryOp(crate::IntBinaryOp::Add);

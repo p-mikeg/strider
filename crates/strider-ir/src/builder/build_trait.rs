@@ -2,14 +2,12 @@ use crate::builder::FunctionBuilder;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 pub trait IRBuilder: crate::IRViewer {
-    /// A structural escape hatch: mutating graph structure through this
-    /// bypasses [`crate::EditFunction`]'s cached live/roots bookkeeping, so
-    /// use it only for side-table-local work. On an `EditFunction` every
-    /// borrow counts as one of its
-    /// [`control_edits`](crate::EditFunction::control_edits).
+    /// Bypasses [`crate::EditFunction`]'s live/roots bookkeeping: use it for
+    /// side-table work only. On an `EditFunction` each borrow counts as one of
+    /// its [`control_edits`](crate::EditFunction::control_edits).
     fn function_mut(&mut self) -> &mut crate::Function;
 
-    /// Interns an integer constant, masked to `ty`; no structural edit.
+    /// Masks to `ty`; no structural edit.
     fn intern_int_const(
         &mut self,
         val: impl Into<crate::UBig>,
@@ -18,8 +16,7 @@ pub trait IRBuilder: crate::IRViewer {
         self.function_mut().intern_int_const(val, ty)
     }
 
-    /// Creates or dedups to a node, unioning each contributor's
-    /// asm-fingerprint into the result.
+    /// Unions each contributor's asm-fingerprint into the result.
     fn create_node_attributed<I, O>(
         &mut self,
         kind: NodeKind,
@@ -56,8 +53,7 @@ impl IRBuilder for FunctionBuilder {
         I: IntoIterator<Item = ValueId>,
         O: IntoIterator<Item = ValueKind>,
     {
-        // Also stamps the current lift address; on a dedup-cache hit it is
-        // unioned into the existing entry.
+        // On a dedup hit, the lift address joins the existing fingerprint.
         let node = self
             .function
             .create_node_attributed(kind, inputs, outputs, contributors);

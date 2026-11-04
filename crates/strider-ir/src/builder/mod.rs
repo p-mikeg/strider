@@ -18,12 +18,11 @@ mod test_support;
 mod tests;
 mod vars;
 
-/// Tracks SSA-style per-region variable state: each variable has exactly one
-/// current `ValueId` inside the active region, and every read and write goes
-/// through that mapping.
+/// Builds a [`Function`], tracking each variable's current `ValueId` in the
+/// active region.
 pub struct FunctionBuilder {
     pub(crate) function: Function,
-    /// The single `Memory` output of the `InitialMemory` node.
+    /// `InitialMemory`'s output.
     pub(crate) entry_memory: ValueId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
     pub(crate) cur_region: Option<crate::region::RegionId>,
@@ -45,14 +44,13 @@ impl FunctionBuilder {
         &mut self.function
     }
 
-    /// The sole constructor. `all_used_variables` is every varnode appearing
-    /// in the function; a bare `Endianness` is the order of every space.
+    /// `all_used_variables` is every varnode in the function, the stack
+    /// pointer included; a bare `Endianness` applies to every space.
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
         cc: strider_target::BuiltCallingConvention,
         byte_order: impl Into<strider_target::ByteOrder>,
     ) -> Result<Self> {
-        // Callers pass the stack vn in `all_used_variables` themselves.
         // `Function::new` drops the duplicates.
         all_used_variables.extend(
             cc.ret_val_regs
@@ -78,14 +76,13 @@ impl FunctionBuilder {
         })
     }
 
-    /// Registers the sla declares for its own semantics, which a call's value
-    /// in them cannot reach the callee through.
+    /// Sla-internal registers, through which no value reaches a callee.
     pub fn set_internal_registers(&mut self, registers: &'static [rsleigh::Vn]) {
         self.internal_registers = registers;
     }
 
-    /// Registers each arg-passing register's largest tracked container's
-    /// `InitialVar` as the carrier for that argument's positional index.
+    /// Records each arg register's container `InitialVar` as the carrier of
+    /// that argument index.
     pub fn record_register_arg_carriers(&mut self) {
         let arg_regs: Vec<rsleigh::Vn> = self.function.default_cc().arg_passing_regs.clone();
         for (i, reg) in arg_regs.iter().enumerate() {
@@ -104,15 +101,13 @@ impl FunctionBuilder {
         self.lift_addr = addr;
     }
 
-    /// The machine address currently being lifted, if any.
     #[inline]
     pub fn lift_addr(&self) -> Option<u64> {
         self.lift_addr
     }
 
-    /// Validates before handing the function over. A failure wraps a
-    /// [`crate::validate::ValidationReport`], recoverable with
-    /// `err.downcast_ref::<crate::validate::ValidationReport>()`.
+    /// Validates first; a failure downcasts to
+    /// [`crate::validate::ValidationReport`].
     pub fn build(mut self) -> crate::Result<crate::Function> {
         crate::validate::validate(&self.function).map_err(|e| e.report(&self.function))?;
         let reach = frame_reach(&self.function, &self.call_register_values);
@@ -121,9 +116,8 @@ impl FunctionBuilder {
     }
 }
 
-/// What a value is, as an address: the entry stack pointer plus a constant,
-/// a constant, derived from the stack pointer some other way, or anything
-/// else.  `Top` is not yet known, the optimistic start a loop `Phi` needs.
+/// A value as an address. `Top` is the optimistic not-yet-known start a loop
+/// `Phi` needs.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Reach {
     #[default]
@@ -150,8 +144,7 @@ impl Reach {
     }
 }
 
-/// A step of the arithmetic an address is built from, which [`frame_reach`]
-/// follows; `None` off it.
+/// An address-arithmetic step [`frame_reach`] follows.
 #[derive(Clone, Copy)]
 enum AddrStep {
     Phi,
@@ -202,22 +195,15 @@ fn address_step(kind: &NodeKind) -> Option<AddrStep> {
     }
 }
 
-/// The highest offset from the entry stack pointer among `values` that are
-/// computed from it through the arithmetic an address is built from (`Add`,
-/// `And`, `Or`, `Xor`, `Neg`, a width change, a `Phi`): `i128::MAX` when one
-/// has no constant offset, `None` when none is.  Any other step (a product,
-/// a load, a call's result) is not followed and is not a stack address; only
-/// added to a stack operand does it make the offset unknown.  A value
-/// reloaded from memory is left out, since storing the address was already
-/// an escape.
-///
-/// Solved optimistically to a fixed point, so a loop that leaves the stack
-/// pointer where it found it keeps the offset.  Not `decompose`'s answer:
-/// that runs on optimized IR in strider-opt, and these values, held only in
-/// registers, are gone from the graph by then.
+/// The highest entry-SP offset among `values` derived from it through
+/// [`AddrStep`]s: `i128::MAX` when one has no constant offset, `None` when
+/// none is. Any other step is not a stack address, but added to one makes
+/// the offset unknown. A reloaded value is left out: storing it was already
+/// an escape. Solved optimistically, so a loop that restores the stack
+/// pointer keeps the offset. Runs here because these register-only values
+/// are gone after optimization.
 fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     use crate::IRViewer;
-    // The cone the arithmetic reaches, and each value's users within it.
     let mut cone = Vec::new();
     let mut seen = entity_utils::DenseEntitySet::new();
     let mut users: cranelift_entity::SecondaryMap<ValueId, Vec<ValueId>> =
