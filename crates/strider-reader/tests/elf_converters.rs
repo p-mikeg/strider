@@ -12,11 +12,8 @@ fn parse(bytes: &[u8]) -> object::File<'_> {
     object::File::parse(bytes).expect("parse synthetic ELF")
 }
 
-/// A one-section `ET_REL` object, which is what routes the loader down the
-/// section walk. The five tests below differed only in these three fields and
-/// in whether the section's bytes exist on disk.
-///
-/// `payload` reserves real bytes and points `sh_offset` at them; `None` points
+/// A one-section `ET_REL` object, which routes the loader down the section
+/// walk. `payload` reserves real bytes and points `sh_offset` at them; `None` points
 /// it past EOF, so `data()` fails for the section.
 fn one_section_rel(name: &[u8], sh_flags: u64, sh_addr: u64, payload: Option<&[u8]>) -> Vec<u8> {
     use object::write::elf::{FileHeader, SectionHeader, Writer};
@@ -87,56 +84,53 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
     assert_eq!(regions.len(), 2);
 }
 
-/// A failing `section.data()` on an accepted section must propagate, not skip.
-/// NOBITS (`Ok(&[])`) is the only legitimate skip path; a real `Err` means a
-/// malformed ELF, and dropping it silently would hand back a partially-loaded
-/// reader.
-///
-/// The failure is synthesised by pointing a non-writable PROGBITS section past
-/// the end of the buffer.
-#[test]
-fn code_and_readonly_preset_propagates_data_error() {
-    let buf = one_section_rel(b".broken", u64::from(object::elf::SHF_ALLOC), 0x1000, None);
-    let err = common::try_regions(&buf, LoadFilter::CodeAndReadOnly)
-        .expect_err("malformed accepted section must surface an error");
-    assert!(
-        err.to_string().contains("failed to parse ELF"),
-        "got: {err}",
-    );
+/// Each preset with flags only it accepts: read-only for `CodeAndReadOnly`,
+/// writable for `AllAllocatable`.
+fn presets() -> [(LoadFilter, u64); 2] {
+    let alloc = u64::from(object::elf::SHF_ALLOC);
+    [
+        (LoadFilter::CodeAndReadOnly, alloc),
+        (
+            LoadFilter::AllAllocatable,
+            alloc | u64::from(object::elf::SHF_WRITE),
+        ),
+    ]
 }
 
-/// An `sh_addr + sh_size` overflow must propagate as `MemRegion::new`'s
-/// overflow error, neither dropped nor rewrapped as an `object` parse error.
-/// With the sibling data-error test this enumerates every error path the walker
-/// can take.
-///
-/// `sh_addr` is `u64::MAX - 1` with `sh_size` 4: the data fits in the file, so
-/// no `object::Error`, but `addr + len` overflows by 3.
+/// A failing `section.data()` on an accepted section propagates rather than
+/// skipping; only NOBITS (`Ok(&[])`) skips. The section's offset is past EOF.
 #[test]
-fn code_and_readonly_preset_propagates_region_overflow() {
-    let payload = [0u8, 0, 0, 0];
-    let buf = one_section_rel(
-        b".overflow",
-        u64::from(object::elf::SHF_ALLOC),
-        u64::MAX - 1,
-        Some(&payload),
-    );
-    let err = common::try_regions(&buf, LoadFilter::CodeAndReadOnly)
-        .expect_err("addr+len overflow must surface as RegionOverflow");
-    let msg = err.to_string();
-    let expected_addr = format!("{:#x}", u64::MAX - 1);
-    assert!(
-        msg.contains("would overflow u64")
-            && msg.contains(&expected_addr)
-            && msg.contains("length 4"),
-        "got: {err}",
-    );
+fn presets_propagate_a_data_error() {
+    for (filter, flags) in presets() {
+        let buf = one_section_rel(b".broken", flags, 0x1000, None);
+        let err = common::try_regions(&buf, filter).expect_err("an accepted malformed section");
+        assert!(
+            err.to_string().contains("failed to parse ELF"),
+            "{filter:?}: {err}"
+        );
+    }
 }
 
-/// Filter-before-data: a rejected section must never have `data()` called on
-/// it, so a malformed rejected section cannot surface as a spurious parse
-/// error. The sibling test pins accepted-and-malformed as an error; this pins
-/// rejected-and-malformed as an empty `Ok`.
+/// An `sh_addr + sh_size` overflow propagates as `MemRegion::new`'s error:
+/// `sh_addr` is `u64::MAX - 1` with 4 bytes that fit in the file.
+#[test]
+fn presets_propagate_a_region_overflow() {
+    for (filter, flags) in presets() {
+        let buf = one_section_rel(b".overflow", flags, u64::MAX - 1, Some(&[0; 4]));
+        let msg = common::try_regions(&buf, filter)
+            .expect_err("addr+len overflows")
+            .to_string();
+        assert!(
+            msg.contains("would overflow u64")
+                && msg.contains(&format!("{:#x}", u64::MAX - 1))
+                && msg.contains("length 4"),
+            "{filter:?}: {msg}"
+        );
+    }
+}
+
+/// A rejected section's `data()` is never read, so a malformed one is an
+/// empty `Ok`.
 #[test]
 fn code_and_readonly_preset_skips_rejected_malformed_section() {
     let buf = one_section_rel(
@@ -234,46 +228,6 @@ fn allocatable_sections_include_text_rodata_data_and_exclude_bss() {
         ".bss (NOBITS) must be excluded"
     );
     assert_eq!(regions.len(), 3);
-}
-
-/// The data-error propagation contract, re-pinned through the allocatable
-/// filter: the section here is writable, so only this preset accepts it.
-#[test]
-fn allocatable_preset_propagates_data_error() {
-    let buf = one_section_rel(
-        b".broken_writable",
-        u64::from(object::elf::SHF_ALLOC) | u64::from(object::elf::SHF_WRITE),
-        0x1000,
-        None,
-    );
-    let err = common::try_regions(&buf, LoadFilter::AllAllocatable)
-        .expect_err("malformed accepted section must surface an error");
-    assert!(
-        err.to_string().contains("failed to parse ELF"),
-        "got: {err}"
-    );
-}
-
-/// The overflow propagation contract, re-pinned through the allocatable filter.
-#[test]
-fn allocatable_preset_propagates_region_overflow() {
-    let payload = [0u8, 0, 0, 0];
-    let buf = one_section_rel(
-        b".overflow_writable",
-        u64::from(object::elf::SHF_ALLOC) | u64::from(object::elf::SHF_WRITE),
-        u64::MAX - 1,
-        Some(&payload),
-    );
-    let err = common::try_regions(&buf, LoadFilter::AllAllocatable)
-        .expect_err("addr+len overflow must surface as RegionOverflow");
-    let msg = err.to_string();
-    let expected_addr = format!("{:#x}", u64::MAX - 1);
-    assert!(
-        msg.contains("would overflow u64")
-            && msg.contains(&expected_addr)
-            && msg.contains("length 4"),
-        "got: {err}"
-    );
 }
 
 /// An RWX mapping is fetchable but is not runtime-immutable, so it belongs in
