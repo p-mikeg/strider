@@ -191,6 +191,7 @@ const INTENT: &[(&str, &str, &[&[Need]])] = &[
     // ppc32 converts by the magic-number subtraction, an add of its negation,
     // folded where the magic number is a double.
     ("floats", "int_to_float", &[&[("int_to_float", 1)], &[("float.add", 1), ("float.neg|fconst[0xc330000080000000]", 1), ("float_to_float", 1)]]),
+    ("indirect_branch", "indirect_branch_resolved", RESOLVES),
     ("globals", "branch_on_const_string", &[&[("iconst[0x79]", 1)], &[("if", 0)]]),
     ("globals", "read_const_byte", &[&[("iconst[0x61]", 1)]]),
     ("globals", "read_const_int", &[&[("iconst[0x12345678]", 1)]]),
@@ -207,7 +208,53 @@ const INTENT: &[(&str, &str, &[&[Need]])] = &[
     ("stack", "large_local_array", &[&[("store", 1), ("cfg.back_edge", 1)]]),
     ("stack", "recursive_stack_growth", &[&[("call", 1), ("store", 1)]]),
     ("stack", "volatile_three_writes", &[&[("store", 3)]]),
+    ("switch", "dispatch_value", RESOLVES),
+    ("switch_masked_loop", "masked_loop_switch", RESOLVES),
+    ("switch_phi_index", "phi_index_dispatch", RESOLVES),
+    ("switch_value_range", "dispatch_offset", RESOLVES),
+    ("switch_value_range", "dispatch_unmasked", RESOLVES),
 ];
+
+/// Every indirect branch resolves.
+const RESOLVES: &[&[Need]] = &[&[("unresolved_branch", 0)]];
+
+/// Known unresolved dispatches: `(case, function, arches, why)`. On those
+/// arches the row must instead report `unresolved_branch`, so a fix fails
+/// here until its gap is dropped.
+#[rustfmt::skip]
+const GAPS: &[(&str, &str, &[&str], &str)] = &[
+    ("indirect_branch", "indirect_branch_resolved", &["aarch64be"], "the labels are stored as one i128 and read back at a variable offset off an alignment-masked SP"),
+    ("indirect_branch", "indirect_branch_resolved", &["arm_be8"], "a variable-index load from the two-slot stack array is not forwarded"),
+    ("indirect_branch", "indirect_branch_resolved", MIPS64, GOT),
+    ("indirect_branch", "indirect_branch_resolved", &["ppc32le", "ppc64be", "ppc64le"], DATA_REL_RO),
+    ("switch", "dispatch_value", MIPS64, GOT),
+    ("switch_masked_loop", "masked_loop_switch", &["mips32be", "mips32le"], "the `& 7` mask names entries past gcc's six-entry table"),
+    ("switch_masked_loop", "masked_loop_switch", MIPS64, GOT),
+    ("switch_phi_index", "phi_index_dispatch", &["aarch64", "arm", "arm_thumb", "mips32be", "mips32le", "mips64be", "mips64le", "ppc32le", "ppc64be"], DATA_REL_RO),
+    ("switch_phi_index", "phi_index_dispatch", &["aarch64be", "arm_be"], "clang -O0 reloads the index from a stack slot through a memphi, which is not forwarded"),
+    ("switch_value_range", "dispatch_offset", MIPS64, GOT),
+    ("switch_value_range", "dispatch_unmasked", MIPS64, GOT),
+];
+
+const MIPS64: &[&str] = &["mips64be", "mips64le"];
+const GOT: &str = "the table base is a GOT slot, unrelocated in the default ROM";
+const DATA_REL_RO: &str = "the label table is in writable .data.rel.ro, which no ROM serves";
+
+/// `function`'s row on `arch`, and the gap it stands in for.
+fn intent_on(
+    arch: &str,
+    case: &str,
+    function: &str,
+    any: &'static [&'static [Need]],
+) -> (&'static [&'static [Need]], Option<&'static str>) {
+    match GAPS
+        .iter()
+        .find(|g| g.0 == case && g.1 == function && g.2.contains(&arch))
+    {
+        Some(gap) => (&[&[("unresolved_branch", 1)]], Some(gap.3)),
+        None => (any, None),
+    }
+}
 
 /// A dedicated op, a library call, or the inlined bit sequence.
 #[rustfmt::skip]
@@ -321,12 +368,13 @@ fn count(section: &str, token: &str) -> usize {
     }
 }
 
-/// One line per `INTENT` row of `case` that `text` breaks or has no section
-/// for.
-fn broken_intents(case: &str, text: &str) -> Vec<String> {
+/// One line per `INTENT` row of `case` that `text` breaks on `arch` or has
+/// no section for.
+fn broken_intents(arch: &str, case: &str, text: &str) -> Vec<String> {
     let sections = sections(text);
     let mut broken = Vec::new();
     for &(_, function, any) in INTENT.iter().filter(|i| i.0 == case) {
+        let (any, _) = intent_on(arch, case, function, any);
         let found: Vec<&str> = sections
             .iter()
             .filter(|(header, _)| header.split_once(" @").is_some_and(|h| h.0 == function))
@@ -387,8 +435,15 @@ fn golden_text(fixture: &Fixture) -> String {
         "# {}/{}: Strider::analyze, default options\n",
         fixture.arch.dir, fixture.case
     );
-    for (_, function, any) in INTENT.iter().filter(|i| i.0 == fixture.case) {
-        let _ = writeln!(out, "# {function}: {}", intent_text(any));
+    for &(_, function, any) in INTENT.iter().filter(|i| i.0 == fixture.case) {
+        match intent_on(fixture.arch.dir, &fixture.case, function, any) {
+            (any, None) => {
+                let _ = writeln!(out, "# {function}: {}", intent_text(any));
+            }
+            (any, Some(why)) => {
+                let _ = writeln!(out, "# {function}: {} ({why})", intent_text(any));
+            }
+        }
     }
     out.push_str(shared.as_deref().unwrap_or_default());
     out.push_str(&body);
@@ -439,7 +494,7 @@ fn check_arch(dir: &str) {
         let shown = Path::new("fixtures/golden").join(dir).join(&file);
         let path = golden_dir.join(&file);
         let actual = golden_text(&fixture);
-        let intents = broken_intents(&fixture.case, &actual);
+        let intents = broken_intents(dir, &fixture.case, &actual);
         cases.push(fixture.case);
         if !intents.is_empty() {
             for intent in intents {
@@ -606,10 +661,27 @@ fn every_fixture_has_functions() {
 fn an_analyze_error_breaks_every_intent_row() {
     let text = "header\n== branch_on_const_string @0x1000\nerror: lift failed\n";
     assert_eq!(
-        broken_intents("globals", text)
+        broken_intents("x64", "globals", text)
             .iter()
             .filter(|b| b.starts_with("branch_on_const_string"))
             .count(),
         1
     );
+}
+
+#[test]
+fn every_gap_is_an_intent_row_on_roster_arches() {
+    let roster = roster_dirs();
+    for &(case, function, arches, _) in GAPS {
+        assert!(
+            INTENT.iter().any(|i| i.0 == case && i.1 == function),
+            "{case}::{function} has no INTENT row"
+        );
+        for arch in arches {
+            assert!(
+                roster.iter().any(|r| r == arch),
+                "{arch} is not a roster arch"
+            );
+        }
+    }
 }
