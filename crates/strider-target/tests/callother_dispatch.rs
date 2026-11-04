@@ -704,3 +704,92 @@ fn ppc_fpscr_and_msr_footprints_resolve_on_every_ppc_preset() {
         }
     }
 }
+
+/// Every AltiVec op a record form (`vcmp*.`, `bcd*.`) lifts to. The sla
+/// writes no CR6 for any of them, so the table must. The `vectorCompare*`
+/// names are shared with the non-record form.
+const PPC_CR6_OPS: [&str; 38] = [
+    "vectorCompareBoundsFloatingPoint",
+    "vectorCompareEqualToFloatingPoint",
+    "vectorCompareEqualToUnsignedByte",
+    "vectorCompareEqualToUnsignedHalfWord",
+    "vectorCompareEqualToUnsignedWord",
+    "vectorCompareGreaterThanOrEqualToFloatingPoint",
+    "vectorCompareGreaterThanFloatingPoint",
+    "vectorCompareGreaterThanSignedByte",
+    "vectorCompareGreaterThanConditionRegisterSignedHalfWord",
+    "vectorCompareGreaterThanSignedWord",
+    "vectorCompareGreaterThanUnsignedByte",
+    "vectorCompareGreaterThanUnsignedHalfWord",
+    "vectorCompareGreaterThanUnsignedWord",
+    "altv207_14",
+    "altv207_16",
+    "altv207_18",
+    "altv207_64",
+    "altv207_65",
+    "altv300_1",
+    "altv300_2",
+    "altv300_3",
+    "altv300_4",
+    "altv300_5",
+    "altv300_6",
+    "altv300_7",
+    "altv300_8",
+    "altv300_9",
+    "altv300_10",
+    "altv300_12",
+    "altv300_13",
+    "altv300_14",
+    "altv300_21",
+    "altv300_23",
+    "altv300_25",
+    "altv300_27",
+    "altv300_29",
+    "altv300_31",
+    "vsx300_82",
+];
+
+const PPC_PRESETS: [ArchPreset; 4] = [
+    ArchPreset::Ppc32Be,
+    ArchPreset::Ppc32Le,
+    ArchPreset::Ppc64Be,
+    ArchPreset::Ppc64Le,
+];
+
+#[test]
+fn ppc_record_form_vector_ops_write_cr6() {
+    for preset in PPC_PRESETS {
+        for name in PPC_CR6_OPS {
+            let abi = expect_call(classify(preset, name));
+            assert!(
+                abi.implicit_writes.contains(&"cr6"),
+                "{preset:?}/{name}: {abi:?}"
+            );
+        }
+    }
+}
+
+/// The op `vcmpequb. v6,v0,v18` decodes to is one the table says writes CR6.
+#[test]
+fn vcmpequb_dot_decodes_to_a_cr6_write() {
+    const WORD: u32 = 0x10C0_9406;
+    for preset in [ArchPreset::Ppc64Le, ArchPreset::Ppc32Be] {
+        let arch = preset.arch();
+        let bytes = match arch.endianness() {
+            strider_target::Endianness::Big => WORD.to_be_bytes(),
+            strider_target::Endianness::Little => WORD.to_le_bytes(),
+        };
+        let reader = rsleigh::mem_readers::BufMemReader::new(bytes.to_vec(), 0x1000);
+        let lift = arch.sleigh(reader).unwrap().lift_one(0x1000).unwrap();
+        let names = &arch.decode_tables().user_op_names;
+        let ops: Vec<&str> = lift
+            .insns
+            .iter()
+            .filter(|i| i.opcode == rsleigh::Opcode::CallOther)
+            .map(|i| names[usize::try_from(i.inputs[0].addr_off).unwrap()].as_str())
+            .collect();
+        assert_eq!(ops, ["vectorCompareEqualToUnsignedByte"], "{preset:?}");
+        let abi = expect_call(classify(preset, ops[0]));
+        assert_eq!(abi.implicit_writes, &["cr6"], "{preset:?}");
+    }
+}
