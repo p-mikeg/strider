@@ -90,8 +90,8 @@ impl<'f> Matcher<'f> {
     ///
     /// Every distinct capture-to-binding map is yielded once:
     /// `int_add(var(x), var(x))` is one match, `int_add(anything().capture(k),
-    /// anything())` two. `k` commutative nodes whose operands each satisfy both
-    /// sub-patterns yield up to 2^k; pin them with `.ordered()`. Natural operand
+    /// anything())` two. `n` commutative nodes whose operands each satisfy both
+    /// sub-patterns yield up to 2^n; pin them with `.ordered()`. Natural operand
     /// order comes before swapped.
     ///
     /// # Errors
