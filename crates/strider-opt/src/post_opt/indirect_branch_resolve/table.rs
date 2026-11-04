@@ -5,7 +5,9 @@
 //! `Multiple` missing a runtime target drops an edge.
 //!
 //! Known limit (hand-written asm only): a read guard's range is trusted as the
-//! table's bound even where an unread or lost test is tighter.
+//! table's bound even where an unread or lost test is tighter, and a test
+//! reading the cell through a phi reads no bits of it. Each seats cells the
+//! code rules out.
 
 use super::index_range::{Interval, MAX_WALK, ScaleOp, Step, scale_of, strip_to_cell, width_mask};
 use super::{MAX_TABLE_ENTRIES, SiteClassifier};
@@ -220,13 +222,10 @@ impl SiteClassifier<'_> {
             .min_by_key(|hit| hit.range.count())
     }
 
-    /// Does `iv` cover every value `v`'s cell can produce, making `v` table
-    /// data rather than an index? Replays the [`strip_to_cell`] steps over the
-    /// cell's values, wrapping per [`wrap`] (`zext(i8) << 25` at `I32` has 128
-    /// values); an uncountable step or a strip past [`MAX_WALK`] answers `true`.
-    /// A field read through a pointer asks
-    /// [`RangeMap::cell_test_left_unread`](super::index_range::RangeMap::cell_test_left_unread)
-    /// instead.
+    /// Does `iv` cover every value `v`'s cell can produce (the [`strip_to_cell`]
+    /// steps replayed, wrapping per [`wrap`]), making `v` table data rather than
+    /// an index? An uncountable step or a strip past [`MAX_WALK`] answers `true`;
+    /// a field read through a pointer asks `cell_test_left_unread` instead.
     fn is_width_only(&mut self, site: NodeId, v: ValueId, iv: Interval, narrowed: bool) -> bool {
         let function = self.function();
         let Some(strip) = strip_to_cell(function, v, |and| {

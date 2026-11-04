@@ -11,24 +11,6 @@ use crate::pipeline::OptCtx;
 /// The fold ignores the memory chain, so the rom must map only memory that
 /// is immutable at runtime (code, `.rodata`; never `.data`, `.got` or the
 /// stack).
-///
-/// ```rust
-/// use strider_opt::{LoadReadOnly, OptCtx, OptimizerPipeline};
-/// use strider_ir::ReadOnlyMemory;
-///
-/// struct MyRom;
-/// impl ReadOnlyMemory for MyRom {
-///     fn read(&self, _addr: u64, _buf: &mut [u8]) -> anyhow::Result<()> {
-///         anyhow::bail!("unmapped")
-///     }
-/// }
-///
-/// let mut pipeline = OptimizerPipeline::new();
-/// pipeline.add(&LoadReadOnly);
-/// let rom = MyRom;
-/// let ctx = OptCtx::new(Some(&rom));
-/// # let _ = (pipeline, ctx);
-/// ```
 pub struct LoadReadOnly;
 
 // RPO folds the inner load of `Load(Load(c))` first, so nothing re-enqueues.
