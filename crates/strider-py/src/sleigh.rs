@@ -82,11 +82,11 @@ impl PyVn {
 impl PyVn {
     /// A varnode from `(space, offset, size_in_bytes)`.
     #[new]
-    fn new(space: PyVnSpace, off: u64, size: u32) -> Self {
+    fn new(space: PyVnSpace, off: crate::bigint::Addr, size: u32) -> Self {
         Self {
             inner: rsleigh::Vn {
                 size,
-                addr_off: off,
+                addr_off: off.0,
                 addr_space: space.inner,
             },
         }

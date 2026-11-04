@@ -5,7 +5,7 @@ import pytest
 
 import strider
 from strider import cfg, lift, pattern as p, reader
-from strider.sleigh import CallingConvention, SleighArch
+from strider.sleigh import CallingConvention, SleighArch, Vn, VnSpace
 
 from .conftest import fixture_path, lift_bytes
 
@@ -15,6 +15,10 @@ _RET = bytes([0xC3])
 
 def _lifter():
     return lift.lifter(SleighArch.x86_64(), reader.BufferReader(0x1000, _RET))
+
+
+def _cfg():
+    return _lifter().analyze(0x1000, _CC).cfg
 
 
 def _elf():
@@ -37,6 +41,13 @@ _TAKES = {
     "function_arg": lambda n: p.function_arg(n),
     "call().arg": lambda n: p.call().arg(n, p.anything()),
     "Function.node": lambda n: lift_bytes(_RET).node(n),
+    "Function.walk": lambda n: lift_bytes(_RET).walk(n),
+    "Function.neighborhood_dot": lambda n: lift_bytes(_RET).neighborhood_dot(n),
+    "Cfg.pcode_at": lambda n: _cfg().pcode_at(n),
+    "Cfg.region_at": lambda n: _cfg().region_at(n),
+    "Cfg.neighborhood_dot": lambda n: _cfg().neighborhood_dot(n),
+    "function_arg().index": lambda n: p.any_function_arg().index(n),
+    "Vn off": lambda n: Vn(VnSpace.REGISTER, n, 8),
 }
 
 
