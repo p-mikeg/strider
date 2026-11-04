@@ -1,8 +1,3 @@
-//! Whether a return jumps back to the address the function was entered with.
-//!
-//! [`claims`] holds the rule per claim, [`feasible`] which phi arm control can
-//! have taken, and [`stack`] the stack-memory probes.
-
 mod claims;
 mod feasible;
 mod stack;

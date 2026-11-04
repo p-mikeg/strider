@@ -1,5 +1,3 @@
-//! Address classes and the pairwise alias verdict between a load and a store.
-
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
@@ -68,7 +66,6 @@ impl Loc {
         }
     }
 
-    /// What `load` reads.
     pub(super) fn read_by(function: &Function, load: NodeId) -> Self {
         let NodeKind::Load(space) = *function.node_kind(load) else {
             unreachable!("read_by on a non-Load");
@@ -84,7 +81,6 @@ impl Loc {
         )
     }
 
-    /// What `store` writes.
     pub(super) fn written_by(function: &Function, store: NodeId) -> Self {
         let NodeKind::Store(space) = *function.node_kind(store) else {
             unreachable!("written_by on a non-Store");

@@ -1,5 +1,3 @@
-//! Width preconditions of the rewrite rules that compute a constant.
-
 use strider_ir::Function;
 use strider_ir::node::ValueType;
 use strider_pattern::{Bindings, Capture};

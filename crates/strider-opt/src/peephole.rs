@@ -1,6 +1,3 @@
-//! Worklist-driven peephole passes: an impl names its root kinds and one
-//! rewrite attempt; [`run_peephole`] drives the worklist.
-
 use entity_utils::Worklist;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};

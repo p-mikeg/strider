@@ -1,7 +1,3 @@
-//! LHS -> RHS rewrite rules over [`Pattern`] and [`Template`]. Every RHS node
-//! absorbs the matched footprint's asm-fingerprints once the rewrite is
-//! accepted.
-
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{EditFunction, IRBuilder, IRViewer, IRWalker};
 
@@ -10,8 +6,7 @@ use strider_pattern::{
     is_skip,
 };
 
-/// Builds a rewrite-rule closure from a typed LHS and a buildable typed RHS
-/// (a wildcard RHS does not implement [`TemplatePat`]).
+/// Builds a rewrite-rule closure from a typed LHS and a buildable typed RHS.
 ///
 /// The closure matches at a candidate root and redirects the root's single
 /// value output to the built RHS. It returns `Ok(Some(new_out))` when a use
@@ -34,10 +29,9 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs
     Rewrite::typed(lhs, rhs).boxed()
 }
 
-/// The dynamic (FFI) counterpart of [`rewrite_rule`], taking an already-built
-/// [`Pattern`] and [`Template`]. Template nodes are checked against their
-/// kind's signature; anything it does not pin (such as which address a `Load`
-/// reads) is the RHS author's.
+/// [`rewrite_rule`] over an already-built [`Pattern`] and [`Template`].
+/// Template nodes are checked against their kind's signature only; anything
+/// it does not pin (such as which address a `Load` reads) is unchecked.
 ///
 /// # Errors
 ///
@@ -47,8 +41,7 @@ pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Template) -> Result<BoxedRule> {
     Ok(Rewrite::checked(lhs, rhs)?.boxed())
 }
 
-/// A compiled LHS -> RHS rewrite, the body of [`rewrite_rule`] and
-/// [`rewrite_rule_runtime`].
+/// A compiled LHS -> RHS rewrite.
 pub(crate) struct Rewrite {
     lhs: Pattern,
     rhs: Template,
@@ -90,8 +83,6 @@ impl Rewrite {
     /// instantiated RHS.
     fn apply(&self, edit: &mut EditFunction<'_>, node: NodeId) -> Result<Option<ValueId>> {
         let (lhs, rhs) = (&self.lhs, &self.rhs);
-        // The footprint is the rewrite's proof: its interior gets culled, so
-        // its asm-fingerprints are carried onto the RHS.
         let (bindings, matched_nodes) = {
             let matcher = Matcher::new(edit.function());
             match matcher.match_at(node, lhs)? {
@@ -153,12 +144,10 @@ impl Rewrite {
             return Ok(None);
         }
 
-        // `replace_value` redirects every use of the root, the RHS's own
-        // included, so an RHS reading the root would close a data cycle.
-        // A match through a join gets the unpruned walk and an availability
-        // check, and declines on failure; a phi leaf breaks a cycle. Otherwise
-        // every bound value sits below the root, so the walk prunes at the
-        // footprint.
+        // `replace_value` also redirects the RHS's own uses, so an RHS reading
+        // the root would close a data cycle. Through a join the walk is
+        // unpruned and a failure declines; otherwise every bound value sits
+        // below the root, so the walk prunes at the footprint.
         if new_value != root_value {
             let f = edit.function();
             let crosses_join = self.through_join
@@ -469,7 +458,6 @@ where
     applied
 }
 
-/// [`apply_rules_count`]'s walk.
 fn fire_rules<R>(edit: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
 where
     R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
@@ -493,7 +481,7 @@ where
     Ok(applied)
 }
 
-/// The common trait-object type both rule constructors box into.
+/// A boxed rewrite rule.
 pub type BoxedRule = Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>>;
 
 #[cfg(test)]
