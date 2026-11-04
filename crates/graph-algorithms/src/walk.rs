@@ -1,5 +1,4 @@
-use alloc::vec::Vec;
-use core::marker::PhantomData;
+use std::marker::PhantomData;
 
 use cranelift_entity::EntityRef;
 
