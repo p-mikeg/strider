@@ -1,21 +1,13 @@
 //! A linked image's relocations as the dynamic loader finds them: the last
-//! `PT_DYNAMIC`, read at its `p_vaddr` through the `PT_LOAD`s, the last
-//! entry of each tag, and the tables those tags place (`DT_RELA`, `DT_REL`,
-//! `DT_JMPREL` by `DT_PLTREL`, `DT_CREL`, `DT_RELR`, and Android's packed
-//! and RELR ones). No section header takes part.
+//! `PT_DYNAMIC` at its `p_vaddr`, the last entry of each tag, and the tables
+//! those tags place. No section header takes part. A plain-table entry an
+//! earlier table already holds is walked once (ppc32 `DT_RELA` spans
+//! `DT_JMPREL`).
 //!
-//! A plain-table entry at a virtual address an earlier table already holds
-//! is walked once (GNU ld's ppc32 `DT_RELA` spans `DT_JMPREL`).
-//!
-//! Where loaders differ:
-//!
-//! * bionic takes the first `PT_DYNAMIC`; glibc, musl and this view the last;
-//! * glibc ignores `DT_REL` on a RELA-only arch and `DT_RELA` on a REL-only
-//!   one; musl and this view apply both;
-//! * no production loader reads `DT_CREL`; this view does;
-//! * glibc (`elf/do-rel.h`) applies the first `DT_RELCOUNT` /
-//!   `DT_RELACOUNT` entries as RELATIVE whatever their type; this view
-//!   applies each by its own type.
+//! Where loaders differ, it takes the last `PT_DYNAMIC` (bionic: the first),
+//! applies both `DT_REL` and `DT_RELA` (glibc: the arch's only), applies each
+//! entry by its own type (glibc: the first `DT_REL[A]COUNT` as RELATIVE), and
+//! reads `DT_CREL`, which no production loader does.
 
 use object::Object as _;
 use object::elf;

@@ -43,16 +43,11 @@ pub(super) fn hole_copies(ctx: &mut Ctx<'_, '_>) {
     }
 }
 
-/// Holes over the MIPS primary GOT entries the loader writes with no
-/// relocation record (glibc `elf_machine_runtime_setup`,
-/// `elf_machine_got_rel`): the lazy resolver's word, the module pointer's
-/// when the second word's top bit asks for one, and every global entry
-/// (`DT_MIPS_GOTSYM .. DT_MIPS_SYMTABNO`) except one whose `.dynsym` symbol
-/// the image defines, is no IFUNC, and already holds its `st_value`.
-///
-/// Local entries (`B + value`, `B` = 0) stay as filed. With no `SHT_DYNSYM`
-/// header (`object` needs one) every global entry is a hole; with a GOT tag
-/// missing, every `.got` word. Holes name `R_MIPS_GLOB_DAT`.
+/// Holes, named `R_MIPS_GLOB_DAT`, over the MIPS primary GOT entries the
+/// loader writes with no relocation record (glibc `elf_machine_got_rel`): the
+/// lazy resolver's word, the module pointer's when the second word's top bit
+/// asks, and each global entry not already holding its defined, non-IFUNC
+/// `.dynsym` symbol's `st_value`. With a GOT tag missing, every `.got` word.
 pub(super) fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
     let obj = ctx.obj;
     if !matches!(obj.architecture(), A::Mips | A::Mips64)
@@ -72,7 +67,7 @@ pub(super) fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
         Some(None) => {
             for sec in obj.sections().filter(|s| s.name() == Ok(".got")) {
                 let base = ctx.layout.section_base(&sec);
-                // To the end of its mapping, whatever `sh_size` claims.
+                // Up to `sh_size`, stopping where its mapping ends.
                 for i in 0..sec.size() / word {
                     let Some(addr) = i.checked_mul(word).and_then(|o| base.checked_add(o)) else {
                         break;

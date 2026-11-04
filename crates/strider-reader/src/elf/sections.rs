@@ -27,13 +27,8 @@ pub enum LoadFilter {
     /// store-then-reload to its file-initial value.
     ImmutableOnly,
     /// [`ImmutableOnly`](Self::ImmutableOnly) plus relocated `.got`, `.got2`
-    /// and `.data.rel.ro` (the claim of
-    /// [`RelocationMode::Applied`](super::RelocationMode::Applied)'s
-    /// `got_is_rom`). A slot whose value only the loader computes is a hole:
-    /// an uncomputed relocation, an `R_*_COPY` object, the ARM / PPC32
-    /// lazy-binding header words, MIPS implicit GOT entries. Only
-    /// `SHF_ALLOC | SHF_WRITE`, non-`SHF_TLS` sections are added, and none
-    /// when a table the dynamic tags place cannot be read.
+    /// and `.data.rel.ro`, as under `got_is_rom`; a slot only the loader
+    /// computes is a hole. Adds none when a tag-placed table is unreadable.
     ImmutableAndRelocatedGot,
     /// Every allocatable mapping, `.data` / `.got` / `.data.rel.ro` included.
     AllAllocatable,
@@ -634,11 +629,9 @@ impl<'d> OpdTable<'d> {
     }
 
     /// The code entry the descriptor at `addr` names; `None` when `addr` is
-    /// not an 8-byte-aligned word of the table or the word is zero.
-    ///
-    /// A linked image's TOC or environment word is followed as an entry too:
-    /// the descriptor stride is 24 or 16 bytes and the section does not say
-    /// which. An ET_REL's entries are exact.
+    /// not an 8-byte-aligned word of the table or the word is zero. On a
+    /// linked image any word counts (the 24- or 16-byte stride is unknown), so
+    /// a TOC or environment word reads as an entry too.
     pub fn entry_at(&self, addr: u64) -> Option<u64> {
         let (base, data, endian_le) = match &self.descriptors {
             Descriptors::Relocated(entries) => return entries.get(&addr).copied(),
@@ -666,12 +659,8 @@ fn align_up(value: u64, align: u64) -> u64 {
 }
 
 /// The regions `source` and `filter` select, as windows into `bytes`, which
-/// `obj` was parsed from.
-///
-/// # Errors
-///
-/// When an accepted segment or section's `data()` can't be read, or its
-/// `address + length` would exceed `u64::MAX`.
+/// `obj` was parsed from. Errs when an accepted mapping's data can't be read
+/// or it ends past `u64::MAX`.
 pub(crate) fn collect_regions(
     obj: &object::File<'_>,
     bytes: &FileBytes,
@@ -698,11 +687,7 @@ pub(crate) fn collect_regions(
 }
 
 /// One mapping, `range` being its file extent, as a window into `bytes`.
-///
-/// # Errors
-///
-/// When a mapping with bytes has no file extent, or the window does not fit
-/// `bytes` or the address space.
+/// Errs when it has no file extent or the window does not fit.
 fn region_from(bytes: &FileBytes, addr: u64, range: Option<(u64, u64)>) -> Result<MemRegion> {
     let (offset, len) = range
         .ok_or_else(|| anyhow::anyhow!("the mapping at {addr:#x} has bytes but no file extent"))?;

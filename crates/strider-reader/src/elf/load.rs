@@ -36,12 +36,9 @@ pub enum RelocationMode {
     Unapplied,
     /// Applied by this loader; fetch then maps writable sections too.
     /// `got_is_rom` also serves `.got`, PPC32's `.got2` and `.data.rel.ro` as
-    /// ROM, an unchecked claim that nothing writes them after the loader (full
-    /// RELRO; PPC32 code relocating its own `.got2` breaks it) and that a
-    /// symbol the image defines binds to that definition. A slot only the
-    /// loader computes stays a hole. `.got.plt` is not served; a lazily bound
-    /// slot the link puts in `.got` (ARM's `R_ARM_JUMP_SLOT`) is, at its bound
-    /// value.
+    /// ROM: an unchecked claim that nothing writes them after the loader and
+    /// that a symbol the image defines binds to that definition. A slot only
+    /// the loader computes stays a hole; `.got.plt` is not served.
     Applied { got_is_rom: bool },
 }
 
@@ -168,11 +165,10 @@ impl OwnedElf {
     ///
     /// # Errors
     ///
-    /// When a mapping's data can't be read or its `address + length` would
-    /// exceed `u64::MAX`; when relocating, if the relocation tables name more
-    /// entries than the file can hold, or a table the dynamic tags place
-    /// cannot be read and the image may relocate code; plus anything
-    /// [`checked_file`](Self::checked_file) reports.
+    /// When a mapping can't be read or ends past `u64::MAX`, the relocation
+    /// tables name more entries than the file holds or are unreadable where
+    /// the image may relocate code, or [`checked_file`](Self::checked_file)
+    /// fails.
     pub fn image(&self, source: RegionSource, mode: RelocationMode) -> Result<ElfImage> {
         let obj = self.checked_file()?;
         let layout = ElfSectionLayout::new(&obj);
@@ -209,12 +205,9 @@ impl OwnedElf {
 
     /// The mappings `source` and `filter` select over a
     /// [`checked_file`](Self::checked_file) parse. When `view` is unread, a
-    /// relocating load serves no writable, non-executable mapping.
-    ///
-    /// # Errors
-    ///
-    /// When a mapping cannot be loaded or relocated, and when `filter` is
-    /// `ImmutableAndRelocatedGot` with `relocate == false`.
+    /// relocating load serves no writable, non-executable mapping. Errs when a
+    /// mapping cannot be loaded or relocated, or on `ImmutableAndRelocatedGot`
+    /// without `relocate`.
     pub(crate) fn regions_with(
         &self,
         obj: &object::File<'_>,
