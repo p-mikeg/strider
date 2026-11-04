@@ -43,11 +43,7 @@ pub(super) fn build_rules() -> Vec<Rule> {
     rules
 }
 
-/// Whether `cap` binds anything but an `IntConst` node, unbound included.
-///
-/// Structural: a value reader answers off a carrier width, and a constant
-/// too wide for it would read as a variable, which is what lets a swap rule
-/// fire in both orientations.
+/// Whether `cap` is not an `IntConst` (true when unbound).
 pub(super) fn binds_no_int_const(
     b: &strider_pattern::Bindings,
     f: &strider_ir::Function,
@@ -57,13 +53,9 @@ pub(super) fn binds_no_int_const(
         .is_some_and(|n| matches!(f.node_kind(n), strider_ir::node::NodeKind::IntConst(_)))
 }
 
-/// Collecting a value against itself: `x + x`, `x*C1 + x*C2` and everything
-/// between become one `Mul`. Each side is the same alternation, `x*C`, `x<<C`
-/// or bare `x`, contributing the coefficient `C`, `2^C` or 1, summed unbounded
-/// and masked to the root's width when interned.
-///
-/// Subtraction arrives lowered to `Add(a, Neg(b))`, so the difference form
-/// matches that shape rather than an `IntSub`.
+/// Collects a value against itself: each side of an `Add` (or `Add(a, Neg(b))`)
+/// is `x*C`, `x<<C` or bare `x`, and the sum becomes one `Mul` by the summed
+/// coefficients, masked to the root's width when interned.
 fn build_factor_rules() -> Vec<Rule> {
     let (x, c1, c2, z1, z2) = (
         Capture::new(),
@@ -72,10 +64,8 @@ fn build_factor_rules() -> Vec<Rule> {
         Capture::new(),
         Capture::new(),
     );
-    // The product and shift arms come first so a match binds the coefficient
-    // rather than swallowing the whole product into `x` through the bare arm,
-    // which would leave the inner `Mul` standing. An arm whose continuation
-    // fails still falls through: `one_of` is a union, not a cut.
+    // Product and shift arms first, so the bare arm does not swallow the
+    // product into `x`. `one_of` is a union, not a cut.
     let term = move |c, z| {
         one_of![
             int_mul(var(x), int_const(c)),
@@ -83,9 +73,8 @@ fn build_factor_rules() -> Vec<Rule> {
             var(x),
         ]
     };
-    // The per-arm width preconditions, each vacuous where its arm did not
-    // fire: a coefficient must be as wide as the root, and a shift count must
-    // name a bit of it.
+    // A coefficient must be as wide as the root and a shift count below its
+    // width; each check is vacuous where its arm did not fire.
     let widths = move |edit: &strider_pattern::Matcher,
                        ty: strider_ir::node::ValueType,
                        binds: &strider_pattern::Bindings| {
@@ -110,13 +99,11 @@ fn build_factor_rules() -> Vec<Rule> {
                     coefficient(c1, z1) + coefficient(c2, z2)),
             ),
         ),
-        // The same difference. `Neg` pins which side is subtracted, so
-        // commutative matching cannot reach it from the sum.
+        // The difference.
         Rule::rewrite(
             int_add(term(c1, z1), int_neg(term(c2, z2))).when_match(widths),
             template::int_mul(
                 var(x),
-                // The intern masks the sum back to `ty`.
                 int_const_with!([c1: uint?, z1: uint?, c2: uint?, z2: uint?, ty] =>
                     coefficient(c1, z1)
                         + eval::int_unary(IntUnaryOp::Neg, &coefficient(c2, z2), ty)
@@ -126,10 +113,9 @@ fn build_factor_rules() -> Vec<Rule> {
     ]
 }
 
-/// What one side of a factor rule multiplies `x` by: the bound constant of an
-/// `x*C` arm, `2^C` for an `x<<C` arm, or 1 for the bare `x`. Exactly one arm
-/// fires, so at most one of the two binds, and the guard has already put the
-/// shift count below the root's width.
+/// What one side of a factor rule multiplies `x` by: `C` for `x*C`, `2^C` for
+/// `x<<C`, or 1 for bare `x`. At most one of the two binds; the guard bounds
+/// the shift count by the root's width.
 fn coefficient(mul: Option<UBig>, shift: Option<UBig>) -> UBig {
     debug_assert!(mul.is_none() || shift.is_none(), "one arm fires per side");
     match (mul, shift) {
@@ -144,7 +130,6 @@ fn coefficient(mul: Option<UBig>, shift: Option<UBig>) -> UBig {
 /// Reassociation and mask-merging: constant-folding across nested
 /// `Add`/`Sub`/`And`, mask distribution, and const-on-right canonicalisation.
 fn build_reassoc_and_mask_rules() -> Vec<Rule> {
-    // One shared capture pool: each rule matches with its own fresh `Bindings`.
     let (x, y, c1, c2, c3) = (
         Capture::new(),
         Capture::new(),
@@ -172,8 +157,7 @@ fn build_reassoc_and_mask_rules() -> Vec<Rule> {
     reassoc!(int_xor, int_const_with!([c1: uint, c2: uint] => c1 ^ c2));
 
     // `shift(shift(x, C1), C2) -> shift(x, C1 + C2)` while the sum is below the
-    // width; past it the logical shifts give 0, which known bits fold. The
-    // count is built at `x`'s type, which holds any count below its width.
+    // width; past it known bits fold the logical shifts to 0.
     macro_rules! shift_chain {
         ($op:ident) => {
             rules.push(Rule::rewrite(
@@ -211,8 +195,7 @@ fn build_reassoc_and_mask_rules() -> Vec<Rule> {
     ));
 
     // ((x & C1) | (y & C2)) & C3 -> (x & (C1 & C3)) | (y & (C2 & C3)),
-    // gated on some product `Ci & C3` being zero, the case where a disjunct
-    // folds away.
+    // when some `Ci & C3` is zero.
     rules.push(Rule::rewrite(
         int_and(
             int_or(
@@ -240,8 +223,7 @@ fn build_reassoc_and_mask_rules() -> Vec<Rule> {
         ),
     ));
 
-    // (x | A) & B -> x & B   when A & B == 0: every surviving bit (`B_i = 1`)
-    // has `A_i = 0`.
+    // (x | A) & B -> x & B   when A & B == 0.
     rules.push(Rule::rewrite(
         int_and(int_or(var(x), int_const(c1)), int_const(c2)).when_match(move |edit, ty, binds| {
             let (Some(set_bits), Some(mask)) = (
@@ -250,19 +232,16 @@ fn build_reassoc_and_mask_rules() -> Vec<Rule> {
             ) else {
                 return false;
             };
-            // `get_uint` masks each constant to ITS declared width, so
-            // without width agreement the disjointness test runs in the
-            // wrong modulus.
+            // `get_uint` masks each constant to its own width.
             at_root_width(edit.function(), binds, ty, &[x, c1, c2])
                 && (set_bits & mask) == UBig::ZERO
         }),
         template::int_and(var(x), var(c2)),
     ));
 
-    // `op(C, x) -> op(x, C)` for each commutative int op.  `.ordered()` is
-    // REQUIRED: without it the LHS also matches the already-canonical
-    // `op(x, C)` and the rule never terminates.  The `x`-not-const guard
-    // prevents a `(C1, C2)` ping-pong.
+    // `op(C, x) -> op(x, C)` for each commutative int op. `.ordered()` keeps
+    // the LHS off the canonical `op(x, C)`; the guard prevents a `(C1, C2)`
+    // ping-pong.
     macro_rules! const_on_right {
         ($op:ident) => {
             Rule::rewrite(
@@ -304,8 +283,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
         var(x),
     ));
 
-    // A bitcast of a constant is a constant of the same bits, up to the
-    // `u64` a `FloatConst` carries, as the builder folds one.
+    // A bitcast of a constant, up to the `u64` a `FloatConst` carries.
     let fits_u64 =
         |_: &strider_pattern::Matcher, ty: strider_ir::node::ValueType, _: &_| ty.byte_size() <= 8;
     rules.push(Rule::rewrite(
@@ -317,9 +295,8 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
         int_const_with!([c: float_bits] => UBig::from(c)),
     ));
 
-    // Truncate(Extend(x)) is at most one cast: the extend keeps `x`'s bits
-    // low, so a truncate back to `x`'s width is `x`, a narrower one is a
-    // truncate of `x`, and a wider one is the same extend of `x` to that width.
+    // Truncate(Extend(x)) is `x`, a truncate of `x` or the same extend of `x`,
+    // by the truncate's width against `x`'s.
     macro_rules! trunc_of_ext {
         ($ext:ident) => {{
             let x_width_is = move |ord: std::cmp::Ordering| {
@@ -349,9 +326,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
     rules.extend(trunc_of_ext!(int_zero_extend));
     rules.extend(trunc_of_ext!(int_sign_extend));
 
-    // Nested SAME-kind casts are transitive, so the intermediate width drops out
-    // and the RHS inherits the outer width. Of the MIXED-kind nests only a sext
-    // of a strictly widening zext is one cast, below.
+    // Nested same-kind casts are transitive; the RHS inherits the outer width.
     rules.push(Rule::rewrite(
         int_zero_extend(int_zero_extend(var(x))),
         template::int_zero_extend(var(x)),
@@ -364,8 +339,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
         int_truncate(int_truncate(var(x))),
         template::int_truncate(var(x)),
     ));
-    // A strictly widening zext leaves its top bit 0, so a sext of it extends
-    // by zeros: `SExt(ZExt(x)) -> ZExt(x)`.
+    // `SExt(ZExt(x)) -> ZExt(x)` for a strictly widening zext (top bit 0).
     rules.push(Rule::rewrite(
         int_sign_extend(int_zero_extend(var(x)).capture(c)).when_match(move |edit, _ty, bnd| {
             let f = edit.function();
@@ -376,12 +350,9 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
         template::int_zero_extend(var(x)),
     ));
 
-    // Drop the high half of an x86 register-merge Or when truncating to the low
-    // half's width: `Truncate_W(Or(And(high_mask, old), And(low_mask, new)))`
-    // -> `Truncate_W(...)`, since the high mask contributes nothing below bit
-    // W. The guard picks the high-mask And by requiring its low-`W` bits to be
-    // zero. A single operand orientation suffices: on guard failure the matcher
-    // re-drives the `Or`'s operand order.
+    // `Truncate_W(Or(a, And(C, b))) -> Truncate_W(a)` when `C`'s low W bits
+    // are zero (the high half of an x86 register merge). The matcher retries
+    // the `Or`'s other operand order.
     rules.push({
         let guard = move |edit: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
@@ -397,9 +368,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
         )
     });
 
-    // `Truncate_W(And(low_W_mask, x)) -> Truncate_W(x)`: the And zeroes bits the
-    // truncate discards anyway. One orientation suffices because the `And`'s
-    // commutative retry binds `c` to the const on either side.
+    // `Truncate_W(And(C, x)) -> Truncate_W(x)` when `C` covers the low W bits.
     rules.push({
         let guard = move |edit: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
@@ -407,8 +376,6 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
             let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
-            // The mask must cover at least the low W bits; anything beyond
-            // that is fine since the truncate drops those bits.
             eval::mask(&c_val, ty) == eval::all_ones(ty)
         };
         Rule::rewrite(
@@ -417,10 +384,9 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
         )
     });
 
-    // Narrowing through a binop whose low W bits read only its operands' low
-    // W bits: `Truncate_W(op(Ext(a), Ext(b))) -> op_W(a, b)` and
-    // `Truncate_W(op(Ext(a), C)) -> op_W(a, C mod 2^W)`, either extend on each
-    // side, `a` and `b` of the truncate's own type.
+    // `Truncate_W(op(Ext(a), Ext(b))) -> op_W(a, b)` and
+    // `Truncate_W(op(Ext(a), C)) -> op_W(a, C mod 2^W)` for an op whose low W
+    // bits read only its operands' low W bits, `a` and `b` of the root type.
     let ext = |v| one_of![int_zero_extend(var(v)), int_sign_extend(var(v))];
     let of_root_type = move |caps: [Capture; 2]| {
         move |edit: &strider_pattern::Matcher,
@@ -454,8 +420,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
 /// Algebraic identities for integer binary operations.
 fn build_identity_rules() -> Vec<Rule> {
     let (x, c) = (Capture::new(), Capture::new());
-    // All-ones is output-width-dependent, so compare `c` against the
-    // per-match output type rather than a fixed constant.
+    // All-ones at the matched output width.
     let is_all_ones = move |edit: &strider_pattern::Matcher,
                             ty: strider_ir::node::ValueType,
                             b: &strider_pattern::Bindings| {
@@ -467,12 +432,11 @@ fn build_identity_rules() -> Vec<Rule> {
         var(x),
     );
 
-    // x | all_ones -> all_ones. At I1 this subsumes `x | true -> true`.
+    // x | all_ones -> all_ones
     let or_all_ones_rule =
         Rule::rewrite(int_or(var(x), int_const(c)).when_match(is_all_ones), var(c));
 
-    // The commutative ops below match both operand orders; the shift rules do
-    // not, so only a zero on the right is an identity for them.
+    // Shifts are not commutative: only a zero count is an identity.
     vec![
         Rule::rewrite(int_add(var(x), int_const(0u128)), var(x)),
         Rule::rewrite(int_sub(var(x), var(x)), int_const(0u128)),
@@ -495,17 +459,14 @@ fn build_identity_rules() -> Vec<Rule> {
     ]
 }
 
-/// Folds an integer node over constant operands through [`eval_node_const`].
-///
-/// Mirrors `rewrite_rule`: the operands' fingerprints go into the result,
-/// `replace_value` absorbs the root's, and a root with no uses falls through
-/// to the later rules.
+/// Folds an integer node over constant operands through [`eval_node_const`],
+/// absorbing the operands' fingerprints into the result. A root with no uses
+/// falls through to the later rules.
 fn const_eval_rule(edit: &mut EditFunction<'_>, root: NodeId) -> Result<Option<ValueId>> {
     let f = edit.function();
     let Ok((out, ty)) = f.single_value_output(root) else {
         return Ok(None);
     };
-    // The fold builds an integer constant; a float node keeps the float rules.
     if !ty.is_integer() {
         return Ok(None);
     }
@@ -526,8 +487,7 @@ fn const_eval_rule(edit: &mut EditFunction<'_>, root: NodeId) -> Result<Option<V
     Ok(changed.then_some(new))
 }
 
-/// Const-eval rules for the I1 boolean ops and all float ops. The absorbing
-/// element lives in `build_identity_rules` (`or_all_ones_rule`), not here.
+/// Const-eval rules for the I1 boolean ops and all float ops.
 fn build_bool_float_rules() -> Vec<Rule> {
     let (op, l, r, v, x) = (
         Capture::new(),
@@ -537,8 +497,8 @@ fn build_bool_float_rules() -> Vec<Rule> {
         Capture::new(),
     );
 
-    // Booleans are 1-bit integers, so the generic integer rules already fire at
-    // I1. Only shapes with no integer analogue belong here.
+    // The integer rules already fire at I1; only shapes with no integer
+    // analogue belong here.
     vec![
         // !!x -> x
         { Rule::rewrite(bool_not(bool_not(var(x))), var(x)) },
