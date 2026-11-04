@@ -3,13 +3,11 @@ use std::path::Path;
 
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
 
-/// `@viz-js/viz` v3.5.0 standalone build: Graphviz 11.x as Wasm, the Wasm
-/// itself base64-embedded in the JS. Inlined into the template so the
-/// generated HTML is self-contained: no CDN fetch, no `.wasm` side-load.
+/// `@viz-js/viz` v3.5.0 standalone build: Graphviz 11.x as base64-embedded
+/// Wasm, inlined so the page is self-contained.
 pub const VIZ_STANDALONE_JS: &str = include_str!("../assets/vendored/viz-standalone.js");
 
-/// `svg-pan-zoom` v3.6.1 minified. Inlined for the same reason as
-/// [`VIZ_STANDALONE_JS`].
+/// `svg-pan-zoom` v3.6.1 minified.
 const SVG_PAN_ZOOM_JS: &str = include_str!("../assets/vendored/svg-pan-zoom.min.js");
 
 /// A restricted render: the nodes it draws, ascending, and the one it
@@ -30,8 +28,7 @@ impl<N: Copy + Ord> View<N> {
 /// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
     type Node: Copy + Ord;
-    /// The mutable state threaded through all [`Self::dump_as_dot`] calls,
-    /// starting from its `Default`.
+    /// State threaded through the [`Self::dump_as_dot`] calls of one render.
     type State: Default;
 
     /// Every node of a whole render; a restricted one draws its view's.
@@ -61,10 +58,10 @@ pub trait GraphDotDumper {
         }
     }
 
-    /// Emits DOT statements (nodes + edges) for a single graph node.
+    /// Emits the DOT statements (node and edges) of one graph node.
     ///
     /// # Errors
-    /// Whatever the dumper's own data source raises.
+    /// Whatever the dumper's data source raises.
     fn dump_as_dot(
         &self,
         node: Self::Node,
@@ -73,8 +70,7 @@ pub trait GraphDotDumper {
     ) -> anyhow::Result<()>;
 }
 
-/// A pre-built Graphviz visual theme (graph/node/edge default attributes).
-/// `Default` sets none.
+/// Graph, node and edge default attributes. `Default` sets none.
 #[derive(Clone, Default)]
 pub struct DotStyle {
     graph: Vec<(&'static str, &'static str)>,
@@ -113,28 +109,21 @@ impl DotStyle {
         Self::dark_with_font("monospace")
     }
 
-    /// `Courier` instead of `monospace`: only Courier's character-width
-    /// metrics are bundled into the Graphviz/viz.js layout engine, and
-    /// without them multiline labels overflow their boxes in the WASM render.
+    /// `Courier`: the only font whose metrics viz.js bundles, so multiline
+    /// labels fit their boxes.
     pub fn dark_cfg() -> Self {
         Self::dark_with_font("Courier")
     }
 }
 
-/// Escapes a string for use as a DOT double-quoted label.
+/// Escapes a string for a DOT double-quoted label.
 ///
-/// Every backslash doubles. Labels carry symbol names and disassembly lifted
-/// out of the binary under analysis, so `\l` inside one is two characters of a
-/// name, not DOT's left-justify break: passed through, Graphviz breaks the line
-/// there and the name is silently cut. A caller that means the break emits it
-/// through [`DotEmitter::node_left_lines`]. A literal newline becomes `\n`.
-///
-/// Every other control character becomes the printable text `\xNN`: a NUL ends
-/// the quoted string mid-label for Graphviz's lexer, and the rest survive into
-/// the rendered SVG, where C0 outside tab, newline and return is not a legal
-/// XML character and fails the parse. Carriage return is escaped too, leaving
-/// tab the one control character passed through, being meaningful whitespace in
-/// disassembly.
+/// Every backslash doubles, so a `\l` in a symbol name stays text rather than
+/// a DOT line break ([`DotEmitter::node_left_lines`] emits a real one). A
+/// newline becomes `\n`. Every other control character but tab, and every
+/// bidi formatting character, becomes the printable text `\xNN`: a NUL ends a
+/// quoted string for Graphviz, other C0 bytes are not legal in the SVG, and
+/// bidi characters reorder the text around them.
 fn escape_dot_label(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -143,16 +132,8 @@ fn escape_dot_label(s: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\t' => out.push('\t'),
-            // Doubled, so Graphviz renders the four characters rather than
-            // reading `\x` as an escape of its own.
-            // Control characters, and the bidirectional formatting ones a
-            // label would otherwise carry verbatim into the rendered page,
-            // where they reorder the text around them. No label source today
-            // carries attacker-controlled text -- they are node kinds, hex and
-            // Sleigh register names -- so this is a boundary, not a fix.
             c if c.is_control() || is_bidi_format(c) => {
-                // Writing to a `String` is infallible; the discard is for
-                // `unused_must_use`.
+                // The backslash doubled, so Graphviz renders `\x` as text.
                 let _ = write!(out, "\\\\x{:02x}", c as u32);
             }
             c => out.push(c),
@@ -161,19 +142,14 @@ fn escape_dot_label(s: &str) -> String {
     out
 }
 
-/// The Unicode bidirectional formatting characters: the overrides and
-/// embeddings (U+202A-U+202E), the isolates (U+2066-U+2069), and the marks
-/// (U+200E / U+200F / U+061C).
+/// The Unicode bidi overrides, embeddings, isolates and marks.
 fn is_bidi_format(c: char) -> bool {
     matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
                 | '\u{200e}' | '\u{200f}' | '\u{061c}')
 }
 
-/// Wraps `s` in a JSON string literal.
-///
-/// Beyond the usual JSON escapes, `<` is unconditionally escaped so a label
-/// containing `</script>` cannot break out of the
-/// `<script type="application/json">` element the DOT source is embedded in.
+/// Wraps `s` in a JSON string literal, `<` escaped so it cannot close the
+/// `<script>` element it is embedded in.
 fn json_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -186,8 +162,6 @@ fn json_quote(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
-                // Writing to a `String` is infallible; the discard is for
-                // `unused_must_use`.
                 let _ = write!(out, "\\u{:04x}", c as u32);
             }
             c => out.push(c),
@@ -205,9 +179,7 @@ pub struct DotEmitter {
 impl DotEmitter {
     pub fn new(name: &str, style: &DotStyle) -> Self {
         let mut s = String::new();
-        // Always quote the digraph name so a caller-supplied name with
-        // whitespace or punctuation still produces valid DOT. Graphviz parses
-        // quoted and bare identifiers identically where both are legal.
+        // Quoted, so any name is valid DOT.
         s.push_str("digraph \"");
         s.push_str(&escape_dot_label(name));
         s.push_str("\" {\n");
@@ -292,8 +264,7 @@ impl DotEmitter {
     }
 }
 
-/// Appends one `key="value"` attribute, the value escaped; callers supply
-/// their own framing (leading comma, separator, bracket block).
+/// Appends one `key="value"` attribute, the value escaped, without framing.
 fn push_attr(out: &mut String, k: &str, v: &str) {
     push_quoted_attr(out, k, &escape_dot_label(v));
 }
@@ -323,13 +294,10 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
 }
 
 /// Node count above which the viewer defaults to `sfdp`: `dot`'s layered
-/// layout is superlinear and stalls the browser on large graphs. The viewer's
-/// engine picker still lets the user switch back.
+/// layout stalls the browser on large graphs.
 const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
 
-/// Approximate: counting `[label=` also catches edge-label attribute blocks.
-/// It only picks the default engine, so over-counting harmlessly biases large
-/// graphs toward `sfdp`.
+/// Approximate: counting `[label=` also counts labelled edges.
 pub(crate) fn dot_node_count(dot: &str) -> usize {
     dot.matches("[label=").count()
 }
@@ -347,7 +315,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     }
 
     /// # Errors
-    /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
+    /// From [`GraphDotDumper::dump_as_dot`].
     pub fn as_dot(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new("G", &self.style);
         let mut state = G::State::default();
@@ -364,17 +332,12 @@ impl<G: GraphDotDumper> GraphDot<G> {
         Ok(dot.finish())
     }
 
-    /// An interactive HTML page rendering the DOT client-side via Graphviz
-    /// WASM. The vendored JS payloads are inlined, so the page works offline.
-    /// The single place every `graph_template_dot.html` placeholder is
-    /// substituted; a template revision adding one wires it up here.
+    /// A self-contained interactive HTML page rendering the DOT client-side.
     ///
     /// # Errors
     /// Same as [`Self::as_dot`].
     pub fn as_html_from_dot(&self) -> anyhow::Result<String> {
         let dot_src = self.as_dot()?;
-        // A ~1800-node IR is ~1400 ranks deep, and `dot`'s mincross explodes
-        // on the resulting virtual nodes, hanging the browser.
         let engine = if dot_node_count(&dot_src) > DEFAULT_SFDP_NODE_THRESHOLD {
             "sfdp"
         } else {
