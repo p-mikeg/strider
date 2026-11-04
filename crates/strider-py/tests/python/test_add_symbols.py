@@ -72,18 +72,17 @@ def test_add_symbols_keeps_the_data_ranges_it_cannot_change(tmp_path):
     """`$d` spans come from the ELFs and symbol files, never from symbols
     supplied directly, so `add_symbols` leaves the built ones in place. A
     rebuild re-stats every symbol file, so one changed since is how a rebuild
-    shows. Naming `fragment_ranges` keeps the build off the symbol table."""
+    shows."""
     companion = tmp_path / "companion.elf"
     shutil.copy(fixture_path("arm", "calls"), companion)
     lift = strider.lift.load_elf(str(fixture_path("arm", "calls")))
     lift.add_symbol_file(str(companion))
     start = lift.symbol("_start").address
-    opts = strider.cfg.CfgOptions(fragment_ranges=[(0, 1)])
-    first = lift.build_cfg(start, opts).incomplete
+    first = lift.build_cfg(start).incomplete
     with companion.open("ab") as f:
         f.write(b"\0" * 64)
     lift.add_symbols({"made_up": 0x1234})
-    assert lift.build_cfg(start, opts).incomplete == first
+    assert lift.build_cfg(start).incomplete == first
 
 
 def test_add_symbols_takes_addresses_and_extents():

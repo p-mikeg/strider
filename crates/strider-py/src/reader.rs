@@ -209,6 +209,8 @@ struct ElfMemo {
     /// The `$d` mapping-symbol spans.
     data_ranges: OnceLock<strider_cfg::DataRanges>,
     local_entries: OnceLock<Arc<strider_cfg::LocalEntries>>,
+    /// Whether an ELF or symbol file has a `<base>.cold` function symbol.
+    has_cold_symbols: OnceLock<bool>,
 }
 
 fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
@@ -540,8 +542,27 @@ impl PyLoadedElf {
             .clone())
     }
 
-    /// The cold fragments of every function symbol at `entry`.
+    /// The cold fragments of every function symbol at `entry`. Builds the
+    /// symbol table only where some symbol names a fragment.
     pub(crate) fn cold_fragments(&self, entry: u64) -> PyResult<strider_cfg::DataRanges> {
+        let names_cold = |name: &str| cold_fragment_base(name).is_some();
+        let has_cold = match self.memo.has_cold_symbols.get() {
+            Some(&has) => has,
+            None => {
+                self.check_unchanged()?;
+                let has = self.elfs.iter().chain(&self.symbol_elfs).any(|obj| {
+                    obj.checked_file().is_ok_and(|file| {
+                        file.symbols()
+                            .chain(file.dynamic_symbols())
+                            .any(|s| s.name().is_ok_and(names_cold))
+                    })
+                });
+                *self.memo.has_cold_symbols.get_or_init(|| has)
+            }
+        };
+        if !has_cold && !self.extra_symbols.iter().any(|s| names_cold(&s.name)) {
+            return Ok(strider_cfg::DataRanges::default());
+        }
         self.with_symbols(|t| {
             // A Thumb symbol's `start` is one below its address.
             let first = t
@@ -941,9 +962,10 @@ impl PyLoadedElf {
             });
         }
         self.extra_symbols.append(&mut added);
-        // `$d` spans come from the ELFs alone.
+        // `$d` spans and the files' cold symbols come from the ELFs alone.
         self.memo = ElfMemo {
             data_ranges: std::mem::take(&mut self.memo.data_ranges),
+            has_cold_symbols: std::mem::take(&mut self.memo.has_cold_symbols),
             ..ElfMemo::default()
         };
         Ok(())
