@@ -112,7 +112,9 @@ impl ResolvedTargets {
             .filter_map(|(addr, bit)| bit.map(|bit| (addr, bit)))
             .collect();
         self.successors().any(|(addr, bit)| {
-            !addrs.contains(&addr) || bit.is_some_and(|bit| bits.contains(&(addr, !bit)))
+            !addrs.contains(&addr)
+                || bit
+                    .is_some_and(|bit| bits.contains(&(addr, !bit)) && !bits.contains(&(addr, bit)))
         })
     }
 }
@@ -215,6 +217,11 @@ mod tests {
         assert!(
             t(&[(0x2000, Some(true))]).narrows_to(&t(&[(0x2000, Some(false))])),
             "a mode flipped"
+        );
+        assert!(
+            !t(&[(0x2000, Some(true))])
+                .narrows_to(&t(&[(0x2000, Some(true)), (0x2000, Some(false))])),
+            "the other mode added"
         );
         assert!(
             ResolvedTargets::LinkRegister.narrows_to(&t(&[(0x2000, None)])),
