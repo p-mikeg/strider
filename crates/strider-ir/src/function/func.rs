@@ -22,8 +22,7 @@ pub fn cc_ret_and_clobber_vns(
 pub struct Function {
     graph: Graph,
 
-    // Facts: keyed by no arena id and derived from no graph, so neither
-    // `compact` nor `invalidate_analyses` touches them.
+    // Facts: never re-derived by `compact` or `invalidate_analyses`.
     /// The convention this function was built under.
     default_cc: strider_target::BuiltCallingConvention,
     /// The byte order of each space's loads and stores.
