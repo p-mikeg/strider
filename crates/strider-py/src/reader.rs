@@ -970,7 +970,8 @@ impl PyMemReader {
     /// unmapped.  The base raises `NotImplementedError`.
     ///
     /// An exception here fails the whole lift, chained as the `StriderError`'s
-    /// `__cause__`.  `ReadOnlyMemory.read` is the opposite: see its docstring.
+    /// `__cause__`; `KeyboardInterrupt` and `SystemExit` propagate unchanged.
+    /// `ReadOnlyMemory.read` is the opposite: see its docstring.
     // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
     fn read<'py>(
