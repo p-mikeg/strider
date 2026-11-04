@@ -3,19 +3,15 @@ use std::hash::{BuildHasher, Hash};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// `Frontiers[x]` is the dominance frontier of `x`. An absent key means an
-/// empty frontier.
+/// `Frontiers[x]` is the dominance frontier of `x`; absent means empty.
 pub type Frontiers<N> = FxHashMap<N, Vec<N>>;
 
 /// Cytron dominance frontiers: `DF(x)` is the set of vertices `b` where `x`
 /// dominates a predecessor of `b` but does not strictly dominate `b`.
 /// `preds` yields each vertex's predecessors, unreachable ones included.
 ///
-/// The root's stop condition is the virtual node ABOVE it, so a climb from
-/// one of its predecessors passes through the root itself: a root with a
-/// predecessor REACHABLE from it is in its own frontier. A predecessor the
-/// root does not reach has no idom either, so its climb records the one pair
-/// `(p, b)` and then dies.
+/// A root with a predecessor reachable from it is in its own frontier. A
+/// climb from an unreachable predecessor records `(p, b)` and stops.
 #[must_use]
 pub fn dominance_frontiers<N, I>(
     doms: &Dominators<N>,
@@ -26,20 +22,13 @@ where
     I: IntoIterator<Item = N>,
 {
     let mut frontiers: Frontiers<N> = FxHashMap::default();
-    // Membership runs beside the `Vec`s, which keep discovery order: a wide
-    // join fans one frontier out to every join, so scanning one for the
-    // duplicate check is quadratic in its own length. Drained by `remove`
-    // rather than `clear`: the set never shrinks its allocation, so a `clear`
-    // after one long climb costs a memset over that capacity for every later
-    // node, which is quadratic in the node count on a graph with one deep
-    // chain.
+    // Membership beside the discovery-ordered `Vec`s. Drained by `remove`,
+    // not `clear`, which would memset its whole capacity per vertex.
     let mut recorded: FxHashSet<(N, N)> = FxHashSet::default();
     // The pairs `recorded` holds for the vertex being processed.
     let mut climbed: Vec<(N, N)> = Vec::new();
     for (at, &b) in doms.vertices.iter().enumerate() {
-        // Every pair recorded below carries this `b`, so an earlier `b`'s
-        // pairs are never probed again; dropping them caps the set at the
-        // pairs of one vertex's climb.
+        // An earlier `b`'s pairs are never probed again.
         for pair in climbed.drain(..) {
             recorded.remove(&pair);
         }
@@ -47,11 +36,8 @@ where
         for p in preds(b) {
             let mut runner = p;
             while Some(runner) != idom_b {
-                // Already recorded means an earlier predecessor climbed from
-                // here up the same idom chain and stopped where this climb
-                // would: at `idom_b`, or at a vertex with no idom. Either way
-                // every pair above is in too. Re-walking a chain of joins is
-                // quadratic.
+                // An earlier predecessor climbed the same idom chain from
+                // here to the same stop, so every pair above is in.
                 if !recorded.insert((runner, b)) {
                     break;
                 }
@@ -59,8 +45,7 @@ where
                 frontiers.entry(runner).or_default().push(b);
                 match doms.immediate_dominator(runner) {
                     Some(next) => runner = next,
-                    // No idom: `runner` is the root (nothing above it), or is
-                    // unreachable and carries no live definition to reconcile.
+                    // The root, or unreachable.
                     None => break,
                 }
             }
@@ -72,10 +57,7 @@ where
 /// Iterated dominance frontier / SSA phi placement (Cytron et al., Fig. 11):
 /// a phi for `V` lands at node `R` iff `R` ∈ `IDF(def-sites(V))`.
 ///
-/// Returns, per node, the set of variables needing a phi there.
-///
-/// `def_sites` maps each variable to the nodes defining it; any collection of
-/// nodes serves as the value.
+/// Returns, per node, the variables needing a phi there.
 #[must_use]
 pub fn phi_placement<Var, Node, C, H>(
     frontiers: &Frontiers<Node>,
@@ -90,8 +72,7 @@ where
     let mut placement: FxHashMap<Node, FxHashSet<Var>> = FxHashMap::default();
     for (&var, defs) in def_sites {
         let sites: FxHashSet<Node> = defs.into_iter().copied().collect();
-        // `placed` queues each node at most once, which is what terminates
-        // the iteration on a cyclic graph.
+        // Each node is queued at most once.
         let mut worklist: Vec<Node> = sites.iter().copied().collect();
         let mut placed: FxHashSet<Node> = FxHashSet::default();
         while let Some(x) = worklist.pop() {
@@ -101,9 +82,7 @@ where
             for &y in df {
                 if placed.insert(y) {
                     placement.entry(y).or_default().insert(var);
-                    // The placed phi is itself a definition of `V`, so explore
-                    // its frontier too, unless it was an original def-site
-                    // and is already seeded.
+                    // The phi is itself a def of `V`.
                     if !sites.contains(&y) {
                         worklist.push(y);
                     }
@@ -186,8 +165,7 @@ where
     number.insert(root, 0);
     let mut parent = vec![0u32];
     let mut preds: Vec<Vec<u32>> = vec![Vec::new()];
-    // Iterative DFS: each frame holds a vertex's successors and the next one
-    // to try, so `parent` is a true depth-first spanning tree.
+    // Iterative DFS, so `parent` is a true depth-first spanning tree.
     let mut stack: Vec<(u32, Vec<N>, usize)> = vec![(0, successors(root).into_iter().collect(), 0)];
     while let Some((at, succs, next)) = stack.last_mut() {
         let Some(&succ) = succs.get(*next) else {
