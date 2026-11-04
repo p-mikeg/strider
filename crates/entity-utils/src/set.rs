@@ -1,4 +1,4 @@
-use core::fmt;
+use std::fmt;
 
 use cranelift_entity::{EntityRef, EntitySet, SetIter};
 
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn from_iter_empty() {
-        let s: DenseEntitySet<Id> = core::iter::empty().collect();
+        let s: DenseEntitySet<Id> = std::iter::empty().collect();
         assert!(s.iter().next().is_none());
     }
 
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn debug_lists_members_only() {
-        let s: DenseEntitySet<Id> = core::iter::once(Id(2)).collect();
+        let s: DenseEntitySet<Id> = std::iter::once(Id(2)).collect();
         assert_eq!(format!("{s:?}"), "{Id(2)}");
     }
 }

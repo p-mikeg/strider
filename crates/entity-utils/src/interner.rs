@@ -1,5 +1,5 @@
-use core::hash::Hash;
-use core::ops::Index;
+use std::hash::Hash;
+use std::ops::Index;
 
 use cranelift_entity::{EntityRef, PrimaryMap};
 use rustc_hash::FxHashMap;
@@ -137,8 +137,8 @@ mod tests {
         // `Eq` must still keep distinct values on distinct keys.
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         struct Collide(u32);
-        impl core::hash::Hash for Collide {
-            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        impl std::hash::Hash for Collide {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
                 0u8.hash(state);
             }
         }
