@@ -1,9 +1,7 @@
-//! What the loader view refuses rather than serve one reading of tables
-//! the loaders could read differently, or that it does not model: an
-//! unreadable table, and an Android stream read at the wrong width or
-//! past the budget. Each
-//! image is a `fixtures/loader/out/*` one with the patch its test
-//! documents, or built here whole.
+//! What the loader view refuses: an unreadable table, and an Android stream
+//! read at the wrong width or past the budget. Each image is a
+//! `fixtures/loader/out/*` one with the patch its test documents, or built
+//! here whole.
 
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::RelocationMode;
