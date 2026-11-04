@@ -4,8 +4,10 @@ use strider_ir::{
     VnTypeExt,
 };
 
+use anyhow::Result;
+
 use crate::FunctionLifter;
-use crate::pcode_util::{Result, nth_input_or_err, require_output_vn};
+use crate::pcode_util::{nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Registers hold float results as integers, so bitcast on the way out.

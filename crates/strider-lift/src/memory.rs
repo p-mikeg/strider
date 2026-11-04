@@ -1,8 +1,9 @@
+use anyhow::Result;
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
 use crate::FunctionLifter;
 use crate::pcode_consts::opaque_clobber_set;
-use crate::pcode_util::{Result, require_output_vn};
+use crate::pcode_util::require_output_vn;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// A constant-space LOAD yields its address (GHIDRA's `IPTR_CONSTANT`), as

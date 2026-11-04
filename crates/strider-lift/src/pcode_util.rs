@@ -1,4 +1,4 @@
-pub(crate) type Result<T> = anyhow::Result<T>;
+use anyhow::Result;
 
 pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
     insn.output.as_ref().ok_or_else(|| {

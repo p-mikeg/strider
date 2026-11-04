@@ -1,9 +1,9 @@
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, VnTypeExt};
 
-use anyhow::bail;
+use anyhow::{Result, bail};
 
 use crate::FunctionLifter;
-use crate::pcode_util::{Result, ensure_const_space, nth_input_or_err, require_output_vn};
+use crate::pcode_util::{ensure_const_space, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Rejects unequal input and output sizes, which Sleigh never emits and

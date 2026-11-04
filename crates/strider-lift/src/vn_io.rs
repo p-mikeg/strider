@@ -1,9 +1,8 @@
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use strider_ir::node::ValueId;
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, ValueType, VnTypeExt};
 
 use super::FunctionLifter;
-use super::pcode_util::Result;
 
 /// Ghidra's `BUILTIN_VOLATILE_READ`, past any sla's own user-op ids.
 const READ_VOLATILE_USER_OP_ID: u64 = 0x1000_0001;
