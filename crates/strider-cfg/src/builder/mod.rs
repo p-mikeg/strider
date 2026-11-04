@@ -81,8 +81,9 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// the same address from another site decodes in another context.
     pub(super) refused_arms: Vec<(NodeIndex, PcodeInsnAddr)>,
     /// Empty regions of zero-pcode-op instructions sealed onto a stub at bytes
-    /// that are not code; [`Self::finish`] ends every call falling into them.
-    pub(super) nops_into_no_code: Vec<NodeIndex>,
+    /// that are not code, each with the decode error [`Self::finish`] returns
+    /// when no call falls into it; `finish` ends every call that does.
+    pub(super) nops_into_no_code: Vec<(NodeIndex, Option<anyhow::Error>)>,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
@@ -689,14 +690,20 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Ends calls falling into no code, drops refused arms and unreachable
     /// regions, and derives the site reports.
     fn finish(mut self, lost_successor: Vec<(NodeIndex, anyhow::Error)>) -> Result<Cfg> {
-        for nop in std::mem::take(&mut self.nops_into_no_code) {
+        let mut no_return = Vec::new();
+        for (nop, e) in std::mem::take(&mut self.nops_into_no_code) {
             let preds: Vec<_> = self
                 .region_graph
                 .neighbors_directed(nop, petgraph::Incoming)
                 .collect();
-            for call in self.calls_falling_into(preds) {
-                self.end_as_no_return(call);
+            let calls = self.calls_falling_into(preds);
+            if let Some(e) = e.filter(|_| calls.is_empty()) {
+                return Err(e);
             }
+            no_return.extend(calls);
+        }
+        for call in no_return {
+            self.end_as_no_return(call);
         }
         self.refuse_arms_reaching(lost_successor.iter().map(|(region, _)| *region));
         self.drop_refused_switch_arms();
