@@ -5,8 +5,9 @@ use super::visit;
 
 /// `targets` with each mode-less entry taking the ISA mode `known` proved for
 /// its address. A new mode-less address is dropped at an interworking site
-/// (`None` decodes in the mode being switched away from); elsewhere it is
-/// kept and the returned flag marks the site's modes assumed.
+/// (`None` decodes in the mode being switched away from), and the fold reports
+/// the site unless the caller's seed holds the address; elsewhere it is kept
+/// and the returned flag marks the site's modes assumed.
 pub(super) fn adopt_known_modes(
     known: Option<&ResolvedTargets>,
     targets: ResolvedTargets,

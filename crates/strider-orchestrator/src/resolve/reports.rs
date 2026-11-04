@@ -138,7 +138,7 @@ pub(super) struct DerivedChannels<'a> {
 }
 
 /// Sites with no complete successor set, sorted and deduplicated: live
-/// placeholders, unclassified `Switch`es their seed no longer covers
+/// placeholders, unclassified `Switch`es no seed covers
 /// ([`seed_still_covers`]), and both derived channels.
 pub(super) fn live_unresolved_branches(
     live_indirect: &FxHashSet<NodeId>,
