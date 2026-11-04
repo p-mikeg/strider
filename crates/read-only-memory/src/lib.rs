@@ -17,10 +17,20 @@ pub trait ReadOnlyMemory: Send {
     /// When the address is unmapped, the range runs past the mapped region, or
     /// `addr + buf.len()` overflows `u64`.
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()>;
+
+    /// [`Self::read`] without the error, for a caller that drops it: an impl
+    /// whose errors cost to build answers here without one.
+    fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
+        self.read(addr, buf).is_ok()
+    }
 }
 
 impl<T: ?Sized + ReadOnlyMemory> ReadOnlyMemory for Box<T> {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         (**self).read(addr, buf)
+    }
+
+    fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
+        (**self).try_read(addr, buf)
     }
 }
