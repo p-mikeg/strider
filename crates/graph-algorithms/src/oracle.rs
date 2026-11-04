@@ -107,7 +107,7 @@ pub fn frontiers(succs: &[Vec<u32>], dom: &[Vec<bool>], root: u32) -> Vec<BTreeS
     df
 }
 
-/// The least `J` with `J = DF(defs ∪ J)`.
+/// The least `J` with `J = DF(defs + J)`.
 pub fn iterated_frontier(df: &[BTreeSet<u32>], defs: &[u32]) -> BTreeSet<u32> {
     let mut j = BTreeSet::new();
     loop {
