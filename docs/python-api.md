@@ -90,6 +90,9 @@ loads from constant addresses. `BufferReader` works as either; `reader.MemLike`
 
 A Python subclass of `MemReader`, `ReadOnlyMemory` or `JoinPredicate` is never
 freed once instantiated (its instances are), so define it once, not in a loop.
+A reader holding its own `Lifter` (tens of MB of decoder state) forms a
+cycle that only a cyclic GC pass frees, so in a loop hold the `Lifter` through
+a `weakref` or call `gc.collect()`.
 
 ## 2. Analyzing a function
 
