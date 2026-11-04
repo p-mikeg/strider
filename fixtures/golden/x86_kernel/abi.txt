@@ -11,7 +11,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == eight_int_args @0x4010f0
 cfg
   0x4010f0 86 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v2]
 arg 1 [%v3]
 arg 2 [%v5]
@@ -56,7 +56,7 @@ return %v0, %v1, %v27, %v3, %v28, %v29, %v30
 == mixed_args @0x401110
 cfg
   0x401110 78 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
+tracked [EAX, ECX, EDX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x8c300:4]
 arg 0 [%v11]
 arg 1 [%v12]
 arg 2 [%v14]
@@ -101,7 +101,7 @@ return %v0, %v10, %v29, %v12, %v30, %v31, %v32
 == point_sum @0x401130
 cfg
   0x401130 12 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v2]
 arg 1 [%v3]
 %v0:ctrl = entry
@@ -138,7 +138,7 @@ return %v0, %v8, %v2, %v3, %v9, %v10, %v11
 == tail_caller @0x401150
 cfg
   0x401150 40 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x41500:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v9]
 arg 1 [%v5]
 %v0:ctrl = entry
@@ -172,7 +172,7 @@ return %v25, %v26, %v27, %v28, %v29, %v30, %v31
 == main @0x401170
 cfg
   0x401170 231 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4, u:0x8ca00:4]
+tracked [EAX, ECX, EDX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x8c300:4, u:0x8cb00:4]
 frame_address_in_call_register reach=-20
 %v0:ctrl = entry
 %v1:mem = initial_memory

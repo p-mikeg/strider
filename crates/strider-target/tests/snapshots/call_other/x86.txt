@@ -206,7 +206,7 @@ rdrandIsValid call reads=[] writes=[] mem=false noret=false
 rdseed call reads=[] writes=[] mem=false noret=false
 rdseedIsValid call reads=[] writes=[] mem=false noret=false
 rdtsc call reads=[] writes=[] mem=false noret=false
-rdtscp call reads=[] writes=["EAX", "EDX", "ECX"] mem=false noret=false
+rdtscp call reads=[] writes=[] mem=false noret=false
 readPID UNCLASSIFIED
 roundpd UNCLASSIFIED
 roundps UNCLASSIFIED

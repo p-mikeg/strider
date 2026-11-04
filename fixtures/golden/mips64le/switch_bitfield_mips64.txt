@@ -39,7 +39,7 @@ cfg
   0x1200002b0 7 ops return -> []
   0x1200002b8 7 ops return -> []
   0x1200002c0 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x4c00:4, u:0x4d00:4, u:0x4e00:4, u:0x4f00:4, u:0x5100:8, u:0x5200:4, u:0x5300:4, u:0x5400:4, u:0x8100:4, u:0xc000:1, u:0x14600:4, u:0x11db00:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x4c00:4, u:0x4d00:4, u:0x4e00:4, u:0x4f00:4, u:0x5100:8, u:0x5200:4, u:0x5300:4, u:0x5400:4, u:0x8100:4, u:0xc000:1, u:0x14600:4, u:0x11f700:4]
 arg 0 [%v9]
 arg 1 [%v1]
 %v0:ctrl = entry

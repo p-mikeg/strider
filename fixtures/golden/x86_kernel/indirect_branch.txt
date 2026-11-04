@@ -9,7 +9,7 @@ cfg
   0x401100 13 ops switch@0x401103.3 [0x40110a, 0x40110d]
   0x40110a 12 ops return -> []
   0x40110d 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v2]
 arg 1 [%v13]
 %v0:ctrl = entry
@@ -34,7 +34,7 @@ return %v11, %v1, %v3, %v13, %v14, %v15, %v16
 == main @0x401120
 cfg
   0x401120 73 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 1 [%v12]
 arg 2 [%v13]
 %v0:ctrl = entry

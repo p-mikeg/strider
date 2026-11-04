@@ -60,22 +60,12 @@ const CALL_OTHER: &[Row] = &[
             no_return: false,
         }),
     },
-    // RDTSC: `tmp:8 = rdtsc(); EDX = tmp(4); EAX = tmp(0);`, all explicit.
+    // RDTSC: `tmp:8 = rdtsc(); EDX = tmp(4); EAX = tmp(0);`; RDTSCP also
+    // `ECX = tmp(8)` of its 12 bytes. All explicit.
     Row {
-        names: &["rdtsc"],
+        names: &["rdtsc", "rdtscp"],
         only: None,
         class: PURE,
-    },
-    // RDTSCP has no p-code writes: EDX:EAX plus ECX (IA32_TSC_AUX).
-    Row {
-        names: &["rdtscp"],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &["EAX", "EDX", "ECX"],
-            clobbers_memory: false,
-            no_return: false,
-        }),
     },
     // RDMSR: `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`, all explicit.
     Row {
