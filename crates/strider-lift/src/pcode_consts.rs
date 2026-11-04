@@ -1,11 +1,9 @@
-//! Constant values of a machine instruction's p-code temporaries, used to
-//! resolve a register-space LOAD / STORE address (ARM `vld1.N {dX[i]}`). A
-//! loop-carried address (ARM `VLD2/3/4`) does not fold, and the lift takes the
-//! opaque path (`memory::opaque_register_store`).
+//! Constant values of a machine instruction's p-code temporaries, resolving a
+//! register-space LOAD / STORE address (ARM `vld1.N {dX[i]}`). A loop-carried
+//! address (ARM `VLD2/3/4`) does not fold and takes the opaque path.
 //!
 //! The def-site collection and the lift must feed the same ops through this in
-//! the same order so they resolve the same stores; otherwise a write gets no
-//! phi at a join.
+//! the same order, or a write gets no phi at a join.
 
 use rustc_hash::FxHashMap;
 

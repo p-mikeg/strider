@@ -98,12 +98,9 @@ fn an_overridden_calls_post_call_sp_is_its_own_adjust() {
     );
 }
 
-/// An override naming another register as the stack pointer is refused.  It
-/// passes `validate` and `check_addr_size`, which are both intra-convention,
-/// yet `build_call` adjusts the FUNCTION's SP while the clobber split honours
-/// the override's: the function's SP becomes a clobber and its writeback
-/// replaces the adjust with the opaque `Call` output, so the join above reads
-/// a value with no stack offset at all.
+/// An override naming another register as the stack pointer is refused,
+/// though it passes the intra-convention `validate` and `check_addr_size`:
+/// the function's SP would become a clobber of the call.
 #[test]
 fn an_override_renaming_the_stack_pointer_is_refused() {
     let r = lift_sp_join(|regs, o| {

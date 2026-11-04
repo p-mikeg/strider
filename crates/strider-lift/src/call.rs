@@ -151,8 +151,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
         // Outputs: the 0-or-1 result, then the clobbers as deduplicated
         // containers (the result wins ties). The result keeps its own width
-        // only where `callother_output_is_exact_in` holds for its container;
-        // elsewhere it clobbers the whole container, opaque but sound.
+        // only where `callother_output_is_exact_in` holds for its container,
+        // else it clobbers the whole container.
         let result_vn = match output.map(|vn| {
             let container = self.container_map.container_of(&vn);
             if self.lifter.arch().callother_output_is_exact_in(&container) {
@@ -214,7 +214,7 @@ pub(super) fn decode_user_op<'a>(
     if let Some((id, name)) = strider_cfg::user_op_of(insn, user_op_names) {
         return Ok((u64::from(id), name));
     }
-    // Why it names none.
+    // Diagnose why it names none.
     let id_vn = crate::pcode_util::nth_input_or_err(insn, 0)?;
     crate::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
     let id = u32::try_from(id_vn.addr_off)
@@ -291,10 +291,8 @@ mod tests {
         (args, outs)
     }
 
-    /// A bare `syscall` names no register in its pcode, which is the whole
-    /// reason its ABI row exists. `R10` (read) and `R11` (write) are in neither
-    /// the SysV argument registers nor its callee-saved set, so nothing but the
-    /// ABI footprint itself can put them in the tracked-varnode universe.
+    /// A bare `syscall` names no register in its pcode, and `R10` (read) and
+    /// `R11` (write) have no SysV role: only the ABI footprint can track them.
     #[test]
     fn syscall_lifts_with_its_full_implicit_footprint() {
         // 1000: 0f 05    syscall
