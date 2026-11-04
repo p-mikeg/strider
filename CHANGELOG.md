@@ -16,6 +16,10 @@ These change an answer without an error:
   the builder changes what the `Pat` matches, and it answers every query.
 - `BoundCapture.__eq__` compares at full width: `m[c] == 2**300` can be
   `True`.
+- `find_all` returns one match per bound output: `call().any_output()` on a
+  call with 14 outputs gives 14 matches, and `find_unique` raises there.
+- `ElfLifter.analyze` / `build_cfg` follow a function's GCC `<name>.cold` and
+  `<name>.cold.N` fragments instead of ending at a tail call.
 
 These raise:
 
@@ -55,6 +59,12 @@ These raise:
 - `bool(CastMask)` is whether it selects any cast.
 - `ElfLifter.analyze` / `build_cfg` given the wrong options type raise
   `TypeError`.
+- A `MemReader.read` that raises, returns a non-bytes value or returns more
+  bytes than asked fails the lift with `StriderError` (the reader's exception
+  as `__cause__`) at any address; it was reported as `unmapped_target` past
+  the entry.
+- A buffer whose items are wider than a byte (`array('H')`,
+  `memoryview.cast('I')`) raises `TypeError`; it was read one item per byte.
 - `Lifter.call_other_abi` raises for an entry built against another arch.
 - `ElfLifter.arch` and `reader()` raise while the handle is in use;
   `reader()` returns the handle's own `BufferReader`.
@@ -79,6 +89,8 @@ the rest.
 
 ### Added, Python
 
+- `CfgOptions(fragment_ranges=[(start, end)])`: address ranges that also
+  belong to the function; `ElfLifter` fills it from `.cold` symbols.
 - `"past_function_end"` in `INCOMPLETE_REASONS`: code fell through past
   `function_max_size`, now a tail call where it was an error.
 - `AssumptionOptions.fp_rounding_mode_is_nearest` and
@@ -208,7 +220,18 @@ Lifting (vendored Sleigh):
 - ppc64 ELFv1 and ppc32 SysV conventions return floats in `f1`-`f4`.
 - CFG decoding of a run of `nop`s is deterministic.
 - `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb), as `analyze`
-  does.
+  does, and survives repeated Thumb builds on one handle.
+- AArch64 `ldpsw` (second word), `stlrb` / `stlrh` and `ldar` W (access
+  width), LSE atomics and `ldlar` into W (upper half), byte and half
+  `ld{s,u}{max,min}` (compare width); MIPS64 `ins` / `ext` / `wsbh`
+  (sign extension); ARM NEON `vcvt` f16 vectors, modified immediates with
+  imm8 0, `sdiv` / `udiv` by 0; x86 66/F2/F3 conversion prefixes, `0x67`
+  `rep` and `lea`; PowerPC VSX double FMAs and `divwe[u]`; plus 21 fixes
+  taken from Ghidra master (listed in `externals/rsleigh/sleigh/FORK.md`).
+- A branch into `lock cmpxchg` or a `rep` string op lands on the
+  instruction's first op; the glibc `lock` re-entry is not reported.
+- A Thumb byte table whose index range is not proven defers instead of
+  resolving to every byte value.
 
 Loading:
 

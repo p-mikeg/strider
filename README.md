@@ -54,7 +54,8 @@ strider.explore.shutdown(port)
 
 - **More inputs.** Unlinked `.o` files with their relocations applied, ppc64
   ELFv1 descriptors, `add_symbol_file` / `add_symbols` for stripped images,
-  `Symbol` records (`symbol_at`), and `relocated_got_is_rom`.
+  `Symbol` records (`symbol_at`), `relocated_got_is_rom`, and GCC `.cold`
+  fragments followed as part of their function (`fragment_ranges`).
 - **Complete or says why.** `cfg.incomplete` lists each address the analysis
   cannot vouch for, under one of seven reasons; empty means complete.
 - **Mixed instruction sets.** A resolved branch target decodes in the
