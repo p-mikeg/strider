@@ -248,8 +248,9 @@ both pattern operands accept the same pairs with the same bindings.
   - `strider-py` has no `unsendable` pyclass. `analyze`, `build_cfg` and
     `add_elf` borrow the handle's `PyCell` exclusively, so a concurrent call
     on it raises `StriderError`; read-only calls may overlap. Only `analyze`
-    releases the GIL, and not over a Python reader. A daemon thread analysing through a Python reader at interpreter
-    shutdown still aborts, which no Rust check can intercept.
+    releases the GIL, and not over a Python reader. A daemon thread
+    analysing through a Python reader at interpreter shutdown still aborts,
+    which no Rust check can intercept.
 - `Sleigh::lift_one(&mut self)` carries context-register state an instruction
   can commit at a later address (ARM/Thumb mode, IT blocks), so a region
   decodes sequentially (`RegionBuilder::build`). The state survives between
