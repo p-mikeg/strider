@@ -1,14 +1,12 @@
 # Python API reference
 
 The Python API by topic. The `.pyi` stubs under `crates/strider-py/strider/`
-list every name with its exact signature. For a task-first walkthrough, read
-the [Python guide](python-guide.md).
+give every exact signature; the [Python guide](python-guide.md) is the
+task-first walkthrough. Whole-flow blocks run against the fixture ELFs under
+`fixtures/out/`; signature listings use placeholder names.
 
-Whole-flow blocks run against the fixture ELFs under `fixtures/out/`;
-signature listings use placeholder names.
-
-The public surface is eight submodules plus one error. `explore` (the
-`visualize` explorer) is bound too, outside `__all__`:
+Eight submodules plus one error are public; `explore` (the `visualize`
+explorer) is bound outside `__all__`:
 
 ```python
 import strider
@@ -16,8 +14,6 @@ from strider import ir, lift, cfg, sleigh, reader, opt, pattern, template, explo
 strider.StriderError      # the analysis error; see Errors below
 strider.__version__
 ```
-
----
 
 ## 1. Loading a binary
 
@@ -31,14 +27,13 @@ prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
 # from_segments=True (default) walks PT_LOAD; False uses sections.
 # apply_relocations=True (default) patches relocations; False also drops
 # writable, non-executable mappings.
-# relocated_got_is_rom=True also serves .got (PPC32 .got2) and .data.rel.ro as
-# read-only, so a load through a GOT slot folds. It claims no slot changes
-# after the loader runs (wrong for code relocating its own GOT). It requires
-# apply_relocations=True.
+# relocated_got_is_rom=True (needs apply_relocations=True) also serves .got
+# (PPC32 .got2) and .data.rel.ro as read-only, so a load through a GOT slot
+# folds; wrong for code that relocates its own GOT.
 ```
 
-`load_elf` returns an `ElfLifter`: a lifter that also carries the symbol table,
-the loaded memory and a default calling convention.
+`load_elf` returns an `ElfLifter`: a lifter carrying the symbol table, the
+loaded memory and a default calling convention.
 
 The file is memory-mapped. Writing into it (same inode) raises
 `StriderError: mapped file ... changed on disk since it was mapped` (checked by
@@ -68,7 +63,7 @@ lft = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)      # rom=... option
 ```
 
 `lifter(arch, mem, rom=None)` builds a plain `Lifter`: `mem` is the instruction
-source, `rom` optional read-only memory for constant folding.
+source, `rom` the optional read-only memory for constant folding.
 `BufferReader(base_addr, data)` takes `bytes`, a `bytearray` or a sequence of
 ints. No preset decodes microMIPS (a MIPS preset reads an odd address as
 MIPS16e); `load_elf` refuses a microMIPS image, a raw `lifter` cannot tell.
@@ -96,8 +91,6 @@ loads from constant addresses. `BufferReader` works as either; `reader.MemLike`
 A Python subclass of `MemReader`, `ReadOnlyMemory` or `JoinPredicate` is never
 freed once instantiated (its instances are), so define it once, not in a loop.
 
----
-
 ## 2. Analyzing a function
 
 `analyze` lifts, optimizes and resolves one function.
@@ -120,11 +113,12 @@ _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 ```
 
 A handle works on any thread. `analyze`, `build_cfg` and `add_elf` take it
-exclusively; any other call on that handle meanwhile raises `StriderError: this
-Lifter is already in use`. For parallelism use one handle per thread: build
-each over the same `prog.arch`, `prog.reader()` and `prog.rom()` (gathered
-before any analysis is in flight, and after every `add_elf`), and call
-`analyze(addr, prog.cc)`. `analyze` drops the GIL; `Function.optimize` holds it.
+exclusively; any other call on it meanwhile raises `StriderError: this
+Lifter is already in use`. For parallelism use one handle per thread, each
+built over `prog.arch`, `prog.reader()` and `prog.rom()` (gathered before any
+analysis is in flight and after every `add_elf`), and call
+`analyze(addr, prog.cc)`. `analyze` drops the GIL unless a reader is a Python
+object; `Function.optimize` holds it.
 
 ### `lift.LifterOptions`, per-call tuning
 
@@ -156,9 +150,8 @@ opts = strider.lift.LifterOptions(
 prog.analyze("dispatch_value", opts=opts)
 ```
 
-`AssumptionOptions` holds claims about the analysed code that strider cannot
-check; a wrong one makes the answer wrong. Each field's risky value is the
-positive one:
+`AssumptionOptions` holds claims strider cannot check; a wrong one makes the
+answer wrong. Each field's risky value is the positive one:
 
 - `stack_global_disjoint` (on): no constant address equals `sp + K` at
   runtime.
@@ -307,8 +300,6 @@ or below the address whose extent reaches it, ranking aliases by extent, then
 by being code; `functions()` prefers code, so the two can name different
 symbols at one address.
 
----
-
 ## 3. The `Function` and its `Node`s
 
 ```python
@@ -362,8 +353,6 @@ function.to_html("graph.html")               # dark-themed standalone page (path
 function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)  # local subgraph DOT
 # also hub_cap=, max_nodes=, count_producers= (section 10)
 ```
-
----
 
 ## 4. Patterns
 
@@ -600,8 +589,6 @@ p.int_const(c).of_width(32)             # constrain the constant's width
 p.var(c).value_ty("i64")                # ... or a captured value's type
 ```
 
----
-
 ## 5. Running queries
 
 ```python
@@ -630,8 +617,6 @@ stride = p.Capture("stride")
 # The jump-table stride: one value across distinct multiply nodes.
 function.find_unique_value(p.int_mul(p.anything(), p.int_const(stride)), stride)   # -> 4
 ```
-
----
 
 ## 6. Reading a `Match`
 
@@ -674,8 +659,6 @@ for hit in function.find_all(p.load(addr=p.int_add(p.anything(), p.int_const(off
 `pattern.CaptureKey` is a `Capture` or its name. `hit[c]` is a `BoundCapture`
 carrying `has`, `int()` and `==`; it has no truth value (`if hit[c]` raises
 `TypeError`), so test `hit[c].has` or `c in hit`.
-
----
 
 ## 7. Constraints (`strider.pattern.constraints`)
 
@@ -728,8 +711,6 @@ once they are bound, and an exception in it surfaces at the query. It composes
 in `any_of` / `all_of` / `negate`. The built-in relations return a
 `constraints.JoinConstraint`.
 
----
-
 ## 8. Rewrites (`strider.template`)
 
 ```python
@@ -752,8 +733,6 @@ available where it is read.
 Neither runs to a fixed point. Both stale every `Node` handle, even when they
 return 0. The [guide](python-guide.md#rewriting-the-graph) walks through one.
 
----
-
 ## 9. The optimizer (`strider.opt`)
 
 `analyze` runs the default pipeline. To run your own:
@@ -775,8 +754,6 @@ Main passes (`add`): `ConstantFold`, `LoadReadOnly`, `KnownBits`,
 run once. The `MainOptimizerPass`, `PostOptimizerPass` and `OptimizerPass`
 aliases name those groups. [optimizations.md](optimizations.md) says what each
 pass does.
-
----
 
 ## 10. Visualizing
 
@@ -814,8 +791,6 @@ running is shut down at interpreter exit.
 
 For static output use the renderers in
 [section 3](#3-the-function-and-its-nodes).
-
----
 
 ## 11. Registers and architecture (`strider.sleigh`)
 
@@ -883,8 +858,6 @@ ARM32 hard-float: the convention names the double carriers `d0..d7`, so for
 `d_{n/2}`, while `function_arg_float(n)` reports `d_n`), and positions 8..15
 have no entry.
 
----
-
 ## 12. The CFG (`strider.cfg`)
 
 ```python
@@ -949,14 +922,14 @@ strider.cfg.CfgOptions(
 
 `function_max_size` bounds the decode to `[entry, entry + size)` (`0` raises
 `ValueError`). `allow_code_before_start_addr` follows branches below the entry;
-passing it with a size raises `ValueError`.
+with a size it raises `ValueError`.
 
 `known_targets` seats indirect-branch answers and seeds the resolution loop,
 which adds its own findings, so it composes with
 `resolve_indirect_branches=False`. A seeded site leaves `unresolved` unless the
 CFG cannot seat it. One target outside the function is a tail call; several
 with one outside or off an instruction boundary defer the site. A wrong seed
-can hide the real arms, which is why seeded sites are `"unverified_seed"`.
+can hide the real arms, so seeded sites are `"unverified_seed"`.
 
 `data_ranges` marks bytes as data (an ARM literal pool). `ElfLifter.analyze`
 and `build_cfg` fill it from the ELF's `$d` mapping symbols unless the options
@@ -978,8 +951,6 @@ Thumb or MIPS16 callee at its even address (`addr & ~1`). `ElfLifter.analyze`
 and `build_cfg` also cover a ppc64 ELFv2 symbol's `local_entry` (and `analyze`
 does the same for `per_address_ccs`); a plain `Lifter` takes both tables as
 given.
-
----
 
 ## Errors
 
@@ -1008,8 +979,8 @@ log = logging.getLogger(__name__)
 try:
     prog.analyze("no_such_function")
 except strider.StriderError as e:
-    log.error("%s", e)            # the one line you can act on
-    log.debug("%s", e.backtrace)  # frames, when you are chasing strider itself
+    log.error("%s", e)            # the error and its causes
+    log.debug("%s", e.backtrace)  # plus the Rust frames
 ```
 
 `STRIDER_BACKTRACE=1` (also via `os.environ`) puts the trace in the message.
