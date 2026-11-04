@@ -16,13 +16,11 @@ impl Function {
     /// claims in force, `frame_address_in_call_register reach=<offset|unbounded>` when set,
     /// argument carriers), then one `outs = op[payload] ins` line per node reachable from
     /// [`Self::entry`], values named `%vN` in print order. With `fingerprints`, each line ends in
-    /// its sorted asm address set `  @{..}`, which can be quadratic in a chain of unions (see
-    /// [`UnionDag::for_each`](entity_utils::UnionDag::for_each)).
+    /// its sorted asm address set `  @{..}` (quadratic in a chain of unions).
     ///
     /// Control nodes print in reverse postorder, each after its unprinted data inputs; a phi
-    /// prints right after its `Region`. The order reads no arena id, hash order or use-list
-    /// (save a control output's single use), so equal graphs print equal text however they
-    /// were built, and [`Self::compact`] leaves it unchanged.
+    /// right after its `Region`. Equal graphs print equal text however they were built, and
+    /// [`Self::compact`] leaves it unchanged.
     pub fn to_text(&self, fingerprints: bool) -> String {
         self.to_text_with(fingerprints, &vn_str)
     }
