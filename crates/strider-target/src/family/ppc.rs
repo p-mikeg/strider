@@ -671,7 +671,7 @@ const PPC32_SCALAR_ARGS_F: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7",
 const PPC64_SCALAR_ARGS_F: &[&str] = &[
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
 ];
-const PPC_SCALAR_RET_F: &[&str] = &["f1", "f2"];
+const PPC_SCALAR_RET_F: &[&str] = &["f1", "f2", "f3", "f4"];
 
 /// Base for `powerpc64_elf_v1` and `powerpc64_elf_v2`, which differ in
 /// `stack_args.base_offset` (ELFv1's 48-byte linkage area vs ELFv2's 32, each
@@ -733,11 +733,11 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
         "vs63",
     ],
     ret_val_regs: &["r3", "r4"],
-    // `long double` is IBM double-double and returns in the f1:f2 pair, as
-    // does `_Complex double`.  A vector returns in v2 (`vs34`), as does an
-    // IEEE `__float128` / `_Float128` and, under `-mabi=ieeelongdouble`,
-    // every `long double`.
-    ret_val_regs_float: &["f1", "f2", "vs34"],
+    // IBM double-double `long double` and `_Complex double` return in f1:f2,
+    // `_Complex long double` in f1-f4. A vector returns in v2 (`vs34`), as
+    // does an IEEE `__float128` and, under `-mabi=ieeelongdouble`, every
+    // `long double`.
+    ret_val_regs_float: &["f1", "f2", "f3", "f4", "vs34"],
     // 48-byte linkage area, then the 8-doubleword parameter save area that
     // homes r3-r10; the first stack-ONLY argument is above both.  GHIDRA's
     // ppc_64_be.cspec agrees on 112.
@@ -791,9 +791,8 @@ impl CallingConvention {
                 "vs62", "vs63",
             ],
             ret_val_regs: &["r3", "r4"],
-            // The f1:f2 pair carries `long double` / `_Complex double`; v2
-            // carries a vector result (AltiVec supplement).
-            ret_val_regs_float: &["f1", "f2", "vs34"],
+            // As `POWERPC64_ELF_BASE`.
+            ret_val_regs_float: &["f1", "f2", "f3", "f4", "vs34"],
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
@@ -837,11 +836,8 @@ impl CallingConvention {
             }),
             // ELFv2 2.2.3.3 returns a homogeneous float aggregate of up to
             // eight members in f1-f8 and a homogeneous VECTOR aggregate of up
-            // to eight in v2-v9 (`vs34`-`vs41`), so the whole window carries a
-            // result and not just its first member.  ELFv1 returns either
-            // aggregate through a hidden
-            // pointer, so the base's f1:f2 pair (`long double`,
-            // `_Complex double`) plus v2 is the whole story there.
+            // to eight in v2-v9 (`vs34`-`vs41`); ELFv1 returns either through
+            // a hidden pointer.
             ret_val_regs_float: &[
                 "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37",
                 "vs38", "vs39", "vs40", "vs41",
