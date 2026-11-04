@@ -67,9 +67,8 @@ const CASES: &[Case] = &[
     },
 ];
 
-/// A fixture's symbols sit above code the same object holds, so a branch below
-/// the entry is an edge to follow rather than a tail call: both entry points
-/// below allow it.
+/// Follows a branch below the entry as an edge: fixture functions sit above
+/// code they branch into.
 const CFG_OPTS: fn() -> strider_cfg::CfgOptions<'static> = || strider_cfg::CfgOptions {
     bound: strider_cfg::FunctionBound::Open {
         code_before_start: true,
@@ -109,9 +108,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     function
 }
 
-/// `analyze_case` plus the indirect-branch resolution loop (one re-lift per
-/// level of discovery), the classifier and the return settling, which together
-/// are the difference between the two groups.
+/// `analyze_case` plus the indirect-branch resolution loop.
 fn resolve_case(c: Case) -> strider_orchestrator::AnalyzeResult {
     let fixture = Fixture::open(fixture_arch(c.arch_name), c.case);
     let (mut strider, cc) = fixture.strider();
@@ -153,32 +150,22 @@ fn bench_resolution_loop(c: &mut Criterion) {
     group.finish();
 }
 
-// Synthetic benches independent of ELF fixtures; each parameterises over
-// problem size N to plot scaling curves separately from pipeline cost.
-
 mod synthetic {
     use super::*;
 
-    /// Synthetic 8-byte VN the store chains below are addressed off. Which
-    /// arch it comes from is irrelevant; a function's stack pointer is
-    /// whatever its calling convention names.
+    /// An 8-byte VN to address stores off; any arch's would do.
     pub fn stack_vn() -> rsleigh::Vn {
         stack_vn_aarch64()
     }
 
-    /// Builds `n` SP-relative `Store`s at distinct offsets, each storing
-    /// a fresh `IntConst`, followed by `n` matching `Load`s chained
-    /// through `Add`s into the return value, and canonicalises so the bench
-    /// measures `LoadForward` in isolation.
+    /// `n` SP-relative constant `Store`s and `n` matching `Load`s summed into
+    /// the return, canonicalised for `LoadForward`.
     ///
-    /// Two halves of that setup are what make all `n` loads forward, and
-    /// dropping either leaves the fixture measuring one rewrite:
-    /// `stack_vn` names the convention's stack pointer, without which the
-    /// addresses do not decompose and every store is a may-alias;
-    /// `PhiCollapse` / `RegionCollapse` retire the trivial `MemPhi` the
-    /// builder leaves at the region header, which the memory walk treats as
-    /// an opaque merge. [`bench_stack_store_chain`] asserts the fixture is
-    /// live.
+    /// All `n` loads forward only because `stack_vn` names the stack pointer
+    /// (else the addresses do not decompose) and `PhiCollapse` /
+    /// `RegionCollapse` retire the builder's trivial header `MemPhi` (an
+    /// opaque merge to the memory walk). [`bench_stack_store_chain`] asserts
+    /// it.
     pub fn build_stack_store_chain(n: usize) -> strider_ir::Function {
         let sp = stack_vn();
         let mut b = RegisterSet::new()
@@ -199,7 +186,6 @@ mod synthetic {
             b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
             load_addrs.push(addr);
         }
-        // Left-fold the loads through Add so every one reaches the return.
         let mut acc = b.build_int_const(0u64, ValueType::int(64)).unwrap();
         for addr in load_addrs {
             let loaded = b
@@ -221,9 +207,7 @@ mod synthetic {
         fg
     }
 
-    /// Builds `n` if-else diamonds chained sequentially, each merging
-    /// back before the next branches; merge-phi count grows linearly
-    /// in `n`. Benches validator + optimiser scaling on merge-heavy IRs.
+    /// `n` chained if-else diamonds, optimised.
     pub fn run_diamond_cfg(n: usize) -> strider_ir::Function {
         let sp = stack_vn();
         let mut b = RegisterSet::new()
@@ -234,8 +218,6 @@ mod synthetic {
         let entry = b.create_region_all().unwrap();
         b.set_entry_region_all(entry).unwrap();
 
-        // Each iteration creates true/false/merge regions, routes
-        // prev -> If -> merge, then advances prev to merge.
         let mut prev_region = entry;
         for _ in 0..n {
             let true_arm = b.create_region_all().unwrap();
@@ -246,8 +228,7 @@ mod synthetic {
             let cond = b.build_boolean_const(true);
             b.build_if(cond, true_arm, false_arm).unwrap();
 
-            // Distinct offset constants per arm so PhiCollapse can't
-            // collapse the merge.
+            // Distinct constants per arm, so PhiCollapse keeps the merge.
             b.set_region(true_arm);
             let sp_t = b.read_variable(&sp).unwrap();
             let off_t = b.build_int_const(0xa_au64, ValueType::int(64)).unwrap();
@@ -271,8 +252,6 @@ mod synthetic {
         let sp_final = b.read_variable(&sp).unwrap();
         b.build_return(Some(sp_final), &[]).unwrap();
         let mut fg = b.build().unwrap();
-        // Measures build + pipeline together: build dominates, but this
-        // also pins the validator's per-region cost.
         let mut p = OptimizerPipeline::new();
         p.add(&ConstantFold);
         p.add(&PhiCollapse);
@@ -283,10 +262,9 @@ mod synthetic {
         fg
     }
 
-    /// The jump-table shape with `n` targets (`n` must be a power of 2):
-    /// target constants stored at contiguous stack offsets, one reloaded
-    /// through `(arg & (n - 1)) * stride`. No `IndirectBranch` node is built,
-    /// so this measures construction plus `ConstantFold` only.
+    /// The jump-table shape with `n` (a power of 2) targets stored at
+    /// contiguous stack offsets, one reloaded through `(arg & (n - 1)) *
+    /// stride`, with no `IndirectBranch`; optimised by `ConstantFold` only.
     pub fn run_jump_table_scenario(n: usize) -> strider_ir::Function {
         assert!(
             n.is_power_of_two(),
@@ -319,8 +297,6 @@ mod synthetic {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        // create_node_attributed, not raw create_node: the latter bypasses
-        // attribution and trips the always-on fingerprint validator.
         let arg_u32 = b.create_node_attributed(
             strider_ir::node::NodeKind::Truncate,
             [arg_val],
@@ -368,15 +344,12 @@ mod synthetic {
         fg
     }
 
-    /// A function with `n` distinct `IntConst` nodes added together, for
-    /// benching pattern-matcher cross-product joins over a shared capture.
+    /// The sum of `n` distinct `IntConst`s.
     pub fn build_many_int_consts(n: usize) -> strider_ir::Function {
         let mut b = strider_ir_test_utils::empty_builder().unwrap();
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
-        // Each IntConst(i) is a distinct dedup-cache key, so this yields
-        // N distinct root nodes for the matcher to walk.
         let mut acc = b.build_int_const(0u64, ValueType::int(64)).unwrap();
         for i in 1..=n {
             let c = b.build_int_const(i as u64, ValueType::int(64)).unwrap();
@@ -390,8 +363,7 @@ mod synthetic {
 }
 
 fn bench_stack_store_chain(c: &mut Criterion) {
-    // A fixture that stops forwarding still runs, and its curve still looks
-    // clean, so the guard is worth its one extra pass run.
+    // A fixture that stops forwarding still yields a clean curve.
     {
         let mut fg = synthetic::build_stack_store_chain(32);
         fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
@@ -466,10 +438,8 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
     let mut group = c.benchmark_group("synthetic/find_joined_shared");
     for n in [100usize, 500, 1_000] {
         let fg = synthetic::build_many_int_consts(n);
-        // Two patterns sharing capture `x`: `add(_, x)` binds it to the rhs
-        // of every Add, `int_const(x)` to every IntConst. The join over `x`
-        // exercises the matcher's bindings-equality path on every coinciding
-        // (Add, IntConst) pair.
+        // Two patterns joined on `x`: the rhs of every Add, and every
+        // IntConst.
         let x = Capture::new();
         let pat1 = int_add(strider_pattern::anything(), var(x)).into_pattern();
         let pat2 = int_const(x).into_pattern();

@@ -208,7 +208,7 @@ fn arm_a_single_register_pop_into_the_pc_is_a_return() {
 ///
 /// Both pops below rest on the claim equally -- the single-register
 /// `ldr pc, [sp], #4` and the ordinary `pop {r4, pc}` -- so neither is
-/// reported, where only the first one used to be.
+/// reported.
 #[test]
 fn a_return_verified_under_a_claim_is_not_reported() {
     for bytes in [

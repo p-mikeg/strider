@@ -1,6 +1,3 @@
-//! The resolve loop: every round rebuilds the function from one seat set,
-//! until the seats stop changing.
-
 mod merge;
 mod reports;
 mod round;
@@ -21,16 +18,13 @@ pub use round::Classifier;
 use round::{Resolutions, Round};
 use sites::SiteTable;
 
-/// Caps the folds. A run builds one more round than this, plus one per stale
-/// round at the cap.
-///
-/// Also the discovery depth limit: one fold seats one level of indirect
-/// branches, so a trampoline chain needs one round per link. Exhausting it is
-/// never an `Err`: a site still growing at the cap is reported unresolved, and
-/// a site that narrows twice is withdrawn and reported earlier.
+/// Caps the folds, and so the discovery depth: one fold seats one level of
+/// indirect branches. A site still growing at the cap is reported, never an
+/// `Err`. A run builds one more round than this, plus one per stale round at
+/// the cap.
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
-/// `items`, counting each read in tests for the fold's cost tests.
+/// `items`, counting each read under `cfg(test)`.
 fn visit<I: IntoIterator>(items: I) -> impl Iterator<Item = I::Item> {
     items.into_iter().inspect(|_| {
         #[cfg(test)]

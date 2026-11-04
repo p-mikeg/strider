@@ -1,5 +1,3 @@
-//! The mode and merge policy: how two answers for one site combine.
-
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 

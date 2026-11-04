@@ -112,18 +112,9 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     );
 }
 
-/// Runs the full validator on the resolved function, pinning that the spliced
-/// Call+Return shape (arity, vn-tagged outputs, fingerprints) is well-formed
-/// end-to-end; the other in-place-edit tests exercise the editor in isolation.
-///
-/// Also documents the SSoT split `target_calling_context_for` encodes: the
-/// spliced **Return** returns from the *current* function to *its*
-/// caller, so its ret-val slots come from the function's OWN default CC,
-/// NOT the per-address override (which governs only the tail-callee's
-/// Call shape). For preset CCs the two agree on ret-val count; a custom
-/// override with a differing count would diverge, and sourcing the
-/// Return from the override there would fail the validator's
-/// `2 + default_ret_val_count` check.
+/// A resolved tail call through a per-address override validates. The spliced
+/// `Return` takes its ret-val slots from the function's own default CC; the
+/// override shapes only the `Call`.
 #[test]
 fn resolved_override_tail_call_passes_whole_graph_validate() {
     let (bytes, entry, call_target) = x86_64_indirect_jmp_to_const_bytes();
@@ -160,12 +151,8 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     );
 }
 
-/// The **no-override** path: with no per-address CC, `build_cc_call` falls back
-/// to `Function::default_cc()`, the SSoT.
-/// Pins that the default-CC spliced Call passes `validate` and does not
-/// double-count its ret regs; the other end-to-end tail-call test
-/// discards the `run` result, so this is the one that checks the default
-/// path explicitly.
+/// With no per-address CC the spliced `Call` uses `Function::default_cc()`,
+/// validates, and does not double-count its ret regs.
 #[test]
 fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
     let (bytes, entry, _call_target) = x86_64_indirect_jmp_to_const_bytes();
