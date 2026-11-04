@@ -21,14 +21,13 @@ pub use round::Classifier;
 use round::{Resolutions, Round};
 use sites::SiteTable;
 
-/// Caps the folds, so a run builds at most one more round than this.
+/// Caps the folds. A run builds one more round than this, plus one per stale
+/// round at the cap.
 ///
-/// Doubles as a DEPTH limit: one iteration seats one LEVEL of indirect-branch
-/// discovery, so a chain of trampolines each jumping to the next needs one
-/// round per link. [`SiteTable::fold`] reporting no change is the terminator
-/// for everything shallower. Exhausting the cap is never an `Err`: the sites
-/// still growing are reported, and a site whose answer never settles is
-/// withdrawn and reported the same way.
+/// Also the discovery depth limit: one fold seats one level of indirect
+/// branches, so a trampoline chain needs one round per link. Exhausting it is
+/// never an `Err`: a site still growing at the cap is reported unresolved, and
+/// a site that narrows twice is withdrawn and reported earlier.
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
 /// `items`, counting each read in tests: the unit the fold's cost bounds are
@@ -113,6 +112,11 @@ where
                 break st.finish(round, Termination::Converged)?;
             }
             if st.folds == MAX_RESOLUTION_ITERATIONS {
+                // A stale round is rebuilt from the frozen seats unfolded:
+                // each refusal shrinks a frozen seat, so this ends.
+                if stale {
+                    continue;
+                }
                 break st.finish(round, Termination::CapReached(resolutions))?;
             }
             if !st.fold(&round, resolutions)? && !stale {
