@@ -76,6 +76,10 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// The first op of the instruction each [`Self::seat_non_boundary_target`]
     /// edge points into; only the split half keeping it may keep the edge.
     pub(super) non_boundary_seats: rustc_hash::FxHashMap<EdgeIndex, PcodeInsnAddr>,
+    /// `(head, addr)`: an edge or a decode reached `addr` strictly inside the
+    /// instruction at `head`. [`Self::finish`] reports each as
+    /// [`Reason::InteriorTarget`] unless it is a benign prefix re-entry.
+    pub(super) interior_candidates: Vec<(u64, PcodeInsnAddr)>,
     /// `(Switch region, arm)` for each arm [`Self::drop_refused_switch_arms`]
     /// strips: undecodable, or owned in the other ISA mode. Keyed on the site:
     /// the same address from another site decodes in another context.
@@ -106,6 +110,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             nops_into_no_code: Vec::new(),
             report: crate::BuildReport::default(),
             non_boundary_seats: rustc_hash::FxHashMap::default(),
+            interior_candidates: Vec::new(),
             committed_next: rustc_hash::FxHashSet::default(),
             function_mode,
             descent: None,
@@ -220,6 +225,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// decoded off an arm is no more certain than the arm: there a clash is
     /// only reported.
     fn next_work_item(&mut self) -> Option<WorkItem> {
+        #[cfg(test)]
+        if let Some(i) = shuffled_index(self.work_queue.len()) {
+            return Some(self.work_queue.swap_remove(i));
+        }
         self.work_queue.pop().or_else(|| self.seeded_queue.pop())
     }
 
@@ -356,12 +365,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             let owner = self
                 .find_region_containing_addr(head)
                 .map_or(owner, |(id, _)| id);
-            let benign = self.is_benign_prefix_reentry(owner, addr);
             let edge = self.region_graph.add_edge(parent, owner, ());
             self.non_boundary_seats.insert(edge, head);
-            if !benign {
-                self.report.incomplete.insert(addr, Reason::InteriorTarget);
-            }
+            self.interior_candidates.push((head.machine(), addr));
             return Ok(());
         }
         // One arm per seating: an address named in both ISA modes has one
@@ -407,31 +413,21 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if region.start_addr != PcodeInsnAddr::at_machine_start(start) {
             return false;
         }
-        let Ok(tail) = self.engine.sleigh.lift_one(target) else {
+        let (Ok(tail), Ok(full)) = (
+            self.engine.sleigh.lift_one(target),
+            self.engine.sleigh.lift_one(start),
+        ) else {
             return false;
         };
         // Not saturating: a tail ending at the top must not match `full_end`.
         (tail.machine_insn_len as u64).checked_add(target) == Some(full_end)
-            && self.same_core_ops(self.decoded_ops_at(start).into_iter(), tail.insns.iter())
+            && self.same_core_ops(full.insns.iter(), tail.insns.iter())
     }
 
     /// Skipped on an arch with an ISA-mode var or committed flow vars, so a
     /// throwaway decode leaks no mode and no context [`Self::enqueue`] reads.
     pub(super) fn may_reenter_prefix(&self) -> bool {
         self.engine.arch.isa_mode_var().is_none() && self.engine.tables.flow_commit.is_empty()
-    }
-
-    /// The decoded p-code of the instruction at `machine`, across every region
-    /// it spans.
-    pub(super) fn decoded_ops_at(&self, machine: u64) -> Vec<&rsleigh::Insn> {
-        let range = PcodeInsnAddr::at_machine_start(machine)
-            ..PcodeInsnAddr::at_machine_start(machine.saturating_add(1));
-        self.index
-            .starts_in(range)
-            .flat_map(|(_, id)| self.region_graph[id].insns.iter())
-            .filter(|i| i.addr.machine() == machine)
-            .map(|i| &i.insn)
-            .collect()
     }
 
     /// Whether `full` and `tail` carry the same p-code once the atomic-prefix
@@ -725,6 +721,15 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Ends calls falling into no code, drops refused arms and unreachable
     /// regions, and derives the site reports.
     fn finish(mut self, lost_successor: Vec<(NodeIndex, anyhow::Error)>) -> Result<Cfg> {
+        for (head, addr) in std::mem::take(&mut self.interior_candidates) {
+            let benign = self
+                .index
+                .get(PcodeInsnAddr::at_machine_start(head))
+                .is_some_and(|owner| self.is_benign_prefix_reentry(owner, addr));
+            if !benign {
+                self.report.incomplete.insert(addr, Reason::InteriorTarget);
+            }
+        }
         let mut no_return = Vec::new();
         for (nop, e) in std::mem::take(&mut self.nops_into_no_code) {
             let preds: Vec<_> = self
@@ -799,4 +804,27 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             space_ids: self.engine.space_ids().clone(),
         })
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A nonzero seed makes [`Builder::next_work_item`] pop direct edges in
+    /// a pseudo-random order.
+    pub(super) static SHUFFLE_SEED: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn shuffled_index(len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    SHUFFLE_SEED.with(|seed| {
+        let mut x = seed.get()?;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        seed.set(Some(x));
+        usize::try_from(x % len as u64).ok()
+    })
 }

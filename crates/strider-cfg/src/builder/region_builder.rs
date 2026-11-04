@@ -544,11 +544,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Reports as `InteriorTarget` every region start strictly inside the
-    /// instruction at `cur_addr`: those bytes get two owners. A
-    /// [`Builder::edge_to_stub`] stub owns no bytes and is skipped, as is a
-    /// benign prefix re-entry when the instruction is this region's first,
-    /// matching what [`Builder::seat_non_boundary_target`] accepts.
+    /// Queues every region start strictly inside the instruction at
+    /// `cur_addr` as a [`Builder::interior_candidates`] entry: those bytes get
+    /// two owners. A [`Builder::edge_to_stub`] stub owns no bytes and is
+    /// skipped.
     fn note_stepped_over_region_starts(
         &mut self,
         cur_addr: PcodeInsnAddr,
@@ -562,40 +561,13 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         if lo >= hi {
             return;
         }
-        // A later p-code slice of the instruction heads no region itself.
-        let head = PcodeInsnAddr::at_machine_start(base);
-        let heads_region = (self.start_addr == head || self.builder.index.get(head).is_some())
-            && self.builder.may_reenter_prefix();
         let range = PcodeInsnAddr::at_machine_start(lo)..PcodeInsnAddr::at_machine_start(hi);
-        let builder = &*self.builder;
-        let stepped: Vec<PcodeInsnAddr> = builder
-            .index
-            .starts_in(range)
-            .filter(|&(start, region)| {
-                let r = &builder.region_graph[region];
-                if r.insns.is_empty() && matches!(r.terminator, RegionTerminator::TailCall { .. }) {
-                    return false;
-                }
-                let m = start.machine();
-                let ends_here = r
-                    .insns
-                    .iter()
-                    .find(|i| i.addr.machine() == m)
-                    .is_some_and(|i| m.checked_add(u64::from(i.len)) == Some(hi));
-                !(heads_region
-                    && ends_here
-                    && builder.same_core_ops(
-                        lift_res.insns.iter(),
-                        builder.decoded_ops_at(m).into_iter(),
-                    ))
-            })
-            .map(|(start, _)| start)
-            .collect();
-        for start in stepped {
-            self.builder
-                .report
-                .incomplete
-                .insert(start, crate::Reason::InteriorTarget);
+        let builder = &mut *self.builder;
+        for (start, region) in builder.index.starts_in(range) {
+            let r = &builder.region_graph[region];
+            if !(r.insns.is_empty() && matches!(r.terminator, RegionTerminator::TailCall { .. })) {
+                builder.interior_candidates.push((base, start));
+            }
         }
     }
 
