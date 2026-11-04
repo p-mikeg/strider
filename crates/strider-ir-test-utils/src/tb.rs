@@ -73,8 +73,7 @@ impl Tb {
         Self { fb }
     }
 
-    /// Creates NO region, for multi-region graphs (branches, merges) where the
-    /// caller picks the entry region.
+    /// Creates no region; the caller picks the entry.
     pub fn bare(
         vars: Vec<rsleigh::Vn>,
         arg_passing: &[rsleigh::Vn],
@@ -120,7 +119,7 @@ impl Tb {
     pub fn add(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Add)
     }
-    /// `Add(l, Neg(r))`, the shape pcode-lift produces.
+    /// `Add(l, Neg(r))`, the lifter's lowering of `IntSub`.
     pub fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.fb
             .build_sub_as_add_neg(l, r, ValueType::int(64))
@@ -177,8 +176,7 @@ impl Tb {
             .expect("lzcount")
     }
 
-    // Booleans are 1-bit (`I1`) integers, so a boolean binary op is an
-    // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`.
+    // An `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`.
     pub fn bool_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
         self.fb
             .build_int_binary_operation(l, r, op, ValueType::I1)
@@ -255,7 +253,7 @@ impl Tb {
         self.fb.build_call_cc(tgt, None).expect("call");
     }
     /// [`strider_ir::FunctionBuilder::build_call_other`] plus the user-op name
-    /// stamp, which patterns and dumps read.
+    /// stamp.
     pub fn named_call_other(
         fb: &mut FunctionBuilder,
         user_op_id: u64,
