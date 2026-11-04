@@ -102,3 +102,36 @@ pub(crate) fn py_big_int(ob: &Bound<'_, PyAny>) -> PyResult<Option<PyBigInt>> {
     let bytes = bytes.downcast::<PyBytes>()?;
     Ok(Some(PyBigInt(Ok(IBig::from_le_bytes(bytes.as_bytes())))))
 }
+
+/// An address, node id or operand index. A `bool` raises `TypeError`, an int outside `T`
+/// `StriderError`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Unsigned<T>(pub T);
+
+pub(crate) type Addr = Unsigned<u64>;
+
+impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for Unsigned<T> {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if ob.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "expected an int, got bool",
+            ));
+        }
+        ob.extract().map(Self).map_err(|e| {
+            if ob.is_instance_of::<PyInt>() {
+                crate::errors::into_strider_err(anyhow::anyhow!(
+                    "{ob} is out of range: it must fit an unsigned {}-bit integer",
+                    8 * std::mem::size_of::<T>()
+                ))
+            } else {
+                e
+            }
+        })
+    }
+}
+
+impl<T: IntoPy<PyObject>> IntoPy<PyObject> for Unsigned<T> {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        self.0.into_py(py)
+    }
+}

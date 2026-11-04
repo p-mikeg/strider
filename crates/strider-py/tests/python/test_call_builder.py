@@ -186,10 +186,9 @@ def test_call_arg_huge_index_builds_but_never_matches():
     assert g.find_all(call().arg(1_000_000, anything())) == []
 
 
-def test_call_arg_negative_index_overflows_at_chain_time():
-    # The index is unsigned, so a negative int fails eagerly at chain time
-    # as OverflowError, not StriderError.
+def test_call_arg_negative_index_raises_at_chain_time():
+    # The index is unsigned, so a negative int fails eagerly at chain time.
     import pytest
 
-    with pytest.raises(OverflowError):
+    with pytest.raises(strider.StriderError, match="out of range"):
         call().arg(-1, anything())
