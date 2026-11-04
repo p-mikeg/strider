@@ -1,6 +1,3 @@
-//! The interval lattice [`RangeMap`](super::RangeMap) carries, and the
-//! constant scalings it maps through.
-
 use strider_ir::IRViewer;
 use strider_ir::eval::bit;
 use strider_ir::node::{ValueId, ValueType};
@@ -67,12 +64,10 @@ impl Interval {
         self.lo == 0 && self.hi >= width_mask && self.stride == 1
     }
 
-    /// Whether `x` is in the set.
     pub(crate) fn contains(&self, x: u128) -> bool {
         self.lo <= x && x <= self.hi && (x - self.lo).is_multiple_of(self.stride)
     }
 
-    /// Whether every value of `other` is in the set.
     pub(super) fn covers(&self, other: Self) -> bool {
         other.is_empty()
             || (self.contains(other.lo)
@@ -211,8 +206,7 @@ pub(crate) fn width_mask(f: &strider_ir::Function, v: ValueId) -> u128 {
 }
 
 /// `ty`'s integer mask, or `u128::MAX` (top, no bound) for no type, a
-/// non-integer or a width past `u128`. A consumer needing a real bound gates
-/// on [`ValueType::int_mask_u128`].
+/// non-integer or a width past `u128`.
 pub(super) fn type_mask_or_top(ty: Option<ValueType>) -> u128 {
     ty.and_then(ValueType::int_mask_u128).unwrap_or(u128::MAX)
 }

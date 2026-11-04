@@ -143,10 +143,10 @@ fn post_pass_function_validates() {
     strider_ir::validate::validate(&f).expect("IR must validate");
 }
 
-/// The decomposition memo is the per-node SSoT `pattern`'s `stack_only` /
-/// `heap_only` / `non_stack` filters read, and every changing pass drains it. A
-/// caller pipeline that registers no post-pass must still leave it filled, or
-/// every region filter silently matches nothing.
+/// The region filters (`stack_only` / `heap_only` / `non_stack`) read the
+/// decomposition memo, which every changing pass drains. A pipeline with no
+/// post-pass must still leave it filled, or every region filter matches
+/// nothing.
 #[test]
 fn a_pipeline_without_post_passes_still_stamps_the_decomposition() {
     let mut function = stack_store_load_return();

@@ -1,5 +1,3 @@
-//! `MemWalker`, the clobber predicate a memory-SSA climb asks per def.
-
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Function, IRViewer};
 
@@ -25,7 +23,7 @@ pub(super) struct MemWalker<'a> {
 
 #[cfg(test)]
 thread_local! {
-    /// [`MemWalker`] clobber calls, counted by the scaling tests.
+    /// [`MemWalker`] clobber calls.
     pub(crate) static WALK_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
