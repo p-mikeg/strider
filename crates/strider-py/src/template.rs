@@ -95,7 +95,7 @@ pub fn float_const(bits: u64) -> PyTemplate {
     PyTemplate::from(crate::pattern::float_const_repr(bits))
 }
 
-value_ops!(PyTemplate, "Build", "");
+value_ops!(PyTemplate, "Build", template);
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     bind!(m;
