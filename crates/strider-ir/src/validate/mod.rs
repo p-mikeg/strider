@@ -30,14 +30,12 @@ use local_typing::check_local_typing;
 /// Returns a [`ValidationErrors`] bundle aggregating every violation found.
 pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     let entry = function.entry();
-    // Detached zombies (dead-branch residue, collapsed phis) carry stale
-    // shapes, so only the entry-reachable set is checked.
+    // Detached nodes carry stale shapes.
     let mut walk = crate::walk::walk_graph(function.graph(), entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();
     let mut errs: Vec<ValidationError> = Vec::new();
 
-    // Everything checked one node at a time, in one scan of the reachable set.
     let mut seen = UniqueKinds::default();
     for node in &reachable {
         let kind = function.node_kind(node);
@@ -61,12 +59,8 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_function_invariants_side_indices(function, &reachable, &mut errs);
     check_function_invariants_terminator_reachable(function, &mut errs);
 
-    // The dataflow checks schedule the graph, so they judge only one that
-    // passed every structural check. A missing asm fingerprint is side-table
-    // bookkeeping and cannot make scheduling unsafe, so it does not gate
-    // them: letting it would hide a real `LostStore` / `MemoryRewind` /
-    // `InputNotAvailable` behind one unstamped node, against this module's
-    // own rule that every check aggregates rather than failing fast.
+    // Scheduling needs a structurally valid graph; a missing asm fingerprint
+    // cannot make it unsafe.
     if errs
         .iter()
         .all(|e| matches!(e, ValidationError::MissingAsmFingerprint { .. }))
