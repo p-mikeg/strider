@@ -2,11 +2,10 @@
 //! render reads, so a render needs no decoder.
 
 use std::fmt;
-use std::sync::OnceLock;
 
 use rsleigh::{MemReader, Sleigh, SleighRegs, Vn, VnSpace};
 
-use crate::arch::{ArchPreset, SleighArch};
+use crate::arch::SleighArch;
 
 /// One arch's register and space names, its default code space and the byte
 /// width of its `ram` addresses.
@@ -27,7 +26,7 @@ impl ArchNames {
     ///
     /// The register table cannot be read, a space name is not UTF-8, or the
     /// sla declares no space with shortcut `r`.
-    fn from_sleigh<R: MemReader>(sleigh: &Sleigh<R>) -> anyhow::Result<Self> {
+    pub(super) fn from_sleigh<R: MemReader>(sleigh: &Sleigh<R>) -> anyhow::Result<Self> {
         let regs = sleigh.regs()?;
         let spaces = (0..=u8::MAX)
             .filter_map(|shortcut| {
@@ -125,19 +124,10 @@ impl fmt::Display for VnName<'_> {
 }
 
 impl SleighArch {
-    /// This arch's [`ArchNames`], built once per preset per process from a
-    /// Sleigh over an empty image.
+    /// This arch's [`ArchNames`], built once per preset per process.
     #[must_use]
     pub fn names(self) -> &'static ArchNames {
-        static NAMES: [OnceLock<ArchNames>; ArchPreset::ALL.len()] =
-            [const { OnceLock::new() }; ArchPreset::ALL.len()];
-        NAMES[self.preset() as usize].get_or_init(|| {
-            let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
-            let sleigh = self
-                .sleigh(probe)
-                .unwrap_or_else(|e| panic!("the compiled-in sla does not load: {e:#}"));
-            ArchNames::from_sleigh(&sleigh).unwrap_or_else(|e| panic!("{:?}: {e:#}", self.preset()))
-        })
+        &self.probe().0
     }
 }
 
