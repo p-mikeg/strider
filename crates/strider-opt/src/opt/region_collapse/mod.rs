@@ -1,10 +1,9 @@
 //! Collapses a `Region` with exactly one control input: its control output is
 //! replaced by that input, every phi over it by the phi's single value input,
-//! and the Region is killed (it is side-effecting, so dead-cone culling never
-//! reaches it).
+//! and the Region is killed (culling never reaches it).
 //!
 //! An unreachable `Region` is skipped: its sole predecessor can be its own
-//! `If`, and collapsing a phi then builds a non-phi data cycle.
+//! `If`, and collapsing a phi there builds a data cycle.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -55,11 +54,8 @@ fn try_collapse(edit: &mut crate::EditFunction<'_>, root: NodeId) {
 }
 
 /// Replaces every live phi over `phi_token` with its single value input and
-/// kills it: with one control predecessor a phi merges nothing.
-///
-/// `false`, having edited nothing, if any phi does not have exactly one value
-/// input or draws it from another phi over this token (the snapshotted pair
-/// would then dangle).
+/// kills it. `false`, having edited nothing, if any phi does not have exactly
+/// one value input or draws it from another phi over this token.
 fn collapse_region_phis(edit: &mut crate::EditFunction<'_>, phi_token: ValueId) -> bool {
     let phis: Vec<NodeId> = edit
         .graph_ref()

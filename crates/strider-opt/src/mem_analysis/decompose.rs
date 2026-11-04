@@ -1,5 +1,5 @@
 //! An address as `base + offset`, down `Add`-of-constant steps and alignment
-//! masks to `InitialVar(sp)` (stack) or a pure allocator's return (heap).  A
+//! masks to `InitialVar(sp)` (stack) or a pure allocator's return (heap). A
 //! `Phi` all of whose values derive from allocations is
 //! [`MemKind::HeapOpaque`]; any other `Phi` is `None`.
 
@@ -56,7 +56,7 @@ enum End {
 }
 
 /// The spine below `value`, each node with its step, down to the first node
-/// whose verdict needs no operand.  Ends because every data cycle passes a
+/// whose verdict needs no operand. Ends because every data cycle passes a
 /// `Phi`, where it stops.
 fn descend(function: &Function, value: ValueId) -> (Vec<(ValueId, Step)>, End) {
     let mut spine = Vec::new();
@@ -152,7 +152,7 @@ fn commit(function: &Function, v: ValueId, verdict: Option<MemExpr>) -> Option<M
     verdict
 }
 
-/// Whether every value `root` can hold derives from an allocation.  Walks
+/// Whether every value `root` can hold derives from an allocation. Walks
 /// `root` and every `Phi` its arms reach once, and commits the verdict of
 /// each.
 fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
@@ -198,7 +198,7 @@ fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
 
 /// A non-heap arm: the phi can hold something that is not an allocation.
 const OPAQUE: u8 = 1;
-/// An allocation arm.  A frontier of nothing but phis names nothing.
+/// An allocation arm. A frontier of nothing but phis names nothing.
 const ALLOCATED: u8 = 2;
 
 /// One phi of [`phi_names_an_allocation`]'s frontier.

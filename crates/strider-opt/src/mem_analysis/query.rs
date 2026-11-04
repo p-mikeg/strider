@@ -21,7 +21,7 @@ pub(crate) struct Policy {
     pub(super) calls: Calls,
 }
 
-/// What a `Call` on the probed location's chain does to it.  A
+/// What a `Call` on the probed location's chain does to it. A
 /// `preserves_memory` call never clobbers, a `CallOther` always does.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Calls {
@@ -29,11 +29,10 @@ pub(crate) enum Calls {
     Block,
     /// No call shadows it.
     Pass,
-    /// The claims' relaxations: a listed allocator passes a private-frame
-    /// slot outside its argument window and an allocation it does not return;
-    /// under `escape_analysis` any call passes that slot, and with
-    /// `stack_global_disjoint` too any `Anchor` store;
-    /// `callee_preserves_stack_args` empties the window.
+    /// The claims' relaxations: a listed allocator, or any call under
+    /// `escape_analysis`, passes a private-frame slot outside its argument
+    /// window (so does an `Anchor` store, with `stack_global_disjoint` too);
+    /// an allocator also passes an allocation it does not return.
     Forward,
 }
 
@@ -80,17 +79,11 @@ impl Policy {
     }
 }
 
-/// The SP-aware query memo, one per pass.  Takes the `&Function` and
-/// [`Policy`] per call, so queries interleave with `&mut` edits.
-///
-/// Its index, argument windows and answers stay valid across edits that keep
-/// every memory def and the values in its address and SP slots.  Moving a
-/// store's address onto another value needs [`Self::forget_answers`]; the
-/// index and windows survive it, since the moved-from value was a `Load`'s,
-/// which the index treats as an `Anchor` and which places no window.  A
-/// call's SP moved off a `Load` needs nothing: a stack address reloaded from
-/// memory was stored, so the frame escapes and no call steps through a stack
-/// probe whatever its window.
+/// The SP-aware query memo, one per pass. Takes the `&Function` and
+/// [`Policy`] per call, so queries interleave with `&mut` edits. Valid across
+/// edits that keep every memory def and the values in its address and SP
+/// slots; moving a store's address off a `Load`'s value needs
+/// [`Self::forget_answers`].
 #[derive(Default)]
 pub(crate) struct MemQuery {
     /// Built on the first query; policy-free.
@@ -157,7 +150,7 @@ impl MemQuery {
             .unwrap_or(start)
     }
 
-    /// Whether `[offset, hi)` meets `call`'s argument window.  An unplaced
+    /// Whether `[offset, hi)` meets `call`'s argument window. An unplaced
     /// prefix covers everything.
     pub(super) fn arg_window_covers(
         &self,
@@ -200,7 +193,7 @@ impl MemQuery {
 
     /// Moves `load`'s memory edge onto its nearest clobber under
     /// [`Policy::strict`], which later walks honour, then [`Self::reaching`]
-    /// under `policy`.  Every relaxation clobbers a subset of what the strict
+    /// under `policy`. Every relaxation clobbers a subset of what the strict
     /// policy does, so asking from the moved edge loses nothing.
     pub(crate) fn reach_and_narrow(
         &self,
@@ -217,7 +210,7 @@ impl MemQuery {
     }
 
     /// The nearest def of `[offset, offset + probe_size)` in `space` relative
-    /// to SP terminal `base`, on the chain from `mem_start`.  A `probe_size`
+    /// to SP terminal `base`, on the chain from `mem_start`. A `probe_size`
     /// of `1` discovers a store whose width [`ReachingSpStore::size`] reads.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn nearest_sp_clobber(
@@ -256,8 +249,8 @@ impl MemQuery {
     }
 }
 
-/// Repoints a `Load`'s memory input onto `clobber`'s memory output.  Sound
-/// only for a `Load`, which has no memory output.  Returns whether the edge
+/// Repoints a `Load`'s memory input onto `clobber`'s memory output. Sound
+/// only for a `Load`, which has no memory output. Returns whether the edge
 /// moved.
 pub(crate) fn narrow_load_to(
     edit: &mut crate::EditFunction<'_>,

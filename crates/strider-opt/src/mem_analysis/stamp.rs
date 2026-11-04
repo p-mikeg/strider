@@ -1,9 +1,7 @@
-//! The per-access memory classes region filters read.  They decompose under
-//! the function's claims; [`Function::invalidate_analyses`] drops them after
-//! each pass or post-pass that changes the graph (they persist across edits
-//! within a pass), `run` stamps every live access on exit, and between those
-//! the table fills lazily.  A raw reader sees the table as it is, so an
-//! outside edit calls [`refresh_memory_classes`] first.
+//! The per-access memory classes region filters read. They decompose under
+//! the function's claims and fill lazily; [`Function::invalidate_analyses`]
+//! drops them after each graph-changing pass and `run` stamps every live
+//! access on exit. An outside edit calls [`refresh_memory_classes`] first.
 //!
 //! [`Function::invalidate_analyses`]: strider_ir::Function::invalidate_analyses
 
@@ -26,7 +24,7 @@ pub(crate) fn stamp_all(edit: &mut crate::EditFunction<'_>) {
 }
 
 /// Re-derives the per-access memory classes `stack_only()` / `heap_only()`
-/// read.  Call it after editing outside a pipeline.
+/// read. Call it after editing outside a pipeline.
 pub fn refresh_memory_classes(edit: &mut crate::EditFunction<'_>) {
     edit.clean();
     edit.function().invalidate_analyses();
