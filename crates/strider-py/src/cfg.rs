@@ -141,8 +141,8 @@ impl PyCfg {
     /// The p-code ops this CFG decoded at `addr`, joined with `"; "`, or
     /// `None`. An instruction lifting to no ops (x86 `endbr64`) also gives
     /// `None`; `Lifter.pcode_at` returns `""` for it.
-    fn pcode_at(&self, addr: u64) -> Option<String> {
-        self.pcode_map().get(&addr).cloned()
+    fn pcode_at(&self, addr: crate::bigint::Addr) -> Option<String> {
+        self.pcode_map().get(&addr.0).cloned()
     }
 
     /// `node`'s asm fingerprint as sorted `(addr, pcode)` pairs, skipping an
@@ -185,8 +185,13 @@ impl PyCfg {
     /// DOT of the regions within `depth` edges of region `center`, capped at
     /// `max_nodes`.
     #[pyo3(signature = (center, depth=5, max_nodes=60))]
-    fn neighborhood_dot(&self, center: u32, depth: usize, max_nodes: usize) -> PyResult<String> {
-        let node = self.region_id(center)?;
+    fn neighborhood_dot(
+        &self,
+        center: crate::bigint::Unsigned<u32>,
+        depth: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        let node = self.region_id(center.0)?;
         self.inner
             .neighborhood_dot(self.arch.names(), node, depth, max_nodes)
             .map_err(into_strider_err)
@@ -216,9 +221,9 @@ impl PyCfg {
     }
 
     /// The region holding `addr`; of overlapping ones, the latest start.
-    fn region_at(&self, addr: u64) -> Option<u32> {
+    fn region_at(&self, addr: crate::bigint::Addr) -> Option<u32> {
         self.inner
-            .region_containing(strider_cfg::PcodeInsnAddr::at_machine_start(addr))
+            .region_containing(strider_cfg::PcodeInsnAddr::at_machine_start(addr.0))
             .map(|id| id.index() as u32)
     }
 }
