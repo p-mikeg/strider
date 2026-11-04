@@ -357,197 +357,104 @@ mod tests {
     }
 
     #[test]
-    fn expected_signature_int_const() {
-        let (inputs, outputs) = kinds(&NodeKind::IntConst(crate::node::IntConstId::new(42_usize)));
-        assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
+    fn expected_signature_rows() {
+        use crate::node::{FloatBinaryOp, IntBinaryOp, IntCmpOp};
+        use ExpectedValueKind::{AnyFloat, AnyInt, Bool, Control, Memory, PhiToken};
+        let ram = rsleigh::VnSpace::RAM;
+        let rows: [(NodeKind, &[ExpectedValueKind], &[ExpectedValueKind]); 14] = [
+            (
+                NodeKind::IntConst(crate::node::IntConstId::new(42_usize)),
+                &[],
+                &[AnyInt],
+            ),
+            (NodeKind::Entry, &[], &[Control]),
+            (NodeKind::If, &[Control, Bool], &[Control, Control]),
+            (NodeKind::InitialMemory, &[], &[Memory]),
+            (NodeKind::Load(ram), &[Memory, AnyInt], &[AnyInt]),
+            (NodeKind::Store(ram), &[Memory, AnyInt, AnyInt], &[Memory]),
+            (NodeKind::Return, &[Control, Memory], &[]),
+            // ctrl, mem, target, sp
+            (
+                NodeKind::Call { cc: None },
+                &[Control, Memory, AnyInt, AnyInt],
+                &[Control, Memory],
+            ),
+            (
+                NodeKind::IntBinaryOp(IntBinaryOp::Add),
+                &[AnyInt, AnyInt],
+                &[AnyInt],
+            ),
+            (
+                NodeKind::IntCmpOp(IntCmpOp::Equal),
+                &[AnyInt, AnyInt],
+                &[Bool],
+            ),
+            (NodeKind::Region, &[], &[Control, PhiToken]),
+            (NodeKind::MemPhi, &[PhiToken], &[Memory]),
+            (NodeKind::FloatConst(0), &[], &[AnyFloat]),
+            (
+                NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
+                &[AnyFloat, AnyFloat],
+                &[AnyFloat],
+            ),
+        ];
+        for (kind, inputs, outputs) in rows {
+            assert_eq!(
+                kinds(&kind),
+                (inputs.to_vec(), outputs.to_vec()),
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]
-    fn expected_signature_entry() {
-        let (inputs, outputs) = kinds(&NodeKind::Entry);
-        assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedValueKind::Control]);
-    }
-
-    #[test]
-    fn expected_signature_if() {
-        let (inputs, outputs) = kinds(&NodeKind::If);
-        assert_eq!(
-            inputs,
-            vec![ExpectedValueKind::Control, ExpectedValueKind::Bool]
-        );
-        assert_eq!(
-            outputs,
-            vec![ExpectedValueKind::Control, ExpectedValueKind::Control]
-        );
-    }
-
-    #[test]
-    fn expected_signature_initial_memory() {
-        let (inputs, outputs) = kinds(&NodeKind::InitialMemory);
-        assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedValueKind::Memory]);
-    }
-
-    #[test]
-    fn expected_signature_load() {
-        let space = rsleigh::VnSpace::RAM;
-        let (inputs, outputs) = kinds(&NodeKind::Load(space));
-        assert_eq!(
-            inputs,
-            vec![ExpectedValueKind::Memory, ExpectedValueKind::AnyInt]
-        );
-        assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
-    }
-
-    #[test]
-    fn expected_signature_store() {
-        let space = rsleigh::VnSpace::RAM;
-        let (inputs, outputs) = kinds(&NodeKind::Store(space));
-        assert_eq!(
-            inputs,
-            vec![
-                ExpectedValueKind::Memory,
-                ExpectedValueKind::AnyInt,
-                ExpectedValueKind::AnyInt,
-            ]
-        );
-        assert_eq!(outputs, vec![ExpectedValueKind::Memory]);
-    }
-
-    #[test]
-    fn expected_signature_return() {
-        let (inputs, outputs) = kinds(&NodeKind::Return);
-        assert_eq!(
-            inputs,
-            vec![ExpectedValueKind::Control, ExpectedValueKind::Memory]
-        );
-        assert_eq!(outputs, vec![]);
-    }
-
-    #[test]
-    fn expected_signature_call() {
-        let (inputs, outputs) = kinds(&NodeKind::Call { cc: None });
-        assert_eq!(
-            inputs,
-            vec![
-                ExpectedValueKind::Control,
-                ExpectedValueKind::Memory,
-                ExpectedValueKind::AnyInt, // target
-                ExpectedValueKind::AnyInt, // sp
-            ]
-        );
-        assert_eq!(
-            outputs,
-            vec![ExpectedValueKind::Control, ExpectedValueKind::Memory]
-        );
-    }
-
-    #[test]
-    fn expected_signature_int_binary_op() {
+    fn expected_signature_slot_roles() {
         use crate::node::IntBinaryOp;
-        let (inputs, outputs) = kinds(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
-        assert_eq!(
-            inputs,
-            vec![ExpectedValueKind::AnyInt, ExpectedValueKind::AnyInt]
-        );
-        assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
-    }
-
-    #[test]
-    fn expected_signature_int_cmp_op() {
-        use crate::node::IntCmpOp;
-        let (inputs, outputs) = kinds(&NodeKind::IntCmpOp(IntCmpOp::Equal));
-        assert_eq!(
-            inputs,
-            vec![ExpectedValueKind::AnyInt, ExpectedValueKind::AnyInt]
-        );
-        assert_eq!(outputs, vec![ExpectedValueKind::Bool]);
-    }
-
-    #[test]
-    fn expected_signature_region() {
-        let (inputs, outputs) = kinds(&NodeKind::Region);
-        assert_eq!(inputs, vec![]);
-        assert_eq!(
-            outputs,
-            vec![ExpectedValueKind::Control, ExpectedValueKind::PhiToken]
-        );
-    }
-
-    #[test]
-    fn expected_signature_mem_phi() {
-        let (inputs, outputs) = kinds(&NodeKind::MemPhi);
-        assert_eq!(inputs, vec![ExpectedValueKind::PhiToken]);
-        assert_eq!(outputs, vec![ExpectedValueKind::Memory]);
-    }
-
-    #[test]
-    fn expected_signature_float_const() {
-        let (inputs, outputs) = kinds(&NodeKind::FloatConst(0));
-        assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedValueKind::AnyFloat]);
-    }
-
-    #[test]
-    fn expected_signature_float_binary_op() {
-        use crate::node::FloatBinaryOp;
-        let (inputs, outputs) = kinds(&NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
-        assert_eq!(
-            inputs,
-            vec![ExpectedValueKind::AnyFloat, ExpectedValueKind::AnyFloat]
-        );
-        assert_eq!(outputs, vec![ExpectedValueKind::AnyFloat]);
-    }
-
-    #[test]
-    fn load_input_slots_have_mem_and_addr_roles() {
-        let space = rsleigh::VnSpace::RAM;
-        let sig = expected_signature(&NodeKind::Load(space));
-        assert_eq!(sig.inputs.at(0).unwrap().role, SlotRole::Memory);
-        assert_eq!(sig.inputs.at(0).unwrap().name, "mem");
-        assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Addr);
-        assert_eq!(sig.inputs.at(1).unwrap().name, "addr");
-    }
-
-    #[test]
-    fn call_is_variadic_in_args() {
-        let sig = expected_signature(&NodeKind::Call { cc: None });
-        assert!(sig.inputs.tail.is_some());
-        assert_eq!(sig.inputs.head.len(), 4);
-        assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
-        assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
-        assert_eq!(sig.inputs.at(2).unwrap().name, "target");
-        assert_eq!(sig.inputs.at(3).unwrap().name, "sp");
-        assert_eq!(sig.inputs.at(3).unwrap().role, SlotRole::Sp);
-        assert_eq!(sig.inputs.at(4).unwrap().role, SlotRole::Arg);
-        assert_eq!(sig.inputs.at(999).unwrap().role, SlotRole::Arg);
-    }
-
-    #[test]
-    fn return_input_tail_is_ret() {
-        let sig = expected_signature(&NodeKind::Return);
-        assert_eq!(sig.inputs.head.len(), 2);
-        assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
-        assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
-        assert_eq!(sig.inputs.at(2).unwrap().role, SlotRole::Ret);
-        assert_eq!(sig.inputs.at(99).unwrap().role, SlotRole::Ret);
-    }
-
-    #[test]
-    fn if_cond_slot_role_is_cond() {
-        let sig = expected_signature(&NodeKind::If);
-        assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Cond);
-        assert_eq!(sig.inputs.at(1).unwrap().name, "cond");
-    }
-
-    #[test]
-    fn int_binary_op_slot_roles_are_lhs_rhs() {
-        use crate::node::IntBinaryOp;
-        let sig = expected_signature(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
-        assert_eq!(sig.inputs.at(0).unwrap().role, SlotRole::Lhs);
-        assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
+        let rows: [(NodeKind, usize, &str, SlotRole); 11] = [
+            (
+                NodeKind::Load(rsleigh::VnSpace::RAM),
+                0,
+                "mem",
+                SlotRole::Memory,
+            ),
+            (
+                NodeKind::Load(rsleigh::VnSpace::RAM),
+                1,
+                "addr",
+                SlotRole::Addr,
+            ),
+            (NodeKind::Call { cc: None }, 0, "ctrl", SlotRole::Control),
+            (NodeKind::Call { cc: None }, 1, "mem", SlotRole::Memory),
+            (NodeKind::Call { cc: None }, 2, "target", SlotRole::Target),
+            (NodeKind::Call { cc: None }, 3, "sp", SlotRole::Sp),
+            (NodeKind::Return, 0, "ctrl", SlotRole::Control),
+            (NodeKind::Return, 1, "mem", SlotRole::Memory),
+            (NodeKind::If, 1, "cond", SlotRole::Cond),
+            (
+                NodeKind::IntBinaryOp(IntBinaryOp::Add),
+                0,
+                "lhs",
+                SlotRole::Lhs,
+            ),
+            (
+                NodeKind::IntBinaryOp(IntBinaryOp::Add),
+                1,
+                "rhs",
+                SlotRole::Rhs,
+            ),
+        ];
+        for (kind, at, name, role) in rows {
+            let slot = expected_signature(&kind).inputs.at(at).unwrap();
+            assert_eq!((slot.name, slot.role), (name, role), "{kind:?} slot {at}");
+        }
+        let call = expected_signature(&NodeKind::Call { cc: None });
+        assert_eq!(call.inputs.head.len(), 4);
+        assert_eq!(call.inputs.at(4).unwrap().role, SlotRole::Arg);
+        assert_eq!(call.inputs.at(999).unwrap().role, SlotRole::Arg);
+        let ret = expected_signature(&NodeKind::Return);
+        assert_eq!(ret.inputs.head.len(), 2);
+        assert_eq!(ret.inputs.at(2).unwrap().role, SlotRole::Ret);
+        assert_eq!(ret.inputs.at(99).unwrap().role, SlotRole::Ret);
     }
 
     /// One pattern per [`NodeKind`] variant, in declaration order: yields
