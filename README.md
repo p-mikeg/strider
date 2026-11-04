@@ -150,7 +150,8 @@ uv run maturin develop    # build the Rust extension
 uv run pytest             # run the test suite
 ```
 
-Rebuild the fixtures with `cd fixtures && make` after changing their sources.
+After changing a case, rebuild it with `make -C fixtures ARCH=<arch>
+CASE=<case>`; [fixtures/README.md](fixtures/README.md) says what to re-bless.
 
 ## Architecture
 

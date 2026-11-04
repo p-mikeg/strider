@@ -1,17 +1,24 @@
 # Fixtures
 
 `out/<arch>/<case>.elf` is built from `cases/<case>.{c,S}` by `make`, one
-target per (arch, case); every C case also builds an unlinked `.o` twin.
-Every `.o` is committed: `strider-reader`'s release-only `read_digest`
-digests every image under `out/`, so a new one needs its digest row
-re-blessed.
+target per (arch, case). The cases in the Makefile's `OBJ_TWINS` also build an
+unlinked `.o` twin, which the reader tests use.
 
 The binaries are committed through Git LFS, so a clone without `git-lfs` gets
 LFS pointer text where an ELF should be; run `git lfs pull` before
 running the test suite.
 
-Rebuilding is only needed when a case or an arch's flags change. See the header
-of `Makefile` for the `ARCH=` / `CASE=` selectors.
+Rebuilding is only needed when a case or an arch's flags change. Rebuild just
+that one with the `ARCH=` / `CASE=` selectors in the header of `Makefile`.
+`strider-reader`'s release-only `read_digest` digests every image under `out/`,
+so re-bless the digest of each image you changed and review the diff:
+
+```
+UPDATE_EXPECT=1 cargo test -p strider-reader --release --test read_digest
+git diff crates/strider-reader/tests/data/read_digest.txt
+```
+
+A changed `.elf` also needs its golden re-blessed (below).
 
 `loader/out/` holds images the ELF reader tests need a link or flags of their
 own for (dynamic GOT slots, IFUNC, TLS, copy relocations, ppc64 local
