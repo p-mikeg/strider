@@ -1035,8 +1035,8 @@ impl PyMemReader {
     /// Override to return up to `size` bytes at `addr`, or `None` for
     /// unmapped.  The base raises `NotImplementedError`.
     ///
-    /// An exception here, a return of another type or of more than `size`
-    /// bytes fails the lift with `StriderError`, an exception chained as its
+    /// Raising, returning another type, or returning more than `size` bytes
+    /// fails the lift with `StriderError`, a raised exception as its
     /// `__cause__`; `KeyboardInterrupt` and `SystemExit` propagate unchanged.
     /// `ReadOnlyMemory.read` is the opposite: see its docstring.
     // The raising base reads no parameter; the names are the subclass keywords.
