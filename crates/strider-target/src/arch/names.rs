@@ -1,6 +1,3 @@
-//! The names an arch's sla gives its registers and address spaces: all a
-//! render reads, so a render needs no decoder.
-
 use std::fmt;
 
 use rsleigh::{MemReader, Sleigh, SleighRegs, Vn, VnSpace};

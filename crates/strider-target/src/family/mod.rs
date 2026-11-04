@@ -34,10 +34,8 @@ pub(crate) struct Family {
     /// `(op, register)`: the input-less rounding op and the register it is,
     /// per [`crate::call_other_abi::rounding_mode_register`].
     pub(crate) rounding_register: Option<(&'static str, &'static str)>,
-    /// [`crate::call_other_abi::classify`] asks, in order: these exact rows
-    /// (the first whose `only` admits the preset), the arch-independent rows,
-    /// [`Self::call_other_prefixes`], then [`Self::call_other_fallback`].
-    /// An exact row is an exception carved out of a stem.
+    /// Exact rows, the first whose `only` admits the preset winning; ahead of
+    /// every stem ([`crate::call_other_abi::classify`]).
     pub(crate) call_other: &'static [Row],
     pub(crate) call_other_prefixes: &'static [Prefix],
     /// Classification by rule, for a family whose names no stem separates.

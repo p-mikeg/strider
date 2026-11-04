@@ -1,5 +1,3 @@
-//! What an arch's sla says about decoding and lifting.
-
 use std::ops::Range;
 
 use rsleigh::{MemReader, Sleigh, SleighRegs, Vn, VnSpace};
