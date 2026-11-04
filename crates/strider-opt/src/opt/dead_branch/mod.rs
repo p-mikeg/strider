@@ -2,8 +2,9 @@
 //! dispatch address: the live control output is replaced with the branch's
 //! control input, and the branch (side-effecting, so never culled) is killed.
 //!
-//! A dead subgraph can stay reachable through live data until every run
-//! strips each join's dead predecessor slots.
+//! A dead subgraph can stay reachable through live data (validation runs
+//! only after convergence); every run strips each join's dead predecessor
+//! slots.
 
 use entity_utils::DenseEntitySet;
 use smallvec::SmallVec;

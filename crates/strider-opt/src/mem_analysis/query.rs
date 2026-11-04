@@ -31,8 +31,9 @@ pub(crate) enum Calls {
     Pass,
     /// The claims' relaxations: a listed allocator, or any call under
     /// `escape_analysis`, passes a private-frame slot outside its argument
-    /// window (so does an `Anchor` store, with `stack_global_disjoint` too);
-    /// an allocator also passes an allocation it does not return.
+    /// window; under `escape_analysis` with `stack_global_disjoint` an
+    /// `Anchor` store passes it too. An allocator also passes an allocation
+    /// it does not return.
     Forward,
 }
 
