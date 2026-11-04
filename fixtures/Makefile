@@ -47,13 +47,20 @@ SELECTED_CASES := $(CASES)
 endif
 
 TARGETS    := $(addprefix $(OUTDIR)/$(ARCH)/,$(addsuffix .elf,$(SELECTED_CASES)))
-# Every C case also gets compiled to an unlinked ET_REL object file at
-# `out/<arch>/<case>.o`.  Used by reader tests that need a .o for the
-# section-walking loader path (ET_REL has no PT_LOAD program headers).
-# Hand-written `.S` cases are excluded because they're already small
-# freestanding things; only `cases/*.c` get the .o twin.
-C_CASES    := $(notdir $(basename $(wildcard cases/*.c)))
-OBJ_CASES  := $(filter $(C_CASES),$(SELECTED_CASES))
+# The committed unlinked ET_REL twins, `out/<arch>/<case>.o`, for the tests
+# of the section-walking loader path (ET_REL has no PT_LOAD program headers).
+# `read_digest` pins every image on disk, so only these are built; a test
+# needing a new twin adds its case here and commits the `.o`.
+OBJ_TWINS  := switch_phi_index
+ifneq ($(filter $(ARCH),aarch64 arm mips64le ppc64le x64 x86),)
+OBJ_TWINS  += elf_relocs globals switch tzcount
+else ifneq ($(ARCH),arm_be8)
+OBJ_TWINS  += switch_masked_loop
+endif
+ifeq ($(ARCH),x64)
+OBJ_TWINS  += memory
+endif
+OBJ_CASES  := $(filter $(OBJ_TWINS),$(SELECTED_CASES))
 OBJ_TARGETS := $(addprefix $(OUTDIR)/$(ARCH)/,$(addsuffix .o,$(OBJ_CASES)))
 
 all: $(TARGETS) $(OBJ_TARGETS)
