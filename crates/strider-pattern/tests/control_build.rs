@@ -884,63 +884,6 @@ fn mem_phi_phi_token_targets_slot_zero() {
     );
 }
 
-#[test]
-fn call_any_input_binds_target() {
-    let function = shapes::call_at(0x1234);
-    a::matches(
-        &function,
-        call().any_input(int_const(0x1234u128)).build(),
-        1,
-    );
-}
-
-#[test]
-fn call_other_any_input_binds_arg() {
-    let function = call_other_named("f", 5);
-    let matcher = Matcher::new(&function);
-    let hits = matcher
-        .find_all(&call_other().any_input(var(Capture::new())).build())
-        .unwrap();
-    assert!(!hits.is_empty(), "any_input must bind some CallOther input");
-}
-
-#[test]
-fn ret_any_input_binds_ret_val() {
-    let function = return_const(7);
-    a::matches(&function, ret().any_input(int_const(7u128)).build(), 1);
-}
-
-#[test]
-fn indirect_branch_any_input_binds_target() {
-    let function = indirect_branch_to(0xBEEF);
-    a::matches(
-        &function,
-        indirect_branch().any_input(int_const(0xBEEFu128)).build(),
-        1,
-    );
-}
-
-#[test]
-fn switch_any_input_binds_address() {
-    let function = switch_fn(0xC0DE);
-    a::matches(
-        &function,
-        switch().any_input(int_const(0xC0DEu128)).build(),
-        1,
-    );
-}
-
-/// Only a wildcard reaches the sole ctrl predecessor: ctrl is not a value edge.
-#[test]
-fn unreachable_any_input_wildcard_reaches_ctrl() {
-    let function = unreachable_fn();
-    a::matches(
-        &function,
-        unreachable().any_input(var(Capture::new())).build(),
-        1,
-    );
-}
-
 /// `return(load[0x1000]:I64)`.
 fn load_from_0x1000() -> strider_ir::Function {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
@@ -957,14 +900,80 @@ fn load_from_0x1000() -> strider_ir::Function {
     b.build().unwrap()
 }
 
+/// `return(store[0x1000] = 99)`.
+fn store_99() -> strider_ir::Function {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+    let data = b.build_int_const(99u64, ValueType::int(64)).unwrap();
+    b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+    b.build_return(None, &[]).unwrap();
+    b.build().unwrap()
+}
+
+/// Each builder's `any_input` reaches the operand its fixture holds. An
+/// argument-less `CallOther` offers its control and memory inputs; only a
+/// wildcard reaches an `Unreachable`'s sole control predecessor.
 #[test]
-fn load_any_input_binds_addr() {
-    let function = load_from_0x1000();
-    a::matches(
-        &function,
-        load().any_input(int_const(0x1000u128)).build(),
-        1,
-    );
+fn any_input_binds_the_fixture_operand() {
+    let cases: [(&str, strider_ir::Function, strider_pattern::Pattern, usize); 8] = [
+        (
+            "call",
+            shapes::call_at(0x1234),
+            call().any_input(int_const(0x1234u128)).build(),
+            1,
+        ),
+        (
+            "call_other",
+            call_other_named("f", 5),
+            call_other().any_input(var(Capture::new())).build(),
+            2,
+        ),
+        (
+            "ret",
+            return_const(7),
+            ret().any_input(int_const(7u128)).build(),
+            1,
+        ),
+        (
+            "indirect_branch",
+            indirect_branch_to(0xBEEF),
+            indirect_branch().any_input(int_const(0xBEEFu128)).build(),
+            1,
+        ),
+        (
+            "switch",
+            switch_fn(0xC0DE),
+            switch().any_input(int_const(0xC0DEu128)).build(),
+            1,
+        ),
+        (
+            "unreachable",
+            unreachable_fn(),
+            unreachable().any_input(var(Capture::new())).build(),
+            1,
+        ),
+        (
+            "load",
+            load_from_0x1000(),
+            load().any_input(int_const(0x1000u128)).build(),
+            1,
+        ),
+        (
+            "store",
+            store_99(),
+            store().any_input(int_const(99u128)).build(),
+            1,
+        ),
+    ];
+    for (name, function, pat, want) in cases {
+        let got = Matcher::new(&function).find_all(&pat).unwrap().len();
+        assert_eq!(got, want, "{name}");
+    }
 }
 
 #[test]
@@ -1000,22 +1009,6 @@ fn if_raw_input_slot_is_the_cond_slot() {
     // `If` is `[ctrl(0), cond(1)]`; the fixture branches on a false constant.
     a::matches(&function, if_else().input(1, anything()).build(), 1);
     a::matches(&function, if_else().any_input(anything()).build(), 1);
-}
-
-#[test]
-fn store_any_input_binds_data() {
-    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
-    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
-    let data = b.build_int_const(99u64, ValueType::int(64)).unwrap();
-    b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
-    b.build_return(None, &[]).unwrap();
-    let function = b.build().unwrap();
-    a::matches(&function, store().any_input(int_const(99u128)).build(), 1);
 }
 
 /// Register-passed carrier (`InitialVar(rax)`) at index 0 and stack-passed
