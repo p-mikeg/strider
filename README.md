@@ -54,7 +54,7 @@ strider.explore.shutdown(port)
 
 ## What's new since 0.1.0
 
-[CHANGELOG.md](CHANGELOG.md) has every change, breaking ones first.
+[CHANGELOG.md](CHANGELOG.md) has the details, breaking changes first.
 
 - **More inputs.** Unlinked `.o` files (relocations applied, undefined symbols
   given addresses), ppc64 ELFv1 descriptors, stripped images named with
