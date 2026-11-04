@@ -4,19 +4,17 @@ use strider_orchestrator::opt::OptimizerPipeline;
 
 use crate::errors::into_strider_err;
 
-/// A type-erased pass.
 pub(crate) type ErasedPass = &'static dyn strider_orchestrator::opt::Optimizer;
 
-/// An ordered list of optimizer passes plus post-passes; build with `empty()`
-/// or `default()` then `add` / `add_post`. Applying a pipeline copies it, so
-/// one object serves any number of calls.
+/// An ordered list of optimizer passes plus post-passes that run once at the
+/// end. Applying a pipeline copies it, so one object serves any number of
+/// calls.
 #[pyclass(name = "OptimizerPipeline", module = "strider.opt")]
 pub struct PyOptimizerPipeline {
     inner: OptimizerPipeline,
 }
 
 impl PyOptimizerPipeline {
-    /// A copy of the wrapped pipeline.
     pub(crate) fn build_pipeline(&self) -> OptimizerPipeline {
         self.inner.clone()
     }
@@ -24,7 +22,7 @@ impl PyOptimizerPipeline {
 
 #[pymethods]
 impl PyOptimizerPipeline {
-    /// A pipeline with no passes; build one up with `add` / `add_post`.
+    /// A pipeline with no passes.
     #[classmethod]
     fn empty(_cls: &Bound<'_, PyType>) -> Self {
         Self {
@@ -32,7 +30,7 @@ impl PyOptimizerPipeline {
         }
     }
 
-    /// The pipeline `analyze` runs when given none.
+    /// The pipeline `analyze` runs when given none: every built-in pass.
     #[classmethod]
     fn default(_cls: &Bound<'_, PyType>) -> Self {
         Self {
@@ -40,20 +38,20 @@ impl PyOptimizerPipeline {
         }
     }
 
-    /// Append a pass to the main list, run repeatedly until the graph stops
-    /// changing. Raises `StriderError` for a post-pass; use `add_post`.
+    /// Append a pass to the main list, run until the graph stops changing.
+    /// Raises `StriderError` for a post-pass.
     fn add(&mut self, pass_obj: PyOptPass) -> PyResult<()> {
         self.inner.add(pass_obj.into_erased()?);
         Ok(())
     }
 
-    /// Append a post-pass, run once after the main passes finish. A
-    /// fixed-point pass is accepted here too, and runs once.
+    /// Append a post-pass, run once after the main passes. A main pass is
+    /// accepted too, and runs once.
     fn add_post(&mut self, pass_obj: PyOptPass) {
         self.inner.add_post_pass(pass_obj.into_erased_post());
     }
 
-    /// Names of the main (repeated) passes currently registered, in order.
+    /// The main passes' names, in order.
     #[getter]
     fn passes(&self) -> Vec<String> {
         self.inner
@@ -71,7 +69,7 @@ impl PyOptimizerPipeline {
         )
     }
 
-    /// Names of the post-passes currently registered, in order.
+    /// The post-passes' names, in order.
     #[getter]
     fn post_passes(&self) -> Vec<String> {
         self.inner
@@ -102,9 +100,8 @@ macro_rules! pure_pass_class {
     };
 }
 
-/// The pass catalogue: `main` rows run to a fixed point, `post` rows run once
-/// and are rejected by `add`. Each row is `"PythonName" => WrapperType = pass,
-/// doc`.
+/// Rows are `"PythonName" => WrapperType = pass, doc`; `post` rows are
+/// rejected by `add`.
 macro_rules! opt_passes {
     (
         main { $($mn:literal => $mty:ident = $mctor:expr, $mdoc:literal;)* }
@@ -122,7 +119,7 @@ macro_rules! opt_passes {
         }
 
         impl PyOptPass {
-            /// Erase to a fixed-point pass; a post-pass-only kind is an error.
+            /// The pass for `add`; a post-pass is an error.
             fn into_erased(self) -> PyResult<ErasedPass> {
                 Ok(match self {
                     $( PyOptPass::$mty(_) => &$mctor, )*
@@ -137,7 +134,7 @@ macro_rules! opt_passes {
                 })
             }
 
-            /// Any pass erases for `add_post`, a fixed-point one running once.
+            /// The pass for `add_post`.
             fn into_erased_post(self) -> ErasedPass {
                 match self {
                     $( PyOptPass::$mty(_) => &$mctor, )*
