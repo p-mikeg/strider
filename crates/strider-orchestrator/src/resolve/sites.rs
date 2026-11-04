@@ -1,6 +1,3 @@
-//! Each dispatch site's state across rounds, keyed by its anchor: the
-//! `BranchIndirect`'s own p-code address.
-
 use std::collections::BTreeSet;
 
 use anyhow::{Result, anyhow};
@@ -86,7 +83,7 @@ impl Staged {
 /// a sibling `BranchIndirect` its seed.
 #[derive(Clone)]
 pub(super) struct SiteTable<'s> {
-    /// The caller's `known_targets`: never copied or edited.
+    /// The caller's `known_targets`.
     seeds: &'s FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// The loop's own answers, lent to the cfg as `derived_targets`.
     seats: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
@@ -162,7 +159,7 @@ impl<'s> SiteTable<'s> {
     ///
     /// # Errors
     ///
-    /// A classified node that is no anchor (internal-consistency violation).
+    /// A classified node that is no anchor.
     pub(super) fn fold(
         &mut self,
         anchors: &[FlowingAnchor],
@@ -532,10 +529,8 @@ mod tests {
 
     #[test]
     fn fold_skips_identical_reclassification_but_applies_improved() {
-        // Pins convergence without dropping improvements. An identical
-        // re-classification must report no growth (or an unchanged cone
-        // churns to the iteration cap), while a narrowed set must still be
-        // applied (or an unseatable site is stranded unresolved forever).
+        // An identical re-classification reports no growth, or the loop
+        // churns to the cap; a narrowed set is still applied.
         let table =
             |arms: [u64; 2]| ResolvedTargets::table(arms.map(strider_cfg::ResolvedTarget::from));
         let (progress, folded) =
@@ -703,13 +698,9 @@ mod tests {
         );
     }
 
-    /// Round 1 seats an interworking table with a proven per-target mode.
-    /// Round 2 re-derives the now-seated `Switch` with no mode to evaluate, so
-    /// every target comes back mode-less. The seated modes must
-    /// survive the fold, or the arms decode in the superseded ISA, and an
-    /// address only the mode-less side knows must not be seated: the cfg would
-    /// decode it in the mode flowing into the branch, the same guess the
-    /// within-round merge refuses to make.
+    /// A mode-less re-derivation of a seated interworking table keeps the
+    /// seated modes and seats no address only the mode-less side knows: the
+    /// cfg would decode it in the flowing mode.
     #[test]
     fn fold_keeps_a_seated_mode_a_rederivation_does_not_report() {
         use strider_cfg::ResolvedTarget;
@@ -749,14 +740,8 @@ mod tests {
         assert_eq!(folded, multiple(&[(0x2000, None), (0x2004, None)]));
     }
 
-    /// A proved mode EQUAL to the flowing one seats identically to no mode at
-    /// all, so the set still widens: the drop is for sites that switch ISA.
-    ///
-    /// The site is still reported: 0x2004's own mode was never evaluated, and
-    /// only the OTHER arms proved the one it is decoded in, so seating it stays
-    /// an assumption. Dropping the arm instead would cost every same-mode
-    /// dispatch its widening; reporting keeps the arm and refuses to call the
-    /// answer settled.
+    /// A proved mode equal to the flowing one seats like no mode, so the set
+    /// still widens; the new arm's mode is assumed, so the site is reported.
     #[test]
     fn fold_widens_a_site_whose_proved_mode_is_the_flowing_one() {
         let (progress, folded) = round(
@@ -926,12 +911,8 @@ mod tests {
         assert!(progress.grew.is_empty());
     }
 
-    /// Round 1 seats one interworking arm before the dispatch loop closes.
-    /// Round 2 re-derives the now-seated `Switch` with no mode to evaluate, so
-    /// it reports every arm mode-less, and the three NEW arms cannot be seated
-    /// in a mode. The fold then equals the seated set, so the loop
-    /// converges here: the site has to come back through `incomplete` or the
-    /// caller reads a one-arm table alongside an empty `unresolved`.
+    /// A mode-less re-derivation of a seated interworking arm drops its three
+    /// new arms, so the fold converges and the site must be reported.
     #[test]
     fn fold_reports_a_site_whose_widening_was_dropped() {
         let (progress, folded) = round(

@@ -3,8 +3,7 @@
 //!
 //! With no argument it renders `x86/arithmetic.elf::add` to `cfg.*`, `graph.*`
 //! and `graph-opt.*`. `memory` renders `x64/memory.elf::main` to the same names
-//! prefixed `memory-`: a mix of stack stores and calls, whose post-pipeline
-//! Store/Load labels carry a `base sp + K` line.
+//! prefixed `memory-`.
 
 use object::{Object, ObjectSymbol};
 use strider_target::{CallingConvention, SleighArch};

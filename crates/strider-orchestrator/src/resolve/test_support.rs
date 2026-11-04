@@ -1,5 +1,3 @@
-//! Fixtures the resolve loop's unit tests share.
-
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::NodeId;
 
