@@ -55,7 +55,7 @@ where
 }
 
 /// Iterated dominance frontier / SSA phi placement (Cytron et al., Fig. 11):
-/// a phi for `V` lands at node `R` iff `R` ∈ `IDF(def-sites(V))`.
+/// a phi for `V` lands at node `R` iff `R` is in `IDF(def-sites(V))`.
 ///
 /// Returns, per node, the variables needing a phi there.
 #[must_use]

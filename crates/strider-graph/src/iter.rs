@@ -77,7 +77,7 @@ impl<N, V, C: NodeCacheable<N, V>> Index<usize> for Inputs<'_, N, V, C> {
 
     /// # Panics
     ///
-    /// On out-of-bounds. Prefer the fallible `get(idx)` for opaque-arity nodes.
+    /// On out-of-bounds.
     fn index(&self, index: usize) -> &Self::Output {
         count_edge_read();
         &self.graph.store.inputs[self.use_list[index]].value_id

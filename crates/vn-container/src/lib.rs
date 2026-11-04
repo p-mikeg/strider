@@ -34,12 +34,11 @@ pub fn vn_overlaps(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 /// Survivors keep input order.
 ///
 /// Partially overlapping varnodes both survive and are modelled as
-/// non-aliasing. Sound because none arise: declared register files nest
-/// exactly, `strider-lift`'s `register_slot_of` drops a computed slot
+/// non-aliasing, sound only because none arise: register files nest exactly,
+/// `strider-lift`'s `register_slot_of` drops a computed slot
 /// [`smallest_enclosing`] cannot seat, and every UNIQUE varnode lies in one
-/// 256-byte-aligned block (SleighCompile's temp stride, which it rejects a
-/// wider temp against). SleighCompile checks only declared temp sizes, so an
-/// operand-sized temp is bounded only by the widest register.
+/// 256-byte-aligned block (SleighCompile's temp stride; it checks declared
+/// temps only, so an operand-sized temp is bounded by the widest register).
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {
@@ -54,8 +53,7 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
         // the narrower slices it contains.
         bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
 
-        // Widest reach so far and the earliest start achieving it. Every
-        // earlier entry starts at or before `v`, so one reaching `v_end`
+        // Every earlier entry starts at or before `v`, so one reaching `v_end`
         // encloses `v`, strictly unless it has `v`'s exact range.
         let mut max_end: u128 = 0;
         let mut earliest_at_max_end: u64 = u64::MAX;
@@ -96,15 +94,14 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
         .unwrap_or(*vn)
 }
 
-/// Smallest same-space varnode in `vns` enclosing `vn`: the register a
-/// computed address reaches. `None` in a flat space or on a miss.
+/// Smallest same-space varnode in `vns` enclosing `vn`; `None` in a flat space
+/// or on a miss.
 pub fn smallest_enclosing(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> Option<rsleigh::Vn> {
     if !is_aliasable_space(vn.addr_space) {
         return None;
     }
     vns.iter()
         .filter(|c| vn_contains(c, vn))
-        // `addr_off` only makes the pick total.
         .min_by_key(|c| (c.size, c.addr_off))
         .copied()
 }
@@ -133,7 +130,6 @@ impl ContainerMap {
         let mut map: FxHashMap<rsleigh::Vn, rsleigh::Vn> = FxHashMap::default();
         for q in queries {
             if is_aliasable_space(q.addr_space) && !map.contains_key(&q) {
-                // Placeholder; the sweep overwrites it.
                 map.insert(q, q);
                 queries_by_space.entry(q.addr_space).or_default().push(q);
             }

@@ -5,8 +5,7 @@ use smallvec::SmallVec;
 use crate::ids::{NodeId, ValueId};
 use crate::storage::RawStore;
 
-/// The node-creation policy: stateless hooks deciding dedup-or-create. Any
-/// `Hash`/`PartialEq` bound lives in a caching impl's method bodies.
+/// The node-creation policy: stateless hooks deciding dedup-or-create.
 ///
 /// [`hash`](Self::hash) and [`eq`](Self::eq) are only called when
 /// [`should_cache`](Self::should_cache) (default `false`) is true, so a

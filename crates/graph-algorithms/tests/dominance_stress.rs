@@ -1,7 +1,7 @@
 //! The oracles here share NO code with the module under test: dominator sets
-//! come from the textbook iterative fixpoint `Dom(n) = {n} ∪ ⋂ Dom(pred)`, from
-//! the deletion definition (`oracle`) and from petgraph's
-//! `simple_fast`; DF / IDF from their definitions.
+//! come from the iterative fixpoint `Dom(n) = {n} + intersect(Dom(pred))`,
+//! the deletion definition (`oracle`) and petgraph's `simple_fast`; DF / IDF
+//! from their definitions.
 
 mod common;
 
@@ -105,13 +105,13 @@ fn oracle_dom_and_idom(
     (dom, idom)
 }
 
-/// ORACLE: `DF(x)` by definition, as a brute-force O(n³) scan.
+/// ORACLE: `DF(x)` by definition, as a brute-force O(n^3) scan.
 fn oracle_df(
     n: u32,
     preds: &HashMap<u32, Vec<u32>>,
     dom: &HashMap<u32, HashSet<u32>>,
 ) -> HashMap<u32, HashSet<u32>> {
-    let dominates = |x: u32, y: u32| dom[&y].contains(&x); // x ∈ Dom(y)
+    let dominates = |x: u32, y: u32| dom[&y].contains(&x); // x in Dom(y)
     let strictly_dominates = |x: u32, y: u32| x != y && dominates(x, y);
     let mut df: HashMap<u32, HashSet<u32>> = (0..n).map(|x| (x, HashSet::new())).collect();
     for b in 0..n {
@@ -126,7 +126,7 @@ fn oracle_df(
     df
 }
 
-/// ORACLE: iterated dominance frontier as the fixpoint `J = DF(defs ∪ J)`.
+/// ORACLE: iterated dominance frontier as the fixpoint `J = DF(defs + J)`.
 fn oracle_idf(df: &HashMap<u32, HashSet<u32>>, defs: &HashSet<u32>) -> HashSet<u32> {
     let mut j: HashSet<u32> = HashSet::new();
     loop {
