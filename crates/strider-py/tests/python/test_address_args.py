@@ -64,8 +64,15 @@ def test_bool_is_refused(take):
         take(True)
 
 
-@pytest.mark.parametrize("call", ["analyze", "build_cfg"])
+_ENTRIES = {
+    "analyze": lambda e: _lifter().analyze(e, _CC),
+    "build_cfg": lambda e: _lifter().build_cfg(e),
+    "ElfLifter.analyze": lambda e: _elf().analyze(e),
+    "ElfLifter.build_cfg": lambda e: _elf().build_cfg(e),
+}
+
+
+@pytest.mark.parametrize("call", _ENTRIES.values(), ids=_ENTRIES.keys())
 def test_bool_entry_is_refused(call):
-    args = (True, _CC) if call == "analyze" else (True,)
-    with pytest.raises(strider.StriderError, match="`entry`"):
-        getattr(_lifter(), call)(*args)
+    with pytest.raises(TypeError, match="bool"):
+        call(True)
