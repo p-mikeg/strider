@@ -940,11 +940,7 @@ fn build<'f>(
         else {
             continue;
         };
-        let Some(sink) = guard_sink(function, false_ctrl).or_else(|| {
-            merged_edges
-                .contains(&false_ctrl)
-                .then(|| single_control_consumer(function, false_ctrl))?
-        }) else {
+        let Some(sink) = guard_sink(function, false_ctrl) else {
             continue;
         };
         let Some((x, k)) = crate::const_eval::var_and_const_of(
