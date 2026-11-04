@@ -132,9 +132,10 @@ stored as `a + (-b)`, so you never have to write both. The
 **Assumption.** A claim about the code being analysed that the IR cannot
 prove. Most are what the optimizer needs before it can rule two memory
 accesses apart: that the stack and globals do not overlap, that a named
-allocator returns fresh storage, and five more. One more says an ARM
-interrupt-mask restore keeps the processor mode. `AssumptionOptions` holds
-them, and a wrong one makes the answer wrong rather than imprecise.
+allocator returns fresh storage, and five more. Two more are about the
+processor: an ARM register `msr` keeps the mode, and float conversions round
+to nearest. `AssumptionOptions` holds all nine, and a wrong one makes the
+answer wrong rather than imprecise.
 [python-api.md](python-api.md#2-analyzing-a-function) says what each buys and
 which values are sound.
 
@@ -163,8 +164,8 @@ without pinning down the parts you do not care about.
 
 **Capture.** A named hole in a pattern. Where you write a capture, the pattern
 matches anything and remembers what it matched, so you can read it back. Write
-it as a `Capture("name")` object. A bare string is not a match-pattern operand;
-it names a capture in a rewrite template or on a `Match`.
+it as a `Capture("name")` object. A bare string is not a pattern operand; it
+names a capture only as a rewrite's `replace` or a `Match` key.
 
 **Alternation.** One pattern standing for several shapes: `one_of` matches any
 of them and reports every hit, `first_of` takes the first that matches and

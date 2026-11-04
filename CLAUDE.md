@@ -262,7 +262,7 @@ which wraps a `Graph`. The entry is node 0, not a stored field:
 always has one and `EditFunction::new(&mut Function)` is infallible.
 
 Integer constants: `IntConst(IntConstId)` interns through
-`Function::const_interner` into a `dashu_int::UBig` (all int constants, not
+the function side tables' `const_interner` into a `dashu_int::UBig` (all int constants, not
 only wide ones); read via `IRViewer::int_const_u128` / `int_const_i128`, never
 off the `UBig`. `UBig` is unsigned and unbounded, so two's-complement at a
 declared width stays strider's rule: interning masks to the width
