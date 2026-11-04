@@ -36,7 +36,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6
 == sink4 @0x401130
 cfg
   0x401130 13 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x8c000:4]
+tracked [EAX, ECX, EDX, ESP, ESI, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x8c200:4]
 arg 0 [%v7]
 arg 1 [%v8]
 %v0:ctrl = entry
@@ -56,7 +56,7 @@ return %v0, %v6, %v7, %v8, %v9, %v10, %v11
 == sink8 @0x401140
 cfg
   0x401140 99 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v5]
 arg 1 [%v9]
 arg 2 [%v11]
@@ -107,7 +107,7 @@ return %v0, %v33, %v32, %v9, %v34, %v35, %v36
 == sink16 @0x401170
 cfg
   0x401170 203 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v5]
 arg 1 [%v9]
 arg 2 [%v11]
@@ -198,7 +198,7 @@ return %v0, %v65, %v64, %v9, %v66, %v67, %v68
 == sink_narrow @0x4011c0
 cfg
   0x4011c0 13 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x8c000:4]
+tracked [EAX, ECX, EDX, ESP, ESI, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x8c200:4]
 arg 0 [%v7]
 arg 1 [%v8]
 %v0:ctrl = entry
@@ -218,7 +218,7 @@ return %v0, %v6, %v7, %v8, %v9, %v10, %v11
 == sink_mixed @0x4011d0
 cfg
   0x4011d0 13 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x8c000:4]
+tracked [EAX, ECX, EDX, ESP, ESI, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x8c200:4]
 arg 0 [%v7]
 arg 1 [%v8]
 %v0:ctrl = entry
@@ -238,7 +238,7 @@ return %v0, %v6, %v7, %v8, %v9, %v10, %v11
 == forward_1 @0x4011e0
 cfg
   0x4011e0 34 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v8]
 arg 1 [%v15]
 arg 2 [%v16]
@@ -265,7 +265,7 @@ return %v17, %v18, %v8, %v20, %v21, %v22, %v23
 == forward_2 @0x401200
 cfg
   0x401200 46 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v13]
 arg 1 [%v17]
 arg 2 [%v24]
@@ -301,7 +301,7 @@ return %v25, %v26, %v39, %v28, %v29, %v30, %v31
 == forward_4 @0x401230
 cfg
   0x401230 92 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v20]
 arg 1 [%v22]
 arg 2 [%v24]
@@ -353,7 +353,7 @@ return %v38, %v39, %v54, %v41, %v42, %v43, %v44
 == forward_8 @0x401270
 cfg
   0x401270 202 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v20]
 arg 1 [%v22]
 arg 2 [%v24]
@@ -445,7 +445,7 @@ return %v66, %v67, %v90, %v69, %v70, %v71, %v72
 == forward_16 @0x401310
 cfg
   0x401310 379 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v20]
 arg 1 [%v22]
 arg 2 [%v24]
@@ -620,7 +620,7 @@ return %v125, %v126, %v165, %v128, %v129, %v130, %v131
 == narrow_widths @0x401430
 cfg
   0x401430 92 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17100:2, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17100:2, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v20]
 arg 1 [%v22]
 arg 2 [%v24]
@@ -673,7 +673,7 @@ return %v39, %v40, %v55, %v42, %v43, %v44, %v45
 == mixed_4 @0x401480
 cfg
   0x401480 91 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6a00:4, u:0x6c00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6a00:4, u:0x6c00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4]
 arg 0 [%v20]
 arg 1 [%v23]
 arg 2 [%v25]
@@ -777,7 +777,7 @@ return %v13, %v27, %v29, %v16, %v17, %v18, %v19
 == main @0x401500
 cfg
   0x401500 359 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4, u:0x8c800:4]
+tracked [EAX, ECX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4, u:0x8ca00:4]
 frame_address_in_call_register reach=-8
 arg 1 [%v17]
 arg 2 [%v18]
