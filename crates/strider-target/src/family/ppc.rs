@@ -76,10 +76,6 @@ const PPC_FPCC_VX: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
 
 /// The FPSCR status bits a scalar VSX arithmetic, rounding or conversion op
 /// may set: FPRF (`fp_c`, FPCC), FR, FI, the exceptions and their summaries.
-///
-/// The scalar float ops the sla spells in p-code (`fadd`, `fmadd`, `frsp`,
-/// `fctiw`, `xsadddp`, ...) set their bits in p-code instead: FR, FI, OX and
-/// UX from the `float*` rows' ops, the rest from their operands.
 const PPC_FP_RESULT: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
     implicit_writes: &[
@@ -252,14 +248,9 @@ const PPC_DOT_CR0_MEM: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     no_return: false,
 });
 
-/// Linux PowerPC `sc`: r0 = syscall number, r3..r8 = args, return in r3.
-///
-/// Sleigh's `syscall()` has no pcode output, so this is the whole footprint.
-/// The kernel ABI makes r0, r4-r12 and cr0 volatile, so naming only r3 would
-/// forward a stale r9-r12 across the call. `XER` names only the SPR the
-/// `mfspr` path reads; the bits `adde`/`addc`/`subfe` actually read and write
-/// are the separate 1-byte registers at `offset=0x400`, so naming `XER` alone
-/// leaves a carry live across the call.
+/// Linux PowerPC `sc`: r0 = number, r3..r8 = args, r3 = return; r0, r4-r12,
+/// cr0, CTR and XER are volatile. The XER bits `adde` and friends use are the
+/// separate `xer_*` registers.
 const PPC_SYSCALL: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &["r0", "r3", "r4", "r5", "r6", "r7", "r8"],
     implicit_writes: &[
@@ -288,28 +279,15 @@ const PPC_SYSCALL: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     no_return: false,
 });
 
-/// GHIDRA's PowerPC `.sinc` lifts atomic store-conditional, cache / TLB / SLB
-/// management, Altivec/VSX vector ops, traps, and system-register moves to
-/// named `pcodeop` CallOthers.  Scoped to the four PPC presets so the generic
-/// names among them (`random`, `message`) cannot match on another arch.
 const CALL_OTHER: &[Row] = &[
-    // `rfi`/`rfid` return from an exception handler and end the function.
     Row::new(&["returnFromInterrupt"], CallOtherClass::NO_RETURN),
-    // `tw`/`td` conditional traps: GHIDRA emits the pcodeop unconditionally
-    // with the trap-on condition as a plain operand (NO branch), so control
-    // FALLS THROUGH. They must be RETURNING, not NO_RETURN, or every
-    // function with a compiler bounds/overflow trap loses its tail. A
-    // firing trap may enter a memory-touching handler, so MEM_CLOBBER.
+    // `tw` / `td` take their condition as an operand, so control falls
+    // through; an unconditional one is `trap_is_unconditional`.
     Row::new(&["trapDoubleWord"], MEM_CLOBBER),
     Row::new(&["trapDoubleWordImmediate"], MEM_CLOBBER),
     Row::new(&["trapWord"], MEM_CLOBBER),
-    // The `vsx*` prefix below classifies VSX as pure register compute, which
-    // holds for every form whose memory access the sla spells as a p-code Load
-    // or Store. These nineteen are the exceptions: `vsx.sinc` emits a bare
-    // pcodeop with the base register as an operand and no `*[ram]` anywhere, so
-    // the access is invisible unless the row names it. Left pure, a `stxvl`
-    // does not advance the memory token and a later load of the same address
-    // forwards past it.
+    // VSX forms taking the base register as a value: their memory access has
+    // no p-code.
     Row::new(&["vsx207_1"], MEM_CLOBBER),  // lxsiwax
     Row::new(&["vsx207_2"], MEM_CLOBBER),  // lxsiwzx
     Row::new(&["vsx207_3"], MEM_CLOBBER),  // lxsspx
@@ -339,12 +317,9 @@ const CALL_OTHER: &[Row] = &[
     Row::new(&["vsx300_74"], PPC_FPCC),    // xststdcdp
     Row::new(&["vsx300_75"], PPC_FPCC),    // xststdcqp
     Row::new(&["vsx300_76"], PPC_FPCC),    // xststdcsp
-    // The arithmetic, rounding and conversion forms set FPSCR status bits
-    // (Power ISA 3.0B, Book I chapter 7), which `mcrfs` and `mffs` read back.
-    // The permutes, moves, sign and exponent ops and `xscvspdpn` set none.
-    // `xscmpnedp` and `xvcmpne{dp,sp}[.]` are draft encodings no final ISA
-    // holds and only the sla decodes; their footprints are `xscmpeqdp`'s and
-    // `xvcmpeqdp[.]`'s.
+    // Arithmetic, rounding and conversion forms set FPSCR status bits.
+    // `xscmpnedp` and `xvcmpne{dp,sp}[.]` are draft encodings, given
+    // `xscmpeqdp`'s and `xvcmpeqdp[.]`'s footprints.
     Row::new(&["vsx207_11"], PPC_FP_RESULT),      // xsaddsp
     Row::new(&["vsx207_14"], PPC_FP_RESULT),      // xscvsxdsp
     Row::new(&["vsx207_15"], PPC_FP_RESULT),      // xscvuxdsp
@@ -485,31 +460,20 @@ const CALL_OTHER: &[Row] = &[
     Row::new(&["storeDoubleWordConditionalIndexed"], MEM_CLOBBER),
     Row::new(&["storeWordConditionalIndexed"], MEM_CLOBBER),
     Row::new(&["syscall"], PPC_SYSCALL),
-    // `wait` is a low-power wait like ARM WFI: a remote agent may modify
-    // shared memory while the core is parked, so it must not let a load
-    // forward across it.
+    // A low-power wait, like ARM WFI.
     Row::new(&["waitT"], MEM_CLOBBER),
-    // `ldbrx` is `D = LoadDoublewordByteReverseIndexed(D,A,B)`: base registers
-    // by value, the 8-byte read inside the op, so the access is invisible on
-    // the memory chain, the same shape as the `vsx*` loads above. `stdbrx` is
-    // NOT that shape (`*[ram]:8 EA = StoreDoublewordByteReverseIndexed(...)`,
-    // an explicit p-code store, leaving its op a pure byte swap); its clobber
-    // above is an over-approximation.
+    // `ldbrx` reads inside the op. (`stdbrx`'s store is p-code; its clobber
+    // above over-approximates.)
     Row::new(&["LoadDoublewordByteReverseIndexed"], MEM_CLOBBER),
-    // The vector shift-control generator (lvsl, `altivec.sinc:219`) and the
-    // hardware RNG produce a pcode-explicit output and touch no RAM. Altivec/VSX/vector
-    // compute is covered by the `altv`/`vsx`/`vector` prefix below.
+    // `lvsl` and the hardware RNG.
     Row::new(&["loadVectorForShiftLeft"], PURE),
     Row::new(&["random"], PURE),
-    // e500 `mfpmr` / `mtpmr` move a performance-monitor register
-    // (`quicciii.sinc`) and touch no RAM. A `CallOther` is never
-    // deduplicated, so two reads of a running counter stay two values.
+    // e500 `mfpmr` / `mtpmr`; a `CallOther` is never deduplicated, so two
+    // counter reads stay two values.
     Row::new(&["moveFromPerformanceMonitorRegister"], PURE),
     Row::new(&["moveToPerformanceMonitorRegister"], PURE),
-    // The scalar float ops the sla spells in p-code take FR, FI, OX and UX,
-    // which hang on a rounding it does not compute, from these: each yields
-    // the bit, which the sla writes (FR, FI) or ORs in (OX, UX). `frsp`
-    // spells its own as `floatAdd*` of zero.
+    // The FR, FI, OX and UX bits of the scalar float ops the sla spells in
+    // p-code, which writes them from these ops' outputs.
     Row::new(&["floatAddInexact"], PURE),
     Row::new(&["floatAddOverflow"], PURE),
     Row::new(&["floatAddRoundedUp"], PURE),
@@ -538,33 +502,20 @@ const CALL_OTHER: &[Row] = &[
     Row::new(&["intToFloatRoundedUp"], PURE),
     // The FPRF a conversion to an integer leaves undefined (a fork op).
     Row::new(&["fpscrUndefined"], PURE),
-    // `slbmfee` / `slbmfev` / `slbfee.` write RT from the op's output (a fork
-    // patch: the stock sla wrote it nowhere) and read the SLB, not RAM.
+    // `slbmfee` / `slbmfev` / `slbfee.` read the SLB into the op's output.
     Row::new(&["slbMoveFromEntryESID"], PURE),
     Row::new(&["slbMoveFromEntryVSID"], PURE),
     Row::new(&["slbfeeDotOp"], PPC_DOT_CR0),
-    // Cache-touch and stream-stop are prefetch hints, and `clearHistory`
-    // clears a branch-history buffer only a pcodeop with its own output reads.
-    // No memory or value effect to model.
-    //
-    // The rows below are NOT inert: each userop is a bare void pcodeop, yet
-    // the sla models the FPSCR bits (`ppc_common.sinc:43`) and MSR (`:52`) as
-    // real registers it reads back itself, in `setSummaryFPSCR` (`:1736`) and
-    // `mfmsr` (`ppc_embedded.sinc:93`). Undeclared, a read either side of one
-    // folds to the same value.
-    //
-    // Narrow reach, unlike `wrtee` / `wrteei`: `mtfsf` ITSELF is modelled in
-    // p-code (`ppc_instructions.sinc:2218`, which pins `BIT_25=0 & BIT_16=0`
-    // and emits `packFPSCR` / `unpackFPSCR`), so these `MoveToFPSCRField*`
-    // pcodeops exist only in `ppc_isa.sinc`, included only by the
-    // `ppc_64_isa*` slaspecs. They therefore fire on the Power ISA 2.06
-    // `L=1` / `W=1` forms on the ppc64 presets, and never on ppc32.
+    // Void pcodeops writing FPSCR bits or MSR, which the sla reads back as
+    // registers (`setSummaryFPSCR`, `mfmsr`). `MoveToFPSCRField*` are only
+    // the ppc64 `L=1` / `W=1` forms of `mtfsf`, which is otherwise p-code.
     Row::new(&["MoveToFPSCRFieldImmediate"], PPC_FPSCR),
     Row::new(&["MoveToFPSCRFieldImmediate1"], PPC_FPSCR_CR1),
     Row::new(&["MoveToFPSCRFields"], PPC_FPSCR),
     Row::new(&["MoveToFPSCRFields1"], PPC_FPSCR_CR1),
     Row::new(&["WriteExternalEnable"], PPC_MSR),
     Row::new(&["WriteExternalEnableImmediate"], PPC_MSR),
+    // Prefetch hints and a branch-history clear.
     Row::new(&["clearHistory"], NoOp),
     Row::new(&["dataCacheBlockTouch"], NoOp),
     Row::new(&["dataCacheBlockTouchForStore"], NoOp),
@@ -661,12 +612,8 @@ const CALLING_CONVENTIONS: &[CcPreset] = &[
     },
 ];
 
-/// The float windows without the AltiVec window the userland presets append
-/// to them, for the `*_linux_kernel` flavours: a PowerPC Linux kernel is built
-/// `-mno-altivec -mno-vsx`, so no vector register carries an argument or a
-/// result there.  Naming them anyway would seed twelve 16-byte varnodes on
-/// every function and renumber `arg(n)`, neither of which the kernel's own
-/// code can produce.
+/// The `*_linux_kernel` float windows: the kernel is built
+/// `-mno-altivec -mno-vsx`, so no vector register carries a value.
 const PPC32_SCALAR_ARGS_F: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
 const PPC64_SCALAR_ARGS_F: &[&str] = &[
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
@@ -674,63 +621,32 @@ const PPC64_SCALAR_ARGS_F: &[&str] = &[
 const PPC_SCALAR_RET_F: &[&str] = &["f1", "f2", "f3", "f4"];
 
 /// Base for `powerpc64_elf_v1` and `powerpc64_elf_v2`, which differ in
-/// `stack_args.base_offset` (ELFv1's 48-byte linkage area vs ELFv2's 32, each
-/// plus the 64-byte parameter save area) and in `ret_val_regs_float`.
+/// `stack_args`, `ret_val_regs_float` and `entry_address`.
 const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     stack_ptr: "r1",
     arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
-    // ELFv1 3.2.3 / ELFv2 2.2.3.1: floating-point arguments in f1..f13.  The
-    // f1..f8 window is the 32-bit SysV rule (`powerpc_sysv32`).
-    //
-    // ELFv2 2.2.3 / the ELFv1 AltiVec supplement then pass vector arguments in
-    // v2..v13, a register file of its own (`vs34`-`vs45`; see
-    // `callee_saved_regs` for the `vN` spelling), byte-disjoint from f0-f31.
-    // Appended AFTER the floats so the float positions do not shift: a vector
-    // argument's own ordinal is not its index here, the same positional
-    // approximation `arm_aapcs` documents.  `*_linux_kernel` drops the window
-    // (`PPC64_SCALAR_ARGS_F`).
+    // f1..f13, then the vector arguments v2..v13 (`vs34`-`vs45`), appended
+    // so the float positions do not shift.
     arg_passing_regs_float: &[
         "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "vs34",
         "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
     ],
     callee_saved_regs: &[
-        // r13 is the userland TLS thread pointer, reserved and never written
-        // there.  In the ppc64 Linux kernel it is the per-CPU `paca` pointer,
-        // which `setup_paca`, `setjmp` / `longjmp`, `restore_gprs` and every
-        // `mfsprg r13,1` interrupt entry write, and a task migrating inside a
-        // callee resumes on another CPU's paca.  Listed callee-saved anyway:
-        // the equality is then an
-        // address-identity claim the kernel does not make, while the call's
-        // memory clobber already cuts every load through it.
-        //
-        // r2 (TOC) is NOT callee-saved: ELFv1 3.5.11 / ELFv2 2.3.2.1 put the
-        // save and restore on the CALLER, and a cross-module callee does alter
-        // it.  Modelled preserved anyway, the same tradeoff as `LR` below: it
-        // keeps TOC-relative loads resolvable across a call, and a caller that
-        // needs r2 afterwards reloads it from the save slot, so the reload is
-        // what a correct binary reads.
+        // r13 is the TLS pointer, or the kernel's per-CPU `paca`, which a
+        // migrating task changes; listed anyway, since the call's memory
+        // clobber already cuts loads through it. r2 (TOC) is caller-saved,
+        // but a caller needing it reloads it from the save slot, so it is
+        // listed to keep TOC-relative loads resolvable.
         "r2", "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24",
         "r25", "r26", "r27", "r28", "r29", "r30", "r31",
-        // PPC64 ELFv1 3.4 marks LR volatile/caller-saved.  Listing it
-        // callee-saved anyway is the deliberate link-register tradeoff (same
-        // as `powerpc_sysv32`): it makes `InitialVar(lr)` propagate through
-        // call sites, so the indirect-branch resolver's `LinkRegister` arm
-        // fires for functions returning via the entry LR.
-        //
-        // ELFv1 3.2.2 / ELFv2 2.2.1 make f14-f31 non-volatile.
+        // LR is volatile, but listed so `InitialVar(LR)` survives calls and
+        // a return through it is recognised.
         "LR", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24", "f25",
         "f26", "f27", "f28", "f29", "f30", "f31",
-        // CR2-CR4 are the non-volatile condition fields; CR0/CR1 and CR5-CR7
-        // are volatile. Named individually because that is how `mfcr` /
-        // `mtcrf` name them, never as the 8-byte `crall` container, which
-        // spans the volatile fields too.
-        "cr2", "cr3", "cr4",
-        // ELFv2 2.2.1 and the ELFv1 AltiVec supplement make v20-v31
-        // non-volatile in full.  The sla overlays AltiVec onto the top 32 VSX
-        // registers and leaves the `vN` spellings commented out, so v20-v31
-        // are `vs52`-`vs63` (`ppc_common.sinc`).
-        "vs52", "vs53", "vs54", "vs55", "vs56", "vs57", "vs58", "vs59", "vs60", "vs61", "vs62",
-        "vs63",
+        // cr2-cr4 (not `crall`, which spans volatile fields), then v20-v31,
+        // which the sla spells `vs52`-`vs63`.
+        "cr2", "cr3", "cr4", "vs52", "vs53", "vs54", "vs55", "vs56", "vs57", "vs58", "vs59", "vs60",
+        "vs61", "vs62", "vs63",
     ],
     ret_val_regs: &["r3", "r4"],
     // IBM double-double `long double` and `_Complex double` return in f1:f2,
@@ -738,9 +654,7 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     // does an IEEE `__float128` and, under `-mabi=ieeelongdouble`, every
     // `long double`.
     ret_val_regs_float: &["f1", "f2", "f3", "f4", "vs34"],
-    // 48-byte linkage area, then the 8-doubleword parameter save area that
-    // homes r3-r10; the first stack-ONLY argument is above both.  GHIDRA's
-    // ppc_64_be.cspec agrees on 112.
+    // ELFv1: the 48-byte linkage area plus the 64-byte parameter save area.
     stack_args: Some(StackArgs {
         base_offset: 112,
         increment: 8,
@@ -757,49 +671,31 @@ impl CallingConvention {
     /// Returns the PowerPC 32-bit System V ABI calling convention.
     #[must_use]
     pub const fn powerpc_sysv32() -> Self {
-        // PowerPC 32-bit System V, byte-order independent (`powerpc-linux-gnu-gcc`
-        // with either `-mbig-endian` or `-mlittle-endian`).  `r1` is the SP by
-        // PowerPC convention.  Stack args start at 8: a 4-byte back-chain plus a
-        // 4-byte LR save.  r3/r4 double as the pair for 64-bit returns.
         CallingConvention {
             stack_ptr: "r1",
             arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
-            // SysV PPC32: floating-point arguments in f1..f8, then the AltiVec
-            // supplement's vector arguments in v2..v13 (`vs34`-`vs45`), the
-            // same append-after-the-floats layout as `POWERPC64_ELF_BASE`.
+            // As `POWERPC64_ELF_BASE`, with f1..f8.
             arg_passing_regs_float: &[
                 "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37",
                 "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
             ],
             callee_saved_regs: &[
-                // r2 (system/TLS thread pointer) and r13 (small-data-area base)
-                // are reserved/dedicated: preserved across calls like r14-r31.
+                // r2 (TLS) and r13 (small-data base) are dedicated.
                 "r2", "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23",
-                "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31", "LR",
-                // SysV PPC32 3-16: f14-f31 are non-volatile.
-                "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24", "f25",
-                "f26", "f27", "f28", "f29", "f30", "f31",
-                // CR2-CR4 are the non-volatile condition fields; CR0/CR1 and
-                // CR5-CR7 are volatile. Named individually because that is how
-                // `mfcr` / `mtcrf` name them, never as the 8-byte `crall`
-                // container, which spans the volatile fields too.
-                "cr2", "cr3", "cr4",
-                // The SysV AltiVec supplement makes v20-v31 non-volatile in
-                // full; the sla spells them `vs52`-`vs63` (see
-                // `POWERPC64_ELF_BASE`).
-                "vs52", "vs53", "vs54", "vs55", "vs56", "vs57", "vs58", "vs59", "vs60", "vs61",
-                "vs62", "vs63",
+                "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31", "LR", "f14", "f15", "f16",
+                "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28",
+                "f29", "f30", "f31", "cr2", "cr3", "cr4", "vs52", "vs53", "vs54", "vs55", "vs56",
+                "vs57", "vs58", "vs59", "vs60", "vs61", "vs62", "vs63",
             ],
             ret_val_regs: &["r3", "r4"],
             // As `POWERPC64_ELF_BASE`.
             ret_val_regs_float: &["f1", "f2", "f3", "f4", "vs34"],
+            // Above the back-chain and LR save words.
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
             }),
             ret_stack_pop: 0,
-            // `bl` writes the return address to the `LR` SPR; Sleigh's PPC
-            // table names it uppercase.
             link_register: Some("LR"),
             preserves_memory: false,
             preserves_all_registers: false,
@@ -811,41 +707,26 @@ impl CallingConvention {
     /// Returns the PowerPC 64-bit ELFv1 calling convention.
     #[must_use]
     pub const fn powerpc64_elf_v1() -> Self {
-        // PowerPC 64-bit ELFv1, BE (`powerpc64-linux-gnu-gcc`).  Stack args start
-        // at 112: the 48-byte linkage area plus the 64-byte parameter save area.
-        //
-        // ELFv1 has function descriptors: an external function symbol resolves to
-        // a 3-pointer descriptor (entry, TOC, env), not the entry itself.  Only
-        // the register-level ABI is modelled here.
         POWERPC64_ELF_BASE
     }
 
     /// Returns the PowerPC 64-bit ELFv2 calling convention.
     #[must_use]
     pub const fn powerpc64_elf_v2() -> Self {
-        // PowerPC 64-bit ELFv2, LE (`powerpc64le-linux-gnu-gcc`).  Drops function
-        // descriptors, so symbols point straight at the entry point, and shrinks
-        // the linkage area from 48 to 32 bytes.  Register usage matches ELFv1.
         CallingConvention {
-            // 32-byte linkage area plus the same 8-doubleword parameter save
-            // area, so arguments past the eighth start at r1+96.  GHIDRA's
-            // ppc_64_le.cspec says 112, which is the ELFv1 figure copied over.
+            // The 32-byte linkage area plus the parameter save area. GHIDRA's
+            // cspec says 112, the ELFv1 figure.
             stack_args: Some(StackArgs {
                 base_offset: 96,
                 increment: 8,
             }),
-            // ELFv2 2.2.3.3 returns a homogeneous float aggregate of up to
-            // eight members in f1-f8 and a homogeneous VECTOR aggregate of up
-            // to eight in v2-v9 (`vs34`-`vs41`); ELFv1 returns either through
-            // a hidden pointer.
+            // Homogeneous float and vector aggregates of up to eight members.
             ret_val_regs_float: &[
                 "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37",
                 "vs38", "vs39", "vs40", "vs41",
             ],
-            // ELFv2 2.2.2.1: a caller entering through the GLOBAL entry leaves
-            // the function's own address in r12, which the two-instruction
-            // prologue turns into the TOC pointer. ELFv1 has no such register
-            // contract, hence the override here rather than in the base.
+            // The global entry receives its own address, from which the
+            // prologue forms the TOC pointer.
             entry_address: Some("r12"),
             ..POWERPC64_ELF_BASE
         }
@@ -876,8 +757,6 @@ impl CallingConvention {
     pub const fn powerpc64_elf_v2_linux_kernel() -> Self {
         CallingConvention {
             arg_passing_regs_float: PPC64_SCALAR_ARGS_F,
-            // ELFv2 2.2.3.3's homogeneous float aggregate, without the
-            // homogeneous VECTOR aggregate the userland preset also returns.
             ret_val_regs_float: &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"],
             ..Self::powerpc64_elf_v2()
         }
