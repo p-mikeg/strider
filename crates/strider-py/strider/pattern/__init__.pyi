@@ -734,32 +734,20 @@ def initial_var_for(vn: Vn) -> Pat:
     """Match the initial-state read of `vn` or of any register containing it,
     so `eax` matches a node tagged `rax`."""
 def one_of(patterns: Sequence[PatLike]) -> Pat:
-    """Match if any listed sub-pattern matches (a logical OR). Nests in any
-    slot. Match-only; no alternatives matches nothing.
-
-    A union, not an ordered choice: every matching arm fires with its own
-    bindings, so a wildcard arm does not shadow a narrower one (use
-    `first_of` to cut). Arms matching one node with the same bindings are one
-    match. A capture under an arm that did not fire stays unbound:
-    `off = h.uint(o) if h.has(o) else 0`.
-    """
+    """Match if any listed sub-pattern matches: a union, each matching arm
+    firing with its own bindings (`first_of` cuts). Arms matching one node
+    with the same bindings are one match; a capture under an arm that did not
+    fire stays unbound. Nests in any slot. Match-only; no alternatives
+    matches nothing."""
 def first_of(patterns: Sequence[PatLike]) -> Pat:
-    """Match the first listed sub-pattern that matches (an ordered OR).
+    """Match the first listed sub-pattern that matches (an ordered OR): at
+    each value it is offered, the first arm yielding a match wins. Several
+    settle in pattern order, inner before outer. List the specific shape
+    first, since `anything()` and `var(c)` match any node::
 
-    Like `one_of`, but at each value it is offered the first arm that yields
-    a match wins and the rest are dropped. Each read of a `first_of` settles
-    on its own; several settle in pattern order (operands left to right,
-    inner before outer). Order arms most-specific first: `anything()` and
-    `var(c)` match any node::
-
-        # WRONG: var(base) also matches the Add, so `off` never binds and
-        # every `base + K` load looks like a bare `base`.
-        load(addr=first_of([var(base), int_add(var(base), int_const(off))]))
-
-        # RIGHT: specific shape first, bare fallback last.
         load(addr=first_of([int_add(var(base), int_const(off)), var(base)]))
 
-    No alternatives matches nothing; match-only.
+    Nests in any slot. Match-only; no alternatives matches nothing.
     """
 def function_arg(i: int) -> FunctionArgPat:
     """Start a function-argument pattern at integer argument index `i`."""

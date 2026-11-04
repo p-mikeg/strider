@@ -105,16 +105,14 @@ class Function:
     ) -> None:
         """Run `pipeline` (default: the default pipeline) over this function in
         place. `assumptions` must include every claim in force and may not add
-        the lift-time claims `msr_register_keeps_mode` /
-        `fp_rounding_mode_is_nearest`, else `StriderError` before running. Add
-        a claim with::
+        a lift-time one, else `StriderError`. Add a claim with::
 
             function.optimize(assumptions=function.assumptions
                               | AssumptionOptions.none(escape_analysis=True))
 
-        Reads the producing `Lifter`'s `rom`; raises `StriderError` while that
-        `Lifter` is in `analyze`, `build_cfg` or `add_elf`. Stales `Node` /
-        `Match` handles and node ids. Holds the GIL."""
+        Raises `StriderError` while the producing `Lifter` is in `analyze`,
+        `build_cfg` or `add_elf`. Stales `Node` / `Match` handles and node
+        ids. Holds the GIL."""
         ...
     def to_dot(
         self,
@@ -201,20 +199,14 @@ class Function:
         ignore_casts: Union[bool, CastMask] = ...,
         constraints: Optional[Sequence[ConstraintLike]] = ...,
     ) -> list[Match]:
-        """Every deduplicated `Match` for `pat`.
+        """Every deduplicated `Match` for `pat`, one per distinct binding:
+        `int_add(anything().capture(k), anything())` on `int_add(x, y)` gives
+        `k=x` and `k=y`; `.ordered()` pins operand slots.
 
         A list of patterns joins on shared `Capture`s, one merged `Match` per
-        result; rows differing only in the root of a pattern whose captures
-        are all shared with an earlier one collapse to one. `ignore_root` keys
-        dedup on captures alone. `constraints` filter joined results
-        (`dominates`, `phi_input_from_edge`). `ignore_casts` (`True`, or a
-        `CastMask`) looks through extend / truncate / bit-reinterpret casts.
-
-        A root yields one match per distinct binding:
-        `int_add(anything().capture(k), anything())` on `int_add(x, y)`
-        returns both `k=x` and `k=y`; `.ordered()` pins operand slots. Each
-        output `any_output()` binds is its own match; `m[c] ==` tells them
-        apart.
+        row, and `constraints` filter the rows. `ignore_root` keys dedup on
+        captures alone. `ignore_casts` (`True`, or a `CastMask`) looks through
+        extend / truncate / bit-reinterpret casts.
         """
         ...
     def find_unique(
@@ -246,11 +238,10 @@ class Function:
     def rewrite(self, find: _PatLike, replace: _ReplaceLike) -> int:
         """Apply one `find` -> `replace` rewrite in one walk (not a fixed
         point), returning how often it fired. `replace` is a `Template`, a
-        `Capture` or a capture name; a `Pat` raises `TypeError`, one nested
-        in a `Template` `StriderError`. A `.when()` guard on `find` raises. A
-        `replace` that builds nodes raises `StriderError` where the match
-        holds no instruction-produced node (an `initial_var` or `phi` root),
-        as the new nodes would carry no address.
+        `Capture` or a capture name (a `Pat` raises `TypeError`). Raises
+        `StriderError` up front for a `.when()` guard on `find` or a capture
+        `find` does not bind, and at a match holding no instruction-produced
+        node (an `initial_var` or `phi` root) when `replace` builds nodes.
 
         A match is skipped when the replacement has another width, or, for a
         `find` through a phi or region, would read the matched value or is

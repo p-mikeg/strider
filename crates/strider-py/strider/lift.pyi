@@ -43,43 +43,58 @@ class AssumptionOptions:
     `LifterOptions(assumptions=...)` and `Function.optimize(assumptions=...)`;
     a wrong claim makes the answer wrong.
 
-    `stack_global_disjoint`, `assume_incoming_args_survive_calls`,
-    `return_slots_survive_untracked_writes`, `msr_register_keeps_mode` and
-    `fp_rounding_mode_is_nearest` default `True`, the other four off or
-    empty; clearing all nine is the sound floor (see `none`). Each claim is
-    described in `docs/python-api.md` section 2.
-
-    Claims accumulate on a `Function`: `Function.optimize` adds, none
-    withdraws. The lift reads `msr_register_keeps_mode` and
-    `fp_rounding_mode_is_nearest`, so `optimize` refuses to add either.
+    Five default `True`, the other four off or empty; clearing all nine is
+    the sound floor (see `none`). Claims accumulate on a `Function`:
+    `Function.optimize` adds, none withdraws, and it refuses to add a
+    lift-time claim (`msr_register_keeps_mode`, `fp_rounding_mode_is_nearest`).
     """
 
     @property
-    def stack_global_disjoint(self) -> bool: ...
-    @property
-    def assume_incoming_args_survive_calls(self) -> bool: ...
-    @property
-    def distinct_sp_bases_disjoint(self) -> bool: ...
-    @property
-    def callee_preserves_stack_args(self) -> bool: ...
-    @property
-    def noalias_allocators(self) -> list[int]:
-        """Callee addresses of pure `malloc`-like allocators, sorted. Each
-        result overlaps no other allocation, stack slot or constant address,
-        so an arena allocator does not qualify."""
+    def stack_global_disjoint(self) -> bool:
+        """The stack never overlaps constant-address memory (`.data`, `.rodata`,
+        `.bss`, MMIO). Default `True`."""
         ...
     @property
-    def escape_analysis(self) -> bool: ...
+    def assume_incoming_args_survive_calls(self) -> bool:
+        """A call leaves the incoming stack-argument slots alone unless handed a
+        pointer into them. Default `True`; read by incoming-argument detection."""
+        ...
     @property
-    def return_slots_survive_untracked_writes(self) -> bool: ...
+    def distinct_sp_bases_disjoint(self) -> bool:
+        """A store rooted at an SP base other than the entry SP (`sp & -16`) misses
+        the probed slot; read by incoming-argument detection."""
+        ...
     @property
-    def msr_register_keeps_mode(self) -> bool: ...
+    def callee_preserves_stack_args(self) -> bool:
+        """A callee leaves the outgoing-argument slots the caller wrote alone.
+        Inert without `escape_analysis` or `noalias_allocators`."""
+        ...
+    @property
+    def noalias_allocators(self) -> list[int]:
+        """Callee addresses of pure `malloc`-like allocators, sorted. Each result
+        overlaps no other allocation, stack slot or constant address, so an arena
+        allocator does not qualify."""
+        ...
+    @property
+    def escape_analysis(self) -> bool:
+        """When no stack address escapes to a callee, forward a spill load across
+        a call (and, under `stack_global_disjoint`, past an opaque store)."""
+        ...
+    @property
+    def return_slots_survive_untracked_writes(self) -> bool:
+        """Untracked stores, callees and user-ops leave the saved return address
+        and entry SP slots alone. Default `True`; off, such a return is unverified."""
+        ...
+    @property
+    def msr_register_keeps_mode(self) -> bool:
+        """An ARM `msr cpsr_c, rN` writes the mode already in force; the
+        immediate form and `cps` still switch. Default `True`; a lift-time claim."""
+        ...
     @property
     def fp_rounding_mode_is_nearest(self) -> bool:
-        """Float conversions reading the dynamic rounding mode (MXCSR.RC, x87
-        RC at `fst`/`fstp`, FPSCR.RN, FPSCR.RMode, FPCR.RMode, FCSR.RM) round
-        to nearest even; x87 `fist`, `fistp`, `frndint` always read RC. Off,
-        each selects among the four modes. Wrong after `fesetround`."""
+        """Float conversions reading the dynamic rounding mode round to nearest
+        even; off, each selects among the four modes. Wrong after `fesetround`.
+        Default `True`; a lift-time claim."""
         ...
     def __init__(
         self,
@@ -111,15 +126,11 @@ class AssumptionOptions:
     ) -> "AssumptionOptions":
         """Every claim cleared, then the ones named set; with no argument,
         the sound floor. `none(escape_analysis=True)` holds one claim where
-        `AssumptionOptions(escape_analysis=True)` holds six. Add one to a
-        function's with `function.assumptions | AssumptionOptions.none(...)`.
+        `AssumptionOptions(escape_analysis=True)` holds six.
 
-        Two premises remain. Memory is RAM: a load reads the last value the
-        analysed code stored there (a polled MMIO register reads as the value
-        written). Float arithmetic rounds to nearest with flush-to-zero and
-        denormals-are-zero off (x86 MXCSR.FTZ/DAZ, PowerPC FPSCR.NI/OE/UE,
-        ARM FPSCR.FZ, AArch64 FPCR.FZ, MIPS FCSR.FS clear), so `-ffast-math`
-        code has no floor here.
+        The floor still takes memory to be RAM (a load reads the last value
+        stored) and float arithmetic to round to nearest with flush-to-zero
+        and denormals-are-zero off, so `-ffast-math` code has no floor.
         """
         ...
     def union(self, other: AssumptionOptions) -> AssumptionOptions:

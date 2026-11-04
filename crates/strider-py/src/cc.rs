@@ -97,39 +97,8 @@ impl PyCallingConvention {
         }
     }
 
-    /// Build a calling convention from register-name lists. Names are resolved
-    /// and ABI invariants checked here; a bad one raises `StriderError`.
-    ///
-    /// Args:
-    ///     sleigh: The `SleighArch` to resolve register names against.
-    ///     arg_passing_regs: Register names passing positional args, in ABI order.
-    ///     callee_saved_regs: Registers the callee preserves; must include
-    ///         `link_register` when set.
-    ///     ret_val_regs: Integer return-value registers, in ABI order.
-    ///     ret_val_regs_float: Float return-value registers, in ABI order.
-    ///     stack_pointer: The stack pointer register.
-    ///     stack_arg_base: Offset from call-time SP of the first stack
-    ///         argument, or `None` if none are passed on the stack.
-    ///     stack_arg_increment: Byte stride between stack arguments.
-    ///     ret_stack_pop: Net byte change `ret` makes to SP (4/8 on
-    ///         stack-push ISAs, 0 on link-register ISAs).
-    ///     link_register: The link register (ARM/AArch64/MIPS/PowerPC), or
-    ///         `None` on x86/x86_64.
-    ///     preserves_memory: `True` for a callee that leaves memory alone.
-    ///     arg_passing_regs_float: Float/vector argument registers, in ABI
-    ///         order, numbered after `arg_passing_regs` (the first is
-    ///         `arg(len(arg_passing_regs))`).
-    ///     reg_args_adjoin_stack_args: `True` where each argument register
-    ///         has a stack home just below the stack arguments (ARM AAPCS,
-    ///         MIPS O32 / N64, PowerPC64 ELF).
-    ///     entry_address: Register holding the function's own address on
-    ///         entry (PPC64 ELFv2 `r12`, MIPS abicalls `t9`), or `None`.
-    ///
-    /// Raises `StriderError` when `stack_pointer` is not address-width, when
-    /// `stack_arg_base` is set and `stack_arg_increment` is not that width, or
-    /// when `link_register=None` and `ret_stack_pop` is below it. Usable only
-    /// with a `Lifter` sharing `sleigh`'s register table (`arm`, `arm_thumb`
-    /// and `arm_be_kernel` share one).
+    /// A convention from register names resolved against `sleigh`; an unknown
+    /// name or a broken ABI invariant raises `StriderError`.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,

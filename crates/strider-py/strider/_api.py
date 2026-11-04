@@ -215,31 +215,21 @@ def load_elf(
     preset; with `arch=` alone, `analyze` raises `StriderError` if the
     header's convention has another arch's stack geometry.
 
-    `apply_relocations=True` relocates the image from the tables its dynamic
-    tags place (Android packed ones included). `False` drops writable
-    non-executable sections and serves every remaining relocation field as
-    its file bytes; writable-executable mappings are kept either way. With it
-    on, `StriderError` is raised when the tables name more than twice the
-    entries the file can hold, or when a table strider cannot read or decode
-    may relocate code (`DT_TEXTREL`, or a writable-executable mapping); any
-    other image with such a table serves none of its writable mappings.
+    `apply_relocations=True` relocates the image (Android packed tables
+    included); `False` drops writable non-executable sections and serves
+    relocation fields as their file bytes. With it on, `StriderError` is
+    raised for tables naming more than twice the entries the file can hold,
+    or an unreadable table that may relocate code; any other image with an
+    unreadable table serves none of its writable mappings.
 
-    `relocated_got_is_rom=True` also serves `.got` (and PPC32's `.got2`) and
-    `.data.rel.ro` as read-only, so a load through a GOT slot folds to the
-    address it holds (resolving GOT-based PIC jump tables). Not served when
-    the image has a table strider cannot read or decode. Slots only the
-    dynamic loader computes stay unmapped: an uncomputed relocation (an
-    import with no address), an IFUNC's (`R_*_IRELATIVE` or against an
-    `STT_GNU_IFUNC` symbol), an `R_*_COPY` object, the lazy-binding GOT
-    header words (ARM, secure-PLT PPC32), and on MIPS the lazy-resolver word,
-    the module-pointer word when requested, and every global entry not
-    already holding a defined symbol's address. `.got.plt` is never served.
-    In an executable mapping a relocation against a defined IFUNC takes the
-    symbol's own address. The flag is an unchecked claim that nothing
-    rewrites a slot after loading and each defined symbol binds to its own
-    definition; a program writing its GOT, a copy relocation, `LD_PRELOAD`,
-    a `dlopen`ed interposer, or PPC32 code relocating its own `.got2` makes
-    it false. With `apply_relocations=False` it raises `StriderError`.
+    `relocated_got_is_rom=True` also serves `.got` (PPC32 `.got2`) and
+    `.data.rel.ro`, never `.got.plt`, as read-only, so a load through a GOT
+    slot folds to the address it holds. Slots only the dynamic loader
+    computes (imports, IFUNCs, copy relocations, lazy-binding words) stay
+    unmapped. The flag is an unchecked claim that nothing rewrites a slot
+    after loading and each symbol binds to its own definition (`LD_PRELOAD`
+    or code writing its GOT makes it false). With `apply_relocations=False`
+    it raises `StriderError`.
 
     Raises `FileNotFoundError` for a missing `path`, `ValueError` for a
     non-ELF or an unsupported architecture or ABI (microMIPS included), and
@@ -430,17 +420,15 @@ class ElfLifter(Lifter):
         """`Lifter.analyze` at `entry`, a symbol name or an address. `cc`
         defaults to this handle's convention.
 
-        A `str` entry's recorded size bounds the lift unless
-        `opts.cfg.function_max_size` is set, and the bound drops
-        `allow_code_before_start_addr`. The ELF's `$d` mapping symbols supply
-        `opts.cfg.data_ranges`, and the entry's `<name>.cold` /
-        `<name>.cold.N` symbols `opts.cfg.fragment_ranges`, each unless it
-        names some. A `no_return_targets` address or `per_address_ccs` key at
-        a ppc64 ELFv2 symbol's `address` also covers its `Symbol.local_entry`.
+        A `str` entry's recorded size bounds the lift (dropping
+        `allow_code_before_start_addr`) unless `opts.cfg.function_max_size` is
+        set. The ELF's `$d` mapping symbols and the entry's `<name>.cold[.N]`
+        symbols fill empty `data_ranges` and `fragment_ranges`. A
+        `no_return_targets` address or `per_address_ccs` key at a ppc64 ELFv2
+        symbol's `address` also covers its `Symbol.local_entry`.
 
         Raises `TypeError` when `entry` is neither `str` nor `int`, and
-        `StriderError` when the binary changed on disk since loading. GIL and
-        thread behaviour are as for `Lifter.analyze`.
+        `StriderError` when the binary changed on disk since loading.
         """
         return self._analyze_elf(self._elf, entry, self._cc if cc is None else cc, opts)
 

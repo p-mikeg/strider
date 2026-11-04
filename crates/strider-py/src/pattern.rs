@@ -1268,10 +1268,8 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
     PyPat::from(leaf("initial_var_for()", Kind::Match, Box::new(make)))
 }
 
-/// Match if any listed sub-pattern matches (a union: every matching arm
-/// fires with its own bindings; `first_of` cuts). Arms matching one node with
-/// the same bindings are one match; a capture under an arm that did not fire
-/// stays unbound. Nests in any slot. Match-only; no arms matches nothing.
+/// Match if any listed sub-pattern matches, each matching arm with its own
+/// bindings.
 #[pyfunction]
 pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from(Repr::new(
@@ -1282,11 +1280,7 @@ pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     ))
 }
 
-/// Match the first listed sub-pattern that matches (an ordered OR): at each
-/// value it is offered, the first arm yielding a match wins, so a leading
-/// `anything()` shadows the rest. Several settle in pattern order (operands
-/// left to right, inner before outer). Nests in any slot. Match-only; no arms
-/// matches nothing.
+/// Match the first listed sub-pattern that matches (an ordered OR).
 #[pyfunction]
 pub fn first_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from(Repr::new(
@@ -2329,10 +2323,7 @@ impl PyJoinConstraint {
 }
 
 /// `a` dominates `b`: every control-flow path from entry to `b` passes through
-/// `a`. Each is a captured node or an `If` branch-edge capture
-/// (`capture_true` / `capture_false`). No single incoming edge dominates a
-/// merge `Phi`; use `phi_input_from_edge`. A capture with no control position
-/// (a `load`, `store` or arithmetic node) drops the match, negated or not.
+/// `a`.
 #[pyfunction]
 pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinConstraint {
     PyJoinConstraint::leaf(JoinConstraint::Dominates {
