@@ -184,7 +184,7 @@ impl FunctionDotDumperState {
 
 impl FunctionDotDumper<'_> {
     /// Whether `node` draws a private box beside each consumer instead of one
-    /// shared box.  True for constants, except the neighbourhood centre.
+    /// shared box. True for constants, except the neighbourhood centre.
     fn renders_per_use(&self, node: NodeId) -> bool {
         self.function.node_kind(node).is_const() && !self.is_center(node)
     }

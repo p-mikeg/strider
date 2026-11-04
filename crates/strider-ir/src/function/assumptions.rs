@@ -29,11 +29,8 @@ impl<T: Clone + Eq + std::hash::Hash, S: std::hash::BuildHasher + Default> Claim
     }
 }
 
-/// A claims struct from one `name: type = default` row per claim, with its floor constructor,
-/// `union_with`, `omitted_by` and `Default`. The invoking module needs [`Claim`] in scope.
-///
-/// The floor sets each field to its type's `Default`, not the struct's, so a default-on claim
-/// cannot leak into the floor.
+/// A claims struct from `name: type = default` rows, with a floor constructor (each field
+/// its type's `Default`), `union_with`, `omitted_by` and `Default`. Needs [`Claim`] in scope.
 macro_rules! claims {
     (
         $(#[$struct_doc:meta])*
@@ -91,110 +88,51 @@ macro_rules! claims {
 }
 
 claims! {
-    /// Assertions about the analysed code that the analysis cannot check. Each field's
-    /// positive value is the risky one: on, it can make the answer wrong on valid input.
-    /// [`AssumptionOptions::none`] is the sound floor, under the premises stated there.
-    ///
-    /// Claims accumulate per [`Function`](crate::Function) through
-    /// [`Function::assume`](crate::Function::assume) and are never withdrawn.
+    /// Claims about the analysed code that the analysis cannot check. Each field's positive
+    /// value is the risky one: on, it can make the answer wrong on valid input. Claims
+    /// accumulate per [`Function`](crate::Function) and are never withdrawn.
     pub struct AssumptionOptions {
         /// The stack never overlaps a constant-address region (`.data`, `.rodata`, `.bss`,
-        /// MMIO). Wrong only where a constant address equals `sp + K` at runtime. Default on.
+        /// MMIO). Wrong where a constant address equals `sp + K` at runtime. Default on.
         pub stack_global_disjoint: bool = true,
-        /// A `Call` leaves the incoming stack-argument slots as it found them, so an argument
-        /// read after a call is still detected as one. Decides only which loads are incoming
-        /// arguments, never a memory edge. Default on.
-        ///
-        /// Holds for a conforming callee not handed a pointer into the incoming-argument area
-        /// ([`incoming_args_start`](strider_target::BuiltCallingConvention::incoming_args_start)).
-        /// Where a stack address that may point there reaches a callee (a call argument, a
-        /// stored value, a return, a clobbered register at a call, or any use the analysis
-        /// cannot place), every call blocks; entry SP plus a constant below the area does not
-        /// count. Missed: such a base spilled and reloaded, and an address in a callee-preserved
-        /// register. Code that stores its entry SP (the ARM APCS frame record) blocks at every
-        /// call.
-        ///
-        /// A custom convention that homes or splits register arguments next to the stack ones
-        /// (ARM, MIPS, PPC64, riscv, Win64) must set
+        /// A `Call` leaves the incoming stack-argument slots as it found them. Wrong for a
+        /// callee that writes them: a load after the call is misread as an argument. A
+        /// convention whose register arguments adjoin the stack ones must set
         /// [`reg_args_adjoin_stack_args`](strider_target::BuiltCallingConvention::reg_args_adjoin_stack_args).
+        /// Default on.
         pub assume_incoming_args_survive_calls: bool = true,
         /// A `Store` rooted at an SP base other than the entry SP (e.g. `sp & -16`) is
-        /// disjoint from the probed location. Read only by incoming-argument detection.
+        /// disjoint from the probed incoming-argument slot. Wrong where the two bases meet.
         /// Default off.
         pub distinct_sp_bases_disjoint: bool = false,
-        /// A callee leaves the outgoing-argument slots the caller wrote as it found them, so a
-        /// spill at the stack top survives the call. The psABIs let a callee write them.
-        /// Default off.
-        ///
-        /// Inert without [`escape_analysis`](Self::escape_analysis) or a non-empty
-        /// [`noalias_allocators`](Self::noalias_allocators). Read only by `LoadForward`.
+        /// A callee leaves the outgoing-argument slots the caller wrote as it found them, so
+        /// a spill there survives the call. Wrong for a callee that writes them, as the psABIs
+        /// allow. Default off.
         pub callee_preserves_stack_args: bool = false,
-        /// Callee addresses of pure `noalias` heap allocators (a size in, a fresh pointer out,
-        /// no pointer arguments). An allocation is disjoint from every other live allocation,
-        /// every stack slot and every constant address, and a load steps through the call.
-        /// Empty by default.
-        ///
-        /// Listing a callee that can return an existing or interior pointer (`realloc`,
-        /// `free`, an allocator over a static or caller-supplied arena) is unsound.
-        /// Deallocation is not modelled: a use-after-free load is taken as disjoint from the
-        /// storage handed out again. A non-empty set also forwards a stack spill across a
-        /// listed call on a private frame, with the gaps
-        /// [`escape_analysis`](Self::escape_analysis) documents.
+        /// Callee addresses of pure `noalias` allocators: a size in, a fresh pointer out,
+        /// disjoint from every other allocation, stack slot and constant address. Wrong for a
+        /// callee that can return an existing or interior pointer (`realloc`, an arena).
+        /// Deallocation is not modelled. Empty by default.
         pub noalias_allocators: rustc_hash::FxHashSet<u64> = rustc_hash::FxHashSet::default(),
-        /// When no stack address escapes to a callee, forward a spill `Load` across a `Call`
-        /// and, under [`stack_global_disjoint`](Self::stack_global_disjoint), past an opaque
-        /// (`Anchor`) store. Default off.
-        ///
-        /// An address escapes through a call argument, a stored value, a return, or a
-        /// clobbered register holding it at a call. Two gaps remain: a callee reading an
-        /// address from a register its convention preserves, and an unwritten argument slot
-        /// (an alignment hole) read as the end of the outgoing-argument window, so a callee's
-        /// argument slot above it can be forwarded across the call. Inert on a frame that
-        /// stores its entry SP (every PowerPC frame, an ARM APCS frame record).
+        /// When no stack address escapes to a callee, a spill `Load` forwards across a `Call`.
+        /// Wrong where a callee reaches the frame through a path escape tracking misses, such
+        /// as a callee-preserved register. Default off.
         pub escape_analysis: bool = false,
-        /// A RAM `Store` the analysis cannot place on the entry stack, and any callee or
-        /// user-op, leave the slots holding the saved return address and entry SP as they
-        /// found them. Read only by return-target verification; off, such a return is
-        /// reported unverified. A store the analysis does place is checked against the slot
-        /// regardless. Needed for ARM `push {lr}; ... bl ...; pop {pc}`. Default on.
+        /// An unplaced RAM `Store`, callee or user-op leaves the saved return-address and
+        /// entry-SP slots as it found them. Wrong where one overwrites them: the return is
+        /// verified when it is not. Default on.
         pub return_slots_survive_untracked_writes: bool = true,
-        /// An ARM register-form `msr` to the CPSR control field (`msr cpsr_c, rN`) writes the
-        /// mode already in force, so it re-banks nothing; the masks and flags still update.
-        /// The immediate form and `cps` still switch mode. Off, the write re-banks unless its
-        /// mode is provably the current one.
-        ///
-        /// Wrong for a new mode built in a register (Linux's `safe_svcmode_maskall`, the
-        /// switch into FIQ in `fiqasm.S`) and for a saved mode restored after a switch made
-        /// since the save. Read by the lift only (`AnalyzeOptions::assumptions`); added to a
-        /// lifted function it changes nothing. Default on.
+        /// An ARM register-form `msr` to the CPSR control field writes the mode already in
+        /// force, so it re-banks nothing. Wrong for code building a new mode in a register.
+        /// Lift-time only. Default on.
         pub msr_register_keeps_mode: bool = true,
-        /// The dynamic rounding mode a float-to-integer, narrowing or integer-to-float
-        /// conversion reads is round to nearest even: x86 MXCSR.RC (SSE and VEX
-        /// conversions) and x87 RC at `fst` / `fstp` to a single or double, PowerPC
-        /// FPSCR.RN, ARM FPSCR.RMode, AArch64 FPCR.RMode and MIPS FCSR.RM. Fixed-mode
-        /// forms (`cvtt*`, `fcti*z`, ARM `vcvt` to an integer, MIPS `round` / `trunc` /
-        /// `floor` / `ceil`, AArch64 `fcvt{n,a,m,p,z}{s,u}` and `fcvtxn`) read no mode, and
-        /// x87 `fist`, `fistp` and `frndint` always read RC.
-        ///
-        /// Off, each such conversion selects among the four modes, so a mode the function
-        /// sets (`ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr`, `ctc1`) folds and an unknown one
-        /// stays a select; an AArch64 FPCR read is volatile, so there it always stays one.
-        /// Wrong after `fesetround` or under a mode a caller set. Float arithmetic and the
-        /// conversions lifted as opaque user ops are outside it.
-        ///
-        /// Read by the lift only (`AnalyzeOptions::assumptions`); added to a lifted
-        /// function it changes nothing. Default on.
+        /// The dynamic rounding mode a float conversion reads is round-to-nearest-even.
+        /// Wrong after `fesetround` or under a mode a caller set. Lift-time only. Default on.
         pub fp_rounding_mode_is_nearest: bool = true,
     }
 
-    /// Every claim cleared: the sound floor of these fields.
-    ///
-    /// Two premises no field lifts. Memory is RAM: a load reads the last value the analysed
-    /// code stored there, and no device, thread or signal handler changes it in between. The
-    /// floating-point environment is the IEEE default apart from the conversion rounding mode
-    /// [`fp_rounding_mode_is_nearest`](Self::fp_rounding_mode_is_nearest) claims: float
-    /// arithmetic rounds to nearest, and x86 MXCSR.FTZ and DAZ, PowerPC FPSCR.NI, OE and UE,
-    /// ARM FPSCR.FZ, AArch64 FPCR.FZ and MIPS FCSR.FS are clear (not so under `-ffast-math`).
+    /// Every claim cleared: the sound floor, for RAM-like memory (no device, thread or signal
+    /// changes it) and an IEEE-default float environment (no flush-to-zero).
     fn none();
 }
 

@@ -41,7 +41,7 @@ pub struct Function {
 }
 
 impl Function {
-    /// Builds the `Entry` node.  `InitialMemory` is the `FunctionBuilder`'s job.
+    /// Builds the `Entry` node. `InitialMemory` is the `FunctionBuilder`'s job.
     ///
     /// `tracked_vns` keeps only the largest of nested varnodes
     /// ([`vn_container::dedup_overlapping_largest`]), sorted by space shortcut,

@@ -12,15 +12,9 @@ use crate::node::{
 };
 
 impl Function {
-    /// The canonical text form: a header (endianness, tracked varnodes, default convention,
-    /// claims in force, `frame_address_in_call_register reach=<offset|unbounded>` when set,
-    /// argument carriers), then one `outs = op[payload] ins` line per node reachable from
-    /// [`Self::entry`], values named `%vN` in print order. With `fingerprints`, each line ends in
-    /// its sorted asm address set `  @{..}` (quadratic in a chain of unions).
-    ///
-    /// Control nodes print in reverse postorder, each after its unprinted data inputs; a phi
-    /// right after its `Region`. Equal graphs print equal text however they were built, and
-    /// [`Self::compact`] leaves it unchanged.
+    /// The canonical text form: a header, then one `outs = op[payload] ins` line per node
+    /// reachable from [`Self::entry`]. With `fingerprints`, each line ends in its asm address
+    /// set `  @{..}`. Equal graphs print equal text however built; [`Self::compact`] keeps it.
     pub fn to_text(&self, fingerprints: bool) -> String {
         self.to_text_with(fingerprints, &vn_str)
     }

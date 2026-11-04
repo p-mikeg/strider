@@ -157,7 +157,7 @@ impl FunctionSideTables {
         self.asm_fingerprints.is_empty(id)
     }
 
-    /// Unions `contributors` in.  Existing entries are never removed.
+    /// Unions `contributors` in. Existing entries are never removed.
     pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
         for &addr in contributors {
             self.asm_fingerprints.extend(node_id, addr);
