@@ -71,15 +71,9 @@ macro_rules! delegate_node_pat {
         }
     };
     (@m $inner:tt, any_input) => {
-        /// Matches some input no fixed operand pinned (on a commutative node,
-        /// any input). `var` / `anything` also reach control and memory edges.
-        /// Repeatable; several on one node take distinct slots.
-        ///
-        /// # Cost
-        ///
-        /// `k` of these over `n` candidate inputs explore all
-        /// `n * (n-1) * ... * (n-k+1)` assignments; pin a slot with `input` on a
-        /// wide node.
+        /// Matches some input no fixed operand pinned (on a commutative node, any input).
+        /// Repeatable; several on one node take distinct slots, so `k` of them over `n` inputs
+        /// explore `n!/(n-k)!` assignments.
         pub fn any_input<P: $crate::matcher::match_pat::MatchPat + 'static>(
             mut self,
             p: P,

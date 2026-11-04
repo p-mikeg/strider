@@ -217,10 +217,8 @@ impl Pattern {
         out
     }
 
-    /// Runs after the whole match, seeing every capture; `false` rejects it.
-    /// The type is the matched output's, `None` for a control, memory or
-    /// `PhiToken` edge or a zero-output node.
-    /// Composes with a guard already on the root. A no-op on a pattern with no unique root.
+    /// Adds a root guard that runs after the whole match, seeing every capture; `false` rejects
+    /// it. A no-op on a pattern with no unique root.
     pub fn with_root_post_match(mut self, f: PostMatchFn) -> Self {
         if let Ok(&root) = self.root.as_ref() {
             self.graph.node_kind_mut(root).post_matches.push(f);
@@ -229,11 +227,8 @@ impl Pattern {
     }
 
     /// Adds `m` to the cast mask: an operand produced by a selected cast also matches at the
-    /// cast's input.
-    ///
-    /// Per operand, only the matches at the outermost cast level are kept. Operands settle after
-    /// every `first_of`, in written order, inner before outer, so a guard coupling two of them
-    /// depends on which is written first. Costs as [`OneOf::first`](crate::OneOf::first) does.
+    /// cast's input. Per operand only the outermost matching level is kept, settled in written
+    /// order after every `first_of`.
     pub fn ignore_casts_mask(mut self, m: CastMask) -> Self {
         self.cast_mask |= m;
         self
