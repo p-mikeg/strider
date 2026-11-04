@@ -234,8 +234,9 @@ impl<'a> Ctx<'a, '_> {
 
     /// Whether the field lies in an executable mapping. There an IFUNC's `S`
     /// is the symbol's own address, so a `call` decodes to the function the
-    /// image names; an address taken in code then also gets it, where at run
-    /// time it holds the resolver's result.
+    /// image names. An address taken in code, and a data word in an
+    /// executable mapping (FreeBSD 12's `.rodata`), then also get it, where
+    /// at run time they hold the resolver's result.
     fn in_code(&self, addr: u64, width: usize) -> bool {
         self.executable.touches(addr, width)
     }
