@@ -121,8 +121,8 @@ impl CallingConvention {
     /// Returns the AArch64 AAPCS64 calling convention.
     #[must_use]
     pub const fn aarch64_aapcs64() -> Self {
-        // The indirect result register `x8` is not an argument, so a stack
-        // slot passed in it is an escape `assumptions.escape_analysis` misses.
+        // `x8` (indirect result) is not an argument; a stack address in it
+        // escapes as a clobbered register.
         CallingConvention {
             stack_ptr: "sp",
             arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],

@@ -220,8 +220,8 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
         "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31",
     ],
     ret_val_regs: &["v0", "v1"],
-    // The 8-byte pair registers (`FREGSIZE 4`); the 4-byte `f0` would
-    // truncate a `double` return.
+    // Returns are read at their declared width, so a `double` needs the
+    // 8-byte pair (`FREGSIZE 4`); arguments are projected to their containers.
     ret_val_regs_float: &["f0_1", "f2_3"],
     // Above the 16-byte home area of a0..a3.
     stack_args: Some(StackArgs {

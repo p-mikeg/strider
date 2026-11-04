@@ -13,10 +13,12 @@ pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
     // AArch64 ERET.
     ("ExceptionReturn", CallOtherClass::NO_RETURN),
     ("UndefinedInstructionException", CallOtherClass::NO_RETURN),
-    // Linux spells both `BUG()` and `WARN_ON()` with these, told apart only by
-    // `__bug_table`. NoReturn costs WARN its resume edge, which the branch
-    // around the trap usually reaches anyway.
+    // AArch64 `brk`. Linux spells both `BUG()` and `WARN_ON()` with it, told
+    // apart only by `__bug_table`. NoReturn costs WARN its resume edge, which
+    // the branch around the trap usually reaches anyway.
     ("SoftwareBreakpoint", CallOtherClass::NO_RETURN),
+    // x86 `ud0` / `ud1` / `ud2`; `ud2` is Linux's `BUG()` and `WARN_ON()`, the
+    // same tradeoff.
     ("invalidInstructionException", CallOtherClass::NO_RETURN),
     // The exclusive monitor; LDREX / STREX accesses are p-code.
     ("ExclusiveMonitorPass", PURE),
