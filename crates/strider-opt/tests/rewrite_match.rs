@@ -372,9 +372,8 @@ where
     apply_rules_count(&mut ctx, std::slice::from_ref(&rule))
 }
 
-/// An RHS that consumes the matched ROOT has its own fresh edges redirected
-/// along with everyone else's, so the node becomes its own input.  The rule
-/// must refuse rather than install `x = f(x)`.
+/// An RHS that consumes the matched root would become its own input, so the
+/// rule refuses rather than install `x = f(x)`.
 #[test]
 fn rhs_consuming_the_root_is_refused_not_installed() {
     let mut function = graph_add_x_zero();
@@ -392,9 +391,8 @@ fn rhs_consuming_the_root_is_refused_not_installed() {
     );
 }
 
-/// The same hole without a capture: the RHS rebuilds the LHS shape, so the
-/// dedup cache hands back the matched node itself and the fresh parent ends up
-/// consuming the value it replaces.
+/// The same without a capture: the RHS rebuilds the LHS shape, which the
+/// dedup cache resolves to the matched node itself.
 #[test]
 fn rhs_rebuilding_the_lhs_shape_is_refused_not_installed() {
     let mut function = graph_add_x_zero();
