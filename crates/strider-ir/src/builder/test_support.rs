@@ -1,10 +1,7 @@
-//! These build a function eagerly: a value `Phi` for every tracked varnode
-//! with current values pre-seeded, so a hand-written test graph resolves each
-//! variable read without the pruned-SSA dominance walk the lifter runs.
-//!
-//! They cannot live in the `strider-ir-test-utils` dev-dep: under `cargo
-//! test` it links a separate compilation of `strider-ir`, so its
-//! `FunctionBuilder` is a different type from the unit tests'.
+//! Eager builders: a `Phi` for every tracked varnode, so a hand-written test
+//! graph resolves reads without the lifter's pruned-SSA walk. Not in
+//! `strider-ir-test-utils`, whose `FunctionBuilder` is a different type under
+//! `cargo test`.
 
 use super::FunctionBuilder;
 use crate::Result;
@@ -17,8 +14,8 @@ impl FunctionBuilder {
         self.create_region(&vns)
     }
 
-    /// Wires `region_id` as the entry WITHOUT seeding the current-value map
-    /// with the `InitialVar`s, so an entry read resolves to the region's phi.
+    /// Wires `region_id` as the entry without seeding the `InitialVar`s, so
+    /// an entry read resolves to the region's phi.
     pub fn set_entry_region_all(&mut self, region_id: RegionId) -> Result<()> {
         let initial_variables = self.wire_entry_and_build_initial_vars(region_id)?;
         self.link_region_variables(region_id, &initial_variables)

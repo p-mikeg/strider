@@ -56,120 +56,95 @@ pub enum NodeKind {
     Entry,
     /// Outputs `[Memory]`.
     InitialMemory,
-    /// Entry-time value of the tracked varnode at this id. Outputs one integer
-    /// value.
+    /// Entry-time value of a tracked varnode.
     InitialVar(InitialVnId),
 
     /// Inputs: one `Control` per predecessor. Outputs: `[Control, PhiToken]`.
     Region,
-    /// Selects the live memory token at a join.
     MemPhi,
     /// Inputs: `[phi_token, val_0, val_1, ...]`, one value per predecessor in
-    /// the same order as the joining `Region`'s `Control` inputs. Output:
-    /// `[value]`.
-    ///
-    /// A lifter-emitted phi for a register-aliased read carries a source
-    /// varnode tag in the `value_vn` side-table; anonymous phis have no entry.
+    /// the joining `Region`'s `Control` input order. A register-aliased read's
+    /// phi carries its source varnode in the `value_vn` side-table.
     Phi,
 
-    /// Inputs: `(control, cond:I1)`. Outputs: `[Control, Control]`, index 0
-    /// true, index 1 false.
+    /// Inputs: `(control, cond:I1)`. Outputs: `[true, false]` controls.
     If,
-    /// Resolved jump table. Inputs: `(control, address)`. Outputs: one
-    /// `Control` per target, output `i` taken when `address == targets[i]` of
-    /// the table this carries.
-    /// No default arm: a target the resolver could not prove is reported as
-    /// an unresolved branch, not modelled as an arm.
+    /// Resolved jump table. Inputs: `(control, address)`, plus an optional
+    /// ISA-mode bit. Output `i` is taken when `address == targets[i]`. No
+    /// default arm: an unproven target is reported as an unresolved branch.
     Switch(SwitchTableId),
 
-    /// Clobbers caller-saved registers and the memory token. `cc` is `None`
-    /// under the function's default convention.
+    /// Clobbers caller-saved registers and memory. `cc: None` is the
+    /// function's default convention.
     Call {
         cc: Option<CcId>,
     },
-    /// Consumes the outgoing control and memory edges plus any return values.
+    /// Inputs: `[control, memory, return values...]`.
     Return,
-    /// Placeholder for a branch the CFG could not resolve. Inputs:
-    /// `[control, memory, target_value]`, plus the optional interworking
-    /// ISA-mode bit at slot 3. Outputs: `[]`. Surviving the pipeline means
-    /// classification failed; the IR stays valid.
+    /// Unresolved branch. Inputs: `[control, memory, target]`, plus an
+    /// optional interworking ISA-mode bit at slot 3. No outputs.
     IndirectBranch,
-    /// Control sink for a no-return trap (`ud2`, `abort`, `BUG_ON`).
-    /// Inputs: `[control]`, plus the optional memory chain at slot 1, which an
-    /// exit-free-cycle sink carries so its stores survive compaction.
-    /// Outputs: `[]`.
+    /// No-return sink (`ud2`, `abort`). Inputs: `[control]`, plus an optional
+    /// memory chain at slot 1 that keeps an exit-free cycle's stores alive.
     Unreachable,
 
     Load(rsleigh::VnSpace),
     Store(rsleigh::VnSpace),
 
-    /// Read the value via `IRViewer::int_const_u128`, never by matching the
-    /// payload.
+    /// Read via `IRViewer::int_const_u128`, not the payload.
     IntConst(crate::node::IntConstId),
-    /// Negation only. Bitwise complement is `Xor(x, all_ones)`.
+    /// Negation only; complement is `Xor(x, all_ones)`.
     IntUnaryOp(crate::node::IntUnaryOp),
     IntBinaryOp(crate::node::IntBinaryOp),
-    /// Outputs `I1`. Boolean logic reuses `IntBinaryOp::{And,Or,Xor}` at `I1`;
-    /// logical NOT is `Xor(_, IntConst(1)):I1`.
+    /// Outputs `I1`. Boolean logic is `IntBinaryOp::{And,Or,Xor}` at `I1`.
     IntCmpOp(crate::node::IntCmpOp),
-    /// Drop high bits.
     Truncate,
     Popcount,
     /// Leading zero count.
     Lzcount,
     Extend(crate::node::ExtendOp),
 
-    /// Raw IEEE 754 bit pattern, masked to the declared output width: upper 32
-    /// bits are zero for `F32`. `build_float_const` masks, `validate` re-checks.
+    /// Raw IEEE 754 bits, masked to the output width (upper 32 bits zero for
+    /// `F32`).
     FloatConst(u64),
     FloatBinaryOp(crate::node::FloatBinaryOp),
     FloatUnaryOp(crate::node::FloatUnaryOp),
     /// Outputs `I1`.
     FloatCmpOp(crate::node::FloatCmpOp),
 
-    /// Signed integer to the nearest representable float, like C's `(float)n`.
+    /// Signed integer to nearest float.
     IntToFloat,
-    /// Float to integer, truncating toward zero, like C's `(int)f`.
+    /// Float to integer, truncating toward zero.
     FloatToInt,
-    /// Reprecision between float types.
     FloatToFloat,
 
-    /// Same-size bitcast, integer to float. Bits unchanged.
+    /// Same-size bitcast.
     IntBitsToFloat,
-    /// Same-size bitcast, float to integer. Bits unchanged.
+    /// Same-size bitcast.
     FloatBitsToInt,
 
-    /// Sleigh `CallOther`: CPU intrinsics such as `cpuid`, `rdtsc`, `syscall`,
-    /// x87 transcendentals. Also the lifter's `read_volatile`, a read of a
-    /// register that changes with nothing writing it.
-    ///
-    /// Inputs: `[control, memory, arg0, arg1, ...]`. Outputs:
-    /// `[Control, Memory]`, then a `Typed` slot for the result when the
-    /// instruction has an output varnode, then one per implicit-write clobber.
-    /// The `Memory` output is always present; only a memory-clobbering op
-    /// advances the region's chain through it.
+    /// Sleigh `CallOther` (CPU intrinsics), and the lifter's volatile register
+    /// reads. Inputs: `[control, memory, args...]`. Outputs:
+    /// `[Control, Memory]`, then the result slot if the instruction has an
+    /// output varnode, then one per implicit-write clobber. Only a
+    /// memory-clobbering op advances the memory chain.
     CallOther {
         user_op_id: u64,
     },
 
-    /// Sleigh `CPoolRef`: Java constant-pool lookup. Resolution can have
-    /// observable side effects (class loading).
-    ///
-    /// Inputs: `[ref0, ref1, ...]`. Outputs: `[Typed]`.
+    /// Sleigh `CPoolRef` (Java constant pool; may load classes). Inputs:
+    /// `[refs...]`. Outputs: `[Typed]`.
     CPoolRef,
 
-    /// Sleigh `New`: Java object allocation. Each allocation yields a distinct
-    /// object.
-    ///
-    /// Inputs: `[size, ...]`. Outputs: `[Typed]` (pointer-sized).
+    /// Sleigh `New` (Java allocation, distinct per occurrence). Inputs:
+    /// `[size, ...]`. Outputs: `[Typed]`, pointer-sized.
     New,
 }
 
 bitflags::bitflags! {
-    /// What a [`NodeKind`] is, as one row per variant in `NodeKind::flags`.
+    /// Per-[`NodeKind`] properties.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) struct KindFlags: u64 {
-        /// The graph may dedup nodes of this kind.
         const CACHEABLE = 1 << 0;
         /// Synthesised without a contributing machine instruction.
         const FINGERPRINT_EXEMPT = 1 << 1;
@@ -177,11 +152,10 @@ bitflags::bitflags! {
         const CONTROL = 1 << 2;
         /// Must survive unused although it carries no control.
         const EFFECTFUL = 1 << 3;
-        /// A pattern may try both operand orderings.
         const COMMUTATIVE = 1 << 4;
         /// Consumes control and produces none.
         const TERMINATOR = 1 << 5;
-        // A cast kind's `CastMask`, shifted up by `CAST_SHIFT`.
+        // A cast kind's `CastMask`, shifted by `CAST_SHIFT`.
         const ZERO_EXTEND = (CastMask::ZERO_EXTEND.bits() as u64) << Self::CAST_SHIFT;
         const SIGN_EXTEND = (CastMask::SIGN_EXTEND.bits() as u64) << Self::CAST_SHIFT;
         const TRUNCATE = (CastMask::TRUNCATE.bits() as u64) << Self::CAST_SHIFT;
@@ -191,50 +165,37 @@ bitflags::bitflags! {
 }
 
 impl KindFlags {
-    /// Where the cast bits start.
     pub(crate) const CAST_SHIFT: u32 = 32;
 }
 
 impl NodeKind {
-    /// Input slot of a `Load` / `Store` address.
+    /// `Load` / `Store` address input.
     pub const ACCESS_ADDR_SLOT: usize = 1;
-    /// Input slot of a `Store`'s data.
     pub const STORE_DATA_SLOT: usize = 2;
-    /// Input slot of a `Call`'s target.
     pub const CALL_TARGET_SLOT: usize = 2;
-    /// Input slot of a `Call`'s stack-pointer anchor.
+    /// `Call`'s stack-pointer anchor input.
     pub const CALL_SP_SLOT: usize = 3;
-    /// Input slot of an `If`'s condition.
     pub const IF_COND_SLOT: usize = 1;
-    /// Input slot of the control predecessor on every kind with a fixed one
-    /// (`If`, `Switch`, `Call`, `CallOther`, `Return`, `IndirectBranch`,
-    /// `Unreachable`).
+    /// Control input of `If`, `Switch`, `Call`, `CallOther`, `Return`,
+    /// `IndirectBranch`, `Unreachable`.
     pub const CTRL_SLOT: usize = 0;
-    /// Input slot of the memory token after the control predecessor
-    /// (`Call`, `CallOther`, `Return`, `IndirectBranch`, `Unreachable`).
+    /// Memory input of `Call`, `CallOther`, `Return`, `IndirectBranch`,
+    /// `Unreachable`.
     pub const CTRL_MEM_SLOT: usize = 1;
-    /// Input slot of a `Load` / `Store`'s memory token.
+    /// `Load` / `Store` memory input.
     pub const ACCESS_MEM_SLOT: usize = 0;
-    /// Input slot of an `IndirectBranch`'s target.
     pub const INDIRECT_BRANCH_TARGET_SLOT: usize = 2;
-    /// Input slot of a `Switch`'s selector.
     pub const SWITCH_SELECTOR_SLOT: usize = 1;
-    /// Input slot of a `Phi` / `MemPhi`'s phi token, the owning `Region`'s.
+    /// `Phi` / `MemPhi` input from the owning `Region`.
     pub const PHI_TOKEN_SLOT: usize = 0;
-    /// Output slot of the control successor on every kind with one fixed
-    /// (`Entry`, `Region`, `Call`, `CallOther`).
+    /// Control output of `Entry`, `Region`, `Call`, `CallOther`.
     pub const CTRL_OUT_SLOT: usize = 0;
-    /// Output slot of the memory token after the control successor (`Call`,
-    /// `CallOther`).
+    /// Memory output of `Call`, `CallOther`.
     pub const CTRL_MEM_OUT_SLOT: usize = 1;
-    /// Output slot of the memory token of a kind with no other output
-    /// (`InitialMemory`, `Store`, `MemPhi`).
+    /// Memory output of `InitialMemory`, `Store`, `MemPhi`.
     pub const MEM_OUT_SLOT: usize = 0;
-    /// Output slot of a `Region`'s phi token.
     pub const REGION_PHI_OUT_SLOT: usize = 1;
-    /// Output slot of an `If`'s arm for a true condition.
     pub const IF_TRUE_OUT_SLOT: usize = 0;
-    /// Output slot of an `If`'s arm for a false condition.
     pub const IF_FALSE_OUT_SLOT: usize = 1;
 
     #[inline]
@@ -242,10 +203,7 @@ impl NodeKind {
         matches!(self, Self::IntConst(..) | Self::FloatConst(..))
     }
 
-    /// Fixed input slots before the variadic tail, i.e. the slot a caller's
-    /// `arg(n)` / `ret_val(n)` / `phi_input(n)` shifts by. Read off
-    /// `expected_signature` so a head-slot addition cannot silently mis-wire
-    /// the shift.
+    /// Fixed input slots before the variadic tail.
     #[must_use]
     pub fn input_head_len(&self) -> usize {
         crate::node::signature::expected_signature(self)
@@ -253,8 +211,7 @@ impl NodeKind {
             .head_len()
     }
 
-    /// Fixed output slots before the variadic tail: a `Call` / `CallOther`'s
-    /// first value output.
+    /// Fixed output slots before the variadic tail.
     #[must_use]
     pub fn output_head_len(&self) -> usize {
         crate::node::signature::expected_signature(self)
@@ -262,7 +219,7 @@ impl NodeKind {
             .head_len()
     }
 
-    /// The value kind output slot `idx` admits, `None` past the arity bound.
+    /// `None` past the arity bound.
     #[must_use]
     pub fn expected_output_kind(&self, idx: usize) -> Option<ExpectedValueKind> {
         crate::node::signature::expected_signature(self)
@@ -271,7 +228,7 @@ impl NodeKind {
             .map(|s| s.kind)
     }
 
-    /// The value kind input slot `idx` admits, `None` past the arity bound.
+    /// `None` past the arity bound.
     #[must_use]
     pub fn expected_input_kind(&self, idx: usize) -> Option<ExpectedValueKind> {
         crate::node::signature::expected_signature(self)
@@ -280,15 +237,14 @@ impl NodeKind {
             .map(|s| s.kind)
     }
 
-    /// How many inputs the signature admits; a repeating tail ends at
-    /// `usize::MAX`.
+    /// A repeating tail ends at `usize::MAX`.
     #[must_use]
     pub fn input_arity(&self) -> RangeInclusive<usize> {
         let inputs = crate::node::signature::expected_signature(self).inputs;
         inputs.head_len()..=inputs.max_len()
     }
 
-    /// The width input `slot` owes this node, as `validate` checks it.
+    /// The width `validate` requires of input `slot`.
     #[must_use]
     pub fn operand_width(&self, slot: usize) -> OperandWidth {
         match self {
@@ -336,45 +292,37 @@ impl NodeKind {
         }
     }
 
-    /// Consumes control and produces none. The single statement of the
-    /// terminator set: a control walk that misses one concludes a live arm
-    /// does not escape.
+    /// Consumes control and produces none.
     #[must_use]
     pub fn is_terminator(&self) -> bool {
         self.flags().contains(KindFlags::TERMINATOR)
     }
 
-    /// Whether the graph may dedup nodes of this kind.
     #[inline]
     pub(crate) fn is_cacheable(&self) -> bool {
         self.flags().contains(KindFlags::CACHEABLE)
     }
 
-    /// Exempt from the non-empty asm-fingerprint invariant: region headers,
-    /// initial state and phis are synthesised without a contributing machine
-    /// instruction.
+    /// Exempt from the non-empty asm-fingerprint invariant: synthesised
+    /// without a contributing machine instruction.
     #[inline]
     pub fn asm_fingerprint_exempt(&self) -> bool {
         self.flags().contains(KindFlags::FINGERPRINT_EXEMPT)
     }
 
-    /// Whether the node carries a `Control` input or output.
     #[inline]
     pub(crate) fn has_control_flow(&self) -> bool {
         self.flags().contains(KindFlags::CONTROL)
     }
 
-    /// Whether the node must survive even with all outputs unused.
-    ///
-    /// `Store` counts: removing it is dead-store elimination, which needs
-    /// aliasing reasoning this does not do. `Load` and `MemPhi` do not.
+    /// Must survive even with all outputs unused. `Store` counts (removing
+    /// one needs alias reasoning); `Load` and `MemPhi` do not.
     #[inline]
     pub(crate) fn has_side_effects(&self) -> bool {
         self.flags()
             .intersects(KindFlags::CONTROL.union(KindFlags::EFFECTFUL))
     }
 
-    /// The one row per variant the flag predicates on `NodeKind` read.
     #[inline]
     pub(crate) const fn flags(&self) -> KindFlags {
         use KindFlags as F;
@@ -402,7 +350,6 @@ impl NodeKind {
             | Self::FloatBinaryOp(FloatBinaryOp::Add | FloatBinaryOp::Mul)
             | Self::IntCmpOp(IntCmpOp::Equal | IntCmpOp::Carry | IntCmpOp::Scarry)
             | Self::FloatCmpOp(FloatCmpOp::Equal) => F::CACHEABLE.union(F::COMMUTATIVE),
-            // Identity is fully determined by the payload plus the inputs.
             Self::Load(..)
             | Self::IntConst(..)
             | Self::IntUnaryOp(..)
@@ -425,11 +372,8 @@ impl NodeKind {
         }
     }
 
-    /// Whether a pattern may try both operand orderings at this node.
-    ///
-    /// `FloatAdd` / `FloatMul` count under the IEEE-754
-    /// commutativity-up-to-NaN convention the IR uses throughout. `Carry` and
-    /// `Scarry` ask whether `l + r` overflows, and addition commutes.
+    /// Whether a pattern may try both operand orders. Float `Add` / `Mul`
+    /// commute up to NaN payload; `Carry` / `Scarry` test `l + r`.
     #[inline]
     pub fn is_commutative(&self) -> bool {
         self.flags().contains(KindFlags::COMMUTATIVE)

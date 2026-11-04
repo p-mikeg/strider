@@ -5,13 +5,12 @@ pub enum ValueKind {
     Typed(ValueType),
     /// One edge per region predecessor, one per branch successor.
     Control,
-    /// Dataless sync edge from a `Region` to every `Phi`/`MemPhi` in that join.
+    /// Dataless edge from a `Region` to its `Phi`s / `MemPhi`s.
     PhiToken,
-    /// Memory state threaded through the graph.
     Memory,
 }
 
-// At most four bytes, the slot the 16-byte value record leaves for it.
+// Fits the slot the 16-byte value record leaves.
 const _: () = assert!(size_of::<ValueKind>() <= 4);
 
 /// A typed value prints as its type (`f64`), the others by name.

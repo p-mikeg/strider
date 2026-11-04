@@ -1,10 +1,9 @@
-//! Single source of truth for every node's slot shape: kind (validation),
-//! name (dot labels), and role (dot colors).
+//! Every node kind's slot shape: value kind (validation), name (dot labels)
+//! and role (dot colors).
 
 use crate::node::{NodeKind, ValueKind, ValueType};
 
-/// A slot's admissible value kinds, coarser than the concrete
-/// [`ValueKind`] stored on real outputs.
+/// A slot's admissible value kinds, coarser than [`ValueKind`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedValueKind {
     Control,
@@ -21,7 +20,6 @@ pub enum ExpectedValueKind {
 const _: () = assert!(size_of::<ExpectedValueKind>() == 1);
 
 impl ExpectedValueKind {
-    /// Whether a value of kind `actual` may fill a slot of this class.
     pub fn admits(self, actual: ValueKind) -> bool {
         match (self, actual) {
             (Self::Control, ValueKind::Control)
@@ -43,7 +41,7 @@ impl ExpectedValueKind {
     }
 }
 
-/// The width an input slot owes its node.
+/// The width an input slot must have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperandWidth {
     /// The node's output width.
@@ -52,8 +50,7 @@ pub enum OperandWidth {
     OfFirstOperand,
     /// A width the conversion relates to the output's.
     Conversion(Conversion),
-    /// No width rule here (a `Phi`'s inputs are held to its type by the phi
-    /// check).
+    /// No width rule (a `Phi`'s inputs are checked separately).
     Free,
 }
 
@@ -69,9 +66,8 @@ pub enum Conversion {
 }
 
 impl Conversion {
-    /// Whether `input` converts to `output` under this rule. A bitcast
-    /// compares bytes: every float width is whole bytes, and none is one byte,
-    /// so `I1` cannot pass for a float.
+    /// A bitcast compares bytes; no float is one byte, so `I1` cannot pass
+    /// for a float.
     #[must_use]
     pub fn admits(self, input: ValueType, output: ValueType) -> bool {
         match self {
@@ -82,7 +78,7 @@ impl Conversion {
     }
 }
 
-/// Drives label colors in dot rendering.
+/// Dot label color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SlotRole {
     Control,
@@ -155,7 +151,7 @@ impl SlotList {
         }
     }
 
-    /// Fixed slots before any tail; the index the variadic tail starts at.
+    /// Fixed slots before any tail.
     pub(crate) fn head_len(&self) -> usize {
         self.head.len()
     }
@@ -165,7 +161,7 @@ impl SlotList {
         self.max_len
     }
 
-    /// Past the head: the tail slot while within `max_len`, else `None`.
+    /// Past the head, the tail slot while within `max_len`.
     pub(crate) fn at(&self, idx: usize) -> Option<Slot> {
         if idx >= self.max_len {
             return None;
@@ -173,8 +169,8 @@ impl SlotList {
         self.head.get(idx).copied().or(self.tail)
     }
 
-    /// [`Self::at`] with the slot's ordinal within a repeating tail, `None`
-    /// for a fixed head slot, so no caller re-derives the head length.
+    /// [`Self::at`] plus the slot's ordinal within the tail (`None` in the
+    /// head).
     pub(crate) fn at_indexed(&self, idx: usize) -> Option<(Slot, Option<usize>)> {
         Some((self.at(idx)?, idx.checked_sub(self.head.len())))
     }
@@ -209,16 +205,13 @@ const ADDR: Slot = slot(AnyInt, "addr", R::Addr);
 const DATA: Slot = slot(AnyInt, "data", R::Data);
 const TARGET: Slot = slot(AnyInt, "target", R::Target);
 // Optional trailing `IndirectBranch` / `Switch` input: the ISA-mode bit the
-// branch instruction commits, taken from the write to the `ISAModeSwitch`
-// register (ARM `SetThumbMode`, MIPS `JXWritePC`).
+// branch commits through `ISAModeSwitch` (ARM `SetThumbMode`, MIPS `JXWritePC`).
 const ISA_MODE: Slot = slot(AnyInt, "isa", R::Cond);
 const SP: Slot = slot(AnyInt, "sp", R::Sp);
-// Argument and return registers hold floats as well as integers, as do the
-// clobbered registers a `Call` outputs (`ANY_VAL`).
+// Argument, return and clobbered registers hold floats as well as integers.
 const ARG: Slot = slot(AnyValue, "arg", R::Arg);
 const RET: Slot = slot(AnyValue, "ret", R::Ret);
 const REF: Slot = slot(AnyInt, "ref", R::Ref);
-// Per-predecessor Phi input.
 const IN_PHI: Slot = slot(AnyValue, "in", R::In);
 
 pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
@@ -232,40 +225,34 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::InitialMemory => sig(L::fixed(&[]), L::fixed(&[MEM])),
         NodeKind::InitialVar(_) | NodeKind::IntConst(_) => sig(L::fixed(&[]), L::fixed(&[INT_VAL])),
 
-        // One Control input per predecessor.
         NodeKind::Region => sig(L::variadic(&[], CTRL), L::fixed(&[CTRL, PHI])),
         NodeKind::MemPhi => sig(L::variadic(&[PHI], MEM), L::fixed(&[MEM])),
-        // Tagged and anonymous phis share this shape.
         NodeKind::Phi => sig(L::variadic(&[PHI], IN_PHI), L::fixed(&[ANY_VAL])),
 
         NodeKind::If => sig(L::fixed(&[CTRL, COND]), L::fixed(&[CTRL, CTRL])),
-        // One Control output per target region, in target order. No default
-        // arm, and the arms need not cover every dispatch value: a site the
-        // resolver seated early can hold one arm and widen later.
+        // One Control output per target, in order. The arms need not cover
+        // every dispatch value: a site can hold one arm and widen later.
         NodeKind::Switch(_) => sig(
             L::optional(&[CTRL, INT_VAL], ISA_MODE),
             L::variadic(&[CTRL], CTRL),
         ),
 
-        // SP is an input-only anchor; the outputs are the clobbered varnodes.
+        // Value outputs are the clobbered varnodes.
         NodeKind::Call { .. } => sig(
             L::variadic(&[CTRL, MEM, TARGET, SP], ARG),
             L::variadic(&[CTRL, MEM], ANY_VAL),
         ),
         NodeKind::Return => sig(L::variadic(&[CTRL, MEM], RET), L::fixed(&[])),
-        // Placeholder for an unresolved branch. The optional trailing input is
-        // the interworking ISA-mode bit (absent for a non-switching branch); it
-        // is a real input so the optimizer keeps its cone live for the resolver.
+        // The ISA-mode bit is a real input so its cone stays live for the
+        // resolver.
         NodeKind::IndirectBranch => sig(L::optional(&[CTRL, MEM, TARGET], ISA_MODE), L::fixed(&[])),
-        // Control sink for a no-return trap. The optional trailing input is the
-        // memory chain: control alone anchors no liveness, so an exit-free
-        // control cycle would otherwise lose its stores to compaction.
+        // The optional memory chain keeps an exit-free cycle's stores alive:
+        // control alone anchors no liveness.
         NodeKind::Unreachable => sig(L::optional(&[CTRL], MEM), L::fixed(&[])),
 
         NodeKind::Load(_) => sig(L::fixed(&[MEM, ADDR]), L::fixed(&[INT_VAL])),
         NodeKind::Store(_) => sig(L::fixed(&[MEM, ADDR, DATA]), L::fixed(&[MEM])),
 
-        // `IntConst` shares the input-less arm above.
         NodeKind::IntUnaryOp(_)
         | NodeKind::Truncate
         | NodeKind::Popcount
@@ -296,8 +283,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
     }
 }
 
-/// One representative per [`NodeKind`] variant, in declaration order. Its
-/// ids are dangling: it is for slot-shape tables, not for a graph.
+/// One representative per [`NodeKind`] variant, in declaration order, with
+/// dangling ids.
 #[cfg(test)]
 pub(crate) fn every_node_kind() -> Vec<NodeKind> {
     use crate::node::{
@@ -457,17 +444,14 @@ mod tests {
         assert_eq!(ret.inputs.at(99).unwrap().role, SlotRole::Ret);
     }
 
-    /// One pattern per [`NodeKind`] variant, in declaration order: yields
-    /// `declaration_index` and `KIND_COUNT` from the one list.
+    /// One pattern per [`NodeKind`] variant, in declaration order.
     macro_rules! declaration_order {
         ($($kind:pat),* $(,)?) => {
             const DECLARED: &[&str] = &[$(stringify!($kind)),*];
             const KIND_COUNT: usize = DECLARED.len();
 
-            /// Position of `kind` in the list. The match has no `_` arm, so a
-            /// new variant does not compile until it is listed, and
-            /// `every_node_kind_is_exhaustive` then fails until
-            /// [`every_node_kind`] holds it too.
+            /// Position of `kind` in the list. No `_` arm, so a new variant
+            /// must be listed here and in [`every_node_kind`].
             fn declaration_index(kind: &NodeKind) -> usize {
                 let name = match kind {
                     $($kind => stringify!($kind),)*
