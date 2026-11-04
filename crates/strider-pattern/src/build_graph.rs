@@ -1,41 +1,27 @@
-//! Both builders write straight into the graph they finish with: an operand
-//! is built before the node consuming it, so ids run producers first and an
-//! input wired from a later node is refused rather than sorted, a template
-//! capture aside.
+//! The graph both builders write into. Ids run producers first: an input wired from a later
+//! node is refused, a template capture aside.
 
 use strider_graph::{Graph, NeverCacheable, NodeId, ValueId};
 
 /// A graph under construction, its first refusal and its nesting budget.
 pub(crate) struct BuildGraph<N, V> {
     pub(crate) graph: Graph<N, V, NeverCacheable>,
-    /// The first build-time refusal. A built graph is untrusted input, so
-    /// refusing one is a `Result`, never a panic.
+    /// The first build-time refusal, surfaced as an `Err`, never a panic.
     pub(crate) refusal: Option<String>,
     /// Nesting levels being lowered; see [`Self::enter_nesting`].
     levels: usize,
     /// Recursion steps being lowered, levels or not.
     depth: usize,
-    /// Frame address of the outermost live step, the zero the stack
-    /// consumption is measured against.
+    /// Frame address of the outermost live step, the base stack use is measured from.
     stack_base: usize,
 }
 
-/// Stack one lowering may consume before [`BuildGraph::enter_nesting`]
-/// bails. A level count alone does not bound stack: a level costs one frame per
-/// builder and decorator it passes through, and an unoptimised frame is several
-/// times an optimised one.
-///
-/// The fattest shape measured, an unoptimised alternation of a decorated call,
-/// reaches [`MAX_PATTERN_NODES`](crate::matcher::graph::MAX_PATTERN_NODES)
-/// levels inside 0.75 MiB, so the level cap stays the bound a normal pattern
-/// trips on; this catches a fatter one before the 2 MiB a spawned thread gets
-/// by default runs out.
+/// Stack one lowering may consume before [`BuildGraph::enter_nesting`] bails, since a level
+/// count alone does not bound stack. Below a spawned thread's default 2 MiB; a normal pattern
+/// hits [`MAX_PATTERN_NODES`](crate::matcher::graph::MAX_PATTERN_NODES) levels first.
 const MAX_PATTERN_STACK: usize = 1024 * 1024;
 
-/// Address of a local in the calling frame. The stack grows DOWN on every
-/// target this ships to, so a deeper frame reads lower; `saturating_sub` is
-/// what makes the other direction read as no consumption rather than as a huge
-/// one.
+/// Address of a local in the calling frame. Assumes a downward-growing stack.
 #[inline(never)]
 fn frame_mark() -> usize {
     let probe = 0u8;
@@ -55,12 +41,9 @@ impl<N, V> Default for BuildGraph<N, V> {
 }
 
 impl<N, V> BuildGraph<N, V> {
-    /// Opens one recursion step of lowering, refusing once the stack budget is
-    /// spent and, for a `level`, past `MAX_PATTERN_NODES` levels. Lowering
-    /// recurses before any node exists to count, so the cap at finish comes too
-    /// late to keep the recursion off the stack; a level past it is over the
-    /// node cap anyway. A step that adds no node (a decoration) is charged to
-    /// the stack alone.
+    /// Opens one recursion step of lowering, refusing once the stack budget is spent or, for a
+    /// `level`, past `MAX_PATTERN_NODES` levels. Lowering recurses before nodes exist, so the
+    /// node cap at finish would come too late.
     pub(crate) fn enter_nesting(&mut self, level: bool) -> bool {
         let here = frame_mark();
         let max = crate::matcher::graph::MAX_PATTERN_NODES;
@@ -105,9 +88,8 @@ impl<N, V> BuildGraph<N, V> {
         self.graph.add_node_output(node, out)
     }
 
-    /// `false`, refused, when `prod` comes from a node built after
-    /// `consumer`, which is the only way a cycle could form, unless `leaf`
-    /// says its producer never takes an input.
+    /// `false`, refused, when `prod` comes from a node built after `consumer` (the only way to
+    /// form a cycle), unless `leaf` says its producer takes no input.
     pub(crate) fn add_input(&mut self, consumer: NodeId, prod: ValueId, leaf: bool) -> bool {
         if !leaf && self.graph.producer(prod).as_u32() >= consumer.as_u32() {
             self.reject(

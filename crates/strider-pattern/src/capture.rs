@@ -1,6 +1,4 @@
-//! One handle type for both data and control positions. After a match,
-//! `Match::node` gives the `NodeId` and `Match::value` the `ValueId`, the
-//! latter `None` for control-flow nodes with no single value output.
+//! The capture handle, for both data and control positions.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -10,19 +8,15 @@ fn next_id() -> u32 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Ids are globally unique via a process-wide atomic counter.
-///
-/// The same `Capture` may appear in several pattern positions; the matcher
-/// then requires every occurrence to bind the **same** node (and the same
-/// value output, where applicable).
+/// A process-unique capture handle. Every position it appears at must bind the same node (and
+/// value, where applicable).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Capture {
     id: u32,
     internal: bool,
 }
 
-// Every `Capture` is minted explicitly: a `.default()` would let a
-// `#[derive(Default)]` on any containing struct silently allocate ids.
+// No `Default`: a derived one on a containing struct would silently mint ids.
 #[allow(clippy::new_without_default)]
 impl Capture {
     pub fn new() -> Self {
@@ -32,9 +26,8 @@ impl Capture {
         }
     }
 
-    /// Minted by a builder, never by a caller: it holds an identity the
-    /// pattern graph cannot express, and is filtered out of everything a
-    /// caller sees. See [`PatValue::identity`](crate::matcher::PatValue).
+    /// A builder-minted capture, hidden from callers; see
+    /// [`PatValue::identity`](crate::matcher::PatValue).
     pub(crate) fn internal() -> Self {
         Self {
             id: next_id(),
@@ -42,8 +35,7 @@ impl Capture {
         }
     }
 
-    /// Counts up from 0, leaving the top of the range for the sentinel keys
-    /// `find_joined_constrained`'s dedup mints for a capture-free pattern.
+    /// Counts up from 0; the top of the range is reserved for join-dedup sentinels.
     pub fn id(self) -> u32 {
         self.id
     }
@@ -53,7 +45,6 @@ impl Capture {
     }
 }
 
-// The flag is bookkeeping; error messages name a capture by its id alone.
 impl std::fmt::Debug for Capture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Capture({})", self.id)
