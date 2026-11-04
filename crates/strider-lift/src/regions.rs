@@ -8,8 +8,7 @@ use crate::{FunctionLifter, pruned_ssa};
 pub(crate) type RegionMap = rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// Allocates one IR region per CFG region, keyed by CFG `RegionId`; every
-    /// CFG region is present.
+    /// One IR region per CFG region.
     pub(crate) fn build_region_map(
         &mut self,
         placement: &pruned_ssa::PhiPlacement,
@@ -17,9 +16,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let cfg = self.cfg;
         let mut region_map: RegionMap = RegionMap::default();
         for cfg_rid in cfg.region_ids() {
-            // Sorted, so `Phi` creation order (hence node-id assignment)
-            // follows `InitialVnId` rather than the placement set's hash
-            // layout.
+            // Sorted, so node ids do not depend on hash order.
             let mut placed: Vec<strider_ir::node::InitialVnId> = placement
                 .get(&cfg_rid)
                 .map(|s| s.iter().copied().collect())
@@ -40,30 +37,23 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
         let entry_ir = region_map[&cfg.entry()];
         self.builder.set_entry_region(entry_ir)?;
-        // `bind_entry_address_register` writes a variable, which needs a
-        // current region.
+        // Writing a variable needs a current region.
         self.builder.set_region(entry_ir);
         self.record_register_arg_carriers()?;
         self.bind_entry_address_register()?;
         Ok(region_map)
     }
-    /// Translates every region's instructions and, when present, its special
-    /// terminator.  A special terminator's pcode insn is skipped inside the
-    /// per-insn loop and lifted post-loop by a dedicated handler, fingerprinted
-    /// to the region's last machine address.
+    /// Lifts every region's instructions, then its special terminator (whose
+    /// own pcode insn the loop skips).
     pub(crate) fn translate_regions(
         &mut self,
         region_map: &RegionMap,
         doms: &graph_algorithms::dominance::Dominators<strider_cfg::RegionId>,
     ) -> Result<()> {
         let cfg = self.cfg;
-        // Pre-order matters: a region must be processed after its immediate
-        // dominator so `inherit_variables` reads that dominator's FINAL values.
-        // Siblings go ascending by `RegionId`, and every body node's NodeId
-        // follows this order. Regions unreachable from the entry are absent.
+        // Pre-order, so `inherit_variables` reads the idom's final values.
         for cfg_rid in doms.tree_preorder() {
             let ir_region = region_map[&cfg_rid];
-            // The entry region has no idom; `set_entry_region` seeded it.
             if let Some(idom_cfg) = doms.immediate_dominator(cfg_rid) {
                 self.builder
                     .inherit_variables(ir_region, region_map[&idom_cfg]);
@@ -77,10 +67,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             let terminator = &region.terminator;
             self.pcode_consts.reset();
             for wrapped_insn in &region.insns {
-                // Observed BEFORE the skip, and reset per region above, because
-                // `collect_def_sites` feeds every op of every region through an
-                // identical resolver. The two must see the same sequence or a
-                // register write can land where no phi was placed for it.
+                // Observed before the skip: `collect_def_sites` must see the
+                // same op sequence, or a write lands where no phi was placed.
                 self.pcode_consts
                     .observe(wrapped_insn.addr, &wrapped_insn.insn);
                 if skips_opcode(terminator, wrapped_insn.insn.opcode) {
@@ -110,11 +98,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                         })
                         .max()
                 });
-            // A `NoReturn` region ending in a `Call` or `CallIndirect` has an
-            // open control edge (the per-insn loop lifted the call, which does
-            // not terminate), so sink it into `Unreachable`.  Gate on the
-            // opcode: a `CallOther` NoReturn region already self-terminated
-            // inside `handle_call_other`, and terminating it twice fails.
+            // A `NoReturn` region ending in a call is still open; one ending
+            // in a `CallOther` already terminated in `handle_call_other`.
             let noreturn_call =
                 matches!(region.terminator, strider_cfg::RegionTerminator::NoReturn)
                     && region.insns.last().is_some_and(|w| {
@@ -132,10 +117,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     targets,
                     addr,
                 } => s.handle_switch(cfg_rid, target_vn, targets, region_map, *addr),
-                // A target's `isa_bit` (the callee's ISA mode on an
-                // interworking tail call) is the callee function's own
-                // concern, applied when it is analyzed at its entry, not
-                // while lifting this caller.
+                // The target's `isa_bit` is the callee's concern.
                 strider_cfg::RegionTerminator::TailCall { target } => {
                     s.handle_tail_call(target.addr)
                 }
@@ -146,9 +128,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         Ok(())
     }
 
-    /// Wires the region successors no terminator handler wired: only
-    /// `Unconditional` regions, whose `Branch` lifts to nothing.  `CondBranch`
-    /// and `Switch` are already wired by their handlers.
+    /// Wires the successors of `Unconditional` regions, whose `Branch` lifts
+    /// to nothing; other terminators' handlers wire their own.
     pub(crate) fn link_region_edges(&mut self, region_map: &RegionMap) -> Result<()> {
         let graph = self.cfg.region_graph();
         for (src, tgt) in graph.edge_indices().filter_map(|e| graph.edge_endpoints(e)) {
@@ -156,9 +137,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 graph[src].terminator,
                 strider_cfg::RegionTerminator::Unconditional
             ) {
-                // Every CFG edge against a `translate_regions` that walks the
-                // dominator pre-order, which covers every region only because
-                // `strider_cfg::DecodeEngine::build_cfg` removes the unreachable ones.
+                // `build_cfg` drops unreachable regions, so every endpoint was
+                // lifted.
                 self.builder
                     .link_regions(region_map[&src], region_map[&tgt])?;
             }
@@ -167,21 +147,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 }
 
-/// Whether the per-instruction loop must skip `opcode`, leaving the region's
-/// terminator to the post-loop dispatch below.
-///
-/// `TailCall` skips `BranchIndirect` as well as `Branch`: a `known_targets`
-/// resolution pointing out of the function marks the `jmp reg` a tail call,
-/// and processing the `BranchIndirect` would emit an `IndirectBranch` and
-/// terminate the region, failing `handle_tail_call`'s `build_call`.  A
-/// `CondBranch` never lives in a TailCall region: it keeps its own
-/// terminator, and the stub regions on its out-of-bounds arms have no insns.
-///
-/// Skipping by opcode alone is safe by region closure: `Branch` and
-/// `BranchIndirect`, the only opcodes skipped, close the region in
-/// `RegionBuilder::process_new_insn`, so at most one appears per region and
-/// it is always the trailing entry, never an inner pcode op.  (`Call` /
-/// `CallIndirect` / `CallOther` can close it too, but are never skipped.)
+/// Whether the per-instruction loop skips `opcode`, leaving it to the
+/// terminator handler. A `TailCall` may end in a `BranchIndirect` (a
+/// `known_targets` answer outside the function). Skipping by opcode is safe:
+/// a skipped opcode closes its region, so it is only ever the last op.
 fn skips_opcode(terminator: &strider_cfg::RegionTerminator, opcode: rsleigh::Opcode) -> bool {
     match terminator {
         strider_cfg::RegionTerminator::UnresolvedIndirectBranch { .. }
