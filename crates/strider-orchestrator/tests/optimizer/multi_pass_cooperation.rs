@@ -212,8 +212,8 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
 }
 
 /// A degenerate Region+Phi with a single reachable predecessor must be
-/// collapsed by `RegionCollapse`.  Post-pass the Return must no longer
-/// flow through a Region.
+/// collapsed by `RegionCollapse`: the Return no longer flows through a
+/// Region.
 #[test]
 fn region_with_one_predecessor_collapses() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
