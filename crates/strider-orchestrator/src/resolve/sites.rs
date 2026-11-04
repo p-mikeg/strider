@@ -212,7 +212,8 @@ impl<'s> SiteTable<'s> {
         } = staged;
         let (targets, contradicted) = drop_contradicted(targets, &proved);
         let seat = self.seat(addr);
-        // A re-derivation reports no mode; it must not re-decode old arms.
+        // A re-derivation reports no mode where the dispatch commits none; it
+        // must not re-decode old arms.
         let (targets, assumed_mode) = adopt_known_modes(seat, targets, flowing);
         // The seed is unioned in after the mode filters, never subject to
         // them.
