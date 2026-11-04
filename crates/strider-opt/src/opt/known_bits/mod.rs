@@ -306,8 +306,10 @@ impl Optimizer for KnownBits {
         // Each fold's whole cone is absorbed into its old producer, which
         // `replace_value` carries to the new constant. Every walk runs over
         // pre-fold edges, so the rewire comes last. A finished old producer
-        // stops a later walk, keeping nested folds linear; `visited` is stamped
-        // per fold and only cuts diamonds (the cone kinds form no cycle).
+        // stops a later walk, so a fold nested in an earlier fold's cone is not
+        // walked again, but sibling folds over one shared cone each walk it;
+        // `visited` is stamped per fold and only cuts diamonds (the cone kinds
+        // form no cycle).
         let mut absorbed: DenseEntitySet<NodeId> = DenseEntitySet::new();
         let mut visited: SecondaryMap<NodeId, u32> = SecondaryMap::new();
         let mut stamp: u32 = 0;
