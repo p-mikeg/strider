@@ -244,7 +244,11 @@ impl OwnedElf {
                 true,
             ),
         };
-        let view = super::dynamic::loader_view(&obj);
+        let view = if relocate {
+            super::dynamic::loader_view(&obj)
+        } else {
+            super::dynamic::LoaderView::NotDynamic
+        };
         let fetch = self.regions_with(&obj, &layout, source, fetch, relocate, &view)?;
         Ok(ElfImage {
             rom: self
