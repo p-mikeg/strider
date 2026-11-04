@@ -282,7 +282,8 @@ class Pat(OrderedPat):
         once, or not at all."""
         ...
     def of_width(self, n: int) -> Pat:
-        """Constrain this value's own output to `n` bits."""
+        """Constrain this value's own output to `n` bits. A width no value
+        type has raises `StriderError`."""
         ...
     def value_ty(self, ty: ValueTy) -> Pat:
         """Constrain this value's own output type by name."""
@@ -467,7 +468,8 @@ class OutputSlotPat(Generic[_B]):
         """Bind this output slot to `c`."""
         ...
     def of_width(self, bits: int) -> _B:
-        """Require this output to be `bits` wide."""
+        """Require this output to be `bits` wide. A width no value type has
+        raises `StriderError`."""
         ...
     def of_type(self, ty: ValueTy) -> _B:
         """Require this output's type to be `ty`."""
@@ -693,11 +695,12 @@ def predicate(f: Callable[[Match], bool]) -> Pat:
     """`anything().when(f)`."""
 def value_of_width(n: int) -> Pat:
     """Match any value whose own output is exactly `n` bits wide (width 1
-    includes comparisons)."""
+    includes comparisons). A width no value type has raises `StriderError`."""
 def inputs_of_width(n: int, inner: ValueLike) -> Pat:
     """Match `inner` and require all of its value inputs to be `n` bits wide.
     `inner` needs at least one value input and one value output, so a
-    constant or a sink never matches."""
+    constant or a sink never matches. A width no value type has raises
+    `StriderError`."""
 def bool_inputs(inner: ValueLike) -> Pat:
     """`inputs_of_width(1, inner)`."""
 def int_const(value: int | list[int] | Capture | None = ...) -> Pat:

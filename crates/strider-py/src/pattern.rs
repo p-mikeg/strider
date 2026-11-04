@@ -440,6 +440,21 @@ fn pat_rhs_message(repr: &Repr) -> String {
 }
 
 /// Case-insensitive: `"i1"` / `"I64"` / `"f32"`.
+/// `n`, when some value type is `n` bits wide.
+pub(crate) fn width_arg(n: u32) -> PyResult<u32> {
+    let mut widths: Vec<usize> = T::SUPPORTED.iter().map(|ty| ty.bit_width()).collect();
+    if widths.contains(&(n as usize)) {
+        return Ok(n);
+    }
+    widths.sort_unstable();
+    widths.dedup();
+    let names: Vec<String> = widths.iter().map(ToString::to_string).collect();
+    Err(into_strider_err(anyhow::anyhow!(
+        "unsupported width {n}: expected one of {}",
+        names.join(", ")
+    )))
+}
+
 fn parse_value_ty(name: &str) -> PyResult<T> {
     name.to_ascii_lowercase()
         .parse()
@@ -978,7 +993,7 @@ impl PyPat {
 
     /// Constrain the matched node's value output to `n` bits. Match-only.
     fn of_width(slf: &Bound<'_, Self>, n: u32) -> PyResult<PyPat> {
-        derive(slf, Wrap::OfWidth(n), None)
+        derive(slf, Wrap::OfWidth(width_arg(n)?), None)
     }
 
     /// Constrain the matched node's value output to type `ty` (`"i64"`,
@@ -1032,9 +1047,14 @@ pub(crate) fn var_repr(c: Capture) -> Repr {
 
 /// Match any value output exactly `n` bits wide.
 #[pyfunction]
-pub fn value_of_width(n: u32) -> PyPat {
+pub fn value_of_width(n: u32) -> PyResult<PyPat> {
+    let n = width_arg(n)?;
     let make = move || ex(sp::value_of_width(n));
-    PyPat::from(leaf("value_of_width()", Kind::Match, Box::new(make)))
+    Ok(PyPat::from(leaf(
+        "value_of_width()",
+        Kind::Match,
+        Box::new(make),
+    )))
 }
 
 /// `int_const(v)`, either side.
@@ -1060,19 +1080,20 @@ pub(crate) fn float_const_repr(bits: u64) -> Repr {
 
 /// Match `inner` and require all value inputs to be `n` bits wide.
 #[pyfunction]
-pub fn inputs_of_width(n: u32, inner: Py<PyAny>) -> PyPat {
+pub fn inputs_of_width(n: u32, inner: Py<PyAny>) -> PyResult<PyPat> {
+    let n = width_arg(n)?;
     let make = move |e| ex(sp::inputs_of_width(n, e));
-    PyPat::from(un(
+    Ok(PyPat::from(un(
         "inputs_of_width()",
         Kind::Through,
         Box::new(make),
         inner,
-    ))
+    )))
 }
 
 /// Match `inner` whose value inputs are all 1-bit (`I1`).
 #[pyfunction]
-pub fn bool_inputs(inner: Py<PyAny>) -> PyPat {
+pub fn bool_inputs(inner: Py<PyAny>) -> PyResult<PyPat> {
     inputs_of_width(1, inner)
 }
 
@@ -2047,7 +2068,7 @@ impl PyOutputSlot {
 
     /// Require this output to be `bits` wide.
     fn of_width(&self, py: Python<'_>, bits: u32) -> PyResult<Py<PyAny>> {
-        self.commit(py, OutputAspect::Width(bits))
+        self.commit(py, OutputAspect::Width(width_arg(bits)?))
     }
 
     /// Require this output's type to be `ty`, e.g. `"i64"`.
