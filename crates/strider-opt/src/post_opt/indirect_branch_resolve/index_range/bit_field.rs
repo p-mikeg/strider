@@ -1,5 +1,5 @@
-//! Reading a value as a run of bits of the value below it, which is what lets
-//! a guard on one expression of those bits bound another.
+//! A value read as a run of bits of the value below it, so a guard on one
+//! expression of those bits bounds another.
 
 use cranelift_entity::SecondaryMap;
 
@@ -16,12 +16,10 @@ use super::{Step, operand_step};
 #[derive(Default)]
 pub(super) struct MaskOperands {
     /// Per `And(x, c)` output whose mask clears only bits KnownBits proves zero
-    /// in `x`, that `x`: the two are the same value.  `slwi` / `sldi` lift to
-    /// `And(ShiftLeft(idx, k), ~(2^k - 1))`.
+    /// in `x`, that `x` (e.g. `slwi`'s `And(ShiftLeft(idx, k), ~(2^k - 1))`).
     pub(super) identity: SecondaryMap<ValueId, Option<ValueId>>,
     /// Per `And(Or(a, b), c)` output where `c` clears every bit `a` may set,
-    /// `b`: the output is `And(b, c)`.  A PowerPC `rlwinm` lifts as the
-    /// rotate `Or(x << r, x >> (32 - r))` under a mask that drops one arm.
+    /// `b` (e.g. a PowerPC `rlwinm` rotate whose mask drops one arm).
     through_or: SecondaryMap<ValueId, Option<ValueId>>,
 }
 
@@ -62,11 +60,9 @@ impl MaskOperands {
 /// reached is the root.
 const MAX_FIELD_STEPS: u32 = 16;
 
-/// A value read as a run of bits of `root`: its bits `shift..shift + width`
-/// are `root`'s bits `lo..lo + width`, and its bits below `shift` are zero.
-/// When `exact` the bits above the run are zero too, so two values with one
-/// exact field are one unsigned value; otherwise they are other bits of
-/// `root`.
+/// A value whose bits `shift..shift + width` are `root`'s bits
+/// `lo..lo + width`, and below `shift` zero. When `exact` the bits above the
+/// run are zero too, so two values with one exact field are one value.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) struct BitField {
     pub(super) root: ValueId,
@@ -104,18 +100,10 @@ impl BitField {
     }
 
     /// What `iv`, an interval on a value with this field, proves about a value
-    /// with the field `inner`, or `None` unless it [`encloses`](Self::encloses)
-    /// `inner` and `iv`'s low end carries.
-    ///
-    /// The same exact field is the same value, so `iv` itself.  Otherwise the
-    /// run's bits read as a number are at most `iv.hi >> shift`, whatever lies
-    /// above them, and `inner`'s are that number's bits from `inner.lo - lo`
-    /// on: at most `(iv.hi >> shift) >> (inner.lo - lo)`, and at most
-    /// `inner`'s own width.  Only the top of an exact run is monotone in the
-    /// value, so only there does `iv.lo` bound `inner` from below; anywhere
-    /// else a low end above zero is refused: dropping it would enumerate
-    /// values below it that the field never takes (`x` in `[10, 17]` puts
-    /// `(x >> 1) & 7` in `{5, 6, 7, 0}`, not `[0, 7]`).
+    /// with the field `inner`; `None` unless it [`encloses`](Self::encloses)
+    /// `inner` and `iv`'s low end carries. Only the top of an exact run is
+    /// monotone in the value, so elsewhere a nonzero `iv.lo` is refused: `x`
+    /// in `[10, 17]` puts `(x >> 1) & 7` in `{5, 6, 7, 0}`.
     pub(super) fn project(self, inner: BitField, iv: Interval) -> Option<Interval> {
         if self == inner {
             return Some(iv);
@@ -243,8 +231,7 @@ fn field_step(
 }
 
 /// `value` as a [`BitField`] of the deepest value the shifts, masks and casts
-/// below it reach; `value` itself, all its bits, when they leave nothing exact
-/// to compare.  `None` for a non-integer.
+/// below it reach, else of itself; `None` for a non-integer.
 pub(super) fn bit_field(
     function: &strider_ir::Function,
     masks: &MaskOperands,
@@ -288,8 +275,7 @@ pub(super) fn bit_field(
 mod tests {
     use super::{BitField, Interval};
 
-    /// A run whose digits shift out of the `u128` carrier bounds nothing,
-    /// rather than reading as zero.
+    /// A run whose digits shift out of the `u128` carrier bounds nothing.
     /// Mutation: read an out-of-carrier shift as zero digits.
     #[test]
     fn a_shift_past_the_carrier_projects_no_bound() {

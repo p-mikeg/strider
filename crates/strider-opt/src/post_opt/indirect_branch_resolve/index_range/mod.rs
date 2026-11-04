@@ -1,22 +1,12 @@
-//! Dominator-scoped per-`(value, region)` integer range analysis, read by
-//! the jump-table classifier above it and nothing else.
+//! Dominator-scoped per-`(value, region)` integer ranges for the jump-table
+//! classifier. Seeds: `If(IntCmp(v, const))` edge guards (back-propagated
+//! through `Add(X, const)`, shared by every expression of the same bits),
+//! KnownBits bounds and strides, guards recovered at a `Region` every
+//! predecessor of which bounds the same value, per-phi-arm edge guards, and
+//! monotone constant scalings.
 //!
-//! Interval lattice with five seeds:
-//!
-//! - `If(IntCmp(v, const))` guards, edge-sensitive, propagated via the control
-//!   dominator tree, back-propagated through an `Add(X, const)` spine, and
-//!   shared by every expression of exactly `v`'s bits of one value.
-//! - `KnownBits` upper bounds and strides.
-//! - Guard recovery at a `Region` every predecessor of which bounds the same
-//!   value.
-//! - Per phi arm, the guard on the edge that arm arrives by, which is the only
-//!   channel for a bound sitting below the loop header it re-enters.
-//! - Forward propagation through a monotone constant scaling.
-//!
-//! Fail-closed: anything uncertain returns the full type range (top).
-//!
-//! SOUNDNESS INVARIANT: `range_of` may widen toward top but must NEVER return
-//! an interval tighter than the real runtime value set.
+//! SOUNDNESS: `range_of` may widen toward top (anything uncertain), but never
+//! returns an interval tighter than the real runtime value set.
 
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -42,16 +32,13 @@ pub(crate) use trust::{CELL_TEST_SCANS, EQUALITY_SCANS};
 use bit_field::{BitField, MaskOperands, bit_field};
 pub(crate) use interval::width_mask;
 
-/// Cast hops either guard ladder ([`RangeMap::dominating_guard`],
-/// [`RangeMap::edge_bound_on`]) walks before giving up.  A real index sits one
-/// or two casts above its compare; the cap only stops a pathological chain from
-/// making the walk the cost centre.
+/// Cast hops [`RangeMap::dominating_guard`] and [`RangeMap::edge_bound_on`]
+/// walk before giving up.
 const MAX_GUARD_LADDER: u32 = 8;
 
 /// Deepest chain of `(value, region)` resolutions [`RangeMap::range_of`]
-/// follows.  A phi of phis costs one level each, so thousands of sequential
-/// conditional assignments feeding one query would otherwise recurse past the
-/// stack.  Exhaustion widens to top.
+/// follows, so a long phi-of-phi chain cannot overflow the stack. Exhaustion
+/// widens to top.
 const MAX_RANGE_DEPTH: u32 = 256;
 
 /// Cycle marking for a `(value, region)` query; absent means unvisited.
@@ -66,25 +53,21 @@ enum MemoSlot {
 pub(crate) struct RangeMap<'f> {
     function: &'f strider_ir::Function,
     doms: DominatorTree<NodeId>,
-    /// Per guarded value, the intervals proven AT its guard nodes (an `If`'s
-    /// guarded successor edge, or a `Region` every one of whose predecessor
-    /// edges bounds the value) on the dominator tree, so a lookup climbs only
-    /// the guards dominating the query point.
+    /// Per guarded value, the intervals proven at its guard nodes (an `If`
+    /// edge's exclusive sink, or a `Region` every predecessor edge of which
+    /// bounds the value).
     guard_forests: FxHashMap<ValueId, DomFacts<Interval>>,
     /// Flow-insensitive `[0, max_value]` bounds from KnownBits.
     kb_bounds: SecondaryMap<ValueId, Option<Interval>>,
     /// Resolved intervals, with `InProgress` cutting resolution cycles.
     memo: FxHashMap<(ValueId, NodeId), MemoSlot>,
     /// Per `If`-controlled edge, what taking it proves and about which value.
-    ///
-    /// Distinct from `guard_forests`, keyed by the node a guard holds AT, which
-    /// so cannot record one whose edge lands on a merge. An edge fact holds
-    /// only for the value ARRIVING on that edge, which is what a phi arm is.
+    /// Unlike `guard_forests`, this covers edges landing on a merge, where the
+    /// fact holds only for the phi arm arriving on that edge.
     edge_guards: FxHashMap<ValueId, (ValueId, Interval)>,
     /// The edges into a merge whose guards the merge's recovered guard joins.
     merged_edges: FxHashSet<ValueId>,
-    /// `dominating_guard` is a pure function of the guards and `doms`, both
-    /// fixed here, and every `range_of` frame asks it at least once.
+    /// [`Self::dominating_guard`] answers.
     guard_memo: FxHashMap<(ValueId, NodeId), Option<Interval>>,
     /// What each `And` with a constant mask is the mask of.
     masks: MaskOperands,
@@ -95,9 +78,8 @@ pub(crate) struct RangeMap<'f> {
     field_memo: SecondaryMap<ValueId, Option<Option<BitField>>>,
     /// Open `range_of` frames, against [`MAX_RANGE_DEPTH`].
     depth: u32,
-    /// Whether the query in flight took a depth or cycle cut. Its frames fold
-    /// the cut's `top` into answers the key does not record the cut in, so
-    /// the memo is dropped rather than handed to the next query.
+    /// Whether the query in flight took a depth or cycle cut, whose `top` its
+    /// memoized answers depend on; the memo is then dropped at depth 0.
     cut: bool,
     /// Every `If`, by the loads its condition reads.
     cell_tests: trust::CellTests,
@@ -107,15 +89,12 @@ pub(crate) struct RangeMap<'f> {
     /// `value` or a zero-extend of it.
     excluded: FxHashMap<(ValueId, u128), DomFacts<()>>,
     /// Per index and range, where [`Self::cell_test_left_unread`] finds an
-    /// unread test, as sorted disjoint preorder ranges. The index's strip is
-    /// a function of the index.
+    /// unread test, as sorted disjoint preorder ranges.
     cell_test_spans: FxHashMap<(ValueId, Interval), Vec<(u32, u32)>>,
 }
 
 impl<'f> RangeMap<'f> {
-    /// The ranges of `function`: builds the flow-insensitive KnownBits bases,
-    /// extracts per-`If` guard facts, then recovers guards at a merge every
-    /// predecessor of which bounds the same value.
+    /// The ranges of `function`.
     pub(crate) fn new(function: &'f strider_ir::Function) -> Self {
         build(
             function,
@@ -124,17 +103,10 @@ impl<'f> RangeMap<'f> {
         )
     }
 
-    /// Range of `value` valid within `region`.
-    ///
-    /// A multi-input phi unions each arm's range in that arm's predecessor
-    /// region, falling back to a guard on the phi's own output if any arm is
-    /// top.  Any other value intersects its dominating guards with the
-    /// KnownBits base.  Unconstrained means top.
+    /// Range of `value` valid within `region`; top when unconstrained.
     pub(crate) fn range_of(&mut self, value: ValueId, region: NodeId) -> Interval {
-        // A width past the `u128` carrier has no mask the value is inside, so
-        // `Interval::top` there is not a bound. Refusing locally keeps the
-        // non-bound out of `const_scale`, which would otherwise turn it into a
-        // tight claim (`top(u128::MAX) >> 127` is at most one).
+        // Past the `u128` carrier `top` is no bound, and `const_scale` would
+        // turn it into a tight one (`top(u128::MAX) >> 127` is at most one).
         let Some(mask) = self
             .function
             .value_type_opt(value)
@@ -142,12 +114,11 @@ impl<'f> RangeMap<'f> {
         else {
             return Interval::top(u128::MAX);
         };
-        // Past the gate the mask exists, so the two bail-outs below share it.
         let top = Interval::top(mask);
         let key = (value, region);
 
-        // A cycle, cut by returning top for the back-edge; the frame that
-        // opened it still applies its dominating guards.
+        // A cycle's back-edge is top; the frame that opened it still applies
+        // its dominating guards.
         match self.memo.get(&key) {
             Some(MemoSlot::Done(iv)) => return *iv,
             Some(MemoSlot::InProgress) => {
@@ -157,8 +128,7 @@ impl<'f> RangeMap<'f> {
             None => {}
         }
 
-        // Budget exhausted: top, left out of the memo so a shallower query of
-        // the same key still resolves it.
+        // Left out of the memo so a shallower query of the key still resolves.
         if self.depth >= MAX_RANGE_DEPTH {
             self.cut = true;
             return top;
@@ -168,11 +138,9 @@ impl<'f> RangeMap<'f> {
 
         let producer = self.function.producer(value);
 
-        // A monotone constant scaling (`idx << k`, the value a table index
-        // feeds into its address) propagates only under a dominating GUARD on
-        // the operand: KnownBits scales the stride but loses the upper bound
-        // across the scale, so an unguarded `byte * 4` would resolve as a
-        // 256-case index.
+        // A constant scaling propagates only under a dominating guard on the
+        // operand: KnownBits keeps the stride but loses the upper bound, so an
+        // unguarded `byte * 4` would resolve as a 256-case index.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
             self.resolve_phi(value, mask, region)
         } else if let Some(operand) = self.masks.identity[value] {
@@ -200,20 +168,18 @@ impl<'f> RangeMap<'f> {
         result
     }
 
-    /// `region` applies only to a guard on the phi's own output; each arm is
-    /// queried at the producer of the edge it arrives on.
+    /// The union of the arms' ranges, each queried at the producer of its
+    /// edge, met with a guard on the phi's own output at `region`.
     fn resolve_phi(&mut self, value: ValueId, mask: u128, region: NodeId) -> Interval {
         let top = Interval::top(mask);
         let phi_node = self.function.producer(value);
         debug_assert_eq!(self.function.node_outputs(phi_node).first(), Some(&value));
-        // A guard dominating an arm's edge holds on that edge; one holding on
-        // another incoming path must not apply.
         let Some((_, arms)) = self.phi_arms(phi_node) else {
             return top;
         };
 
-        // `None` once an arm is top: the union is top too, and the arms taken
-        // so far must not survive it, their stride being one only they obey.
+        // `None` once an arm is top: the strides of earlier arms must not
+        // survive into the union.
         let mut union: Option<Interval> = None;
         for (edge, arm_val) in arms {
             let arm_range = self.range_of(arm_val, self.function.graph().producer(edge));
@@ -224,8 +190,6 @@ impl<'f> RangeMap<'f> {
             union = Some(union.map_or(arm_range, |acc| acc.union(arm_range)));
         }
 
-        // A guard holding at the query point is valid for every arm, and is
-        // all that bounds the phi once one of them is top.
         match (union, self.dominating_guard(value, region)) {
             (Some(union), Some(guard)) => union.intersect(guard),
             (Some(union), None) => union,
@@ -233,21 +197,14 @@ impl<'f> RangeMap<'f> {
         }
     }
 
-    /// Intersection of every guard on `value` whose `guard_node` dominates
-    /// `region`, or `None` when none apply.
-    ///
-    /// Also carries up a guard recorded on a value `value` is built from by a
-    /// chain of [`Self::carrying_operand`] hops: a compare on `al` bounds
-    /// the `movzbl %al` an addressing mode scales, and without the walk the
-    /// index falls back to the KnownBits width bound and reads the whole table
-    /// domain.
+    /// Intersection of every guard dominating `region` on `value` or on a
+    /// value it is built from by [`Self::carrying_operand`] hops (a compare on
+    /// `al` bounds the `movzbl %al` an address scales); `None` when none apply.
     fn dominating_guard(&mut self, value: ValueId, region: NodeId) -> Option<Interval> {
         if let Some(hit) = self.guard_memo.get(&(value, region)) {
             return *hit;
         }
         let mut verdict = self.bound_at(value, region);
-        // The hops from `value` down to `cur`, each lifting its operand's
-        // bound to the value above it.
         let mut hops: Vec<(Step, u128)> = Vec::new();
         let mut cur = value;
         for _ in 0..MAX_GUARD_LADDER {
@@ -268,14 +225,9 @@ impl<'f> RangeMap<'f> {
         verdict
     }
 
-    /// What holds on `value` itself at `region`: the guards recorded on it and
-    /// on every other value whose bits enclose its own, met with what its
-    /// incoming edges prove if it is a phi.
-    ///
-    /// MIPS64 guards `w >> 26` with `srl` and indexes by an `ext` of the same
-    /// six bits, `(sext(w) << 32) >> 58`: two nodes, one value.  A guard on
-    /// wider bits bounds the field inside them: `w < 20` puts `(w >> 4) & 7`
-    /// at most 1.
+    /// The guards at `region` on `value` and on every value whose bits
+    /// enclose its own, met with its phi-arm bound. A guard on wider bits
+    /// bounds the field inside: `w < 20` puts `(w >> 4) & 7` at most 1.
     fn bound_at(&mut self, value: ValueId, region: NodeId) -> Option<Interval> {
         let own = match (
             self.guard_at(value, region),
@@ -319,16 +271,9 @@ impl<'f> RangeMap<'f> {
         field
     }
 
-    /// The union over a phi's arms of what reaching it by that arm's edge
-    /// proves: a constant arm is its own value, and a guarded one is the
-    /// interval its `If` edge establishes on exactly that arm value.  `None`
-    /// unless every arm is one of the two.
-    ///
-    /// An edge fact is not a node fact: the merge the edge lands on is reached
-    /// by the other predecessors too, so the interval bounds only the value
-    /// arriving along that one edge, which is the arm.  A loop back edge is the
-    /// case the mask alone loses, its guard sitting below the header it
-    /// re-enters.
+    /// The union over a phi's arms of a constant arm's value or the interval
+    /// its `If` edge proves of the arm; `None` unless every arm is one of the
+    /// two. Covers a loop back edge whose guard sits below the header.
     fn phi_arm_bound(&self, value: ValueId, region: NodeId) -> Option<Interval> {
         let f = self.function;
         let phi_node = f.producer(value);
@@ -349,16 +294,8 @@ impl<'f> RangeMap<'f> {
             .reduce(Interval::union)
     }
 
-    /// What taking `edge` proves about the value `arm` arriving on it, mapped up
-    /// the hops between the compared value and the arm: the compare is on the
-    /// register, the arm on a widened, masked or already-scaled copy of it.
-    ///
-    /// The hops are collected downward and replayed upward, so each one sees
-    /// the interval its own operand really carries.
-    ///
-    /// A zero-extend is the identity on the value, so the compared value
-    /// stands for each value it zero-extends: a guard on `zext32(b)` bounds
-    /// an arm `zext64(b)`.
+    /// What taking `edge` proves about `arm`, lifted up the hops from the
+    /// compared value (or a value it zero-extends) to the arm.
     fn edge_bound_on(&self, edge: ValueId, arm: ValueId) -> Option<Interval> {
         let (guarded, iv) = *self.edge_guards.get(&edge)?;
         let f = self.function;
@@ -388,7 +325,7 @@ impl<'f> RangeMap<'f> {
     }
 
     /// The guards recorded on `value` itself whose node dominates `region`,
-    /// met from `region` up towards the entry.
+    /// met.
     fn guard_at(&self, value: ValueId, region: NodeId) -> Option<Interval> {
         #[cfg(test)]
         GUARD_SCANS.with(|c| c.set(c.get() + 1));
@@ -397,10 +334,9 @@ impl<'f> RangeMap<'f> {
             .meet_dominating(self.doms.span(region)?)
     }
 
-    /// The operand whose bound `value` inherits through a cast or a mask,
-    /// with the step and `value`'s width mask; with `scales`, through a
-    /// monotone constant scaling too, which a bound survives as a mapped
-    /// interval.  `None` when no hop is sound, which ends the walk.
+    /// The operand whose bound `value` inherits through a cast, a mask, or
+    /// with `scales` a constant scaling, with the step and `value`'s width
+    /// mask; `None` when no hop is sound.
     fn carrying_operand(&self, value: ValueId, scales: bool) -> Option<(ValueId, Step, u128)> {
         let f = self.function;
         let (x, step) = operand_step(f, value)?;
@@ -412,18 +348,16 @@ impl<'f> RangeMap<'f> {
         carries.then(|| (x, step, width_mask(f, value)))
     }
 
-    /// Per arm of `phi_node`, the control edge it arrives on paired with the
-    /// arm value, in the joining `Region`'s input order, and that `Region`.
-    /// `None` for fewer than two arms.
+    /// `phi_node`'s `Region` and its `(edge, arm)` pairs; `None` for fewer
+    /// than two arms.
     fn phi_arms(&self, phi_node: NodeId) -> Option<(NodeId, Vec<(ValueId, ValueId)>)> {
         let f = self.function;
         let arms: Vec<(ValueId, ValueId)> = f.phi_arms(phi_node).collect();
         (arms.len() >= 2).then(|| (f.phi_region(phi_node), arms))
     }
 
-    /// Whether `sum`, an `Add` output, can range narrower than its type at
-    /// some region: only its KnownBits bound, a guard on it, or a guard on a
-    /// field of it narrows one.
+    /// Whether `sum`, an `Add` output, may range narrower than its type at
+    /// some region.
     pub(crate) fn may_bound_sum(&self, sum: ValueId) -> bool {
         self.kb_bounds[sum].is_some()
             || self.guard_forests.contains_key(&sum)
@@ -462,18 +396,13 @@ impl<'f> RangeMap<'f> {
 thread_local! {
     /// [`RangeMap::guard_at`] lookups, one per guard scan of a value.
     pub(crate) static GUARD_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    /// Dominating-guard lookups, each one probe: the cost a query pays, which
-    /// must track neither the chain's depth nor the value's guard count.
+    /// [`DomFacts::meet_dominating`] probes.
     pub(crate) static GUARD_PROBES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// The values the phi `value` can hold when each of its arms is a constant or
-/// a phi of the same kind, sorted; `None` for any other arm, or past `cap`
-/// values or `cap` phis.
-///
-/// Exact where [`RangeMap::range_of`] is a hull: the union of `{0, 3, 5}` is
-/// `[0, 5]`.  A value reaches a web of such phis only through one of its
-/// constant arms, so a cycle among them adds nothing.
+/// The values, sorted, the phi `value` can hold when each of its arms is a
+/// constant or such a phi; `None` for any other arm, or past `cap` values or
+/// `cap` phis. Exact where [`RangeMap::range_of`] is a hull.
 pub(crate) fn phi_constants(
     function: &strider_ir::Function,
     value: ValueId,
@@ -511,10 +440,8 @@ pub(crate) fn phi_constants(
     Some(values.into_iter().collect())
 }
 
-/// For `value = Add(X, IntConst(c))`, the bound `X` inherits from a guard on
-/// `X + c`: `interval` shifted by `-c` mod the operand width.  `None` if the
-/// value is not such an add, or the shift wraps (a straddling interval has no
-/// single `[lo, hi]` form).
+/// For `value = Add(X, c)` guarded by `interval`, `X` and `interval - c` mod
+/// its width; `None` for any other value or when the shift wraps.
 fn add_operand_shifted_interval(
     function: &strider_ir::Function,
     value: ValueId,
@@ -525,9 +452,8 @@ fn add_operand_shifted_interval(
         function.producer(value),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
     )?;
-    // Past 128 bits there is no `u128` modulus, so the shift would wrap mod
-    // 2^128 instead of the type's and the `lo <= hi` test would accept a
-    // TIGHTER-than-real interval, the one thing this module must never return.
+    // Past 128 bits the shift would wrap mod 2^128, not the type's, and could
+    // return a tighter-than-real interval.
     let mask = function.value_type_opt(operand)?.int_mask_u128()?;
     let lo = interval.lo.wrapping_sub(c) & mask;
     let hi = interval.hi.wrapping_sub(c) & mask;
@@ -578,7 +504,7 @@ fn rotate_operand_interval(
     ))
 }
 
-/// How a value is built from one variable operand.  A shift or divide takes
+/// How a value is built from one variable operand. A shift or divide takes
 /// its constant on the right only.
 #[derive(Clone, Copy)]
 pub(crate) enum Step {
@@ -597,21 +523,16 @@ impl Step {
     /// width mask; `None` where nothing carries.
     fn lift(self, iv: Interval, mask: u128) -> Option<Interval> {
         match self {
-            // Zero extension is the identity on the unsigned value.
             Step::ZeroExtend => Some(iv),
-            // Truncation is the identity only below the narrower type's mask.
             Step::Truncate => (iv.hi <= mask).then_some(iv),
-            // Masking only clears bits, so `x & c <= x` carries the upper
-            // bound while the low end and the stride do not survive.
+            // `x & c <= x`: only the upper bound survives.
             Step::And(_) => Some(Interval::dense(0, iv.hi)),
             step => Some(scale_of(step)?.apply(iv, mask)),
         }
     }
 
-    /// The image of `iv` under a step [`strip_to_cell`] takes, at the
-    /// value's `mask`, or `None` where no interval is exactly that image: a
-    /// scaling that wraps, a divide that leaves gaps, a truncate of part of
-    /// a span.
+    /// The exact image of `iv` under a step [`strip_to_cell`] takes, at the
+    /// value's `mask`; `None` where no interval is exactly that image.
     pub(crate) fn image(self, iv: Interval, mask: u128) -> Option<Interval> {
         match self {
             Step::ZeroExtend | Step::And(_) => Some(iv),
@@ -658,9 +579,8 @@ fn operand_step(f: &strider_ir::Function, value: ValueId) -> Option<(ValueId, St
     }
 }
 
-/// If `value` is a monotone constant scaling of one variable operand
-/// (`x << k`, `x * c`, `x >> k`, `x / c`), the operand and how to transform
-/// its range.  The constant must be the RHS for the non-commutative shapes.
+/// The operand and scaling when `value` is a monotone constant scaling of one
+/// variable operand.
 fn const_scale(f: &strider_ir::Function, value: ValueId) -> Option<(ValueId, ScaleOp)> {
     let (x, step) = operand_step(f, value)?;
     Some((x, scale_of(step)?))
@@ -671,8 +591,7 @@ pub(crate) fn scale_of(step: Step) -> Option<ScaleOp> {
     match step {
         Step::ShiftLeft(k) => ScaleOp::shl(k),
         Step::ShiftRight(k) => ScaleOp::shr(k),
-        // A divide by zero traps, and `eval::int_binary` refuses to fold it,
-        // so the node reaches here; `udiv` would read it as a divide by one.
+        // A divide by zero traps and is not folded; `udiv` would read it as /1.
         Step::Div(0) => None,
         Step::Div(c) => Some(ScaleOp::Udiv(c)),
         Step::Mul(c) => Some(ScaleOp::Mul(c)),
@@ -680,10 +599,8 @@ pub(crate) fn scale_of(step: Step) -> Option<ScaleOp> {
     }
 }
 
-/// Steps any one walk over a value chain or cone takes here: a cell strip,
-/// a field address, a test's cone, an `Add` spine. A real chain is a few
-/// steps; the cap only keeps a pathological one off the cost centre, and
-/// every walk that reaches it answers the conservative way.
+/// Steps any one walk over a value chain or cone takes here; a walk reaching
+/// it answers the conservative way.
 pub(crate) const MAX_WALK: usize = 64;
 
 /// A value read as the cell [`strip_to_cell`] reduces it to.
@@ -693,9 +610,9 @@ pub(crate) struct Stripped {
     pub(crate) steps: Vec<(ValueId, Step)>,
 }
 
-/// What `v` reduces to through zero-extends, truncates, the `And`s with a
-/// constant `through_mask` accepts and nonzero constant scalings. `None` past
-/// [`MAX_WALK`] steps, which answers "width-only".
+/// What `v` reduces to through zero-extends, truncates, the constant `And`s
+/// `through_mask` accepts and nonzero constant scalings; `None` past
+/// [`MAX_WALK`] steps.
 pub(crate) fn strip_to_cell(
     f: &strider_ir::Function,
     v: ValueId,
@@ -729,8 +646,8 @@ pub(crate) fn strip_to_cell(
     None
 }
 
-/// Facts at nodes in dominator-tree preorder, each met with every fact whose
-/// node dominates it, so the meet holding at a node is one search.
+/// Facts at nodes in dominator-tree preorder, each pre-met with its
+/// dominators' facts, so the meet holding at a node is one search.
 struct DomFacts<T> {
     entries: Vec<DomEntry<T>>,
     /// `max_post[l][i]`: the largest `post` among `entries[i..i + 2^l]`.
@@ -740,13 +657,11 @@ struct DomFacts<T> {
 struct DomEntry<T> {
     pre: u32,
     post: u32,
-    /// This node's fact met with every fact whose node dominates it.
     met: T,
 }
 
 impl<T: Copy> DomFacts<T> {
-    /// `facts`' nodes outside the tree are dropped: they dominate no node
-    /// in it.
+    /// Drops `facts`' nodes outside the tree.
     fn new(
         doms: &DominatorTree<NodeId>,
         facts: impl IntoIterator<Item = (NodeId, T)>,
@@ -787,9 +702,8 @@ impl<T: Copy> DomFacts<T> {
 
     /// The facts whose nodes enclose `span`, met.
     fn meet_dominating(&self, (pre, post): (u32, u32)) -> Option<T> {
-        // Every entry up to `end` starts at or before `pre`, so it encloses the
-        // query iff it has not finished before `post`; the last such is the
-        // nearest dominating fact.
+        // An entry up to `end` encloses the query iff its `post` is not below
+        // `post`; the last such is the nearest dominating fact.
         let mut end = self.entries.partition_point(|e| e.pre <= pre);
         for level in (0..self.max_post.len()).rev() {
             let width = 1usize << level;
@@ -803,8 +717,7 @@ impl<T: Copy> DomFacts<T> {
     }
 }
 
-/// Records `interval` as proven at `node`, intersecting with any bound already
-/// recorded there.
+/// Records `interval` as proven at `node`, met with any bound already there.
 fn add_guard(
     guards: &mut FxHashMap<ValueId, FxHashMap<NodeId, Interval>>,
     value: ValueId,
@@ -897,10 +810,8 @@ fn build<'f>(
         }
     }
 
-    // A value bounded on EVERY control-predecessor edge of a merge is bounded
-    // at the merge by the union, though no single guard's edge dominates past
-    // it.  One level: a predecessor that is not an `If` bounds nothing and
-    // blocks the join.
+    // A value bounded on every predecessor edge of a merge is bounded there
+    // by the union. One level: a non-`If` predecessor blocks the join.
     for region in function.walk_kind(|k| matches!(k, NodeKind::Region)) {
         let pred_edges: Vec<ValueId> = function.node_inputs(region).into_iter().collect();
         if pred_edges.len() < 2 {
@@ -964,8 +875,8 @@ fn build<'f>(
     let guard_forests = guards
         .iter()
         .map(|(&value, by_node)| {
-            // Meets are taken in another order than the guards nest, which a
-            // power-of-two stride makes associative.
+            // Meets run out of nesting order, which a power-of-two stride
+            // makes associative.
             debug_assert!(by_node.values().all(|iv| iv.stride.is_power_of_two()));
             let facts = by_node.iter().map(|(&node, &iv)| (node, iv));
             (value, DomFacts::new(&doms, facts, Interval::intersect))
@@ -1006,12 +917,9 @@ fn build<'f>(
     }
 }
 
-/// The `(guarded_value, interval)` a bare `Less`/`Sless` condition constrains
-/// on one edge, with `edge_taken` selecting true successor (condition holds)
-/// or false (its negation).  `Sless` is gated on KnownBits sign-bit = 0.
-///
-/// Only upper-bounded intervals matter for table sizing, so a purely
-/// lower-bounded constraint like `v >= N` returns `None`.
+/// The upper bound a `Less`/`Sless` condition puts on its variable on the
+/// `edge_taken` edge; `None` for a lower bound only. `Sless` needs KnownBits
+/// sign bit 0.
 fn guard_from_compare(
     function: &strider_ir::Function,
     cmp_value: ValueId,
@@ -1028,31 +936,22 @@ fn guard_from_compare(
     let const_on_rhs = function.producer_inputs_exact::<2>(cmp_value).ok()?[0] == guarded;
 
     let ty = function.value_type_opt(guarded)?;
-    // An `IntCmpOp` operand is an integer per the node signature; the mask is
-    // `None` only past 128 bits, where no `u128` is a bound the value is
-    // inside.
     debug_assert!(ty.is_integer());
     let type_mask = ty.int_mask_u128()?;
     if ty == ValueType::I1 {
         return None;
     }
-    // `Sless` bounds an unsigned range only where KnownBits proves the value
-    // non-negative.
     let sign_bit = (type_mask >> 1) + 1;
     if op == IntCmpOp::Sless && known[guarded].zeros & sign_bit == 0 {
         return None;
     }
-    // `n` is raw bits, read below as an unsigned endpoint. A NEGATIVE `Sless`
-    // constant against a known-non-negative value carries no bound at all: the
-    // compare is decided, and reading its two's-complement bits unsigned would
-    // yield the whole type as a "bound" instead.
+    // A negative `Sless` constant decides the compare and bounds nothing.
     if op == IntCmpOp::Sless && n & !(type_mask >> 1) != 0 {
         return None;
     }
 
     match (const_on_rhs, edge_taken) {
         (true, true) => {
-            // N == 0 is an impossible unsigned guard.
             if n == 0 {
                 return None;
             }
@@ -1081,18 +980,15 @@ fn cast_chain<'a>(
     .take(MAX_GUARD_LADDER as usize)
 }
 
-/// The sink of `edge` when it is reached EXCLUSIVELY via that edge, so a fact
-/// taking the edge proves holds there. A `Region` still consuming an edge is a
-/// genuine merge, where the fact does not hold for its other predecessors.
+/// The sink of `edge` when reached only via that edge, so its fact holds
+/// there; `None` for a `Region` (a merge).
 fn guard_sink(function: &strider_ir::Function, edge: ValueId) -> Option<NodeId> {
     single_control_consumer(function, edge)
         .filter(|&sink| !matches!(function.node_kind(sink), NodeKind::Region))
 }
 
-/// The one sink of a control edge.  `None` for a dead edge, and `None` if the
-/// edge somehow has two: a guard attached to an arbitrary one of them would
-/// hold on a path that never passed the compare, which is the unsound
-/// direction, so this fails closed rather than taking the first.
+/// The one sink of a control edge; `None` for a dead edge or for two sinks,
+/// either of which may not have passed the compare.
 fn single_control_consumer(function: &strider_ir::Function, ctrl_val: ValueId) -> Option<NodeId> {
     let mut uses = function
         .graph()
