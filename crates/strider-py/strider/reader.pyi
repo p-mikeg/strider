@@ -42,8 +42,8 @@ class MemReader:
         is allowed), or `None` when `addr` is unmapped. A buffer must have
         one-byte items. The base implementation raises `NotImplementedError`.
 
-        An exception here, a return of another type or of more than `size`
-        bytes fails the lift with `StriderError`, an exception chained as its
+        Raising, returning another type, or returning more than `size` bytes
+        fails the lift with `StriderError`, a raised exception as its
         `__cause__`; `KeyboardInterrupt` and `SystemExit` propagate unchanged."""
         ...
 
