@@ -246,28 +246,15 @@ pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
     ("AT_S1E1R", MEM_CLOBBER),
     ("SysOp_W", MEM_CLOBBER),
     ("UnkSytemRegWrite", MEM_CLOBBER),
-    // MIPS cache maintenance (CACHE), low-power WAIT, coprocessor
-    // register write (MTC0 via setCopReg), cp0-thread write (MTTR), and
-    // TLB writes / invalidation (TLBWI/TLBWR/TLBINV): external system
-    // state.  TLB READS are PURE, above.
-    //
-    // KNOWN GAP, `setCopReg`: the memory clobber is not the whole effect.
-    // `mtc0` passes the CP0 register as an attached-register operand
-    // (`mips.sinc:704`, `mips32Instructions.sinc:454`) while `mfc0` reads that
-    // same varnode directly (`:420`), so two `mfc0 $x, Status` either side of
-    // an `mtc0 ... Status` fold to one value. The register is
-    // instruction-encoded, which this table cannot name; closing it needs a
-    // lifter rule treating a register-space operand of `setCopReg` as a
-    // clobber. MIPS16 is unaffected: both directions go through
-    // `getCopReg`/`setCopReg` with the register NUMBER as an immediate, and
-    // `getCopReg` has no row, so that lift fails closed.
+    // MIPS cache maintenance (CACHE), low-power WAIT, another thread's CP0
+    // write (MTTR), and TLB writes / invalidation: external system state.
+    // `setCopReg` (MTC0) is a MIPS family row.
     ("TLB_invalidate", MEM_CLOBBER),
     ("TLB_invalidate_flush", MEM_CLOBBER),
     ("TLB_write_indexed_entry", MEM_CLOBBER),
     ("TLB_write_random_entry", MEM_CLOBBER),
     ("cacheOp", MEM_CLOBBER),
     ("move_to_thread_cp0", MEM_CLOBBER),
-    ("setCopReg", MEM_CLOBBER),
     ("wait", MEM_CLOBBER),
     // LGDT/SGDT, LIDT/SIDT, LLDT/SLDT, LTR/STR read from or write to a
     // memory operand describing the table.
