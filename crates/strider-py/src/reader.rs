@@ -1016,7 +1016,8 @@ impl PyMemReader {
     /// Override to return up to `size` bytes at `addr`, or `None` for
     /// unmapped.  The base raises `NotImplementedError`.
     ///
-    /// An exception here fails the whole lift, chained as the `StriderError`'s
+    /// An exception here, a return of another type or of more than `size`
+    /// bytes fails the lift with `StriderError`, an exception chained as its
     /// `__cause__`; `KeyboardInterrupt` and `SystemExit` propagate unchanged.
     /// `ReadOnlyMemory.read` is the opposite: see its docstring.
     // The raising base reads no parameter; the names are the subclass keywords.
@@ -1091,30 +1092,41 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
     type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
+        let size = out_buf.len();
         Python::with_gil(|py| -> anyhow::Result<usize> {
-            let result = call_py_read(
-                py,
-                &self.py_obj,
-                (addr.off, out_buf.len()),
-                "MemReader.read",
-                |e| anyhow::anyhow!("PyMemReader.read raised: {e}"),
-            )?;
+            // A failing reader fails the lift, as Sleigh would read the
+            // error as an unmapped address.
+            let fail = |msg: String, cause: Option<PyErr>| {
+                if !crate::pattern::peek_pending_query_error() {
+                    let err = crate::errors::StriderError::new_err(msg.clone());
+                    err.set_cause(py, cause);
+                    crate::pattern::stash_pending_query_error(err);
+                }
+                anyhow::anyhow!(msg)
+            };
+            let call = format!("MemReader.read({:#x}, {size})", addr.off);
+            let result = call_py_read(py, &self.py_obj, (addr.off, size), "MemReader.read", |e| {
+                fail(format!("{call} raised: {e}"), Some(e))
+            })?;
             if result.is_none(py) {
-                anyhow::bail!(
-                    "address {:#x} is not mapped (Python read returned None)",
-                    addr.off
-                );
+                anyhow::bail!("{call} returned None");
             }
-            let bytes = read_result_bytes(result.bind(py))
-                .map_err(|e| anyhow::anyhow!("PyMemReader.read must return bytes: {e}"))?;
-            // A short read is allowed; an over-long one is a caller bug.
-            if bytes.len() > out_buf.len() {
-                anyhow::bail!(
-                    "PyMemReader.read({:#x}, {}) returned {} bytes, more than requested",
-                    addr.off,
-                    out_buf.len(),
-                    bytes.len()
-                );
+            let result = result.bind(py);
+            let bytes = read_result_bytes(result).map_err(|e| {
+                let ty = result
+                    .get_type()
+                    .name()
+                    .map_or_else(|_| "?".into(), |n| n.to_string());
+                fail(
+                    format!("{call} must return bytes or None, got {ty}: {e}"),
+                    Some(e),
+                )
+            })?;
+            if bytes.len() > size {
+                return Err(fail(
+                    format!("{call} returned {} bytes, more than requested", bytes.len()),
+                    None,
+                ));
             }
             let n = bytes.len();
             out_buf[..n].copy_from_slice(&bytes);
@@ -1147,8 +1159,9 @@ impl PyReadOnlyMemory {
     /// unmapped.  Bytes are not byte-swapped; the optimizer decodes them
     /// per the run's endianness.  The base raises `NotImplementedError`.
     ///
-    /// An exception here is swallowed, as if `None` were returned, except
-    /// `KeyboardInterrupt` and `SystemExit`, which stop the run.
+    /// An exception here, or a return of another type or length, is
+    /// swallowed as if `None` were returned, except `KeyboardInterrupt` and
+    /// `SystemExit`, which stop the run.
     // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
     fn read(&self, addr: u64, size: usize) -> PyResult<Option<Vec<u8>>> {
