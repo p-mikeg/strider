@@ -45,7 +45,9 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    often will not match. [optimizations.md](optimizations.md) lists what each
    pass reshapes; [python-api.md](python-api.md#2-analyzing-a-function) says
    what `LifterOptions(assumptions=...)` buys and what it costs, and
-   `AssumptionOptions.none()` makes no unchecked claim.
+   `AssumptionOptions.none()` makes no unchecked claim. Two claims,
+   `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest`, are read by
+   the lift: change them by analysing again.
    `LifterOptions(pipeline=...)` replaces the pass list outright.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
@@ -109,50 +111,7 @@ folds that backtrace into the message too.
   Python, and the [README](../README.md) indexes the rest of the guides and the
   runnable examples.
 
-## Coming from 0.1.0
+## Upgrading
 
-[What's new in 0.2.0](../README.md#whats-new-in-020) is the summary and
-[CHANGELOG.md](../CHANGELOG.md) the full list, breaking entries first. The four
-that change what existing code sees, rather than adding to it:
-
-- Every `AssumptionOptions` claim is a premise the analysis cannot check, and
-  five of them default on. `AssumptionOptions.none()` is the floor.
-- A `Call`'s output slots are numbered per clobbered register now, so a query
-  reading `.output(slot)` positionally has to follow.
-- `cfg.incomplete` lists every reason a result can be incomplete; an empty
-  `unresolved` is not a complete answer on its own.
-- A `Match`/`Node` constant reads back as `uint` / `sint` / `boolean`, where
-  0.1.0 spelled them `const_uint` / `const_int` / `const_bool`.
-
-## Coming from 0.2.0
-
-[CHANGELOG.md](../CHANGELOG.md) lists the unreleased changes, breaking entries
-first; its "Breaking, Python" section says how to port each of these:
-
-- `cfg.is_complete()` is gone: `not cfg.incomplete` is the same test.
-- The per-reason `Cfg` getters (`isa_mode_conflicts()` and the rest) are
-  gone: `cfg.incomplete` lists every `(address, reason)`.
-- `CallingConvention.no_return()` is gone: list the callee in
-  `CfgOptions(no_return_targets=...)`.
-- `CfgOptions(function_max_size=n, allow_code_before_start_addr=True)` raises
-  `ValueError`.
-- `CfgOptions.with_function_max_size`, `with_data_ranges` and
-  `LifterOptions.with_cfg` are gone: pass the fields to the constructors.
-- `strider.opt.StackOffsetDetect` is gone: every run records the stack slots
-  after its post-passes.
-- `Lifter.reg` / `reg_name` are gone: use `lifter.arch.reg` / `reg_name`.
-- `strider.sleigh.Sleigh` is gone: its lookups are on `SleighArch`.
-- `lifter=` is gone from the `to_dot` / `neighborhood_dot` renderers.
-- The op-name aliases (`"eq"`, `"shl"`, `"add"`, ...) raise: pass the op's own
-  name (`"Equal"`, `"ShiftLeft"`, `"Add"`).
-- `Node.kind()` and `repr(Node)` render `IntConst`, `InitialVar` and
-  `CallOther` without the interner handle.
-- `BoundCapture` loses its reader properties: `m[c].uint` is `m.uint(c)`.
-- A `strider.pattern` pattern is no longer a rewrite right-hand side: spell
-  it with `strider.template`.
-- `Lifter.optimize(function, ...)` is `function.optimize(assumptions=...,
-  pipeline=...)`, and takes `assumptions=` in place of `opts=`.
-- `Lifter.visualize(target)` is `strider.explore.visualize(target)`.
-- `AssumptionOptions` is unhashable and compares by value.
-- `bool(m[c])` raises `TypeError`: test `m[c].has` or `c in m`.
-- `if mask:` is false for `CastMask.none()`.
+The README's [Upgrading](../README.md#upgrading) section lists the changes
+that alter an answer silently; [CHANGELOG.md](../CHANGELOG.md) has the rest.
