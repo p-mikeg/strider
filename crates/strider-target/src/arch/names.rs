@@ -17,7 +17,6 @@ pub struct ArchNames {
 
 impl ArchNames {
     /// # Errors
-    ///
     /// The register table cannot be read, a space name is not UTF-8, or the
     /// sla declares no space with shortcut `r`.
     pub(super) fn from_sleigh<R: MemReader>(sleigh: &Sleigh<R>) -> anyhow::Result<Self> {

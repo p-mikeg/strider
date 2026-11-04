@@ -99,12 +99,9 @@ arch_presets! {
     X86_64 => "x86_64", x86_64, X86, SLA_SPEC_X86_64, PSPEC_X86_64, Little, Little, "x86:LE:64:default";
     /// ARM 32-bit little-endian, non-Thumb.
     Arm => "arm", arm, ARM32, SLA_SPEC_ARM8_LE, PSPEC_ARMT, Little, Little, "ARM:LE:32:v8";
-    /// Legacy **BE32** ARM 32-bit: big-endian instructions AND data,
-    /// pre-ARMv6.
-    ///
-    /// ARMv6+ big-endian Linux is BE8: use [`SleighArch::arm_be_kernel`].
-    /// NEON lane values under this preset are not meaningful: the sla
-    /// disagrees with itself on lane order.
+    /// Legacy pre-ARMv6 **BE32** ARM: big-endian instructions and data. For
+    /// ARMv6+ big-endian Linux (BE8) use [`SleighArch::arm_be_kernel`]. NEON
+    /// lane values are meaningless here: the sla disagrees with itself on order.
     ArmBe => "arm_be", arm_be, ARM32, SLA_SPEC_ARM8_BE, PSPEC_ARMT, Big, Big, "ARM:BE:32:v8";
     /// **BE8** ARM 32-bit (GHIDRA's `ARM:LEBE:32`): little-endian
     /// instructions, big-endian data; every ARMv6+ big-endian Linux target.
@@ -124,11 +121,10 @@ arch_presets! {
     Ppc32Be => "ppc32be", ppc32be, PPC, SLA_SPEC_PPC_32_BE, PSPEC_PPC_32, Big, Big, "PowerPC:BE:32:default";
     /// `powerpc-linux-gnu-gcc -mlittle-endian`.
     Ppc32Le => "ppc32le", ppc32le, PPC, SLA_SPEC_PPC_32_LE, PSPEC_PPC_32, Little, Little, "PowerPC:LE:32:default";
-    /// `powerpc64-linux-gnu-gcc`, ELFv1 ABI with function descriptors.
-    /// Uses the Power ISA + Altivec sla.
+    /// `powerpc64-linux-gnu-gcc`, ELFv1 ABI with function descriptors; the
+    /// Power ISA + Altivec sla.
     Ppc64Be => "ppc64be", ppc64be, PPC, SLA_SPEC_PPC_64_ISA_ALTIVEC_BE, PSPEC_PPC_64, Big, Big, "PowerPC:BE:64:A2ALT";
-    /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI. Uses the Power ISA + Altivec
-    /// sla.
+    /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI; the Power ISA + Altivec sla.
     Ppc64Le => "ppc64le", ppc64le, PPC, SLA_SPEC_PPC_64_ISA_ALTIVEC_LE, PSPEC_PPC_64, Little, Little, "PowerPC:LE:64:A2ALT";
 }
 
@@ -145,7 +141,6 @@ impl SleighArch {
     /// A Sleigh over `reader` from this preset's sla and pspec.
     ///
     /// # Errors
-    ///
     /// When the compiled-in sla does not load.
     pub fn sleigh<R: rsleigh::MemReader>(&self, reader: R) -> anyhow::Result<rsleigh::Sleigh<R>> {
         rsleigh::Sleigh::new(self.sla_spec, self.pspec, reader)
@@ -163,9 +158,8 @@ impl SleighArch {
     }
 
     /// The byte order of the Sleigh REGISTER space (the sla's `ENDIAN`), which
-    /// sub-register slicing and REGISTER-space accesses follow. Not always the
-    /// data order: `arm_be_kernel` is a little-endian sla with big-endian
-    /// data.
+    /// sub-register slicing follows. `arm_be_kernel` is a little-endian sla
+    /// with big-endian data.
     pub fn register_endianness(&self) -> Endianness {
         self.preset.register_endianness()
     }
@@ -186,21 +180,16 @@ impl SleighArch {
         &self.preset.family().facts
     }
 
-    /// The context variable holding the address-low-bit ISA mode, or `None`.
-    /// `arm_thumb` has one: ARM-state code still appears in a `-mthumb` image.
+    /// The context variable holding the address-low-bit ISA mode (ARM32 and
+    /// MIPS), or `None`.
     #[must_use]
     pub fn isa_mode_var(&self) -> Option<&'static str> {
         self.facts().isa_mode_var
     }
 
-    /// Context vars a constructor commits at an address, which a CFG build
-    /// erases and re-derives by re-lifting the committing instruction: a
-    /// `noflow` var to the pspec default, a flowing one to the predecessor's
-    /// value ([`crate::DecodeTables::flow_commit`]).
-    ///
-    /// Only ARM (`condit`, `TEEMode`) needs any. PowerPC `linkreg` is
-    /// committed but cannot change the lift
-    /// (`a_stale_linkreg_cannot_change_a_powerpc_lift`).
+    /// Context vars a constructor commits at a later address, which a CFG
+    /// build re-derives by re-lifting the committing instruction. Only ARM
+    /// needs any; PowerPC `linkreg` is committed but cannot change the lift.
     #[must_use]
     pub fn flow_commit_vars(&self) -> &'static [&'static str] {
         self.facts().flow_commit_vars
@@ -214,21 +203,15 @@ impl SleighArch {
     }
 
     /// `noflow` context vars that change which constructor matches, reset to
-    /// the pspec default before each decode, re-lifting the predecessor so its
-    /// own commit lands: ARM `LRset` / `REToverride` /
-    /// `CALLoverride`, MIPS `PAIR_INSTRUCTION_FLAG` / `ext_delay`.
+    /// the pspec default before each decode.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
         self.facts().transient_decode_vars
     }
 
-    /// Whether a `CallOther` whose pcode output is a sub-register of
-    /// `container` may be lifted as a write of that slice alone, leaving the
-    /// enclosing register's other bytes as they were.
-    ///
-    /// True on x86 except for the 10-byte x87 `ST` registers, whose MMX
-    /// write redefines the sign and exponent. Elsewhere the whole container
-    /// is clobbered.
+    /// Whether a `CallOther` writing a sub-register of `container` leaves the
+    /// container's other bytes intact. True on x86 except for the 10-byte x87
+    /// `ST` registers, whose MMX write redefines sign and exponent.
     #[must_use]
     pub fn callother_output_is_exact_in(&self, container: &rsleigh::Vn) -> bool {
         self.facts().callother_output_exact && container.size != 10
@@ -247,9 +230,7 @@ impl SleighArch {
     /// additions, less its exclusions.
     ///
     /// # Errors
-    ///
-    /// A volatile range outside the REGISTER space, or a name this arch's
-    /// register table does not declare.
+    /// A volatile range outside the REGISTER space, or an undeclared name.
     pub fn volatile_register_ranges(
         &self,
         regs: &rsleigh::SleighRegs,

@@ -5,7 +5,6 @@ use crate::{ArchPreset, Result, SleighArch, family};
 /// The register `name` names in `sleigh_regs`.
 ///
 /// # Errors
-///
 /// `name` is not a register of this table.
 pub fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
     sleigh_regs
@@ -16,7 +15,6 @@ pub fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsle
 /// The registers `reg_names` names in `sleigh_regs`, in order.
 ///
 /// # Errors
-///
 /// A name is not a register of this table.
 pub fn regs_to_vns(
     sleigh_regs: &rsleigh::SleighRegs,
@@ -45,7 +43,7 @@ pub struct Cc<R, L> {
     pub ret_val_regs: L,
     /// Float return registers, in positional order.
     pub ret_val_regs_float: L,
-    /// The stack pointer.  Shares no byte with the five register lists above.
+    /// Shares no byte with the five register lists above.
     pub stack_ptr: R,
     /// `None` when the convention passes no arguments on the stack.
     pub stack_args: Option<StackArgs>,
@@ -147,10 +145,8 @@ fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
 }
 
 impl BuiltCallingConvention {
-    /// True when `callee_saved_regs` covers every byte of `vn`.
-    ///
-    /// Coverage, not membership: ARM `q4` is the preserved `d8`|`d9`, while
-    /// AArch64 `q8` holds `d8` plus 64 clobbered bits.
+    /// Whether `callee_saved_regs` covers every byte of `vn`: ARM `q4` is the
+    /// preserved `d8`|`d9`, while AArch64 `q8` holds `d8` plus clobbered bits.
     fn preserves_all_bytes_of(&self, vn: &rsleigh::Vn) -> bool {
         let end = vn_container::vn_end(vn);
         let mut covered_to = u128::from(vn.addr_off);
@@ -250,7 +246,7 @@ impl BuiltCallingConvention {
     /// Where the incoming arguments' memory starts, as an offset from the
     /// entry SP: the first stack argument, or under
     /// [`Self::reg_args_adjoin_stack_args`] the first register argument's
-    /// home.  `None` when no argument is passed on the stack.
+    /// home. `None` when no argument is passed on the stack.
     #[must_use]
     pub fn incoming_args_start(&self) -> Option<i128> {
         let args = self.stack_args?;
@@ -264,24 +260,12 @@ impl BuiltCallingConvention {
         )
     }
 
-    /// Checks the ABI invariants; advisory, since every field is `pub`.
-    /// Disjointness is over bytes.
-    ///
-    /// - `callee_saved_regs` is disjoint from `arg_passing_regs`,
-    ///   `arg_passing_regs_float`, `ret_val_regs`, and `ret_val_regs_float`
-    /// - `ret_val_regs` and `ret_val_regs_float` are disjoint
-    /// - `arg_passing_regs` and `arg_passing_regs_float` are disjoint
-    /// - `stack_ptr` shares no byte with any of the five register lists
-    /// - no duplicates within any single list
-    /// - a `Some` `link_register` is also in `callee_saved_regs`
-    /// - `ret_stack_pop >= 0`
-    /// - a `Some` `stack_args` has `increment > 0` and `base_offset >= 0`
-    /// - `preserves_all_registers` is not combined with a populated
-    ///   `ret_val_regs` / `ret_val_regs_float`
+    /// Checks the ABI invariants: byte disjointness of the register lists
+    /// and stack pointer, no duplicates, a callee-saved link register, sane
+    /// stack geometry. Advisory, since every field is `pub`.
     ///
     /// # Errors
-    ///
-    /// Returns the first violation found, naming the offending varnodes.
+    /// The first violation, naming the offending varnodes.
     pub fn validate(&self) -> Result<()> {
         if self.preserves_all_registers
             && !(self.ret_val_regs.is_empty() && self.ret_val_regs_float.is_empty())
@@ -390,11 +374,10 @@ impl BuiltCallingConvention {
         Ok(())
     }
 
-    /// Rejects stack geometry not of an arch with `addr_size`-byte addresses;
-    /// one arch's register names can resolve on another's table.
+    /// Rejects stack geometry not of an arch with `addr_size`-byte addresses,
+    /// since one arch's register names can resolve on another's table.
     ///
     /// # Errors
-    ///
     /// `stack_ptr` is not `addr_size` bytes, a stack-arg slot is not one
     /// `stack_ptr` wide, or a convention with no link register pops less than
     /// the return address its `call` pushed.
@@ -507,7 +490,6 @@ impl CallingConvention {
     /// Resolves every register name in this convention against `sleigh_regs`.
     ///
     /// # Errors
-    ///
     /// The first name that does not resolve, or the first
     /// [`BuiltCallingConvention::validate`] violation.
     pub fn build(self, sleigh_regs: &rsleigh::SleighRegs) -> Result<BuiltCallingConvention> {

@@ -212,9 +212,8 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
     // an $f12 temporary as float argument 0.
     arg_passing_regs_float: &["f12", "f14"],
     callee_saved_regs: &[
-        // Under `-mabicalls` the caller, not the callee, restores `gp`; listed
-        // anyway so `InitialVar(gp)` reaches GOT loads, a PIC caller needing
-        // `gp` after a call reloading it itself. `f20`..`f31` is o32's; n64
+        // Under `-mabicalls` the caller restores `gp`; listed so
+        // `InitialVar(gp)` reaches GOT loads. `f20`..`f31` is o32's; n64
         // overrides the list.
         "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra", "f20", "f21", "f22",
         "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31",
