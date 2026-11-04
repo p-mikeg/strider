@@ -460,8 +460,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         return Ok(());
                     }
                     // A zero-pcode-op run loses no code. Whether a call falls
-                    // into it is settled in `Builder::finish`, once every
-                    // predecessor exists.
+                    // into it, and so whether `e` fails the function, is
+                    // settled in `Builder::finish`, once every predecessor
+                    // exists.
                     if self.insns.is_empty()
                         && (!off_arm
                             || !self.builder.calls_falling_into(self.parent_edge).is_empty())
@@ -472,7 +473,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                             .index
                             .get(self.start_addr)
                             .expect("just sealed");
-                        self.builder.nops_into_no_code.push(nop);
+                        let fatal = (!marked_data).then_some(e);
+                        self.builder.nops_into_no_code.push((nop, fatal));
                         return Ok(());
                     }
                     if marked_data && !off_arm {
