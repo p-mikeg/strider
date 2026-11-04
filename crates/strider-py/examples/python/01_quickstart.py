@@ -14,9 +14,8 @@ prog = strider.lift.load_elf(str(FIXTURE))
 addr = prog.symbol("array_sum").address
 print(f"array_sum @ {addr:#x}")
 
-# analyze does CFG build, lift, optimize, and the indirect-branch fixed-point in
-# one call. The returned cfg is the final resolved one; `cfg.incomplete` lists
-# every address it cannot vouch for, and is empty here.
+# analyze builds the CFG, lifts, optimizes and resolves indirect branches.
+# `cfg.incomplete` lists every address it cannot vouch for (none here).
 cfg, function, _unresolved = prog.analyze("array_sum")
 print(f"lifted array_sum: {function.node_count()} nodes, incomplete={cfg.incomplete}")
 
