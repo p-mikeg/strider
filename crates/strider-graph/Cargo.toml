@@ -30,7 +30,7 @@ edge-read-count = []
 [dev-dependencies]
 # The producer-before-consumer order the invariant tests check use lists
 # against.
-graph-algorithms = { workspace = true }
+graph-algorithms = { workspace = true, features = ["test-util"] }
 proptest.workspace = true
 # `tests/` is an integration test, so `cfg(test)` does not reach the library:
 # without this `cargo test -p strider-graph` alone fails to compile, and the
