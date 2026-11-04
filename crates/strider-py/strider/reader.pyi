@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Sequence, Union
+from typing import Optional, Protocol, Sequence, Union
 
 __all__: list[str]
 
@@ -147,9 +147,15 @@ class SymbolIter:
         ...
 
 
-#: Source of instruction bytes: a `BufferReader`, or a `MemReader` subclass.
-MemLike = Union[MemReader, BufferReader]
+class _Readable(Protocol):
+    """Any object with a `read(addr, size)` method."""
 
-#: Read-only memory image for constant folding: a `ReadOnlyMemory` subclass
-#: or a `BufferReader`.
-RomLike = Union[ReadOnlyMemory, BufferReader]
+    def read(self, addr: int, size: int, /) -> Optional[bytes]: ...
+
+#: Source of instruction bytes: a `BufferReader`, a `MemReader` subclass, or
+#: any object with `read(addr, size)`.
+MemLike = Union[MemReader, BufferReader, _Readable]
+
+#: Read-only memory image for constant folding: a `BufferReader`, a
+#: `ReadOnlyMemory` subclass, or any object with `read(addr, size)`.
+RomLike = Union[ReadOnlyMemory, BufferReader, _Readable]
