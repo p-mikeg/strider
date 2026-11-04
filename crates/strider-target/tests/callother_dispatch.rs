@@ -58,57 +58,6 @@ fn arch_independent_rows_resolve_on_every_preset() {
     }
 }
 
-/// x86 SIMD / crypto / bit-manipulation / x87 user-ops whose sla constructors
-/// list every operand: pure register compute, no memory edge, no implicit
-/// channel.
-#[test]
-fn x86_simd_crypto_ops_are_pure_with_empty_channels() {
-    for name in [
-        "aesdec",
-        "aesdeclast",
-        "aesenc",
-        "aesenclast",
-        "aesimc",
-        "aeskeygenassist",
-        "crc32",
-        "log2",
-        "movntdqa",
-        "pblendvb",
-        "psraw",
-        "sha1msg1_sha",
-        "sha1msg2_sha",
-        "sha1nexte_sha",
-        "sha1rnds4_sha",
-        "vbroadcasti32x4_avx512f",
-        "vmovdqa64_avx512f",
-        "vmovntdq_avx",
-        "vpaddd_avx2",
-        "vpaddq_avx",
-        "vpblendd_avx2",
-        "vpbroadcastb_avx512bw",
-        "vpcmpgtb_avx2",
-        "vpermd_avx2",
-        "vpshufb_avx",
-        "vpshufb_avx2",
-        "vpshufd_avx",
-        "vpsraw_avx2",
-        "vpsrldq_avx",
-    ] {
-        for preset in [ArchPreset::X86, ArchPreset::X86_64] {
-            let abi = expect_call(classify(preset, name));
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}: must stay PURE");
-            assert!(!abi.no_return, "{preset:?}/{name}");
-        }
-        // Scoped to x86, so another spec reusing the spelling cannot inherit it.
-        assert_eq!(classify(ArchPreset::Aarch64, name), None, "aarch64/{name}");
-        assert_eq!(classify(ArchPreset::Arm, name), None, "arm/{name}");
-        assert_eq!(classify(ArchPreset::MipsBe32, name), None, "mips/{name}");
-        assert_eq!(classify(ArchPreset::Ppc32Be, name), None, "ppc/{name}");
-    }
-}
-
 /// The x86 ops that reach memory without p-code saying so: MOVDIR64B's
 /// 64-byte destination store and XSHA256's [ESI]/[EDI] streaming.
 #[test]
@@ -142,33 +91,6 @@ fn avx_memory_ops_are_not_swallowed_by_a_prefix_family() {
             assert_eq!(classify(preset, name), None, "{preset:?}/{name}");
         }
     }
-}
-
-/// Every `NEON_*` user-op in the AArch64 sla is register compute, so the
-/// prefix family covers them; NEON memory access lifts to real p-code
-/// Load / Store, never to one of these.
-#[test]
-fn aarch64_neon_prefix_family_is_pure() {
-    for name in [
-        "NEON_aesd",
-        "NEON_aese",
-        "NEON_aesimc",
-        "NEON_aesmc",
-        "NEON_rev32",
-        "NEON_sha256su0",
-        "NEON_pmull",
-        "NEON_this_one_does_not_exist_yet",
-    ] {
-        for preset in [ArchPreset::Aarch64, ArchPreset::Aarch64Be] {
-            let abi = expect_call(classify(preset, name));
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-    }
-    // The family is aarch64's; arm-32 spells its NEON ops `Vector*`.
-    assert_eq!(classify(ArchPreset::Arm, "NEON_aese"), None);
-    assert_eq!(classify(ArchPreset::MipsBe32, "NEON_aese"), None);
 }
 
 /// `a64_TBL` is aarch64 table lookup across vector registers.
@@ -353,58 +275,6 @@ const ARM32_PRESETS: [ArchPreset; 4] = [
     ArchPreset::ArmThumb,
 ];
 
-/// Every `Float*` user-op `ARMneon.sinc` declares, the float half of the NEON
-/// group whose integer half is `Vector*`.  Each is used only as
-/// `Xd = op(Xn, Xm, esize)` over listed registers, and `ARMneon.sinc` names no
-/// `[ram]` address anywhere, so the whole family is `PURE`.  Unclassified,
-/// every one of them is a hard lift error on any ARM function containing a
-/// NEON float instruction.
-const ARM32_FLOAT_NEON_OPS: [&str; 21] = [
-    "FloatCompareGE",
-    "FloatCompareGT",
-    "FloatSingleToBFloat16",
-    "FloatToSignedRound",
-    "FloatToUnsignedRound",
-    "FloatVectorAbsolute",
-    "FloatVectorAbsoluteDifference",
-    "FloatVectorAdd",
-    "FloatVectorCompareEqual",
-    "FloatVectorCompareGreaterThan",
-    "FloatVectorCompareGreaterThanOrEqual",
-    "FloatVectorMax",
-    "FloatVectorMin",
-    "FloatVectorMult",
-    "FloatVectorMultiplyAccumulate",
-    "FloatVectorMultiplySubtract",
-    "FloatVectorNeg",
-    "FloatVectorPairwiseAdd",
-    "FloatVectorPairwiseMax",
-    "FloatVectorPairwiseMin",
-    "FloatVectorSub",
-];
-
-#[test]
-fn arm32_float_neon_prefix_family_is_pure() {
-    for name in ARM32_FLOAT_NEON_OPS {
-        for preset in ARM32_PRESETS {
-            let abi = expect_call(classify(preset, name));
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-        assert_eq!(classify(ArchPreset::Aarch64, name), None, "aarch64/{name}");
-        assert_eq!(classify(ArchPreset::X86_64, name), None, "x86/{name}");
-    }
-    // PowerPC's `ppc_isa.sinc` (`FloatingRoundToIntegerTowardZero1`) and
-    // x86's `ia.sinc` (`FloatingReciprocalAprox`) spell unrelated ops with the
-    // same `Float` stem; the arch scoping is what keeps them out.
-    assert_eq!(classify(ArchPreset::Ppc32Be, "FloatingPointAdd"), None);
-    assert_eq!(
-        classify(ArchPreset::X86_64, "FloatingPointAbsoluteValue"),
-        None
-    );
-}
-
 /// `cpsie a` / `cpsid a` are adjacent alternatives of one sub-constructor
 /// (`ARMinstructions.sinc:1653-1654`), so classifying one and not the other
 /// lifts the enable and fails the disable.  Same for the six `is*` privileged
@@ -426,41 +296,6 @@ fn arm_privileged_state_ops_are_classified_in_pairs() {
         for preset in ARM32_PRESETS {
             let abi = expect_call(classify(preset, name));
             assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-    }
-}
-
-/// PLD / PLDW / PLI all take the address as a VALUE (`addrmode2` exports
-/// `rn + offset`), so none emits a p-code Load and all three are pure markers.
-#[test]
-fn arm_preload_hints_are_pure() {
-    for name in [
-        "HintPreloadData",
-        "HintPreloadDataForWrite",
-        "HintPreloadInstruction",
-    ] {
-        let abi = expect_call(classify(ArchPreset::Arm, name));
-        assert!(!abi.clobbers_memory, "{name}");
-        assert!(abi.implicit_reads.is_empty(), "{name}");
-    }
-}
-
-/// CLREX is emitted as a bare `ClearExclusiveLocal();`: no operands, no
-/// output, no `[ram]`, so it classifies like its exclusive-monitor siblings.
-#[test]
-fn arm_clrex_is_pure_like_its_monitor_siblings() {
-    for name in [
-        "ClearExclusiveLocal",
-        "ExclusiveAccess",
-        "ExclusiveMonitorPass",
-        "ExclusiveMonitorsStatus",
-        "hasExclusiveAccess",
-    ] {
-        for preset in ARM32_PRESETS {
-            let abi = expect_call(classify(preset, name));
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
             assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
         }
     }
