@@ -1,29 +1,20 @@
-//! A reference interpreter over the IR, for running a raw and an optimised
-//! graph of one function against each other.
+//! A reference interpreter for running a raw and an optimised graph of one
+//! function against each other. It is a consistency oracle only: a
+//! misconception it shares with a pass is invisible. Its integer operations are
+//! written apart from `strider_ir::eval` (only the width helpers are shared),
+//! so it does not share the constant folder's.
 //!
-//! A CONSISTENCY oracle: both graphs run here, so a misconception it shares
-//! with a pass is invisible. It is written apart from `strider-opt`'s constant
-//! folder, and from `strider_ir::eval` which that folder calls, so the two do
-//! not share one: every integer operation below is computed here, over
-//! `strider_ir::eval`'s width helpers alone.
+//! Runs integer ops at the declared width, phis, RAM and REGISTER-space memory,
+//! and `If` / `Switch` / `Region` control including loops. Floats, `CallOther`,
+//! `IndirectBranch` and other spaces are [`Unsupported`].
 //!
-//! It runs integer arithmetic, compares, casts, phis, RAM and REGISTER-space
-//! loads and stores, and `If` / `Switch` / `Region` control including loops; a
-//! run that outlasts [`Env::step_budget`] is [`Outcome::Diverge`]. Floats,
-//! `CallOther`, `IndirectBranch` and other spaces are [`Unsupported`].
-//! Integers run at the declared width, the two past the `u128` carrier
-//! included.
+//! Call `k` of a run (from 1) is an opaque callee: each register it clobbers
+//! becomes `hash(seed, k, target, varnode)`, and unless its convention
+//! preserves memory every non-ROM byte reads `hash(seed, k, address)`, so a
+//! load forwarded across a call shows up as a divergence.
 //!
-//! A `Call` is an opaque callee. Call `k` of a run (from 1) puts
-//! `hash(seed, k, target, varnode)` in each register it clobbers and leaves
-//! every byte outside the ROM reading `hash(seed, k, address)`, unless its
-//! convention preserves memory. No pass may forward a load across a call
-//! without an assumption, so a forward shows up as a divergence. Each call's
-//! target, arguments and the bytes written before it are recorded.
-//!
-//! The REGISTER space is a byte array of its own: the ROM does not back it,
-//! an unwritten byte is noise, and a call that clobbers memory clobbers it
-//! too. Only RAM bytes are reported in `writes`.
+//! The REGISTER space is a separate byte array: not ROM-backed, noise when
+//! unwritten, clobbered with memory, and absent from `writes`.
 
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
@@ -52,15 +43,13 @@ pub struct EntryVar {
 pub struct Env<'a> {
     /// Each entry register's value; the interpreter masks it to the width.
     pub entry: &'a dyn Fn(EntryVar) -> UBig,
-    /// What an unwritten byte reads, before and after any call: a callee
-    /// cannot write read-only memory.
+    /// What an unwritten byte reads, before and after any call.
     pub rom: Option<&'a dyn ReadOnlyMemory>,
     /// Varies the noise unwritten bytes and callee results are drawn from.
     pub seed: u64,
     /// Control nodes a run may pass before it is [`Outcome::Diverge`].
     pub step_budget: usize,
-    /// Addresses left out of every memory snapshot: the function's own frame,
-    /// whose stores may die with it.
+    /// Addresses left out of every memory snapshot (the function's own frame).
     pub private: Option<RangeInclusive<u64>>,
 }
 
@@ -165,11 +154,6 @@ fn label(kind: &NodeKind) -> String {
 }
 
 /// Runs `f` from its entry.
-///
-/// # Errors
-///
-/// [`Unsupported`] when control or memory reaches something the interpreter
-/// does not model.
 pub fn run(f: &Function, env: &Env<'_>) -> Result<Outcome, Unsupported> {
     run_observed(f, env, &mut |_, _, _| {})
 }
@@ -177,10 +161,6 @@ pub fn run(f: &Function, env: &Env<'_>) -> Result<Outcome, Unsupported> {
 /// [`run`], handing `observe` each operand of a compare an `If` tests, the
 /// condition itself, and each returned value, with the control node it is
 /// seen at.
-///
-/// # Errors
-///
-/// As [`run`].
 pub fn run_observed(
     f: &Function,
     env: &Env<'_>,
@@ -236,7 +216,7 @@ pub fn run_observed(
 #[derive(Clone, Debug, Default)]
 struct Mem {
     written: BTreeMap<u64, u8>,
-    /// The REGISTER space's bytes, likewise.
+    /// The REGISTER space's written bytes.
     register: BTreeMap<u64, u8>,
     /// Calls before this point; 0 is the entry state.
     calls: u64,
@@ -306,8 +286,8 @@ impl<'a, 'e> Machine<'a, 'e> {
         self.settle(ints, mems);
     }
 
-    /// Installs new values for control-dependent outputs. Anything computed
-    /// over a value that is replaced is stale.
+    /// Installs new values for control-dependent outputs, invalidating anything
+    /// computed over a replaced one.
     fn settle(
         &mut self,
         ints: Vec<(ValueId, Eval<Option<UBig>>)>,
@@ -326,8 +306,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         }
     }
 
-    /// `None` is an undefined value: a division by zero or `INT_MIN / -1`, or
-    /// anything computed from one.
+    /// `None` is [`Slot::Undefined`].
     fn int(&mut self, v: ValueId) -> Eval<Option<UBig>> {
         if let Some(r) = &self.now[v] {
             return r.clone();
@@ -505,8 +484,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     }
 
     fn switch_arm(&self, node: NodeId, selector: &UBig) -> Eval<usize> {
-        // An interworking dispatch carries its ISA mode in the selector's low
-        // bit.
+        // An interworking dispatch carries its ISA mode in the low bit.
         let interworking = self.f.switch_isa_mode(node).is_some();
         // `UBig` has no `Not`: clearing the low bit is a round trip through 1.
         let even = (selector.clone() >> 1usize) << 1usize;
@@ -527,8 +505,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             return unsupported("a call to an undefined target");
         };
         let target = low_u128(&target);
-        // The callee reads none of them, so an unsupported one does not stop
-        // the run.
+        // An unsupported argument does not stop the run.
         let args = ins[NodeKind::Call { cc: None }.input_head_len()..]
             .iter()
             .map(|&arg| Slot::of(self.int(arg)))
@@ -784,9 +761,8 @@ mod tests {
         }
     }
 
-    /// P-code clears a shift whose count reaches the width, and the count keeps
-    /// its own width: an `I16` count of 256 on an `I8` shift is 256, not its low
-    /// byte.
+    /// A shift count keeps its own width: an `I16` count of 256 on an `I8`
+    /// shift is 256, not its low byte, and clears the result.
     #[test]
     fn a_shift_count_wider_than_its_output_is_not_truncated() {
         let f = make_empty_fn(|b| {
@@ -804,8 +780,7 @@ mod tests {
         assert_eq!(returned(&f, &env(&|_| UBig::ZERO, None)), vec![known(0)]);
     }
 
-    /// Sleigh counts over the input's bytes, so an `I1` counts over 8 bits, as
-    /// `strider_ir::eval::lzcount` does.
+    /// An `I1` counts over 8 bits, as `strider_ir::eval::lzcount` does.
     #[test]
     fn lzcount_of_an_i1_counts_over_a_byte() {
         for (bit, zeros) in [(1u8, 7), (0, 8)] {

@@ -16,11 +16,7 @@ pub trait IrWalkerEx: IRWalker {
         self.walk_kind(pred).next().is_some()
     }
 
-    /// The first reachable node of the kind.
-    ///
-    /// # Panics
-    ///
-    /// If there is none.
+    /// The first reachable node of the kind; panics if there is none.
     #[track_caller]
     fn first_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> NodeId {
         self.walk_kind(pred)
@@ -28,11 +24,7 @@ pub trait IrWalkerEx: IRWalker {
             .expect("no reachable node of the kind")
     }
 
-    /// The one reachable node of the kind.
-    ///
-    /// # Panics
-    ///
-    /// If there is none, or more than one.
+    /// The only reachable node of the kind; panics unless there is exactly one.
     #[track_caller]
     fn sole_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> NodeId {
         let mut nodes = self.walk_kind(pred);
@@ -44,11 +36,8 @@ pub trait IrWalkerEx: IRWalker {
         first
     }
 
-    /// The sole reachable `Return`'s value input.
-    ///
-    /// # Panics
-    ///
-    /// If there is not exactly one `Return`, or it returns no value.
+    /// The sole reachable `Return`'s value input; panics unless there is exactly
+    /// one `Return` and it carries a value.
     #[track_caller]
     fn returned(&self) -> ValueId {
         let ret = self.sole_kind(|k| matches!(k, NodeKind::Return));
@@ -59,13 +48,8 @@ pub trait IrWalkerEx: IRWalker {
 
 impl<T: IRWalker + ?Sized> IrWalkerEx for T {}
 
-/// An [`EditFunction`](strider_ir::EditFunction)'s cached live set and roots
-/// against a fresh entry walk of the same graph, AS SETS: root ORDER
-/// legitimately differs.
-///
-/// # Panics
-///
-/// If either cached set disagrees with the walk.
+/// Asserts an [`EditFunction`](strider_ir::EditFunction)'s cached live set and
+/// roots equal a fresh entry walk's, as sets (root order may differ).
 pub fn assert_live_matches_reachable(edit: &strider_ir::EditFunction) {
     use cranelift_entity::EntityRef;
     let entry = edit.entry();
@@ -88,11 +72,7 @@ pub fn assert_live_matches_reachable(edit: &strider_ir::EditFunction) {
 
 /// Builder shorthands for shapes that aren't primitive in the IR.
 pub trait IrBuilderEx: IRBuilderExt {
-    /// `Add(lhs, Neg(rhs))`, the shape the lifter lowers `IntSub` to.
-    ///
-    /// # Errors
-    ///
-    /// If either operand is not a value edge.
+    /// `Add(lhs, Neg(rhs))`, the lifter's lowering of `IntSub`.
     fn build_sub_as_add_neg(
         &mut self,
         lhs_id: ValueId,
@@ -106,21 +86,19 @@ pub trait IrBuilderEx: IRBuilderExt {
 
 impl<T: IRBuilderExt + ?Sized> IrBuilderEx for T {}
 
-/// Unlike any real machine address, so a sentinel-stamped node leaking into a
-/// graph dump or IR snapshot is unmistakable.
+/// Lift address stamped on fixture nodes; unlike any real address.
 pub const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
-/// Fallback SP when a fixture declares no `stack_vn`. `build_call` reads the
-/// SP from the variable table and errors if it is absent, so a `Call`-building
-/// fixture always needs one; the high offset dodges common test registers.
+/// SP when a fixture declares no `stack_vn` (`build_call` needs one). The high
+/// offset avoids common test registers.
 const DEFAULT_TEST_SP: rsleigh::Vn = rsleigh::Vn {
     addr_off: 0x7000,
     addr_space: rsleigh::VnSpace::REGISTER,
     size: 8,
 };
 
-/// Fluent description of a mock function's register convention, synthesising a
-/// [`strider_target::BuiltCallingConvention`] from the declared lists.
+/// Fluent mock register convention, built into a
+/// [`strider_target::BuiltCallingConvention`].
 #[derive(Default, Clone)]
 pub struct RegisterSet {
     tracked: Vec<rsleigh::Vn>,
@@ -187,23 +165,15 @@ impl RegisterSet {
         self
     }
 
-    /// Stamps [`SENTINEL_LIFT_ADDR`] but creates no region; drive
-    /// `create_region` / `set_entry_region` / `set_region` yourself.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from `FunctionBuilder::new`.
+    /// Stamps [`SENTINEL_LIFT_ADDR`] but creates no region.
     pub fn build_fn(self) -> Result<FunctionBuilder> {
-        // `FunctionBuilder::new` seeds the declared arg/ret regs but not the
-        // stack vn (in production the lifter owns that), so track it here.
+        // `FunctionBuilder::new` does not track the stack vn; the lifter does.
         let stack_vn = self.sp.unwrap_or(DEFAULT_TEST_SP);
         let mut tracked = self.tracked;
         if !tracked.contains(&stack_vn) {
             tracked.push(stack_vn);
         }
-        // Skips `validate`, so fixtures may declare overlapping or otherwise
-        // degenerate register sets. Exhaustive: a new ABI field must be routed
-        // here.
+        // Skips `validate`, so fixtures may declare degenerate register sets.
         let cc = strider_target::BuiltCallingConvention {
             arg_passing_regs: self.arg_passing,
             arg_passing_regs_float: Vec::new(),
@@ -225,33 +195,20 @@ impl RegisterSet {
         Ok(b)
     }
 
-    /// `build_fn` plus `create_region` + `set_entry_region` + `set_region`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from `FunctionBuilder::new`,
-    /// `create_region`, or `set_entry_region`.
+    /// `build_fn` plus one region, set as entry and current.
     pub fn build_fn_single_region(self) -> Result<FunctionBuilder> {
         let mut b = self.build_fn()?;
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;
-        // Mirrors the lifter: arg carriers recorded after entry setup, so tests
-        // see the same `arg_index_to_values` a lifted function has.
+        // After entry setup, as the lifter does.
         b.record_register_arg_carriers();
         b.set_region(region);
         Ok(b)
     }
 
-    /// The canonical `if (cond) { return 1 } else { return 2 }` scaffold the
-    /// `If`-rewrite passes test against. `cond_builder` runs in the entry
-    /// region and yields the condition plus an auxiliary `T` threaded back to
-    /// the caller (typically operands to assert on after the rewrite); use
-    /// `()` when there is none.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from `FunctionBuilder::new`, region /
-    /// IR construction, the closure, or `FunctionBuilder::build`.
+    /// `if (cond) { return 1 } else { return 2 }`, returning the function, its
+    /// `If` and the `T` that `cond_builder` (run in the entry region) yields
+    /// alongside the condition.
     pub fn build_if_then_else_returns<F, T>(
         self,
         cond_builder: F,
@@ -290,10 +247,6 @@ impl RegisterSet {
 }
 
 /// Single-region function returning whatever `f` produces.
-///
-/// # Errors
-///
-/// Propagates any error from the builder closure or from `FunctionBuilder::build`.
 pub fn make_empty_fn<F>(f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder) -> Result<ValueId>,
@@ -301,39 +254,24 @@ where
     make_empty_fn_endian(strider_target::Endianness::Little, f)
 }
 
-/// [`make_empty_fn`] with an explicit endianness baked into the function,
-/// which is the source of truth its passes read.
-///
-/// # Errors
-///
-/// Propagates any error from the builder or from `FunctionBuilder::build`.
+/// [`make_empty_fn`] with an explicit endianness.
 pub fn make_empty_fn_endian<F>(endianness: strider_target::Endianness, f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder) -> Result<ValueId>,
 {
-    // No declared registers, so the trivial convention: only the synthetic SP
-    // is tracked, as an unreferenced `InitialVar`.
     let mut b = RegisterSet::new()
         .byte_order(endianness)
         .build_fn_single_region()?;
     let val = f(&mut b)?;
-    // Re-stamp so the trailing `build_return` is attributed even when `f`
-    // cleared the lift address, as fingerprint-propagation tests do when they
-    // set their own per-insn addresses and reset to `None`.
+    // `f` may have cleared the lift address.
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     b.build()
 }
 
-/// Single-region function with `vn` tracked. The closure receives the
-/// read-back value (the `InitialVar(vn)` value; a single-region function has no
-/// phi at entry) and returns the value to wire into the `Return`; that read-back
-/// value comes back to the caller too.
-///
-/// # Errors
-///
-/// Propagates any error from the builder closure or from `FunctionBuilder::build`.
+/// Single-region function with `vn` tracked. The closure gets `vn`'s initial
+/// value and returns the value to return; that initial value is returned too.
 pub fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(Function, ValueId)>
 where
     F: FnOnce(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
@@ -344,20 +282,15 @@ where
         .build_fn_single_region()?;
     let x = b.read_variable(&vn)?;
     let val = f(&mut b, x)?;
-    // Re-stamp the sentinel after the closure (see `make_empty_fn`).
+    // `f` may have cleared the lift address.
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     Ok((b.build()?, x))
 }
 
-/// Unpacked-slices entry point for tests that don't use the fluent
-/// [`RegisterSet`]. `stack_vn = None` falls back to the synthetic test SP.
-/// No region is created.
-///
-/// # Errors
-///
-/// Propagates any error from [`FunctionBuilder::new`].
+/// [`RegisterSet::build_fn`] from unpacked slices; `stack_vn = None` uses the
+/// default test SP. No region is created.
 pub fn builder(
     tracked: Vec<rsleigh::Vn>,
     arg_passing: &[rsleigh::Vn],
@@ -379,11 +312,7 @@ pub fn builder(
     .build_fn()
 }
 
-/// No declared registers, trivial convention, little-endian, no region.
-///
-/// # Errors
-///
-/// Propagates any error from [`FunctionBuilder::new`].
+/// No declared registers, little-endian, no region.
 pub fn empty_builder() -> Result<FunctionBuilder> {
     RegisterSet::new().build_fn()
 }
@@ -406,8 +335,8 @@ pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
-/// Create-and-stamp in one step, for fixtures that add nodes to a graph after
-/// `build` and still have to satisfy the always-on fingerprint check.
+/// Creates a node stamped with [`SENTINEL_LIFT_ADDR`], for nodes added after
+/// `build`.
 pub fn sentinel_node(
     function: &mut strider_ir::Function,
     kind: strider_ir::node::NodeKind,
@@ -421,7 +350,7 @@ pub fn sentinel_node(
     n
 }
 
-/// Test `ReadOnlyMemory` covering the mock-rom shapes the opt-pass suite needs.
+/// Test `ReadOnlyMemory`.
 pub struct MockRom {
     shape: MockRomShape,
 }
@@ -441,14 +370,13 @@ enum MockRomShape {
     Limited { addr: u64, size: usize, value: u64 },
     /// Serves every `(addr, size)`.
     AlwaysAnswer { value: u64 },
-    /// Byte runs, each served verbatim from its own base with no endianness
-    /// swap and no size cap. A read must sit wholly inside one run.
+    /// Byte runs served verbatim; a read must sit wholly inside one run.
     Regions { runs: Vec<(u64, Vec<u8>)> },
 }
 
 impl MockRom {
-    /// `entries[i]` at `base + i * stride`. Any other read size, and any
-    /// stride of `0`, resolves to `None`.
+    /// `entries[i]` at `base + i * stride`, for reads of `size` only. A stride
+    /// of `0` serves nothing.
     pub fn strided(base: u64, stride: u64, entries: Vec<u64>, size: usize) -> Self {
         Self {
             shape: MockRomShape::Strided {
@@ -460,7 +388,7 @@ impl MockRom {
         }
     }
 
-    /// Size is not constrained.
+    /// Exact addresses, any read size.
     pub fn fixed_table(entries: &[(u64, u64)]) -> Self {
         Self {
             shape: MockRomShape::FixedTable {
@@ -469,7 +397,7 @@ impl MockRom {
         }
     }
 
-    /// One `(addr, size)` mapping; every other read resolves to `None`.
+    /// One `(addr, size)` mapping.
     pub fn limited(addr: u64, size: usize, value: u64) -> Self {
         Self {
             shape: MockRomShape::Limited { addr, size, value },
@@ -482,12 +410,12 @@ impl MockRom {
         }
     }
 
-    /// `bytes` verbatim from `base`; a read straying outside the run errors.
+    /// `bytes` verbatim from `base`.
     pub fn raw_bytes(base: u64, bytes: Vec<u8>) -> Self {
         Self::regions([(base, bytes)])
     }
 
-    /// Several byte runs at once; a read must sit wholly inside one of them.
+    /// Several byte runs; a read must sit wholly inside one of them.
     pub fn regions(runs: impl IntoIterator<Item = (u64, Vec<u8>)>) -> Self {
         Self {
             shape: MockRomShape::Regions {
@@ -498,11 +426,9 @@ impl MockRom {
 }
 
 impl MockRom {
-    /// `None` when the shape doesn't serve that address/size.
-    ///
-    /// `read` encodes the resolved value LITTLE-ENDIAN, and `LoadReadOnly`
-    /// decodes with the function's own endianness, so a fixture driving
-    /// `MockRom` must build its function little-endian (the default).
+    /// `None` when the shape doesn't serve that address/size. `read` encodes
+    /// the value little-endian, so a fixture using it must build its function
+    /// little-endian.
     fn resolve(&self, addr: u64, size: usize) -> Option<u64> {
         match &self.shape {
             MockRomShape::Strided {
@@ -562,7 +488,6 @@ impl ReadOnlyMemory for MockRom {
             anyhow::bail!("MockRom: {addr:#x} unmapped");
         }
         let size = buf.len();
-        // Every shape resolves to a `u64`, so a wider read is unserviceable.
         if size > 8 {
             anyhow::bail!("MockRom: read size {size} > 8 unsupported");
         }
@@ -592,8 +517,7 @@ pub fn sp_frame(sp: rsleigh::Vn) -> RegisterSet {
     RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp)
 }
 
-/// `RegisterSet` with one varnode as the tracked, argument-passing stack
-/// pointer.
+/// `RegisterSet` with one varnode as the tracked, argument-passing SP.
 pub fn sp_arg_frame(sp: rsleigh::Vn) -> RegisterSet {
     RegisterSet::new().tracked(sp).arg(sp).stack_vn(sp)
 }
@@ -607,13 +531,8 @@ pub fn stack_args_at(base_offset: i128, increment: i128) -> Option<strider_targe
     })
 }
 
-/// Single-region function with `stack_vn` tracked as the stack pointer. The
-/// closure gets the read-back SP (`InitialVar(stack_vn)`) and owns the whole
-/// body, the `Return` included.
-///
-/// # Errors
-///
-/// Propagates any error from the builder closure or from `FunctionBuilder::build`.
+/// Single-region function with `stack_vn` as SP. The closure gets the initial
+/// SP and builds the whole body, `Return` included.
 pub fn make_sp_fn<F>(stack_vn: rsleigh::Vn, f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder, ValueId) -> Result<()>,
@@ -653,25 +572,15 @@ pub fn if_cmp_then_return(c: u64) -> Function {
     t.finish()
 }
 
-/// `if cond_val { return 1 } else { return 2 }`, over a constant condition, so
-/// a pass that folds the branch has a dead arm to remove.
-///
-/// # Errors
-///
-/// Propagates any error from the builder or from `FunctionBuilder::build`.
+/// `if cond_val { return 1 } else { return 2 }` over a constant condition.
 pub fn make_if_fn(cond_val: bool) -> Result<Function> {
     RegisterSet::new()
         .build_if_then_else_returns(|b| Ok((b.build_boolean_const(cond_val), ())))
         .map(|(function, _, ())| function)
 }
 
-/// A store on each branch of an if/else plus a load at the join, forcing a
-/// genuine `MemPhi` whose variadic tail past the one-slot `[PhiToken]` prefix
-/// is two `Memory` predecessors.
-///
-/// # Panics
-///
-/// If any builder step fails.
+/// A store on each arm of an if/else and a load at the join, forcing a `MemPhi`
+/// over two `Memory` predecessors.
 pub fn mem_phi_with_two_stores() -> Function {
     let var_vn = reg_vn(0x10, 8);
     let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
@@ -705,9 +614,7 @@ pub fn mem_phi_with_two_stores() -> Function {
     b.build().unwrap()
 }
 
-/// `return(reg)` over one tracked register, yielding a single
-/// `InitialVar(reg)`. Returns the register so tests can build `phi_for` /
-/// `initial_var_for` patterns against it.
+/// `return(reg)` over one tracked register, and that register.
 pub fn single_initial_var() -> (Function, rsleigh::Vn) {
     let reg = reg_vn(0x00, 8);
     let mut t = Tb::with_vars(&[reg]);
