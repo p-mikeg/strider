@@ -162,12 +162,10 @@ impl ReturnTargets<'_> {
         found
     }
 
-    /// What `store` does to the `size` bytes at `at`.
-    ///
-    /// A spine-less address passes under `return_slots_survive_untracked_writes`
-    /// or without `prove`.  Otherwise it is located through [`Self::guess`],
-    /// with the proving claim pushed onto `prove`, and an unlocatable one
-    /// clobbers unless a held claim puts it off the stack.
+    /// What `store` does to the `size` bytes at `at`. A spine-less address
+    /// passes under `return_slots_survive_untracked_writes` or without `prove`;
+    /// otherwise [`Self::guess`] locates it (its claim pushed onto `prove`), and
+    /// an unlocatable one clobbers unless a held claim puts it off the stack.
     pub(super) fn store_effect(
         &mut self,
         store: NodeId,
