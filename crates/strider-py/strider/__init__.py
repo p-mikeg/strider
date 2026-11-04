@@ -13,11 +13,10 @@ import typing as _t
 _ext = _importlib.import_module("strider._strider")
 
 if _t.TYPE_CHECKING:
-    # The loop below binds these at runtime; the static import is what a type
-    # checker sees, so the stubs type the aliases built out of them.
+    # Bound by the loop below at runtime.
     from . import cfg, ir, lift, opt, pattern, reader, sleigh, template
 
-# The extension builds its submodules without a docstring; theirs live here.
+# The extension's submodules have no docstring of their own.
 _SUBMODULE_DOCS = {
     "ir": "The sea-of-nodes IR: `Function`, `Node`, and their readers.",
     "lift": "Lift, optimise and resolve: the `Lifter` handle, its options, "
@@ -38,8 +37,7 @@ for _name in ("ir", "lift", "cfg", "sleigh", "reader", "opt", "pattern", "templa
     _sys.modules[f"strider.{_name}"] = _sub
     globals()[_name] = _sub
 
-# Give `strider.pattern.constraints` its own `sys.modules` key so
-# `import strider.pattern.constraints` resolves.
+# So `import strider.pattern.constraints` resolves.
 _sys.modules["strider.pattern.constraints"] = _ext.pattern.constraints
 _ext.pattern.constraints.__doc__ = (
     "Relational predicates over the captures a pattern binds."
@@ -50,18 +48,13 @@ __version__ = _ext.__version__
 
 
 def _export(module, *names: str) -> None:
-    """Publish `names` in `module.__all__`, skipping ones already there.
-
-    The extension submodules survive an `importlib.reload(strider)`, so a
-    plain `+=` would double every entry.
-    """
+    """Add `names` to `module.__all__` once; the extension submodules
+    survive `importlib.reload(strider)`."""
     module.__all__ += [n for n in names if n not in module.__all__]
 
-# Bind the pure-Python facade members into their home submodule.
 from . import _api as _mod_api  # noqa: E402
 
-# `explore` is a submodule, not an attribute the extension binds; import it so
-# `strider.explore.visualize` / `shutdown` work without an explicit import.
+# So `strider.explore` works without an explicit import.
 from . import explore as explore  # noqa: E402
 
 lift.ElfLifter = _mod_api.ElfLifter          # type: ignore[attr-defined]
@@ -72,9 +65,8 @@ pattern.field = _mod_api.field               # type: ignore[attr-defined]
 pattern.code_ptr = _mod_api.code_ptr         # type: ignore[attr-defined]
 _export(pattern, "FieldPat", "field", "code_ptr")
 
-# The type aliases live in the .pyi stubs; also bind them at runtime so
-# `p.PatLike` works in an annotation evaluated without
-# `from __future__ import annotations`, and so they can be imported.
+# The stubs' type aliases, bound at runtime too so they can be imported and
+# evaluated in annotations.
 _p = pattern
 _p.PatLike = _t.Union[  # type: ignore[attr-defined]
     int, _p.Capture, _p.Pat, _p.CallPat, _p.CallOtherPat, _p.RetPat,
@@ -82,15 +74,13 @@ _p.PatLike = _t.Union[  # type: ignore[attr-defined]
     _p.RegionPat, _p.IndirectBranchPat, _p.UnreachablePat, _p.SwitchPat,
     _p.FunctionArgPat, _p.IntBinaryPat, _p.FloatBinaryPat, _p.BoolBinaryPat,
 ]
-# A VALUE operand slot is narrower than a pattern position: the builders that
-# produce no value raise there at query time.
+# A value operand slot: builders producing no value are excluded.
 _p.ValueLike = _t.Union[  # type: ignore[attr-defined]
     int, _p.Capture, _p.Pat, _p.CallPat, _p.CallOtherPat, _p.LoadPat,
     _p.PhiPat, _p.FunctionArgPat, _p.IntBinaryPat, _p.FloatBinaryPat,
     _p.BoolBinaryPat,
 ]
-# A MEMORY slot takes the four memory producers, a wildcard (a `Capture`, or a
-# `Pat`, which is how `anything()` / `var(c)` and a `one_of` arrive).
+# A memory slot: the four memory producers or a wildcard.
 _p.MemLike = _t.Union[  # type: ignore[attr-defined]
     _p.Capture, _p.Pat, _p.StorePat, _p.MemPhiPat, _p.CallPat, _p.CallOtherPat,
 ]
@@ -98,8 +88,7 @@ _p.CaptureKey = _t.Union[_p.Capture, str]  # type: ignore[attr-defined]
 _p.constraints.ConstraintLike = _t.Union[  # type: ignore[attr-defined]
     _p.constraints.JoinConstraint, _p.constraints.JoinPredicate
 ]
-# Each alias is the roster Rust publishes, the way `IncompleteReason` below
-# is: the names a parser accepts, never a second copy of them.
+# Built from the name rosters Rust publishes.
 _p.ValueTy = _t.Literal[_p.VALUE_TYPES]  # type: ignore[attr-defined]
 _p.IntCmpOpName = _t.Literal[_p.INT_CMP_OPS]  # type: ignore[attr-defined]
 _p.IntBinaryOpName = _t.Literal[_p.INT_BINARY_OPS]  # type: ignore[attr-defined]
@@ -117,10 +106,9 @@ _export(_p.constraints, "ConstraintLike")
 cfg.IncompleteReason = _t.Literal[cfg.INCOMPLETE_REASONS]  # type: ignore[attr-defined]
 _export(cfg, "IncompleteReason")
 
-# PyO3's `#[pyclass(extends = ...)]` takes exactly one base, so the builders
-# cannot share a Rust base class. The shared vocabulary is declared here as
-# structural protocols instead: `isinstance` answers what a caller actually
-# wants to know, and the `.pyi` stubs list them as the builders' bases.
+# The builders' shared vocabulary as runtime-checkable protocols: a pyclass
+# takes one base, so they cannot share a Rust one. The stubs list these as
+# the builders' bases.
 _S = _t.TypeVar("_S")
 
 
@@ -238,8 +226,7 @@ for _proto, _proto_name in (
     setattr(_p, _proto_name, _proto)
     _export(_p, _proto_name)
 
-# The output terminal is shared by every builder that has outputs;
-# `CallPat.output` names it too.
+# `CallPat.output`'s name for the shared output terminal.
 _p.CallOutputPat = _p.OutputSlotPat  # type: ignore[attr-defined]
 _export(_p, "CallOutputPat")
 
@@ -276,13 +263,11 @@ _export(opt, "OptimizerPass", "MainOptimizerPass", "PostOptimizerPass")
 __all__ = ["StriderError", "ir", "lift", "cfg", "sleigh", "reader",
            "opt", "pattern", "template"]
 
-# Drop import machinery from the public namespace, including the
-# `strider._strider` / `strider._api` attributes the import system binds.
+# Drop import machinery from the public namespace.
 del _importlib, _sys, _ext, _name, _sub, _mod_api, _t, _p, _export
 del _SUBMODULE_DOCS
 del _S, _NodePat, _InputPat, _CtrlPat, _MemPat, _MemAccessPat, _OrderedPat
 del _OutputPat, _proto, _proto_name
-# No statement here binds these two; they go through the module dict, and an
-# `importlib.reload` re-runs this after they are already gone.
+# Bound by the import system, and already gone on `importlib.reload`.
 globals().pop("_strider", None)
 globals().pop("_api", None)

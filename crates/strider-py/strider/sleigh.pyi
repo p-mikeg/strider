@@ -7,11 +7,10 @@ from typing import Any, Optional
 
 __all__: list[str]
 
-#: Every architecture preset, the names `SleighArch`'s classmethods carry.
+#: Every architecture preset name.
 ARCH_PRESETS: tuple[str, ...]
 
-#: Every calling-convention preset, the names `CallingConvention`'s preset
-#: classmethods carry, family by family.
+#: Every calling-convention preset name, family by family.
 CC_PRESETS: tuple[str, ...]
 
 class SleighArch:
@@ -95,9 +94,8 @@ class SleighArch:
         ...
     @classmethod
     def preset(cls, name: str) -> SleighArch:
-        """The preset called `name` (one of `ARCH_PRESETS`), as
-        `SleighArch.<name>()` builds it. Raises `StriderError` naming the
-        known presets for any other name."""
+        """The preset called `name` (one of `ARCH_PRESETS`). Raises
+        `StriderError` for any other name."""
         ...
     def calling_conventions(self) -> tuple[CallingConvention, ...]:
         """The calling-convention presets for this arch, in roster order."""
@@ -113,9 +111,8 @@ class SleighArch:
         name is not a register of this arch."""
         ...
     def reg_name(self, vn: Vn) -> Optional[str]:
-        """The register name for `vn`, or `None` when it names no register
-        (a non-register space, or an offset and size absent from this
-        arch's table)."""
+        """The register name for `vn`, or `None` when it is not a register of
+        this arch."""
         ...
     def __eq__(self, other) -> bool:
         """Equal when built from the same preset."""
@@ -176,18 +173,16 @@ class CallingConvention:
     def x86_linux_kernel(cls) -> CallingConvention:
         """32-bit x86 Linux kernel-internal convention (`-mregparm=3`).
 
-        A variadic callee (`printk`) and an `asmlinkage` one take every
-        argument on the stack, yet a call to one under this convention still
-        lists EAX, EDX and ECX as arguments 0-2, so its first argument reads
-        as `arg(3)`. Map such callees to `x86_cdecl()` in
-        `LifterOptions(per_address_ccs=...)`. To analyse one of them, pass
+        Variadic (`printk`) and `asmlinkage` callees take every argument on
+        the stack, yet a call under this convention lists EAX, EDX, ECX as
+        arguments 0-2; map them to `x86_cdecl()` in
+        `LifterOptions(per_address_ccs=...)`. To analyse one, pass
         `cc=x86_cdecl()` and map its regparm callees to this convention."""
         ...
     @classmethod
     def powerpc_sysv32_linux_kernel(cls) -> CallingConvention:
-        """`powerpc_sysv32` for kernel code, built `-mno-altivec -mno-vsx`:
-        no AltiVec register carries an argument or a result, so a function
-        tracks none of them."""
+        """`powerpc_sysv32` for kernel code (`-mno-altivec -mno-vsx`): no
+        AltiVec register carries an argument or result."""
         ...
     @classmethod
     def powerpc64_elf_v1_linux_kernel(cls) -> CallingConvention:
@@ -219,25 +214,21 @@ class CallingConvention:
     ) -> CallingConvention:
         """Build a convention from register names resolved against `sleigh`.
 
-        Registers are named as the architecture spells them. Stack arguments
-        start `stack_arg_base` bytes from the call-time stack pointer and
-        advance by `stack_arg_increment`; `ret_stack_pop` is how many bytes
-        the callee pops on return. `preserves_memory=True` declares that a
-        call through this convention cannot write memory.
-        `arg_passing_regs_float` names the float/vector argument registers;
-        they are appended after `arg_passing_regs`, so the first one is
-        `arg(len(arg_passing_regs))` in a `call()` pattern.
-        `reg_args_adjoin_stack_args=True` says each argument register has a
-        stack home just below the stack arguments, one slot each (ARM AAPCS,
-        MIPS O32 / N64, PowerPC64 ELF), so a by-value argument split between
-        them is one object: its address reaching a callee keeps every
-        incoming stack argument read after a call unknown.
-        `entry_address` names the register the ABI guarantees holds the
-        function's own entry address on entry (PPC64 ELFv2 `r12`, MIPS
-        abicalls `t9`); `None` promises nothing.
+        Stack arguments start `stack_arg_base` bytes from the call-time stack
+        pointer (`None`: none on the stack) and advance by
+        `stack_arg_increment`; `ret_stack_pop` is how many bytes the callee
+        pops on return. `preserves_memory=True` declares that a call cannot
+        write memory. `arg_passing_regs_float` are numbered after
+        `arg_passing_regs`: the first is `arg(len(arg_passing_regs))` in a
+        `call()` pattern. `reg_args_adjoin_stack_args=True` says each argument
+        register has a stack home just below the stack arguments (ARM AAPCS,
+        MIPS O32 / N64, PowerPC64 ELF), so a split by-value argument is one
+        object. `entry_address` names the register the ABI guarantees holds
+        the function's own entry address on entry (PPC64 ELFv2 `r12`, MIPS
+        abicalls `t9`).
 
-        Names are resolved and most ABI invariants checked here, so a bad one
-        raises `StriderError` at construction. Among them:
+        Raises `StriderError` here for an unknown name or a broken ABI
+        invariant, among them:
 
         - a `link_register` must also appear in `callee_saved_regs`;
         - `stack_pointer` must be as wide as the arch's addresses, and so
@@ -246,17 +237,15 @@ class CallingConvention:
           address `call` pushes (x86: 4, x86-64: 8). A link-register arch
           (ARM, MIPS, PPC) pops 0 and sets `link_register`.
 
-        The resolved varnodes are frozen against `sleigh`'s registers, so the
-        result is usable only with a `Lifter` with the same register table
-        (`arm`, `arm_thumb` and `arm_be_kernel` share one); any other raises
-        `StriderError` at `analyze` time.
+        Usable only with a `Lifter` sharing `sleigh`'s register table (`arm`,
+        `arm_thumb` and `arm_be_kernel` share one); any other raises
+        `StriderError` at `analyze`.
         """
         ...
     @classmethod
     def preset(cls, name: str) -> CallingConvention:
-        """The preset called `name` (one of `CC_PRESETS`), as
-        `CallingConvention.<name>()` builds it. Raises `StriderError` naming
-        the known presets for any other name."""
+        """The preset called `name` (one of `CC_PRESETS`). Raises
+        `StriderError` for any other name."""
         ...
     def to_dict(self) -> dict[str, Any]:
         """The keyword arguments of `custom` other than `sleigh`, so
@@ -265,25 +254,19 @@ class CallingConvention:
         passed on the stack.
 
         Raises `StriderError` for a `preserves_all()` / `preserves_regs()`
-        variant: `custom` cannot express `preserves_all_registers`."""
+        variant, which `custom` cannot express."""
         ...
     def preserves_all(self) -> CallingConvention:
-        """A variant that clobbers nothing: every register callee-saved and
-        memory unchanged, with no arguments or return value. Keeps this
-        convention's stack/link-register geometry.
-
-        Use it as a per-address override for a transparent hook that changes
-        no caller state (`__fentry__` / `mcount`), e.g.
-        `CallingConvention.x86_64_systemv().preserves_all()`.
+        """A variant that clobbers nothing: every register callee-saved,
+        memory unchanged, no arguments or return value; stack / link-register
+        geometry kept. For a per-address override on a transparent hook
+        (`__fentry__` / `mcount`).
         """
         ...
     def preserves_regs(self) -> CallingConvention:
-        """Like `preserves_all` but leaves memory clobberable: every register
-        is preserved, memory is not.
-
-        The argument registers and stack arguments survive, unlike under
-        `preserves_all`, so a call still carries its arguments: a callee that
-        writes memory has to be seen taking a frame address."""
+        """Like `preserves_all` but memory may be clobbered, so the call keeps
+        its arguments (a callee writing memory must be seen taking a frame
+        address)."""
         ...
     def name(self) -> str:
         """The preset's short name, e.g. `"x86_64_systemv"`, or `"custom"`
@@ -336,10 +319,9 @@ class CallOtherAbi:
     the memory effect, and whether control returns.
 
     Pass one per user-op name to
-    `strider.cfg.CfgOptions(call_other_abis={name: abi})`, ahead of the
-    built-in table. `Lifter.user_op_names()` lists the names a binary can
-    contain and `Lifter.call_other_abi(name)` reads back the current
-    classification.
+    `strider.cfg.CfgOptions(call_other_abis={name: abi})`, overriding the
+    built-in table. `Lifter.user_op_names()` lists the names and
+    `Lifter.call_other_abi(name)` reads back the current classification.
     """
     @classmethod
     def noop(cls) -> CallOtherAbi:
@@ -358,7 +340,7 @@ class CallOtherAbi:
     @classmethod
     def no_return(cls) -> CallOtherAbi:
         """Control does not pass the op, which ends its region. Empty
-        footprint; `custom(..., no_return=True)` carries one."""
+        footprint; use `custom(..., no_return=True)` for one."""
         ...
     @classmethod
     def custom(
@@ -369,17 +351,16 @@ class CallOtherAbi:
         clobbers_memory: bool = ...,
         no_return: bool = ...,
     ) -> CallOtherAbi:
-        """An ABI naming implicit registers, resolved against `sleigh` here,
-        so an unknown name raises `StriderError` at construction.
+        """An ABI naming implicit registers, resolved against `sleigh`; an
+        unknown name raises `StriderError`.
 
         `implicit_reads` are read beyond the p-code-explicit operands and
         lead the lifted call's argument list; `implicit_writes` are written
         beyond the p-code-explicit result.
 
-        The resolved varnodes are frozen against `sleigh`'s registers, so the
-        result is usable only with a `Lifter` with the same register table
-        (`arm`, `arm_thumb` and `arm_be_kernel` share one); any other raises
-        `StriderError` at `analyze` time.
+        Usable only with a `Lifter` sharing `sleigh`'s register table (`arm`,
+        `arm_thumb` and `arm_be_kernel` share one); any other raises
+        `StriderError` at `analyze`.
         """
         ...
     @property

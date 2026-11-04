@@ -11,8 +11,7 @@ _MAIN_PASS_NAMES: tuple[str, ...]
 #: The `PostOptimizerPass` class names, as the extension registers them.
 _POST_PASS_NAMES: tuple[str, ...]
 
-#: A pass the fixed-point loop can run repeatedly, the only kind
-#: `OptimizerPipeline.add` accepts.
+#: A pass `OptimizerPipeline.add` accepts: run repeatedly to a fixed point.
 MainOptimizerPass = Union[
     "ConstantFold",
     "KnownBits",
@@ -49,9 +48,8 @@ class OptimizerPipeline:
         ...
     @classmethod
     def default(cls) -> OptimizerPipeline:
-        """The pipeline `analyze` runs when no pipeline is supplied: every
-        built-in pass. `analyze` runs its indirect-branch classifier after
-        whatever pipeline it is given."""
+        """The pipeline `analyze` runs when none is supplied: every built-in
+        pass. The indirect-branch classifier runs after any pipeline."""
         ...
     @property
     def passes(self) -> list[str]:
@@ -99,41 +97,33 @@ class IfCondInversion:
         ...
 
 class PhiCollapse:
-    """Braun trivial-phi elimination: redirects a `Phi` / `MemPhi` whose value
-    inputs resolve to exactly one distinct value, self-references
-    discarded, to that value, and a strongly connected group of phis
-    whose only outside input is one value to that input. A genuine
-    two-way merge is left alone."""
+    """Removes trivial phis: a `Phi` / `MemPhi`, or a strongly connected group
+    of them, whose inputs other than themselves are one value is replaced by
+    that value."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class RegionCollapse:
-    """Collapses a `Region` that already has exactly one control input,
-    rewiring its control consumers to that predecessor and each phi over
-    it to that phi's lone value input. A multi-predecessor Region is
-    left alone."""
+    """Collapses a `Region` with exactly one control input into that
+    predecessor, replacing each phi over it with its lone value input."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class DeadBranchElimination:
-    """Folds a branch with a constant selector (an `If` on a constant `I1`, a
-    `Switch` on a constant dispatch address), wiring the live successor
-    past it and killing the branch node. Every run then strips each
-    `Region` predecessor slot entry can no longer reach, with the matching
-    `Phi` / `MemPhi` value slots."""
+    """Folds an `If` or `Switch` on a constant selector to its live successor,
+    then strips the `Region` predecessors entry can no longer reach, with
+    their `Phi` / `MemPhi` slots."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class LoadForward:
     """Forwards a store's value to a later load when the nearest may-aliasing
-    memory definition is an exact-match store: same address class, base
-    and offset, covering the load's whole range. A partial overlap,
-    `InitialMemory`, a `MemPhi` whose arms reach different definitions,
-    or a call the assumptions cannot see through blocks it; a `MemPhi`
-    whose arms agree does not."""
+    memory definition is a store to the same address covering the whole
+    load. A partial overlap, `InitialMemory`, a `MemPhi` whose arms
+    disagree, or a call the assumptions cannot see through blocks it."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
@@ -154,13 +144,11 @@ class CallStackArgCollect:
         ...
 
 class LoadReadOnly:
-    """Folds a load from a constant address into a constant, reading the bytes
-    from the read-only memory image (`rom=`). A no-op when no rom is
-    supplied.
+    """Folds a load from a constant address into a constant read from the
+    read-only memory image (`rom=`); a no-op without one.
 
-    The fold never consults the load's memory chain, so the rom must map
-    only runtime-immutable memory: code and `.rodata`, never `.data` /
-    `.got`."""
+    The fold ignores the load's memory chain, so the rom must map only
+    runtime-immutable memory: code and `.rodata`, never `.data` / `.got`."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
