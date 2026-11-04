@@ -441,6 +441,17 @@ fn pat_rhs_message(repr: &Repr) -> String {
 
 /// Case-insensitive: `"i1"` / `"I64"` / `"f32"`.
 /// `n`, when some value type is `n` bits wide.
+/// A width `width_arg` accepts.
+pub(crate) struct Width {
+    bits: u32,
+}
+
+impl<'py> FromPyObject<'py> for Width {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        width_arg(ob.extract()?).map(|bits| Self { bits })
+    }
+}
+
 pub(crate) fn width_arg(n: u32) -> PyResult<u32> {
     let mut widths: Vec<usize> = T::SUPPORTED.iter().map(|ty| ty.bit_width()).collect();
     if widths.contains(&(n as usize)) {
@@ -1949,7 +1960,7 @@ node_builder! {
         { pat addr(Value): addr = "Constrain the load's address operand." },
         { pat mem(Memory): mem
             = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
-        { scalar bit_width(u32 => u32): bit_width(n) = "Filter loads by value width in bits." },
+        { scalar bit_width(Width => u32).bits: bit_width(n) = "Filter loads by value width in bits." },
         { region region },
     ],
 }
@@ -1980,7 +1991,7 @@ node_builder! {
         { scalar space(crate::sleigh::PyVnSpace => rsleigh::VnSpace).inner: space(s)
             = "Restrict the match to a specific memory space." },
         { pat mem(Memory): mem = "Constrain the store's memory predecessor." },
-        { scalar bit_width(u32 => u32): bit_width(n) = "Filter stores by data width in bits." },
+        { scalar bit_width(Width => u32).bits: bit_width(n) = "Filter stores by data width in bits." },
         { region region },
     ],
 }

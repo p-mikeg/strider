@@ -16,8 +16,17 @@ _BAD = [0, 7, 23, 33, 1000]
         lambda n: p.value_of_width(n),
         lambda n: p.inputs_of_width(n, p.int_add(p.anything(), p.anything())),
         lambda n: p.load().any_output().of_width(n),
+        lambda n: p.load().bit_width(n),
+        lambda n: p.store().bit_width(n),
     ],
-    ids=["of_width", "value_of_width", "inputs_of_width", "output_of_width"],
+    ids=[
+        "of_width",
+        "value_of_width",
+        "inputs_of_width",
+        "output_of_width",
+        "load_bit_width",
+        "store_bit_width",
+    ],
 )
 def test_unsupported_width_raises(build):
     for n in _BAD:
