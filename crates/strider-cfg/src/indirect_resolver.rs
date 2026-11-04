@@ -1,7 +1,5 @@
-//! Classifying a `BranchIndirect` needs the IR, which sits above this crate in
-//! the dependency order, so the CFG build takes its answers from
-//! `options.derived_targets` and `options.known_targets` and defers every
-//! other site via [`crate::RegionTerminator::UnresolvedIndirectBranch`].
+//! Indirect-branch answers the build seats; classifying them needs the IR,
+//! above this crate.
 
 use rustc_hash::FxHashSet;
 
@@ -54,15 +52,8 @@ pub enum ResolvedTargets {
 }
 
 /// A table's arms: non-empty, sorted by `(addr, isa_bit)`, no exact
-/// duplicate. One address in both ISA modes keeps both; the cfg reports that
-/// clash. Built by [`ResolvedTargets::table`].
-///
-/// The OPPOSITE policy to the one the resolve loop merges two classifications
-/// by (`strider_orchestrator`'s `resolve::merge::combine`), which DROPS an
-/// address two answers proved different modes for. Both are deliberate: a
-/// contradiction between two derivations is untrustworthy, where a table
-/// seating both modes is a clash the cfg exists to report. Neither dedup is
-/// redundant with the other.
+/// duplicate. One address in both ISA modes keeps both, a clash the cfg
+/// reports. Built by [`ResolvedTargets::table`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arms(Vec<ResolvedTarget>);
 
@@ -89,9 +80,8 @@ impl ResolvedTargets {
         }
     }
 
-    /// A caller's own answer of `targets`: one is the caller's dispatch, not a
-    /// table read, so a [`Self::Single`], which out of range is a tail call
-    /// where a table's arm defers the site.
+    /// A caller's own answer of `targets`: one target is a [`Self::Single`],
+    /// which out of range is a tail call rather than a deferring arm.
     #[must_use]
     pub fn seeded(targets: impl IntoIterator<Item = u64>) -> Self {
         let table = Self::table(targets.into_iter().map(|t| ResolvedTarget::new(t, None)));

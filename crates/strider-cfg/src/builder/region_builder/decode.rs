@@ -14,8 +14,6 @@ pub(super) fn next_pcode_addr(
     addr: PcodeInsnAddr,
     lift_res: &rsleigh::LiftRes,
 ) -> Result<PcodeInsnAddr> {
-    // Compare in u64 space: usize to u64 is widening everywhere we support,
-    // and avoids a potentially-truncating u64 to usize cast.
     let pcode_count = lift_res.insns.len() as u64;
     if addr.insn_index + 1 < pcode_count {
         return Ok(PcodeInsnAddr {
@@ -23,9 +21,7 @@ pub(super) fn next_pcode_addr(
             insn_index: addr.insn_index + 1,
         });
     }
-    // `rsleigh::LiftRes` imposes no `machine_insn_len > 0` invariant, and a
-    // zero-length one re-lifts the same address forever: `cur_addr` never
-    // advances, so the build loop's fall-through-OOB guard never fires.
+    // A zero length would re-lift the same address forever.
     if lift_res.machine_insn_len == 0 {
         bail!("sleigh returned zero-length machine instruction at pcode addr {addr:?}");
     }
@@ -39,12 +35,10 @@ pub(super) fn next_pcode_addr(
     })
 }
 
-/// Why a decode produced no instruction, carried as the `anyhow` payload the
-/// triage sites read back.
+/// Why a decode produced no instruction, carried as the `anyhow` payload.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::builder) enum DecodeFailure {
-    /// The reader had no bytes here, as opposed to Sleigh rejecting the bytes
-    /// it did get.
+    /// The reader had no bytes here.
     Unmapped(u64),
     /// No instruction decodes here: Sleigh rejected the bytes, or
     /// [`crate::CfgOptions::data_ranges`] marks them as data.
@@ -54,10 +48,8 @@ pub(in crate::builder) enum DecodeFailure {
 }
 
 impl DecodeFailure {
-    /// The machine address the verdict names, whatever address the decode was
-    /// asked to start from: a region's sequential decode fails several
-    /// instructions past its own start, and the two sites that mean "at the
-    /// address I asked for" compare this against theirs.
+    /// The machine address the verdict names, which can lie past the address
+    /// the decode started from.
     pub(in crate::builder) fn addr(self) -> u64 {
         match self {
             Self::Unmapped(addr) | Self::NotCode { addr, .. } => addr,
@@ -90,32 +82,14 @@ impl std::fmt::Display for DecodeFailure {
 impl std::error::Error for DecodeFailure {}
 
 /// The decode verdict `err` carries, `None` for any other failure.
-///
-/// Read at both ends of a failed decode: [`RegionBuilder::build`] seals its
-/// region and seats a stub when a sequential fall-through lands on unmapped
-/// bytes, and [`super::Builder::build`] does the same for a branch target.
-/// Any other failure is Sleigh rejecting bytes it fully read, and the region
-/// under construction is then real code whose extent is unknown; a stub seated
-/// at its start would discard it.
 pub(in crate::builder) fn decode_failure(err: &anyhow::Error) -> Option<DecodeFailure> {
     err.downcast_ref::<DecodeFailure>().copied()
 }
 
 impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
-    /// Each FLOWING [`strider_target::SleighArch::flow_commit_vars`] var's
-    /// value at [`Self::last_lift`], the last address this builder decoded.
-    ///
-    /// That address is this build's own: [`Self::rederive_flow`] re-derived it
-    /// as the predecessor's `inst_next`, or [`crate::builder::Builder::explore`] pinned it as
-    /// the region's first. It is therefore what would have flowed on had
-    /// Sleigh flowed to the successor at all, which is what an edge to an
-    /// address no `inst_next` recorded needs in place of a snapshot: a direct
-    /// edge taking [`crate::builder::Builder::enqueue`]'s fallback, and every
-    /// [`crate::builder::Builder::enqueue_resolved`] arm.
-    ///
-    /// A [`FlowCommit::NoFlow`] var is left out: its commit covers one
-    /// address, so nothing of it flows off the edge, and painting a live IT
-    /// state onto the target predicates it.
+    /// Each [`FlowCommit::Flowing`] var's value at [`Self::last_lift`], a
+    /// context this build set: what an edge to an address with no recorded
+    /// `inst_next` carries. `NoFlow` vars commit one address and never flow.
     pub(super) fn flowing_commits(&self) -> Result<Vec<(&'static str, u32)>> {
         let Some(from) = self.last_lift else {
             return Ok(Vec::new());
@@ -130,8 +104,8 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
             .collect()
     }
 
-    /// Re-imposes this region's ISA mode at `addr` when a change point wrote
-    /// over it. The read is free; only a genuine drift pays for the write.
+    /// Re-imposes this region's ISA mode at `addr` if a change point wrote
+    /// over it.
     fn hold_isa_mode(&mut self, addr: u64) -> Result<()> {
         let (Some(want), Some(var)) = (self.isa_mode, self.builder.engine.arch.isa_mode_var())
         else {
@@ -141,20 +115,13 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         Ok(())
     }
 
-    /// Resets the `noflow` decode vars at `addr` to their defaults, so a value
-    /// an earlier decode committed there does not change this one.
+    /// Resets the `noflow` vars at `addr` to their defaults, re-lifting the
+    /// previous instruction so its own commits land again.
     ///
-    /// The region's first instruction reads defaults. A sequential decode reads
-    /// what the instruction before it committed: when `addr` holds anything
-    /// but defaults, they are written and that instruction re-lifted, which
-    /// commits its own values again.
-    ///
-    /// A region STARTING mid-instruction is the exception: the region before it
-    /// just decoded those bytes, in the context committed AT them, and this
-    /// decode only continues its p-code stream. Resetting would splice a
-    /// stream from a different constructor onto the half already in the graph,
-    /// which is how gcc `-march=armv4t`'s `movne lr,pc; bxne r3` loses its call
-    /// (`LRset` is committed at the `bx`).
+    /// Not for a region starting mid-instruction: it continues a p-code
+    /// stream decoded in the context committed at those bytes, and a reset
+    /// would splice in another constructor's (armv4t `movne lr,pc; bxne r3`
+    /// loses its call, `LRset` being committed at the `bx`).
     fn hold_transients(&mut self, addr: u64) -> Result<()> {
         let defaults = &self.builder.engine.tables.transient_defaults;
         if defaults.is_empty() {
@@ -184,12 +151,9 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         Ok(())
     }
 
-    /// Holds the context at every instruction start inside the lift at `addr`,
-    /// returning whether it wrote any.
-    ///
-    /// Sleigh decodes a delay slot as part of its branch but reads the context
-    /// at the slot's own address, so the slot takes the branch's ISA mode and
-    /// the `noflow` defaults, plus what the branch itself commits there.
+    /// Imposes the region's ISA mode and the `noflow` defaults at every
+    /// delay-slot address inside the lift at `addr`, which Sleigh decodes in
+    /// the context at the slot's own address. Returns whether it wrote any.
     fn hold_delay_slot(&mut self, addr: u64, len: usize) -> Result<bool> {
         if !self.builder.engine.arch.has_delay_slots() {
             return Ok(false);
@@ -207,31 +171,16 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         Ok(wrote)
     }
 
-    /// Makes the committable flow context at `at` this build's own: erase each
-    /// var to what THIS build puts there, then re-lift `from` so that
-    /// instruction's own `globalset` lands again.
+    /// Makes the commit-able context at `at` this build's own: erases each var,
+    /// then re-lifts `from` so its own `globalset` lands again. The erase
+    /// paints forward to the next change point, so its value is per class:
     ///
-    /// Never a live snapshot of `at` itself, which is the value an earlier
-    /// build may have committed. What to erase TO differs by flow class,
-    /// because `set_context_at` is `ContextDatabase::setVariable` and paints
-    /// FORWARD to the next change point:
-    ///
-    /// - [`FlowCommit::NoFlow`] erases to the pspec DEFAULT. The engine's own
-    ///   `noflow` commit covers one address, so painting a live IT state
-    ///   forward would predicate everything after it, and a `cond_shft`
-    ///   shifted by the next instruction can land on a `cond_full` no `thfcc`
-    ///   constructor covers, failing the decode outright. The default is what
-    ///   an un-committed address already holds, so painting it forward changes
-    ///   nothing, and a committed address beyond `at` gets its value back from
-    ///   its own predecessor's decode.
-    /// - [`FlowCommit::Flowing`] erases to the value in force at `from`, which
-    ///   is what would have flowed to `at` had nothing been committed there.
-    ///   The default is wrong here: it would cancel a mode this build's own
-    ///   earlier instruction established and hold only where the committing
-    ///   instruction is the immediate predecessor.
-    ///
-    /// Re-lifting is cheap: `Sleigh` memoises recently-parsed instructions,
-    /// and `oneInstruction` applies a cached parse's commits too.
+    /// - [`FlowCommit::NoFlow`]: the pspec default. Its commit covers one
+    ///   address; painting a live IT state forward predicates what follows
+    ///   and can fail the decode.
+    /// - [`FlowCommit::Flowing`]: the value in force at `from`, what would
+    ///   have flowed to `at`. The default would cancel a mode an earlier
+    ///   instruction set.
     fn rederive_flow(&mut self, at: u64, from: u64) -> Result<()> {
         let mut wrote = false;
         for &(name, flow, default) in &self.builder.engine.tables.flow_commit {
@@ -264,27 +213,12 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
             lift = self.lift_unheld(addr)?;
         }
         self.last_lift = Some(addr);
-        // `inst_next` of an instruction THIS build decoded, which is what
-        // `Builder::enqueue` may trust a snapshot of. Recorded HERE, not in
-        // `process_new_insn`, which runs only from the per-p-code-op loop: an
-        // instruction lifting to ZERO ops never reaches it, and ARM `enterx`
-        // is exactly that shape while committing `TEEMode` at its own
-        // `inst_next`. `checked_add` so an instruction at the top of the
-        // address space cannot seed a wrapped low address.
-        // `as u64` not `as u32`: `machine_insn_len` is a `usize`, and narrowing
-        // it first would wrap a huge length into a small one and defeat the
-        // `checked_add`. A zero length would make `next == addr`, erasing the
-        // context at the address just decoded and recording an instruction's own
-        // start as a commit point; `next_pcode_addr` rejects that length too, but
-        // only once the region does not close first.
+        // Here, not in `process_new_insn`: a zero-op instruction (ARM
+        // `enterx`) can commit at its `inst_next` too.
         let len = lift.machine_insn_len as u64;
         let next = (len > 0).then(|| addr.checked_add(len)).flatten();
         if let Some(next) = next {
-            // Re-derived NOW, while `addr` is still the last instruction
-            // decoded, so whatever sits at `next` afterwards is exactly what
-            // THIS decode committed. That is what lets `Builder::enqueue`
-            // trust a snapshot here even for a fall-through this region does
-            // not go on to decode itself.
+            // Now, so `next` holds exactly what this decode committed.
             self.rederive_flow(next, addr)?;
             self.builder.committed_next.insert(next);
         }
@@ -298,18 +232,14 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
             // Display, not Debug: the error's `Debug` nests its source's, which
             // for a reader error carries a captured backtrace.
             let msg = format!("sleigh could not lift {addr:#x}: {e}");
-            // `DataUnavailErr` is the reader answering a read with zero bytes,
-            // which is the same verdict its own error is.
-            // `PartiallyInitializedInsn` is the same window ending mid
-            // instruction: the missing bytes were never read either.
+            // Both mean the reader had no (or not all) bytes.
             match e {
                 rsleigh::error::GenericError::MemReadErr(_)
                 | rsleigh::error::GenericError::Base(
                     rsleigh::error::BaseError::DataUnavailErr
                     | rsleigh::error::BaseError::PartiallyInitializedInsn,
                 ) => anyhow::Error::new(DecodeFailure::Unmapped(addr)).context(msg),
-                // Every decode Sleigh rejects (`BadDataError`, an unimplemented
-                // constructor) surfaces as a C++ exception.
+                // How Sleigh rejects bytes (`BadDataError`, no constructor).
                 rsleigh::error::GenericError::Base(
                     rsleigh::error::BaseError::UnexpectedCppException(_),
                 ) => anyhow::Error::new(DecodeFailure::NotCode {
@@ -322,9 +252,8 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         })
     }
 
-    /// [`Self::lift_one`], refusing an instruction any byte of which
-    /// [`crate::CfgOptions::data_ranges`] marks as data, except the one at the
-    /// function start: the caller named it as code.
+    /// [`Self::lift_one`], refusing an instruction overlapping
+    /// [`crate::CfgOptions::data_ranges`], except at the function start.
     pub(super) fn lift_code(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
         if addr == self.builder.start_addr {
             return self.lift_one(addr);

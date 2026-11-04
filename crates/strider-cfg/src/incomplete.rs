@@ -5,17 +5,11 @@ use std::fmt;
 
 use crate::PcodeInsnAddr;
 
-/// Emits [`Reason`], its [`Reason::ALL`] roster and its [`Reason::name`]
-/// spellings from one row list, so a reason cannot reach the enum without
-/// reaching the roster Python publishes.
+/// Emits [`Reason`], [`Reason::ALL`] and [`Reason::name`] from one row list.
 macro_rules! reasons {
     ($($(#[$doc:meta])* $variant:ident => $name:literal,)+) => {
-        /// Why an [`Incompleteness`] names an address.
-        ///
-        /// The first two name a dispatch SITE, the key
-        /// [`CfgOptions::known_targets`](crate::CfgOptions::known_targets)
-        /// seeds; the other five a branch TARGET, which a direct edge reaches
-        /// too.
+        /// Why an [`Incompleteness`] names an address. The first two name a
+        /// dispatch SITE, the other five a branch TARGET.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub enum Reason {
             $($(#[$doc])* $variant,)+
@@ -38,79 +32,51 @@ macro_rules! reasons {
 }
 
 reasons! {
-    /// An indirect branch with no complete successor set. A CFG build names
-    /// every dispatch it left without an edge. An analysis names a live
-    /// placeholder, a seated `Switch` whose selector stopped deriving, a site
-    /// still growing at the round cap, one whose answer lost a proved
-    /// successor, narrowed or was withdrawn, and a return whose target is not
-    /// provably the caller's and the caller did not seed.
+    /// An indirect branch with no complete successor set: a dispatch left
+    /// without an edge, or (in an analysis) a site whose answer stopped
+    /// deriving, kept growing, lost a successor, narrowed or was withdrawn,
+    /// and an unseeded return whose target is not provably the caller's.
     UnresolvedBranch => "unresolved_branch",
-    /// A seated answer nothing verified. A CFG build names every seat. An
-    /// analysis names a `Switch` holding exactly the caller's seed, every
-    /// `TailCall` seat, a `Return` seat the caller made (where a failed
-    /// re-check of it lands too), a p-code `RETURN` the caller seeded whose
-    /// target is not provably the caller's, and an arm seated on a mode only
-    /// its siblings' seed proved.
+    /// A seated answer nothing verified: in a build every seat; in an
+    /// analysis a `Switch` holding exactly the caller's seed, a `TailCall`
+    /// seat, a caller's `Return` seat or seeded p-code `RETURN`, and an arm
+    /// whose mode only its siblings' seed proved.
     UnverifiedSeed => "unverified_seed",
-    /// Reached in two ISA modes: one region owns the bytes, so the losing
-    /// edge's path decodes in the other mode. Held per p-code index, so a
-    /// clash noted mid-instruction is its own entry.
-    ///
-    /// The ISA MODE only. Two edges that agree on the mode but disagree on
-    /// another committed var (an edge into an ARM IT block, on `condit`) are
-    /// not reported: the first arrival owns the bytes. An edge the entry
-    /// reaches without a seeded arm wins over an arm, and the `Switch` loses
-    /// every arm at that address, in both modes; any other pair is won by
-    /// work-queue order, so neither decode is trusted.
+    /// Reached in two ISA modes, so the losing edge's path decodes in the
+    /// winner's. Per p-code index. Other committed vars are not compared. A
+    /// direct edge beats a seeded arm (the `Switch` loses every arm there);
+    /// otherwise work-queue order decides, so neither decode is trusted.
     IsaModeConflict => "isa_mode_conflict",
-    /// Interior to a region but off every boundary one can start at (a MIPS
-    /// delay slot too), or a region start a later decode stepped over. A
-    /// direct branch keeps an inexact edge to the owning region; a `Switch`
-    /// arm is dropped.
+    /// Inside a region but off every boundary (a MIPS delay slot too), or a
+    /// region start a later decode stepped over. A direct branch keeps an
+    /// inexact edge to the owner; a `Switch` arm is dropped.
     InteriorTarget => "interior_target",
-    /// No bytes back it: the edge leaves through an empty `TailCall` stub. The
-    /// address is the instruction that could not be read whole, so a MIPS
-    /// branch whose delay slot is unmapped names itself. An unmapped seeded
-    /// arm, or a fall-through into unmapped bytes off one, is named with no
-    /// stub: the arm is dropped, unless a call precedes the bytes, which ends
-    /// that call as `NoReturn`. A branch, or a conditional's not-taken side,
-    /// into unmapped bytes off an arm leaves through a stub and keeps the arm.
-    /// So does an arm landing on a stub a direct edge already left here: the
-    /// address is reported either way, and it says nothing about the table's
-    /// bound, where an arm whose own decode runs into the bytes does. An
-    /// unmapped ENTRY fails the whole build instead.
+    /// No bytes back the instruction here (a MIPS branch with an unmapped
+    /// delay slot names itself); the edge leaves through a `TailCall` stub.
+    /// Off a seeded arm, a decode running into them drops the arm unless a
+    /// call precedes them, which ends `NoReturn`; a branch from the arm, or
+    /// an arm onto an existing stub, keeps it. An unmapped entry fails the
+    /// build.
     UnmappedTarget => "unmapped_target",
-    /// Holds no instruction: bytes Sleigh rejects, or
-    /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks. A
-    /// branch leaves through a `TailCall` stub; a fall-through past a call
-    /// ends that call as `NoReturn`. Any other fall-through into data leaves
-    /// through a stub too; one into bytes Sleigh rejects fails the whole
-    /// build. Bytes reached off a seeded arm are named here with no stub, and
-    /// the arm is dropped and named by
+    /// Holds no instruction: Sleigh rejects the bytes or
+    /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks them.
+    /// A branch, a fall-through into data, or a zero-p-code-op run leaves
+    /// through a `TailCall` stub; a call falling into them ends `NoReturn`.
+    /// Any other fall-through into rejected bytes fails the build. Off a
+    /// seeded arm, as for [`Self::UnmappedTarget`], the arm is dropped and
+    /// named by
     /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets);
-    /// a fall-through reaching them past a call instead ends that call as
-    /// `NoReturn`, keeping the arm. An arm landing on a stub a direct edge
-    /// already left here keeps it, as for [`Self::UnmappedTarget`]. The start
-    /// of an arm, or of a region off one, whose decode fails for a reason no
-    /// other variant names is named here too.
+    /// an arm or region off one whose decode fails for any unnamed reason is
+    /// named here at its start.
     UndecodableTarget => "undecodable_target",
-    /// Where a fall-through ran off a
-    /// [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
-    /// address after the last instruction decoded: the end itself unless that
-    /// instruction straddles it. That is a sequential fall-through, a
-    /// conditional branch's not-taken path, or a conditional instruction's
-    /// skip of itself (`if (!cc) goto inst_next`: ARM, Thumb IT, MIPS
-    /// branch-likely, x86 `rep`). The region leaves through an empty `TailCall`
-    /// stub there, as a branch out of range does. A call returning there ends
-    /// its region `NoReturn` and is reported, unless its target is in
+    /// A fall-through, not-taken path or conditional instruction's skip of
+    /// itself ran off a [`FunctionBound::Size`](crate::FunctionBound::Size)
+    /// end, named at the first address past the last decoded instruction. It
+    /// leaves through a `TailCall` stub; a call returning there ends
+    /// `NoReturn` unless its target is in
     /// [`CfgOptions::no_return_targets`](crate::CfgOptions::no_return_targets).
-    /// Typical causes: an entry point falling into the next symbol, a slot
-    /// patched at run time, or a size too short. Off a seeded arm a sequential
-    /// fall-through is named here with no stub: the arm is dropped instead, and
-    /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets)
-    /// names it. Never under [`FunctionBound::Open`](crate::FunctionBound::Open):
-    /// only an address below the entry is out of range there, and a
-    /// fall-through moves up.
+    /// Off a seeded arm the arm is dropped instead. Never under
+    /// [`FunctionBound::Open`](crate::FunctionBound::Open).
     PastFunctionEnd => "past_function_end",
 }
 
@@ -151,8 +117,7 @@ impl Incompleteness {
         self.0.insert((addr, reason));
     }
 
-    /// Adds `build`'s target reasons. Its site reasons answer for that build
-    /// alone, so they are left out.
+    /// Adds `build`'s target reasons; its site reasons are that build's alone.
     pub fn absorb(&mut self, build: &Incompleteness) {
         self.0.extend(build.iter().filter(|(_, r)| !r.is_site()));
     }

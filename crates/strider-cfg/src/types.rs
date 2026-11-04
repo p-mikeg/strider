@@ -13,11 +13,9 @@ impl From<u64> for MachineInsnAddr {
     }
 }
 
-/// Identifies one pcode instruction: a machine instruction can lift to
-/// several, so the machine address alone is not unique.
+/// One pcode op: a machine address and an index into its lift.
 ///
-/// Ordering is lexicographic with `machine_addr` primary.  DO NOT reorder the
-/// fields; the derived `Ord` follows declaration order.
+/// The derived `Ord` (machine address first) follows field order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PcodeInsnAddr {
     pub machine_addr: MachineInsnAddr,
@@ -42,14 +40,10 @@ impl PcodeInsnAddr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegionInstruction {
     pub addr: PcodeInsnAddr,
-    /// A LOAD / STORE's `inputs[0]` encodes its target space as an id only the
-    /// engine that decoded it resolves ([`crate::Cfg::space_ids`]), and this
-    /// type carries no lifetime tying it to that engine.
-    /// `Lifter::check_cfg_space_ids` is the gate.
+    /// A LOAD / STORE's `inputs[0]` is a space id only the decoding engine
+    /// resolves ([`crate::Cfg::space_ids`]).
     pub insn: rsleigh::Insn,
-    /// Byte length of the MACHINE instruction this pcode op came from, so a
-    /// region's span can end past its last instruction's start address.  Every
-    /// pcode op of one machine instruction repeats it.
+    /// Byte length of the machine instruction this pcode op came from.
     pub len: u32,
 }
 
@@ -61,62 +55,35 @@ pub struct UndecodableTarget {
     pub target: PcodeInsnAddr,
 }
 
-/// How a [`Region`] ends.  Edges are unweighted, so the transfer kind lives
-/// here and nowhere else.
-///
-/// `Return`, `TailCall`, `NoReturn` and `UnresolvedIndirectBranch` have no
-/// outgoing edge at all.
+/// How a [`Region`] ends; edges are unweighted. `Return`, `TailCall`,
+/// `NoReturn` and `UnresolvedIndirectBranch` have no outgoing edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionTerminator {
-    /// The region ended at a zero-pcode-op instruction (`nop`, `endbr64`,
-    /// `paciasp`, `bti`, alignment padding), decoding fell into an
-    /// already-discovered region, the region is the first half of a split, it
-    /// closed on an explicit `Branch` opcode, or decoding fell through onto
-    /// bytes that hold no instruction, unmapped or marked data by
-    /// [`crate::CfgOptions::data_ranges`], or past the function's recorded
-    /// size ([`crate::Reason::PastFunctionEnd`]), and the region edges to a
-    /// `TailCall` stub there.  A fall-through onto Sleigh-REJECTED bytes with
-    /// no preceding call is an `Err` on the whole build instead.
+    /// One successor: a `Branch`, a zero-pcode-op instruction, a fall-through
+    /// into an existing region, the first half of a split, or a fall-through
+    /// onto a `TailCall` stub (unmapped bytes, data, past the bound).
     Unconditional,
-    /// Two outgoing edges; the one whose target region CONTAINS
-    /// `true_target` is the taken side, the other the fall-through.
+    /// Two outgoing edges; see [`crate::Cfg::region_if`].
     CondBranch {
-        /// A full [`PcodeInsnAddr`] rather than a machine address: an
-        /// intra-machine-instruction `CBRANCH` can put both successors at the
-        /// same machine address with different pcode indices.
+        /// A full [`PcodeInsnAddr`]: an intra-instruction `CBRANCH` can put
+        /// both successors at one machine address.
         true_target: PcodeInsnAddr,
     },
     Return,
-    /// Emitted by a CallOther that classifies as noreturn (`BUG()`-class traps
-    /// such as x86 `ud2` or aarch64 `brk #imm`), a `call` whose target is in
-    /// [`crate::CfgOptions::no_return_targets`], a `call` or `callind` whose return
-    /// address falls outside the function bound, and a fall-through past a
-    /// call onto bytes that hold no instruction.
-    ///
-    /// That last one TRUNCATES: the region keeps nothing after the call, so
-    /// the instructions between it and the bytes (a PowerPC TOC restore) are
-    /// dropped. See [`crate::Reason::UndecodableTarget`].
+    /// A no-return CallOther (`ud2`, `brk #imm`), a call to a
+    /// [`crate::CfgOptions::no_return_targets`] entry or returning outside the
+    /// bound, or a call whose fall-through holds no code; that last drops
+    /// whatever followed the call (a PowerPC TOC restore).
     NoReturn,
-    /// Branch leaving the function range, lowered by the IR layer as
-    /// `Call(IntConst(target)) + Return`.
-    ///
-    /// Two shapes: a region ending in a direct (or `known_targets`-resolved)
-    /// jump to an OOB target, and the empty stub the build seats for an edge
-    /// leaving the decoded bytes, whether the target is out of the function
-    /// bound, unmapped, or holds no instruction.  The stub's `start_addr` IS
-    /// the target and it carries no instructions, since none of those is
-    /// decoded; it hangs off a regular successor edge so the branch it came
-    /// from survives.
+    /// A branch leaving the function: a jump to an out-of-range target, or an
+    /// empty stub at `start_addr == target` for an edge leaving the decoded
+    /// bytes (out of bound, unmapped, not code), hung off a successor edge.
     TailCall {
-        /// The callee, with the ISA mode the branch committed for it (an
-        /// interworking `bx <const>` to a different-mode function); its `isa_bit`
-        /// is `None` when the callee keeps its own entry mode.
+        /// The callee, with the ISA mode the branch committed (`None`: its own
+        /// entry mode).
         target: crate::ResolvedTarget,
     },
-    /// Jump table built from a `ResolvedTargets::Multiple` seated from
-    /// `derived_targets` or `known_targets`.
-    ///
-    /// Every target is an instruction start inside the function bound. An arm
+    /// A seated jump table. Every target is an instruction start inside the function bound. An arm
     /// out of the bound, or off every instruction boundary of a region decoded
     /// before the seal, defers the whole site as `UnresolvedIndirectBranch`; an
     /// off-boundary arm found after the seal is dropped. Both off-boundary
@@ -125,11 +92,9 @@ pub enum RegionTerminator {
     Switch {
         /// The `BranchIndirect`'s `inputs[0]`.
         target_vn: rsleigh::Vn,
-        /// Each arm with the ISA mode the branch committed (an interworking
-        /// `bx`/`jr`-dispatch), else `isa_bit: None`.
+        /// Each arm with the ISA mode the branch committed, if any.
         targets: Vec<crate::ResolvedTarget>,
-        /// The dispatch instruction, so a seated site stays keyed to its pcode
-        /// address and a later resolution round can re-derive and widen it.
+        /// The dispatch instruction's address.
         addr: crate::PcodeInsnAddr,
     },
     /// `BranchIndirect` whose target is not yet known.  No outgoing edge.
@@ -148,15 +113,9 @@ impl RegionTerminator {
         Self::UnresolvedIndirectBranch { target_vn, addr }
     }
 
-    /// Drops the `Switch` arms whose target is `machine_addr`, the FIRST only
-    /// when `first_only`: a table can name one address in both ISA modes, and
-    /// each arm enqueues its own work item, so a per-arm seating consumes one
-    /// while a per-address withdrawal takes them all.
-    ///
-    /// A table left with no arm demotes to [`Self::defer`]: a zero-arm
-    /// `Switch` fails the whole function's lift, which is the outcome
-    /// dropping an arm exists to avoid. Returns whether an arm went; `false`
-    /// for every other terminator.
+    /// Drops the `Switch` arms at `machine_addr` (one address can be an arm
+    /// in both ISA modes), only the first when `first_only`. A table left
+    /// with no arm demotes to [`Self::defer`]. Returns whether an arm went.
     pub(crate) fn drop_switch_arms_at(&mut self, machine_addr: u64, first_only: bool) -> bool {
         let Self::Switch {
             target_vn,
@@ -183,69 +142,45 @@ impl RegionTerminator {
 }
 
 /// A basic block: maximal straight-line pcode entered only at `start_addr` and
-/// left only at the terminator.  Ends on a `Branch`, `CondBranch`, `Return`, or
-/// `BranchIndirect` opcode, on a no-return `Call`/`CallOther`/`CallIndirect`,
-/// on a zero-pcode-op instruction (`build` segments at every one), when
-/// sequential decoding reaches an already-discovered region's start, and where
-/// a fall-through cannot go on: the cases
-/// [`RegionTerminator::Unconditional`] and [`RegionTerminator::NoReturn`]
-/// list (unmapped or data bytes, the function's recorded size, Sleigh-rejected
-/// bytes after a call).
+/// left only at its [`RegionTerminator`]. Every zero-pcode-op instruction is
+/// its own region.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
     pub start_addr: PcodeInsnAddr,
-    /// Program order.  Empty in two cases: an `Unconditional` region sealed
-    /// at a zero-pcode-op instruction, which is the common one since `build`
-    /// segments at every such instruction, or a `TailCall` stub.
+    /// Program order, ascending. Empty for a zero-pcode-op `Unconditional`
+    /// region or a `TailCall` stub.
     pub insns: Vec<RegionInstruction>,
-    /// Byte length of the zero-pcode-op machine instruction an empty region was
-    /// sealed at, which no `RegionInstruction` records.  `0` when the region
-    /// owns no byte past `start_addr` (a `TailCall` stub).  Unread while
-    /// `insns` is non-empty, where the last instruction bounds the span.
+    /// Byte length of an empty region's zero-pcode-op instruction; `0` for a
+    /// stub. Unread while `insns` is non-empty.
     pub empty_span_len: u32,
     pub terminator: RegionTerminator,
-    /// The ISA mode the region decoded in; `None` on an arch with no ISA-mode
-    /// var, and for a `TailCall` stub, whose bytes are never decoded.
+    /// The ISA mode the region decoded in; `None` with no ISA-mode var, and
+    /// for a stub.
     pub(crate) isa_mode: Option<u32>,
 }
 
 impl Region {
-    /// Index of the pcode op at exactly `addr`.  `insns` holds one entry per
-    /// PCODE op, so this is a pcode-op index, not a machine-instruction one.
-    ///
-    /// `insns` is program order, which for a region is ascending address
-    /// order: one forward decode loop fills it and `split_off` preserves the
-    /// order, which is what lets this bisect.
+    /// Index into `insns` of the pcode op at exactly `addr`, by bisection.
     pub(crate) fn insn_index_at(&self, addr: PcodeInsnAddr) -> Option<usize> {
         self.insns
             .binary_search_by(|insn| insn.addr.cmp(&addr))
             .ok()
     }
 
-    /// The ascending order [`Self::insn_index_at`] bisects over.  Checked once
-    /// per region mutation, never per query: this is O(len) and
-    /// `insn_index_at` runs once per work-queue item and once per switch
-    /// target.
+    /// The ascending order [`Self::insn_index_at`] bisects over. O(len): for
+    /// debug checks per mutation.
     pub(crate) fn insns_are_ascending(&self) -> bool {
         self.insns.windows(2).all(|w| w[0].addr <= w[1].addr)
     }
 
-    /// Whether a pcode op sits at exactly `addr`, i.e. `addr` is a pcode-op
-    /// boundary rather than interior bytes.
+    /// Whether a pcode op sits at exactly `addr`.
     pub(crate) fn contains_insn_at(&self, addr: PcodeInsnAddr) -> bool {
         self.insn_index_at(addr).is_some()
     }
 
-    /// One past the last machine byte this region owns, and at least one past
-    /// its start: a region always owns `start_addr`. `None` when that end lies
-    /// past the top of the address space, where the region owns everything at
-    /// or above its start.
-    ///
-    /// `checked`, never saturating: an instruction whose bytes cross the top
-    /// would saturate the end to `u64::MAX` and report the byte AT `u64::MAX`
-    /// unowned, which sends the builder to decode a second region inside that
-    /// instruction. It also keeps [`crate::region_index::RegionIndex`]'s
-    /// `(start, end)` range non-empty, which `range` would panic on.
+    /// One past the last machine byte this region owns, at least
+    /// `start_addr + 1`. `None` past the top of the address space (never
+    /// saturated: that would disown the byte at `u64::MAX`).
     pub(crate) fn end(&self) -> Option<u64> {
         let start = self.start_addr.machine();
         let end = match self.insns.last() {
@@ -263,15 +198,9 @@ impl Region {
             .max(1)
     }
 
-    /// `start_addr <= addr < end()`, so a region owns its last
-    /// instruction's BYTES: reporting those unowned makes the builder decode a
-    /// second region mid-instruction.  At the last instruction's own machine
-    /// address the pcode index still bounds the span, a region being able to
-    /// end mid-pcode-sequence.
-    ///
-    /// An empty region owns `start_addr` plus the `empty_span_len` bytes of the
-    /// zero-pcode-op instruction it was sealed at; those bytes hold no pcode, so
-    /// only their machine addresses are owned.
+    /// `start_addr <= addr < end()`, all of the last instruction's bytes
+    /// included; at its own machine address the pcode index still bounds the
+    /// span. An empty region owns its `empty_span_len` machine bytes.
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
         let below_end = self.end().is_none_or(|end| addr.machine() < end);
         match self.insns.last() {
@@ -286,11 +215,8 @@ impl Region {
     }
 }
 
-/// `StableDiGraph` keeps `EdgeIndex` values valid across the removals
-/// `split_region` performs: it snapshots edge ids into a `Vec` and removes
-/// inside the loop, which a plain `Graph` would invalidate by swap-removing.
-/// `Builder::build` drops the unreachable regions, so region ids are not
-/// dense.
+/// Stable, so edge ids survive `split_region`'s removals. Region ids are not
+/// dense once unreachable regions are dropped.
 pub(crate) type RegionGraph = StableDiGraph<Region, ()>;
 
 #[cfg(test)]
