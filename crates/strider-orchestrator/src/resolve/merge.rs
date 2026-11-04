@@ -3,13 +3,10 @@ use strider_cfg::{ResolvedTarget, ResolvedTargets};
 
 use super::visit;
 
-/// `targets` with each mode-less entry taking the ISA mode `known` already
-/// proved for that address.
-///
-/// A new mode-less address is dropped at an interworking site (`None` decodes
-/// in the flowing mode, the one being switched away from), and the fold
-/// reports the site incomplete. Where every proved mode is the flowing one it
-/// is kept, and the returned flag marks the site's modes as assumed.
+/// `targets` with each mode-less entry taking the ISA mode `known` proved for
+/// its address. A new mode-less address is dropped at an interworking site
+/// (`None` decodes in the mode being switched away from); elsewhere it is
+/// kept and the returned flag marks the site's modes assumed.
 pub(super) fn adopt_known_modes(
     known: Option<&ResolvedTargets>,
     targets: ResolvedTargets,
@@ -65,15 +62,10 @@ pub(super) fn merge_derived(
     combine(a, b, Some(flowing_isa_bit))
 }
 
-/// Two answers for one site united by address, order-independently.
-/// `Withdrawn` is the empty set; two `LinkRegister`s stay `LinkRegister`.
-/// `flowing_isa_bit` is the mode flowing into the branch, `None` disabling the
-/// interworking drop. An address the two sides prove in different modes is
-/// dropped, unlike [`ResolvedTargets::table`], which keeps both for the cfg
-/// to report.
-///
-/// Mixing `LinkRegister` with targets loses the return successor; the fold
-/// tracks it and reports the site.
+/// Two answers for one site united by address, order-independently;
+/// `Withdrawn` is the empty set. `flowing_isa_bit` is the mode flowing into
+/// the branch (`None`: no interworking drop). An address proved in two modes
+/// is dropped; mixing `LinkRegister` with targets loses the return successor.
 fn combine(
     a: &ResolvedTargets,
     b: &ResolvedTargets,

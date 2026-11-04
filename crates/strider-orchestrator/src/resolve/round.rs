@@ -75,12 +75,8 @@ where
     R: rsleigh::MemReader,
 {
     /// Builds the cfg under `cfg_opts`, lifts and optimises it, and
-    /// classifies its dispatch sites.
-    ///
-    /// # Errors
-    ///
-    /// Propagates CFG-build, lift (including IR validation), and pipeline
-    /// failures.
+    /// classifies its dispatch sites. Errs on a CFG-build, lift, validation or
+    /// pipeline failure.
     pub(super) fn build_round(
         &mut self,
         start_addr: MachineInsnAddr,

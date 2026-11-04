@@ -8,11 +8,9 @@ use super::round::Anchors;
 use super::sites::SiteTable;
 use super::visit;
 
-/// Sites whose seated `Switch` holds fewer arms than their seat asked for.
-///
-/// The cfg drops an arm it cannot seat (one off every instruction boundary)
-/// and keeps the rest; the fold compares rounds, not the cfg, so it would
-/// read the loss as convergence.
+/// Sites whose seated `Switch` holds fewer arms than their seat asked for:
+/// the cfg drops an arm off every instruction boundary, which the fold,
+/// comparing rounds, would read as convergence.
 pub(super) fn seated_arm_losses(cfg: &Cfg, sites: &SiteTable<'_>) -> Vec<PcodeInsnAddr> {
     let mut out = Vec::new();
     for region in cfg.regions() {
@@ -30,15 +28,10 @@ pub(super) fn seated_arm_losses(cfg: &Cfg, sites: &SiteTable<'_>) -> Vec<PcodeIn
     out
 }
 
-/// The sites whose seat this round's cfg refused, each with the seat it keeps.
-///
-/// An undecodable arm, or one reaching undecodable code, means the bound is
-/// wrong: the whole seat goes. An ISA-mode clash, raised by any two edges
-/// reaching one address, condemns only the arm naming it.
-///
-/// Candidates are `anchors`, the sites `undecodable` names and the loop's
-/// own seats, never other seeds: a binary-wide table holds other functions'
-/// sites.
+/// The sites whose seat this round's cfg refused, each with the seat it keeps:
+/// an undecodable arm withdraws the whole seat, an ISA-mode clash only the
+/// arm naming it. Only `anchors`, `undecodable`'s sites and the loop's own
+/// seats are candidates: a binary-wide seed table holds other functions' sites.
 pub(super) fn refusals(
     undecodable: &[UndecodableTarget],
     clashing: &[PcodeInsnAddr],
@@ -145,12 +138,8 @@ pub(super) struct DerivedChannels<'a> {
 }
 
 /// Sites with no complete successor set, sorted and deduplicated: live
-/// placeholders, seated `Switch`es whose selector no longer derives, and both
-/// derived channels.
-///
-/// A seed suppresses only the unclassified `Switch`, and only while
-/// [`seed_still_covers`] holds; [`unverified_seeded_sites`] reports the
-/// complement.
+/// placeholders, unclassified `Switch`es their seed no longer covers
+/// ([`seed_still_covers`]), and both derived channels.
 pub(super) fn live_unresolved_branches(
     live_indirect: &FxHashSet<NodeId>,
     placeholders: &Anchors,
