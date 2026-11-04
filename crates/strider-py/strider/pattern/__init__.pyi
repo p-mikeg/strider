@@ -793,7 +793,7 @@ def switch() -> SwitchPat:
 def int_add(l: ValueLike, r: ValueLike) -> Pat:
     """Match integer addition. Commutative."""
 def int_sub(l: ValueLike, r: ValueLike) -> Pat:
-    """Match integer subtraction."""
+    """Match integer subtraction. A constant `r` also matches the folded `int_add(l, -r)`."""
 def int_mul(l: ValueLike, r: ValueLike) -> Pat:
     """Match integer multiplication. Commutative."""
 def int_div(l: ValueLike, r: ValueLike) -> Pat:
@@ -857,7 +857,7 @@ def bool_not(operand: ValueLike) -> Pat:
 def float_add(l: ValueLike, r: ValueLike) -> Pat:
     """Match float addition. Commutative."""
 def float_sub(l: ValueLike, r: ValueLike) -> Pat:
-    """Match float subtraction."""
+    """Match float subtraction. A `float_const` `r` also matches the folded `float_add(l, -r)`."""
 def float_mul(l: ValueLike, r: ValueLike) -> Pat:
     """Match float multiplication. Commutative."""
 def float_div(l: ValueLike, r: ValueLike) -> Pat:
