@@ -14,11 +14,7 @@ use super::implicit::note_copy;
 use super::walk::RelocInfo;
 use super::{Ctx, RelocSite};
 
-/// Adds a possibly-negative relocation `addend` to a base address.
-///
-/// A negative addend casts to its 2's-complement bit pattern; `wrapping_add`
-/// plus `Patch::new`'s truncation to the field width give the modular result
-/// every relocation field expects.
+/// `base + addend`, modular: `Patch::new` truncates to the field width.
 #[inline]
 pub(super) fn apply_addend(base: u64, addend: i64) -> u64 {
     base.wrapping_add(addend as u64)
@@ -55,8 +51,7 @@ pub(super) fn symbol_size(obj: &object::File<'_>, idx: object::SymbolIndex) -> O
 }
 
 /// A plain data field `object` describes: `Absolute` is `S + A`, `Relative`
-/// and `PltRelative` `S + A - P`, the latter's L collapsing to S since no PLT
-/// is materialised. Anything else is a hole.
+/// and `PltRelative` `S + A - P` (no PLT, so L is S). Anything else is a hole.
 pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
     let obj = ctx.obj;
     let site_addr = site.addr;
@@ -69,21 +64,14 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
         ctx.unmodelled(holder, site_addr, UNKNOWN_FIELD_BYTES, r.type_word());
         return;
     };
-    // `size` is in bits, and 0 nominally means "the kind's default". Absolute /
-    // Relative / PltRelative all set it explicitly on every arch of interest,
-    // so 0 here signals an arch-specific encoding that isn't modelled. The
-    // width is needed before the value: an `SHT_REL` addend is read back out
-    // of the field.
+    // `size` is in bits; 0 marks an arch-specific encoding, not modelled.
     let size_bits = generic.size_bits;
     let plain = size_bits != 0
         && size_bits.is_multiple_of(8)
         && size_bits <= 64
-        // A byte-multiple size still does not make the field plain low bytes
-        // at the offset: s390x's `*DBL` types hold `(S + A - P) >> 1`,
-        // `R_LARCH_B16` a branch displacement, the SHARC `*_V3` family
-        // instruction-encoded operands. `X86Signed` is the one non-`Generic`
-        // encoding that IS plain: it only names the sign extension
-        // `R_X86_64_32S` applies at runtime.
+        // A non-`Generic` encoding is not plain low bytes (s390x `*DBL` is
+        // `(S + A - P) >> 1`), except `X86Signed`, which only names a sign
+        // extension.
         && matches!(
             generic.encoding,
             object::RelocationEncoding::Generic | object::RelocationEncoding::X86Signed
@@ -105,9 +93,7 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
     };
     let size_bytes = (size_bits / 8) as usize;
 
-    // `r_offset` addresses the storage unit, inside which the field can be
-    // offset. A `r_offset` at the very top of the address space is malformed;
-    // the skew would carry the field out of it.
+    // `r_offset` addresses the storage unit; the field can sit inside it.
     let skew = mips_half_field_skew(r, obj.architecture(), endian_le);
     let Some(field_addr) = site_addr.checked_add(skew) else {
         return;
@@ -122,8 +108,7 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
         ctx.unmodelled(holder, field_addr, size_bytes, r.type_word());
         return;
     };
-    // `PltRelative` is a call or jump, whose displacement hides the address it
-    // was built from; every other plain field holds that address, see
+    // Only a call's displacement hides the address, see
     // `Target::weak_undefined`.
     if (target.ifunc && !ctx.in_code(field_addr, size_bytes))
         || (target.weak_undefined && !matches!(generic.kind, RelocationKind::PltRelative))
@@ -135,9 +120,8 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
         bytes: size_bytes as u8,
         signed: pc_relative || matches!(generic.encoding, object::RelocationEncoding::X86Signed),
     };
-    // `SHT_REL` keeps A in the field, sign-extended from its width: a
-    // PC-relative site holds a negative A (-4 for an x86 `call rel32`). A
-    // field no region holds contributes 0, its patch being skipped too.
+    // `SHT_REL` keeps A in the field, sign-extended (-4 for x86 `call
+    // rel32`). A field no region holds reads 0 and is not patched.
     let addend = match r.rela_addend {
         Some(addend) => addend,
         None => holder
@@ -146,9 +130,7 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
             })
             .unwrap_or(0),
     };
-    // S, A, P follow the System V ABI generic relocation formula:
-    // S = target_addr, A = addend, P = site_addr. P is the storage unit, not
-    // the field inside it.
+    // P is the storage unit, not the field inside it.
     let value = apply_addend(target.addr, addend);
     let value = if pc_relative {
         value.wrapping_sub(site_addr)
@@ -170,9 +152,8 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
 /// word, or the 32-bit displacement of an x86 one.
 pub(super) const UNKNOWN_FIELD_BYTES: usize = 4;
 
-/// `value` checked against a plain data `field`. An ELF32 image's address
-/// arithmetic wraps at 32 bits, so there a word always fits and a narrower
-/// field is checked against the sign-extended 32-bit value.
+/// `value` checked against a plain data `field`. ELF32 arithmetic wraps at
+/// 32 bits: a word always fits, a narrower field is checked sign-extended.
 pub(super) fn fit(obj: &object::File<'_>, field: Field, value: u64) -> Option<u64> {
     if obj.is_64() {
         return encode(field, 0, value, Isa::Same, 0);
@@ -193,8 +174,7 @@ pub(super) fn apply_classified(
     value: Value,
     field: Field,
 ) {
-    // An `SHT_REL` image-relative field already holds `B + A`, the image base
-    // `B` modelled 0: nothing to patch, and nothing to hole either.
+    // An `SHT_REL` image-relative field already holds `B + A`, `B` being 0.
     if value == Value::ImageRelative && r.rela_addend.is_none() {
         return;
     }
@@ -206,7 +186,7 @@ pub(super) fn apply_classified(
         ctx.unmodelled(holder, p, width, r.type_word());
         return;
     }
-    // The common case by far: a RELA image-relative word reads no symbol or field.
+    // Fast path: a RELA image-relative word reads no symbol or field.
     if let (Value::ImageRelative, Some(a)) = (value, r.rela_addend) {
         match fit(ctx.obj, field, apply_addend(0, a)) {
             Some(word) => ctx.record(holder, p, word, width, ctx.field_le(field)),
@@ -243,8 +223,8 @@ pub(super) fn compute_classified(
         (true, _) => return None,
         (false, _) => None,
     };
-    // Only a branch displacement and a GOT slot reference hide the address
-    // they were built from, see `Target::weak_undefined`.
+    // Only a branch or GOT reference hides the address, see
+    // `Target::weak_undefined`.
     if target.is_some_and(|t| t.weak_undefined)
         && !field.is_branch()
         && !value_kind_through_got(value_kind)
@@ -291,9 +271,7 @@ pub(super) fn compute_classified(
         }
         let t = target?;
         let (slot, width) = layout.got_slot(t.index)?;
-        // A weak undefined symbol's slot holds 0 as readily as an address,
-        // and an IFUNC's what its resolver returns, so either is left
-        // unmapped and the load through it stays opaque.
+        // A weak undefined or IFUNC slot's value is unknown: left unmapped.
         if !t.weak_undefined && !t.ifunc {
             ctx.got.insert(slot, (t.addr, width));
         }
@@ -354,8 +332,7 @@ pub(super) fn value_kind_needs_zero(value: Value) -> bool {
     )
 }
 
-/// Whether the value reaches the symbol only through its GOT slot, which is
-/// then the one place its address appears.
+/// Whether the value reaches the symbol only through its GOT slot.
 pub(super) fn value_kind_through_got(value: Value) -> bool {
     matches!(
         value,
@@ -369,10 +346,9 @@ pub(super) fn value_kind_through_got(value: Value) -> bool {
 }
 
 /// Whether an i386 `GOT32` / `GOT32X` field at `p` is its slot's address
-/// rather than its offset from the GOT: lld's test, the byte before it read
-/// as a ModRM with `mod = 0, rm = 5`, though it may be a SIB or a disp8.
-/// `None` for a `lea` (`0x8d` before that byte), which GNU ld exempts. A
-/// field in its section's first two bytes is an offset.
+/// rather than its GOT offset: lld's test, a preceding ModRM with `mod = 0,
+/// rm = 5`. `None` for a `lea` (`0x8d`), which GNU ld exempts. A field in its
+/// section's first two bytes is an offset.
 pub(super) fn i386_got_absolute(region: &MemRegion, p: u64) -> Option<bool> {
     let off = (p - region.start_addr()) as usize;
     if off < 2 || region.raw()[off - 1] & 0xc7 != 0x05 {
@@ -404,13 +380,10 @@ pub(super) struct Target {
     isa: Isa,
     /// `STB_LOCAL`.
     local: bool,
-    /// `STB_WEAK` and undefined, so the link or the module loader resolves it
-    /// to 0 as readily as to an address and `if (&w)` can go either way. The
-    /// synthetic extern address stands in only where it cannot be observed,
-    /// everything else being left uncomputed rather than folded one way.
+    /// `STB_WEAK` and undefined: it may resolve to 0, so the synthetic extern
+    /// address stands in only where it cannot be observed.
     weak_undefined: bool,
-    /// A defined `STT_GNU_IFUNC`, so `S` is its resolver and not the function
-    /// the loader binds.
+    /// A defined `STT_GNU_IFUNC`: `S` is its resolver.
     ifunc: bool,
     /// MIPS `_gp_disp`.
     gp_disp: bool,
@@ -420,20 +393,13 @@ pub(super) struct Target {
     ppc64_local_entry: u64,
 }
 
-/// Symbol `idx`, resolved.
+/// Symbol `idx`, resolved: from `.dynsym` for a linked image, `.symtab` for
+/// an ET_REL, rebased through `layout` (an undefined or `SHN_COMMON` ET_REL
+/// symbol resolves to its [`ElfSectionLayout::extern_address`]).
 ///
-/// A linked image's index is into `.dynsym`, so `obj.symbol_by_index` alone
-/// would return the wrong entry; ET_REL's per-section relocations reference
-/// `.symtab`.
-///
-/// The address is rebased through `layout`: an ET_REL symbol's `st_value` is
-/// an offset into its section, every section after the first at a given
-/// `sh_addr` sits at a synthetic base, and an undefined or `SHN_COMMON` one
-/// resolves to its [`ElfSectionLayout::extern_address`].
-///
-/// `None` when the index doesn't resolve (malformed ELF), when a linked image
-/// has no `.dynsym`, when its `st_shndx` names no section header, when a
-/// linked image's symbol is undefined with a zero value or `SHN_COMMON`.
+/// `None` for an index that does not resolve, a linked image with no
+/// `.dynsym`, an `st_shndx` naming no section, or a linked image's undefined
+/// zero-valued or `SHN_COMMON` symbol.
 ///
 /// [`ElfSectionLayout::extern_address`]: crate::elf::sections::ElfSectionLayout::extern_address
 pub(super) fn resolve_symbol_target(
@@ -441,14 +407,9 @@ pub(super) fn resolve_symbol_target(
     layout: &crate::elf::sections::ElfSectionLayout,
     idx: object::SymbolIndex,
 ) -> Option<Target> {
-    // An ET_REL's per-section `SHT_REL`/`SHT_RELA` indexes the `.symtab` its
-    // `sh_link` names, never the dynamic table. `object`'s
-    // `dynamic_symbol_table` is simply the first `SHT_DYNSYM` section in the
-    // file, populated whatever the `e_type`, so an object file carrying one
-    // otherwise sends every relocation to the wrong table and patches in an
-    // unrelated symbol's `st_value`. A linked image's dynamic relocations
-    // index `.dynsym`; with none, the index names a table the link discarded,
-    // never `.symtab`.
+    // `object`'s `dynamic_symbol_table` is any `SHT_DYNSYM`, even in an
+    // ET_REL, whose relocations index `.symtab`. A linked image without
+    // `.dynsym` has no table its indices name.
     let sym = if obj.kind() == object::ObjectKind::Relocatable {
         obj.symbol_by_index(idx)
     } else {
@@ -458,19 +419,15 @@ pub(super) fn resolve_symbol_target(
     let addr = match layout.extern_address(idx.0) {
         Some(addr) => addr,
         None => {
-            // `(0, undefined)` is a legitimate undefined or weak extern of a
-            // linked image, tested on the raw `st_value`, which is what
-            // "undefined" is expressed in.
+            // An undefined extern of a linked image: no address.
             if sym.address() == 0 && sym.is_undefined() {
                 return None;
             }
-            // `SHN_COMMON` holds the symbol's alignment in `st_value`; its
-            // address exists only once the link allocates it in `.bss`.
+            // `SHN_COMMON`'s `st_value` is its alignment, not an address.
             if sym.is_common() {
                 return None;
             }
-            // An `st_shndx` past the section table: the offset it declares has
-            // no base, so there is no address to patch.
+            // An `st_shndx` past the section table has no base.
             layout.try_symbol_address(&sym)?
         }
     };
@@ -493,10 +450,7 @@ pub(super) fn resolve_symbol_target(
         weak_undefined: sym.is_weak() && sym.is_undefined(),
         ifunc: is_ifunc(&sym) && !sym.is_undefined(),
         gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
-        // ppc64 ELFv1 only, and the arch test comes first: the name lookup
-        // below reads `.shstrtab` and this runs once per relocation, so on
-        // every other arch it was a string compare per relocation for a field
-        // nothing reads. `gp_disp` above short-circuits the same way.
+        // Arch test first: the name lookup runs once per relocation.
         in_opd: arch == A::PowerPc64
             && sym
                 .section_index()
@@ -507,8 +461,7 @@ pub(super) fn resolve_symbol_target(
 }
 
 /// How far past `sym` a call sharing its TOC enters: on ppc64 ELFv2 the
-/// distance from a defined function's global entry to its local one, which
-/// is where a `bl` sharing its TOC lands. 0 on every other arch.
+/// global-to-local entry distance, 0 elsewhere.
 pub fn local_entry_offset<'data>(
     obj: &object::File<'data>,
     sym: &impl object::ObjectSymbol<'data>,
@@ -532,13 +485,8 @@ pub(super) fn ppc64_local_entry_offset(st_other: u8) -> u64 {
     }
 }
 
-/// Where a MIPS relocation's field starts relative to `r_offset`.
-///
-/// `R_MIPS_16`'s storage unit is the 32-bit word at `r_offset` and its field is
-/// that word's low half, so on a big-endian target the two bytes to patch,
-/// and the implicit addend to read back, start two bytes in. `R_MIPS_32` and
-/// `R_MIPS_64`, the only other MIPS types `object` gives a width, fill their
-/// storage unit exactly.
+/// Where a MIPS relocation's field starts relative to `r_offset`:
+/// `R_MIPS_16` is the low half of a 32-bit word, two bytes in on big-endian.
 pub(super) fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
     if !endian_le && matches!(arch, A::Mips | A::Mips64) && r.r_type == object::elf::R_MIPS_16 {
         2

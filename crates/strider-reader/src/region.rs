@@ -4,9 +4,8 @@ use std::sync::Arc;
 
 use crate::{FileBytes, Result, bytes};
 
-/// A relocation site's patched value, applied over the file-initial bytes when
-/// a read crosses it, or a field the loader could not compute, which then
-/// serves no bytes at all.
+/// A relocation site's patched value, applied when a read crosses it, or an
+/// uncomputed field (a hole), which serves no bytes.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Patch {
     pub(crate) addr: u64,
@@ -22,12 +21,8 @@ pub(crate) struct Patch {
 pub(crate) const MAX_PATCH_LEN: u64 = 8;
 
 impl Patch {
-    /// The low `size_bytes` of `value` at `addr`, in the target's endianness.
-    ///
-    /// # Preconditions
-    ///
-    /// `size_bytes <= 8`, since `value` is a `u64`. Every relocation kind that
-    /// reaches here picks a size in `{1, 2, 4, 8}`.
+    /// The low `size_bytes` (at most 8) of `value` at `addr`, in the
+    /// target's endianness.
     pub(crate) fn new(addr: u64, value: u64, size_bytes: usize, endian_le: bool) -> Option<Self> {
         // No-op in release rather than an opaque slice panic.
         if size_bytes > 8 {
@@ -39,8 +34,6 @@ impl Patch {
             return None;
         }
         let mut bytes = [0u8; 8];
-        // Truncation to the field width; signedness is irrelevant for
-        // fixed-width 2's-complement bit patterns.
         bytes::write_uint(&mut bytes[..size_bytes], value, endian_le);
         Some(Self {
             addr,
@@ -66,21 +59,17 @@ impl Patch {
     }
 }
 
-/// A contiguous range of bytes loaded at a fixed virtual address: one mapping
-/// (ELF segment or section) into the target's address space.
-///
-/// The bytes are a window into a shared immutable buffer, and relocations are
-/// a sorted patch list applied to the caller's buffer on read, so loading an
-/// image neither copies it nor faults in the pages nothing reads.
+/// One mapping (ELF segment or section) at a fixed virtual address: a window
+/// into a shared immutable buffer, with relocations as a sorted patch list
+/// applied on read.
 #[derive(Clone)]
 pub struct MemRegion {
     start_addr: u64,
     bytes: FileBytes,
     offset: usize,
     len: usize,
-    /// The image's relocation patches, sorted by `addr` with insertion order
-    /// kept within one address (the last-collected patch at a site lands),
-    /// and the range of them that can overlap this region.
+    /// The image's relocation patches, sorted by `addr` (the last at a site
+    /// lands), and the range of them that can overlap this region.
     patches: Option<(Arc<[Patch]>, Range<usize>)>,
 }
 
@@ -97,9 +86,7 @@ impl std::fmt::Debug for MemRegion {
 impl MemRegion {
     /// # Errors
     ///
-    /// Errors when `start_addr + data.len()` would exceed `u64::MAX`, which
-    /// leaves the byte at `u64::MAX` unmappable: covering it takes an
-    /// exclusive end of `2^64`.
+    /// When `start_addr + data.len()` would exceed `u64::MAX`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
         let len = data.len();
         Self::check_end(start_addr, len)?;
@@ -113,7 +100,7 @@ impl MemRegion {
     }
 
     /// `[file_offset, file_offset + len)` of `bytes` mapped at `start_addr`,
-    /// sharing the buffer rather than copying out of it.
+    /// sharing the buffer.
     ///
     /// # Errors
     ///
@@ -142,11 +129,8 @@ impl MemRegion {
         })
     }
 
-    /// The exclusive end has to fit a `u64`, which every half-open range over
-    /// a region is typed on, [`end_addr`] first. The byte at `u64::MAX` is
-    /// therefore unmappable: a region covering it ends at `2^64`.
-    ///
-    /// [`end_addr`]: Self::end_addr
+    /// The exclusive end must fit a `u64`, so the byte at `u64::MAX` is
+    /// unmappable.
     fn check_end(start_addr: u64, len: usize) -> Result<()> {
         start_addr.checked_add(len as u64).ok_or_else(|| {
             anyhow::anyhow!("region at {start_addr:#x} with length {len} would overflow u64")
@@ -182,12 +166,8 @@ impl MemRegion {
     }
 
     /// One `stat` of the file these bytes were mapped from, compared against
-    /// what it was at map time. Regions over owned bytes answer `Ok` with no
-    /// syscall.
-    ///
-    /// Belongs at the top of an operation, never inside one: [`read`] does no
-    /// syscall and cannot, so a change racing a read in progress is still a
-    /// torn read or a SIGBUS past a shortened end.
+    /// map time; `Ok` with no syscall over owned bytes. A change racing a
+    /// [`read`] is still a torn read or a SIGBUS.
     ///
     /// # Errors
     ///
@@ -227,8 +207,7 @@ impl MemRegion {
         &self.bytes.as_slice()[self.offset..self.offset + self.len]
     }
 
-    /// One past the last address covered. Cannot overflow: the constructors
-    /// reject any pair that would.
+    /// One past the last address covered.
     pub fn end_addr(&self) -> u64 {
         self.start_addr + self.len as u64
     }
@@ -239,13 +218,9 @@ impl MemRegion {
 
     /// Reads bytes at `addr` into `out`, possibly partially.
     ///
-    /// `Some(n)` when [`contains(addr)`](Self::contains); `n < out.len()` when
-    /// the request runs past the region's end or into a relocation field the
-    /// loader could not compute. `None` otherwise, including an `addr` inside
-    /// such a field and a zero-length read at exactly `end_addr` (the end is
-    /// exclusive even for a zero-byte request). An empty region has
-    /// `start_addr == end_addr`, so it contains nothing and always returns
-    /// `None`.
+    /// `Some(n)` when [`contains(addr)`](Self::contains), short when the
+    /// request runs past the end or into a hole. `None` otherwise, including
+    /// an `addr` in a hole and any read at `end_addr`.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let (offset, available) = self.available_at(addr)?;
         let mut to_copy = available.min(out.len());
@@ -285,10 +260,8 @@ impl MemRegion {
         (available != 0).then_some((offset, available))
     }
 
-    /// Both regions serve the same bytes across `[lo, hi)`, patches included,
-    /// and leave the same uncomputed relocation fields unserved. Any other
-    /// part of the range either region fails to serve, whether unmapped or
-    /// short of the request, counts as differing.
+    /// Both regions serve the same bytes and holes across `[lo, hi)`; a part
+    /// either fails to serve otherwise counts as differing.
     pub fn same_bytes_in(&self, other: &MemRegion, lo: u64, hi: u64) -> bool {
         let mut addr = lo;
         let (mut a, mut b) = ([0u8; 4096], [0u8; 4096]);
@@ -347,8 +320,7 @@ fn apply_patches(near: &[Patch], addr: u64, buf: &mut [u8]) {
     }
 }
 
-/// `regions` with each run of equal starts collapsed to its last region, the
-/// one a read reaches, order otherwise kept.
+/// `regions` with each run of equal starts collapsed to its last region.
 pub(crate) fn collapse_equal_starts(regions: Vec<MemRegion>) -> Vec<MemRegion> {
     let last: BTreeMap<u64, usize> = regions
         .iter()

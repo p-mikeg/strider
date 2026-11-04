@@ -25,11 +25,8 @@ pub(super) fn note_copy(ctx: &mut Ctx<'_, '_>, addr: u64, size: Option<u64>, r_t
     ctx.copies.push((addr, end, r_type));
 }
 
-/// Holes over every byte of every `R_*_COPY` object a region holds: what
-/// the loader copies there is the defining library's, never the file's.
-/// The objects are merged first, and each region finds the ones it overlaps
-/// by a binary search, so the work is the regions' count times its log
-/// plus the bytes held.
+/// Holes over every byte of every `R_*_COPY` object a region holds: the
+/// loader copies the defining library's bytes there.
 pub(super) fn hole_copies(ctx: &mut Ctx<'_, '_>) {
     let copies = std::mem::take(&mut ctx.copies);
     let Some(&(_, _, r_type)) = copies.first() else {
@@ -49,26 +46,16 @@ pub(super) fn hole_copies(ctx: &mut Ctx<'_, '_>) {
     }
 }
 
-/// Holes over the MIPS primary GOT entries the dynamic loader writes, which
-/// no relocation record covers (MIPS psABI, "Global Offset Table"; glibc's
-/// `elf_machine_runtime_setup` and `elf_machine_got_rel`):
+/// Holes over the MIPS primary GOT entries the loader writes with no
+/// relocation record (glibc `elf_machine_runtime_setup`,
+/// `elf_machine_got_rel`): the lazy resolver's word, the module pointer's
+/// when the second word's top bit asks for one, and every global entry
+/// (`DT_MIPS_GOTSYM .. DT_MIPS_SYMTABNO`) except one whose `.dynsym` symbol
+/// the image defines, is no IFUNC, and already holds its `st_value`.
 ///
-/// * the lazy resolver's word, and the module pointer's when the top bit of
-///   the second word asks for one;
-/// * every global entry, `DT_MIPS_GOTSYM .. DT_MIPS_SYMTABNO`, except one
-///   whose `.dynsym` symbol is defined in a section or absolute, is no IFUNC,
-///   and is already held at its `st_value`. That is the address the loader's
-///   lookup finds for a symbol the image defines, as a `GLOB_DAT` is taken to
-///   resolve. An imported symbol's entry holds 0, or its lazy-binding stub,
-///   which the loader replaces before the program runs or on the first call.
-///
-/// The local entries hold `B + value`, `B` modelled 0, and stay as the file
-/// has them. `object` builds its dynamic symbol table from an `SHT_DYNSYM`
-/// SECTION HEADER alone, so a section-stripped image has none and no symbol
-/// can be checked: every global entry is a hole, as it is for a dynamic image
-/// missing one of the tags that place the GOT, which makes every `.got` word
-/// one. A hole names `R_MIPS_GLOB_DAT`, the relocation that covers the same
-/// kind of entry outside the primary GOT.
+/// Local entries (`B + value`, `B` = 0) stay as filed. With no `SHT_DYNSYM`
+/// header (`object` needs one) every global entry is a hole; with a GOT tag
+/// missing, every `.got` word. Holes name `R_MIPS_GLOB_DAT`.
 pub(super) fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
     let obj = ctx.obj;
     if !matches!(obj.architecture(), A::Mips | A::Mips64)
@@ -84,13 +71,11 @@ pub(super) fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
     let tags = match mips_got_tags(obj) {
         None => return,
         Some(Some(tags)) => tags,
-        // The loader reads every one of the tags, so an image missing one says
-        // nothing about which words it writes: every `.got` word is a hole.
+        // A missing tag says nothing about which words the loader writes.
         Some(None) => {
             for sec in obj.sections().filter(|s| s.name() == Ok(".got")) {
                 let base = ctx.layout.section_base(&sec);
-                // Up to the end of the mapping holding it, whatever `sh_size`
-                // claims.
+                // To the end of its mapping, whatever `sh_size` claims.
                 for i in 0..sec.size() / word {
                     let Some(addr) = i.checked_mul(word).and_then(|o| base.checked_add(o)) else {
                         break;
@@ -133,8 +118,7 @@ pub(super) fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
         let Some(addr) = tags.local_gotno.checked_add(i).and_then(slot) else {
             break;
         };
-        // Past the mapping holding the GOT nothing is served, so a count
-        // running past it stops here.
+        // Nothing past the GOT's mapping is served.
         let Some(region) = ctx.holding(addr, width) else {
             break;
         };
@@ -156,12 +140,10 @@ pub(super) fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
     }
 }
 
-/// Holes over the two GOT header words the dynamic loader writes for lazy
-/// binding, which no relocation record covers: ARM's link map and resolver
-/// at `DT_PLTGOT + 4` / `+ 8` (glibc's `elf_machine_runtime_setup`), which
-/// PLT0 jumps through, and the secure-PLT PPC32 pair at `DT_PPC_GOT + 4` /
-/// `+ 8`. Only an image with a `DT_JMPREL` has them; `DF_BIND_NOW` or not,
-/// a hole costing only the fold. A hole names the arch's `JUMP_SLOT`.
+/// Holes over the two lazy-binding GOT header words the loader writes with
+/// no relocation record: ARM's at `DT_PLTGOT + 4` / `+ 8`, secure-PLT PPC32's
+/// at `DT_PPC_GOT + 4` / `+ 8`. Only with a `DT_JMPREL`, `DF_BIND_NOW` or
+/// not. A hole names the arch's `JUMP_SLOT`.
 pub(super) fn lazy_got_header(ctx: &mut Ctx<'_, '_>) {
     use object::elf;
     let obj = ctx.obj;

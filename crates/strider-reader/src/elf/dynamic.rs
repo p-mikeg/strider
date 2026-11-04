@@ -4,21 +4,18 @@
 //! `DT_JMPREL` by `DT_PLTREL`, `DT_CREL`, `DT_RELR`, and Android's packed
 //! and RELR ones). No section header takes part.
 //!
-//! Each table is walked as it lies; an entry two tables share, at one file
-//! address in one entry layout, is walked once. GNU ld's ppc32 `DT_RELA`
-//! spans `DT_JMPREL`, and a `REL` entry walked twice would stack its
-//! implicit addend.
+//! A plain-table entry at a virtual address an earlier table already holds
+//! is walked once (GNU ld's ppc32 `DT_RELA` spans `DT_JMPREL`).
 //!
-//! Deliberate choices where loaders differ:
+//! Where loaders differ:
 //!
-//! * bionic, the one loader of the `DT_ANDROID_*` tags, takes the FIRST
-//!   `PT_DYNAMIC`; glibc and musl, and this view, the last;
+//! * bionic takes the first `PT_DYNAMIC`; glibc, musl and this view the last;
 //! * glibc ignores `DT_REL` on a RELA-only arch and `DT_RELA` on a REL-only
-//!   one; musl, and this view, apply both;
-//! * no production loader reads `DT_CREL`, which is walked all the same;
-//! * glibc's arm and aarch64 ports apply the first `DT_RELCOUNT` /
+//!   one; musl and this view apply both;
+//! * no production loader reads `DT_CREL`; this view does;
+//! * glibc (`elf/do-rel.h`) applies the first `DT_RELCOUNT` /
 //!   `DT_RELACOUNT` entries as RELATIVE whatever their type; this view
-//!   applies each entry by its own type.
+//!   applies each by its own type.
 
 use object::Object as _;
 use object::elf;
@@ -83,8 +80,7 @@ impl Loads {
 pub(crate) struct DynamicTags(Vec<(u64, u64)>);
 
 impl DynamicTags {
-    /// The value of the last `want` entry, which is the one every loader
-    /// keeps.
+    /// The value of the last `want` entry, as every loader keeps.
     pub(crate) fn get(&self, want: u32) -> Option<u64> {
         self.0
             .iter()
@@ -217,8 +213,7 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
         Ok(tables) => tables,
         Err(why) => return LoaderView::Unreadable(why),
     };
-    // The entries counted against the budget at the smallest entry size of
-    // any table, an Android one's being its plain twin's.
+    // The budget is counted at the smallest entry size of any table.
     let smallest = tables
         .iter()
         .map(|t| match *t {
@@ -411,12 +406,9 @@ fn crel_count(data: &[u8]) -> Option<u64> {
 /// One decoded relocation: `(r_offset, r_info, r_addend)`.
 type Entry = (u64, u64, i64);
 
-/// `(r_offset, r_info, r_addend)` of an Android `APS2` stream, `None` when
-/// it does not decode (bionic's `packed_reloc_iterator`): a relocation
-/// count and a start offset, then groups of a size and flags, each field
-/// a SLEB128 the group may fix for all its members, read at the image's
-/// word width as bionic's `size_t` reads it. `Err(count)` when the count
-/// passes `limit`, decoding nothing.
+/// The entries of an Android `APS2` stream, as bionic's
+/// `packed_reloc_iterator` decodes it; `None` when it does not decode,
+/// `Err(count)` when its count passes `limit`.
 fn android_entries(
     data: &[u8],
     rela: bool,

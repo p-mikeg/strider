@@ -2,18 +2,15 @@ use std::collections::BTreeSet;
 
 use crate::{MemReadError, MemRegion, RegionIndex, Result, collapse_equal_starts};
 
-/// Lookup table over a set of possibly-overlapping [`MemRegion`]s.
-///
-/// Regions sharing a start address collapse, last-inserted wins. A read is
-/// resolved through a [`RegionIndex`], so it costs O(log n) whether the set is
-/// disjoint or nests.
+/// Lookup table over possibly-overlapping [`MemRegion`]s, a read costing
+/// O(log n) through a [`RegionIndex`]. Equal starts collapse, last wins.
 #[derive(Debug)]
 pub struct MemRegionsLookupTable {
     /// Ascending by start address, one region per start.
     regions: Vec<MemRegion>,
     pub(crate) index: RegionIndex,
-    /// One `regions` index per distinct mapping behind them, so
-    /// [`check_unchanged`] costs a stat per mapping and no scan at all.
+    /// One `regions` index per distinct mapping behind them, for
+    /// [`check_unchanged`].
     ///
     /// [`check_unchanged`]: Self::check_unchanged
     mappings: Vec<usize>,
@@ -48,12 +45,7 @@ impl MemRegionsLookupTable {
     }
 
     /// [`MemRegion::check_unchanged`] over the table, one `stat` per distinct
-    /// mapping rather than per region: an image's regions all share one.
-    ///
-    /// The mappings are the ones the regions carried at construction, which
-    /// are every mapping the table can serve a byte from, so a changed file
-    /// is caught wherever it backs the table. Which changes a `stat` can see
-    /// at all is [`MemRegion::check_unchanged`]'s.
+    /// mapping.
     ///
     /// # Errors
     ///
@@ -86,15 +78,9 @@ impl MemRegionsLookupTable {
     /// Reads bytes at `addr` from whichever region wins; `None` when none
     /// contains `addr`. Partial reads are possible, see [`MemRegion::read`].
     ///
-    /// Resolution is **all-or-most**, never a per-byte merge: `out` is filled
-    /// from exactly one region, so it is never a cross-region byte mix. A
-    /// region fully covering the request wins outright (highest start among
-    /// those); otherwise the region covering the most of it wins, ties going to
-    /// the highest start.
-    ///
-    /// A read straddling a shorter inner region's end therefore falls through
-    /// to the fully-covering outer region rather than returning the inner
-    /// region's truncated prefix.
+    /// `out` is filled from exactly one region: the highest-start one fully
+    /// covering the request, else the one covering the most of it (ties to
+    /// the highest start).
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let winner = self
             .index
@@ -113,9 +99,7 @@ impl MemRegionsLookupTable {
         Some(buf)
     }
 
-    /// Fill-all-or-error read: copies the mapped bytes into `buf` **raw**, with
-    /// no endianness swap. Callers wanting an integer decode them themselves.
-    /// A short fill errors rather than truncating.
+    /// Fills all of `buf` with the raw mapped bytes, or errors.
     ///
     /// # Errors
     ///
@@ -126,9 +110,7 @@ impl MemRegionsLookupTable {
         let want = buf.len();
         let got = self.read(addr, buf).ok_or_else(|| self.unmapped(addr))?;
         if got != want {
-            // Checked like every neighbouring site: a region reaching the top
-            // of the address space makes this the one unchecked add, and under
-            // the release profile's overflow checks that is a panic.
+            // A region can reach the top of the address space.
             let stop = addr.checked_add(got as u64).ok_or_else(|| {
                 anyhow::anyhow!("read at {addr:#x} of {got} bytes overflows the address space")
             })?;

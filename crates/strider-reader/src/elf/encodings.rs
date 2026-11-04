@@ -1,11 +1,6 @@
-//! What every relocation type a row here names computes, and the field that
-//! value is encoded into: instruction immediates, GOT and TOC references, and
-//! the data words `object` reports `Unknown` (image-relative words, GOT/PLT
-//! slots, PC-relative words, TLS slots).
-//!
-//! Formulas are the psABI ones: `S` the symbol, `A` the addend, `P` the site,
-//! `B` the image base, `G` the symbol's GOT slot, `GOT` the GOT's start and
-//! `TOC` the PowerPC64 TOC pointer.
+//! What each relocation type computes and the field it is encoded into.
+//! Formulas are the psABI ones: `S` symbol, `A` addend, `P` site, `B` image
+//! base, `G` GOT slot, `GOT` the GOT's start, `TOC` the PowerPC64 TOC pointer.
 
 use object::Architecture as A;
 use object::elf;
@@ -51,8 +46,7 @@ pub(crate) enum Value {
     /// `B + A`, the image base `B` modelled 0: `R_*_RELATIVE` and an
     /// STN_UNDEF `R_MIPS_REL32`.
     ImageRelative,
-    /// `indirect(B + A)`: what the IFUNC resolver at `B + A` returns, which
-    /// only running it computes: `R_*_IRELATIVE`.
+    /// `indirect(B + A)`, the IFUNC resolver's result: `R_*_IRELATIVE`.
     Indirect,
     /// A TLS module id, offset, TP offset or descriptor, which only the
     /// loader computes.
@@ -135,9 +129,8 @@ pub(crate) enum Field {
     PpcBranch14,
     /// A PowerPC 16-bit field addressed directly by `r_offset`.
     PpcHalf16(Half),
-    /// A PowerPC `half16ds` field: the DS form's 14 bits at bit 2, leaving the
-    /// instruction's own extended opcode in bits 1:0 (`ld` / `std` 0, `ldu` 1,
-    /// `lwa` 2).  Patching those turns one instruction into another.
+    /// A PowerPC `half16ds` field: 14 bits at bit 2; bits 1:0 are the
+    /// instruction's extended opcode (`ld` 0, `ldu` 1, `lwa` 2), kept.
     PpcHalf16Ds(Half),
     /// MIPS `J` / `JAL` `instr_index`.
     Mips26,
@@ -173,10 +166,9 @@ impl Field {
         }
     }
 
-    /// A branch displacement, which carries no address the program can compare
-    /// against null. `A64Imm19` is not one: it is also a literal load's.
-    ///
-    /// Not exhaustive on purpose: "not a branch" is the conservative answer.
+    /// A branch displacement, carrying no address the program can compare
+    /// against null (`A64Imm19` is also a literal load's). Not exhaustive:
+    /// "not a branch" is the conservative answer.
     pub(crate) fn is_branch(self) -> bool {
         matches!(
             self,
@@ -228,8 +220,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_X86_64_GOTPC32 => C(V::GotBasePcrel, data(4, true)),
             elf::R_X86_64_GOTPC64 => C(V::GotBasePcrel, data(8, false)),
             elf::R_X86_64_GOT64 => C(V::GotOffset, data(8, false)),
-            // `PLTOFF64` is `L - GOT + A`, L collapsing to S with no PLT
-            // materialised.
+            // `PLTOFF64` is `L - GOT + A`, L = S with no PLT.
             elf::R_X86_64_GOTOFF64 | elf::R_X86_64_PLTOFF64 => C(V::GotRelative, data(8, false)),
             elf::R_X86_64_PC64 => C(V::Pcrel, data(8, false)),
             elf::R_X86_64_DTPMOD64 | elf::R_X86_64_DTPOFF64 | elf::R_X86_64_TPOFF64 => {
@@ -659,11 +650,8 @@ mod tests {
         }
     }
 
-    /// `lwa r3,0x5040(r9)` assembles to `e8 69 50 42`: the halfword at
-    /// `r_offset` is `0x5042`, whose low two bits are the DS form's extended
-    /// opcode (`ld`/`std` 0, `ldu` 1, `lwa` 2) and not part of the field.
-    /// Overwriting them turns `lwa` into `ld`, a 32-bit sign-extending load
-    /// read as a 64-bit one.
+    /// `lwa r3,0x5040(r9)` is `e8 69 50 42`: the halfword's low two bits
+    /// are the DS extended opcode, and overwriting them turns `lwa` into `ld`.
     #[test]
     fn a_ds_field_keeps_the_instructions_extended_opcode() {
         let lwa = 0x5042;
@@ -718,8 +706,7 @@ mod tests {
         }
     }
 
-    /// Every `half16ds` type, and only those, classifies to the DS field.  The
-    /// `_DS` types used to share an arm with their non-DS siblings.
+    /// Every `half16ds` type, and only those, classifies to the DS field.
     #[test]
     fn only_the_ds_relocations_take_the_ds_field() {
         let ds = [
