@@ -16,7 +16,7 @@ smallvec.workspace = true
 
 [features]
 # Test-only internals: `corrupt_clear_first_use`, `next_node_id`,
-# `remove_node_input`.
+# `remove_node_input`, `is_cached`.
 test-injectors = []
 # `edge_reads`: per-thread count of input and use reads, for strider-ir's
 # validate-cost test.
