@@ -205,10 +205,11 @@ class CallingConvention:
 
         Stack arguments start `stack_arg_base` bytes from the call-time SP
         (`None`: none on the stack) and advance by `stack_arg_increment`;
-        `ret_stack_pop` is how many bytes `ret` pops (0 with a
-        `link_register`). `preserves_memory=True` declares that a call cannot
-        write memory. `arg_passing_regs_float` are numbered after
-        `arg_passing_regs` in a `call()` pattern. `reg_args_adjoin_stack_args`
+        `ret_stack_pop` is how many bytes `ret` pops, its return address
+        included (x86: 4, x86-64: 8; usually 0 with a `link_register`).
+        `preserves_memory=True` declares that a call cannot write memory.
+        `arg_passing_regs_float` are numbered after `arg_passing_regs` in a
+        `call()` pattern. `reg_args_adjoin_stack_args`
         gives each argument register a stack home just below the stack
         arguments (ARM AAPCS, MIPS, PowerPC64 ELF). `entry_address` holds the
         function's own address on entry (PPC64 ELFv2 `r12`, MIPS `t9`).
@@ -216,9 +217,10 @@ class CallingConvention:
         Raises `StriderError` for an unknown name or a broken ABI invariant,
         such as a `link_register` missing from `callee_saved_regs`, a `stack_pointer`
         (or, with `stack_arg_base`, a `stack_arg_increment`) not address-wide,
-        or, without a `link_register`, a `ret_stack_pop` below the address
-        width. Usable only with a `Lifter` sharing `sleigh`'s register table
-        (`arm`, `arm_thumb` and `arm_be_kernel` share one); any other raises
+        a negative `ret_stack_pop`, or, without a `link_register`, one below
+        the address size in bytes. Usable only with a `Lifter` sharing
+        `sleigh`'s register table (`arm`, `arm_thumb` and `arm_be_kernel`
+        share one); any other raises
         `StriderError` at `analyze`.
         """
         ...
