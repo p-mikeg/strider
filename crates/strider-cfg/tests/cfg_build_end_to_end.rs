@@ -1314,3 +1314,63 @@ fn a_finished_region_keeps_no_spare_instruction_capacity() {
     }
     assert!(filled > 0, "expected a region holding instructions");
 }
+
+/// A GCC hot/cold split: `foo` at 0x1000 `js`es down to its cold fragment
+/// at 0x0ff0, which jumps back into the body at 0x1005.
+///
+/// ```text
+/// 0x0ff0: add eax, 1        83 c0 01
+/// 0x0ff3: jmp 0x1005        eb 10
+/// 0x0ff5: nop x11
+/// 0x1000: test edi, edi     85 ff
+/// 0x1002: js 0x0ff0         78 ec
+/// 0x1004: nop               90
+/// 0x1005: ret               c3
+/// ```
+fn hot_cold_split(fragment_ranges: Vec<(u64, u64)>) -> Cfg {
+    let mut bytes = vec![0x83, 0xc0, 0x01, 0xeb, 0x10];
+    bytes.extend(std::iter::repeat_n(0x90u8, 11));
+    bytes.extend([0x85, 0xff, 0x78, 0xec, 0x90, 0xc3]);
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(6),
+        fragment_ranges: strider_cfg::DataRanges::try_new("fragment_ranges", fragment_ranges)
+            .unwrap(),
+        ..CfgOptions::default()
+    };
+    DecodeEngine::new(SleighArch::x86_64(), BufMemReader::new(bytes, 0x0ff0))
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
+        .expect("build_cfg")
+}
+
+#[test]
+fn a_branch_into_an_unlisted_fragment_is_a_tail_call() {
+    let cfg = hot_cold_split(Vec::new());
+    assert_tail_call_stub_at(&cfg, 0x0ff0);
+    assert!(incomplete_of(&cfg).is_empty());
+}
+
+#[test]
+fn a_fragment_range_is_decoded_and_its_jump_back_is_an_edge() {
+    let cfg = hot_cold_split(vec![(0x0ff0, 0x0ff5)]);
+    assert_eq!(successor_starts(&cfg, 0x0ff0), vec![0x1005]);
+    let mut from_entry = successor_starts(&cfg, 0x1000);
+    from_entry.sort_unstable();
+    assert_eq!(from_entry, vec![0x0ff0, 0x1004]);
+    assert!(
+        !cfg.regions()
+            .any(|r| matches!(r.terminator, RegionTerminator::TailCall { .. })),
+        "nothing leaves the function"
+    );
+    assert!(incomplete_of(&cfg).is_empty());
+}
+
+#[test]
+fn a_fall_through_past_a_fragment_end_is_past_function_end() {
+    let cfg = hot_cold_split(vec![(0x0ff0, 0x0ff3)]);
+    assert_tail_call_stub_at(&cfg, 0x0ff3);
+    assert_eq!(
+        incomplete_of(&cfg),
+        vec![(0x0ff3, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}

@@ -140,12 +140,14 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Whether `branch_target_addr` lies outside the function's bound.
+    /// Whether `branch_target_addr` lies outside the function's bound and
+    /// fragments.
     fn is_branch_tail_call(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         crate::is_addr_tail_call(
             branch_target_addr.machine(),
             self.builder.start_addr,
             self.builder.options.bound,
+            &self.builder.options.fragment_ranges,
         )
     }
 
@@ -616,7 +618,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Seals onto a [`Builder::edge_to_stub`] stub at `cur_addr` when the
-    /// fall-through ran past a [`crate::FunctionBound::Size`] end, reporting
+    /// fall-through ran past a [`crate::FunctionBound::Size`] or fragment end, reporting
     /// [`crate::Reason::PastFunctionEnd`]; returns whether it sealed. Off a
     /// seeded arm it is a [`DecodeFailure::PastEnd`] `Err`, dropping the arm.
     fn seal_past_function_end(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
