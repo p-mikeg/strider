@@ -1,10 +1,9 @@
 # Getting started with Strider
 
-Strider answers precise questions about a compiled function with no source and
-no debug symbols: you write the question as a small pattern in Python and get
-back every place in the function that matches. The
-[README](../README.md#quickstart) has that end to end; this page is the map of
-the pipeline behind it.
+Strider answers questions about a compiled function without source or debug
+symbols: write a pattern in Python, get back every place it matches. The
+[README](../README.md#quickstart) shows this end to end; this page maps the
+pipeline.
 
 ## How it works
 
@@ -36,8 +35,8 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    and every dependency is an edge. Values carry their exact width, from the
    1-bit `I1` up to `I512`, so the odd widths SIMD and long-double code produce
    get their own types instead of being rounded to a machine word. This is the
-   thing you query; `function.to_text()` prints a header and then one line per
-   node, and `function.validate()` checks its invariants. A call is modelled by
+   thing you query; `function.to_text()` prints one line per node and
+   `function.validate()` checks its invariants. A call is modelled by
    its calling convention, never by reading the callee.
 5. **Optimize** the IR so that equivalent code reaches a query in fewer shapes.
    Constants fold, `x + (x << 1)` becomes `x * 3`, and a phi or a cycle of phis
@@ -65,8 +64,7 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 
 ## Where the API lives
 
-Everything is under a submodule named for what it does, and importing from the
-home submodule is the supported spelling:
+Import each name from its home submodule:
 
 ```python
 strider.lift      # the entry point: load_elf and lifter, plus LifterOptions,
@@ -83,18 +81,14 @@ strider.sleigh    # SleighArch, CallingConvention, CallOtherAbi, Vn, VnSpace;
 strider.StriderError    # the one top-level name
 ```
 
-`strider.explore.visualize(fn)` serves the graph as an interactive explorer in a browser
-and is the quickest way to see the shape a pattern has to match;
-[python-api.md](python-api.md#10-visualizing) has the view it opens on, the
-keys and the toolbar.
+`strider.explore.visualize(fn)` serves the graph as a browser explorer, the
+quickest way to see the shape a pattern must match
+([python-api.md](python-api.md#10-visualizing)).
 
-A lift handle works from any thread, and `analyze`, `build_cfg` and `add_elf`
-hold it alone. To analyse in parallel, a worker builds its own over the same
-`arch` / `reader()` / `rom()`, gathered before any analysis on the first
-handle is in flight, and calls `analyze(addr, cc)`, since a plain handle
-stores no default convention and carries no symbols. `analyze` releases the
-GIL, so the two run in parallel. A handle decodes the image as it stood when
-it was built, so `add_elf` every ELF first.
+`analyze`, `build_cfg` and `add_elf` hold a handle alone. To analyse in
+parallel, each worker builds its own handle over the same `arch` / `reader()`
+/ `rom()` (gathered before any analysis is in flight, after every `add_elf`)
+and calls `analyze(addr, cc)`; `analyze` releases the GIL.
 
 An analysis failure is a `strider.StriderError`, and its `.backtrace` carries
 the error and its causes followed by the Rust backtrace; `STRIDER_BACKTRACE=1`
