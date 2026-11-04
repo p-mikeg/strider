@@ -8,9 +8,8 @@ use crate::graph::{Graph, NodeIdRemap};
 use crate::node::IntConstId;
 use crate::node::{CcId, NodeId, NodeKind, SwitchTableId, ValueId};
 
-/// A pointer, a length and a capacity, with values up to two limbs held
-/// inline: an interned `u64` constant costs no allocation. A layout
-/// regression shows up here.
+/// Values up to two limbs are held inline, so an interned `u64` constant
+/// costs no allocation.
 const _: () = assert!(size_of::<UBig>() == 24);
 
 /// The ABI class a function argument was passed in; stack arguments continue
@@ -23,13 +22,9 @@ enum ArgClass {
     Float,
 }
 
-/// Every id-keyed payload table of a [`Function`] and nothing else.  None of
-/// it is part of the graph's structural identity.
-///
-/// What makes a field one of these is that compaction has to say something
-/// about it: an arena id the remap translates, or a payload id
-/// [`Function::compact`] renumbers.  Nothing clears them; the derived,
-/// clearable verdicts are the memos [`Function`] holds instead.
+/// The id-keyed payload tables of a [`Function`]: each holds arena ids
+/// [`Function::compact`] remaps or payload ids it renumbers. None is part of
+/// the graph's structural identity, and none is cleared by invalidation.
 ///
 /// [`Function`]: crate::Function
 /// [`Function::compact`]: crate::Function::compact
@@ -47,10 +42,9 @@ pub struct FunctionSideTables {
     /// validator re-checks reachable entries against the node's kind
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: SecondaryMap<crate::node::InitialVnId, Option<NodeId>>,
-    /// Every integer-constant value referenced by an `IntConst(id)` node,
-    /// deduped by value. Unbounded and unsigned; the declared width is the
-    /// node's output type, and `crate::eval::mask` is what holds a stored
-    /// value to it.
+    /// Integer-constant values of `IntConst(id)` nodes, deduped by value.
+    /// Unsigned; the width is the node's output type, applied by
+    /// `crate::eval::mask`.
     pub(crate) const_interner: EntityInterner<IntConstId, UBig>,
     /// Case addresses of each `Switch(id)`, one per control output.
     switch_tables: PrimaryMap<SwitchTableId, Vec<u64>>,
@@ -66,8 +60,7 @@ pub struct FunctionSideTables {
 impl FunctionSideTables {
     /// Crate-private so no caller can wipe the tables through
     /// [`Function::side_tables_mut`](crate::Function::side_tables_mut).
-    /// `vn_interner` is the one table seeded at birth: `InitialVnId`
-    /// numbering is fixed by [`Function::new`](crate::Function::new).
+    /// `vn_interner` is fixed by [`Function::new`](crate::Function::new).
     pub(crate) fn new(vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>) -> Self {
         Self {
             asm_fingerprints: UnionDag::default(),
@@ -184,19 +177,12 @@ impl FunctionSideTables {
     }
 
     /// Rebuilds the constant interner, the switch tables and the call
-    /// conventions over only the entries surviving nodes reference, rewriting
-    /// each node's id in place.  Mark-and-sweep over ids that live inside
-    /// `NodeKind`, so it mints its own translation rather than consuming a
-    /// [`NodeIdRemap`], and drops an entry by liveness, which a key
-    /// translation cannot.
-    ///
-    /// Only safe after `Graph::retain_reachable_stale_cache` has settled the
-    /// arena.
+    /// conventions over the entries surviving nodes reference, rewriting each
+    /// node's id in place. Call only after `Graph::retain_reachable_stale_cache`.
     pub(crate) fn gc_payload_tables(&mut self, graph: &mut Graph) {
-        // Every field named, so one added later states whether it is
-        // collected.
+        // Exhaustive, so a new field must state whether it is collected.
         let Self {
-            // Node- and value-keyed: `Self::remap` translates these.
+            // Translated by `Self::remap`.
             asm_fingerprints: _,
             value_vn: _,
             arg_index_to_values: _,
@@ -204,11 +190,9 @@ impl FunctionSideTables {
             const_interner,
             switch_tables,
             call_ccs,
-            // Keyed by a `user_op_id`, which names every `CallOther` carrying
-            // it, live or not.
+            // Keyed by `user_op_id`, which names every `CallOther`, live or not.
             call_other_names: _,
-            // Keyed by an `InitialVnId`: the tracked varnodes are the
-            // function's own, not a surviving node's.
+            // The function's own tracked varnodes, not a node's.
             vn_interner: _,
         } = self;
         let mut consts: EntityInterner<IntConstId, UBig> = EntityInterner::default();
@@ -278,15 +262,13 @@ impl FunctionSideTables {
     /// Remaps every arena-id key / value after a compaction; an entry whose
     /// node or value did not survive is dropped.
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
-        // Every field named, so one added later states what compaction does
-        // to it.
+        // Exhaustive, so a new field must state what compaction does to it.
         let Self {
             asm_fingerprints,
             value_vn,
             arg_index_to_values,
             initial_var_index,
-            // Payload ids, not arena ids: `Function::gc_payload_tables`
-            // renumbers these against the compacted graph.
+            // Payload ids, renumbered by `Self::gc_payload_tables`.
             const_interner: _,
             switch_tables: _,
             call_ccs: _,
@@ -296,8 +278,7 @@ impl FunctionSideTables {
             vn_interner: _,
         } = self;
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
-        // `InitialVnId`s are stable across compaction, so only the arena-id
-        // coordinate of the next two maps needs translating.
+        // `InitialVnId`s are stable; only the arena-id side needs translating.
         *value_vn = value_vn
             .drain()
             .filter_map(|(value, id)| Some((remap.value_old_to_new(value)?, id)))
@@ -313,19 +294,14 @@ impl FunctionSideTables {
     }
 }
 
-/// The reader and writer vocabulary over the tables above, which is what
-/// the rest of the crate sees of them.
+/// Readers and writers over the tables above.
 impl crate::Function {
-    /// Interns `value` masked to `ty`'s width. `Into<UBig>` takes every
-    /// unsigned primitive and a `UBig` itself, so one entry point serves a
-    /// narrow literal and a value past the `u128` carrier alike.
+    /// Interns `value` masked to `ty`'s width.
     ///
-    /// `ty` must be an integer type; a float one masks to zero, so every value
-    /// interns as `0`. Not asserted: the resulting `IntConst` carries a float
-    /// output type, which [`crate::validate`] rejects, and a caller reaching
-    /// here from a user-supplied rewrite needs that as a catchable error
-    /// rather than a panic. [`crate::IRBuilderExt::build_int_const`] checks up
-    /// front and returns `Err`.
+    /// `ty` must be an integer type; a float one masks every value to `0`.
+    /// Not asserted, so a user-supplied rewrite gets the catchable
+    /// [`crate::validate`] error instead of a panic;
+    /// [`crate::IRBuilderExt::build_int_const`] checks up front.
     pub fn intern_int_const(
         &mut self,
         value: impl Into<UBig>,
@@ -335,9 +311,9 @@ impl crate::Function {
         self.side_tables_mut().const_interner.intern(v)
     }
 
-    /// Panics on an OUT-OF-RANGE id. An id minted by another function's
-    /// interner that happens to be in range returns this one's value for that
-    /// index instead, which `validate`'s `DanglingConstId` also cannot see.
+    /// Panics on an out-of-range id. An in-range id minted by another
+    /// function's interner silently returns this one's value, which
+    /// `validate`'s `DanglingConstId` cannot see either.
     pub(crate) fn const_value(&self, id: crate::node::IntConstId) -> &UBig {
         &self.side_tables().const_interner[id]
     }
@@ -461,16 +437,15 @@ impl crate::Function {
             .insert(user_op_id, name.into());
     }
 
-    /// The `InitialVar(stack_vn)` node, whose output is the entry SP, or `None`
-    /// when the function tracks no such node (`stack_vn` deduped into a wider
-    /// container).  Does NOT filter by liveness: the returned node may already
-    /// have been culled.
+    /// The `InitialVar(stack_vn)` node, whose output is the entry SP; `None`
+    /// when `stack_vn` is not tracked (deduped into a wider container). The
+    /// node may already have been culled.
     pub fn initial_sp(&self) -> Option<NodeId> {
         let sp_id = self.vn_id_of(&self.default_cc().stack_ptr)?;
         self.side_tables().initial_var_index[sp_id]
     }
 
-    /// The entry value of `vn`'s `InitialVar` node.  `None` when `vn` is
+    /// The entry value of `vn`'s `InitialVar` node; `None` when `vn` is
     /// untracked.
     pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
         let id = self.vn_id_of(vn)?;
@@ -524,11 +499,9 @@ mod tests {
     // Interning: one value, one `IntConstId`, masked to the declared
     // width whatever spelling reached it.
 
-    /// A user-supplied rewrite can reach `intern_int_const` with a float type
-    /// (the pattern template materialiser guards only on WIDTH, and every
-    /// float type is <= 128 bits).  Panicking there surfaces in Python as a
-    /// `PanicException`, which derives from `BaseException` and so escapes
-    /// `except Exception`; `validate` reports the same mistake catchably.
+    /// A user-supplied rewrite can reach `intern_int_const` with a float type;
+    /// it must not panic (a Python `PanicException` escapes `except
+    /// Exception`), and `validate` reports the mistake.
     #[test]
     fn intern_int_const_on_a_float_type_does_not_panic() {
         let mut f = test_function();

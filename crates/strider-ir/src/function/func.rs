@@ -18,37 +18,30 @@ pub fn cc_ret_and_clobber_vns(
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 /// Always has an entry node; `Clone` is a deep, independent copy.
 ///
-/// The overlay is grouped by kind, so where a field lives says what it is:
-/// the facts the function rests on, settled once and touched by no operation,
-/// then every id-keyed payload table in [`FunctionSideTables`], then the memos the
-/// analyses derive from the graph and [`Self::invalidate_analyses`] drops.
+/// The overlay is: facts settled once, the id-keyed payload tables in
+/// [`FunctionSideTables`], and graph-derived memos that
+/// [`Self::invalidate_analyses`] drops.
 #[derive(Clone)]
 pub struct Function {
     graph: Graph,
 
-    // The facts.  None is keyed by an arena id, so [`Self::compact`] leaves
-    // them alone, and none is derived from the graph, so
-    // [`Self::invalidate_analyses`] never clears one.  A derived, clearable
-    // verdict is a memo and belongs in `memos` instead.
+    // Facts: keyed by no arena id and derived from no graph, so neither
+    // `compact` nor `invalidate_analyses` touches them.
     /// The convention this function was built under.
     default_cc: strider_target::BuiltCallingConvention,
     /// The byte order of each space's loads and stores.
     byte_order: strider_target::ByteOrder,
-    /// The claims in force: every set [`Self::assume`] added, none before the
-    /// first.  A claim is withdrawn by nothing.
+    /// The union of every set [`Self::assume`] added.
     assumptions: crate::AssumptionOptions,
-    /// The highest offset from the entry SP of a stack address held, at some
-    /// `Call`, in a register the call clobbers, or `None` when no call held
-    /// one.  Recorded once, by `FunctionBuilder::build`.  The call node carries
-    /// no such value, so this is the only record that a callee may have
-    /// received it.
+    /// See [`Self::call_register_frame_reach`]. Set once by
+    /// `FunctionBuilder::build`; the only record that a callee may have
+    /// received a stack address in a clobbered register.
     call_register_frame_reach: Option<i128>,
 
     side_tables: FunctionSideTables,
 
-    /// What the analyses derived from the graph.  Written through a shared
-    /// borrow, so an analysis holding `&Function` fills them in, and dropped
-    /// whole by [`Self::invalidate_analyses`].
+    /// Graph-derived memos, filled through `&Function` and dropped by
+    /// [`Self::invalidate_analyses`].
     pub(super) memos: std::cell::RefCell<crate::function::memos::FunctionMemos>,
 }
 
@@ -69,8 +62,7 @@ impl Function {
             [],
             [crate::node::ValueKind::Control],
         );
-        // Arbitrary order in, so sort: `InitialVnId` assignment is
-        // reproducible.
+        // Sorted so `InitialVnId` assignment is reproducible.
         let mut tracked_vns = vn_container::dedup_overlapping_largest(&tracked_vns);
         tracked_vns.sort_by_key(|vn| (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size));
         let mut vn_interner = entity_utils::EntityInterner::default();
@@ -81,7 +73,6 @@ impl Function {
             graph,
             default_cc,
             byte_order: byte_order.into(),
-            // A function claims nothing until `assume` adds some.
             assumptions: crate::AssumptionOptions::none(),
             call_register_frame_reach: None,
             side_tables: FunctionSideTables::new(vn_interner),
@@ -109,14 +100,8 @@ impl Function {
         &mut self.side_tables
     }
 
-    /// The claims in force: the union of every [`Self::assume`], none before
-    /// the first.  Nothing withdraws one, so only a fresh lift drops one.
-    /// The exceptions are
-    /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode)
-    /// and
-    /// [`fp_rounding_mode_is_nearest`](crate::AssumptionOptions::fp_rounding_mode_is_nearest),
-    /// which only the lift reads: assumed after it, such a claim is listed
-    /// here while the graph does not rest on it.
+    /// The claims in force: the union of every [`Self::assume`]. Only a fresh
+    /// lift drops one.
     #[inline]
     pub fn assumptions(&self) -> &crate::AssumptionOptions {
         &self.assumptions
@@ -142,17 +127,16 @@ impl Function {
         self.call_register_frame_reach = reach;
     }
 
-    /// Adds `claims` to the claims in force, withdrawing none, and drops the
-    /// graph-derived memos when one is new: a decomposition made without an
-    /// allocator reads its return as not-memory.  A region filter or
-    /// [`Self::stack_offset`] then reads nothing until a run or
-    /// `strider_opt::refresh_memory_classes`.  A function never given a claim
-    /// is optimized at the sound floor.  The lift seeds its claims here, so
+    /// Adds `claims` to the claims in force, and drops the graph-derived memos
+    /// when one is new (a decomposition made without an allocator claim reads
+    /// its return as not-memory). A region filter or [`Self::stack_offset`]
+    /// then reads nothing until a run or `strider_opt::refresh_memory_classes`.
+    ///
     /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode)
     /// and
-    /// [`fp_rounding_mode_is_nearest`](crate::AssumptionOptions::fp_rounding_mode_is_nearest),
-    /// which only the lift reads, are recorded without effect when assumed
-    /// after it.
+    /// [`fp_rounding_mode_is_nearest`](crate::AssumptionOptions::fp_rounding_mode_is_nearest)
+    /// are read only by the lift: assumed after it, they are recorded without
+    /// effect.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
         if claims.omitted_by(&self.assumptions).is_empty() {
             return;
@@ -161,9 +145,8 @@ impl Function {
         self.invalidate_analyses();
     }
 
-    /// The root of [`Self::graph`]: the arena's first node.  [`Self::new`]
-    /// mints it first and [`Self::compact`] keeps the walk's order, which
-    /// yields it first.
+    /// The root of [`Self::graph`]: node 0, which [`Self::new`] mints first and
+    /// [`Self::compact`] keeps first.
     #[inline]
     pub fn entry(&self) -> NodeId {
         NodeId::from_u32(0)
@@ -174,7 +157,7 @@ impl Function {
         &self.default_cc
     }
 
-    /// The data byte order. A REGISTER-space access follows
+    /// The data byte order. A register-space access follows
     /// [`Self::byte_order`]'s instead.
     #[inline]
     pub fn endianness(&self) -> strider_target::Endianness {
@@ -187,8 +170,8 @@ impl Function {
         self.byte_order
     }
 
-    /// Integer then float, in ABI order, at each register's declared width with
-    /// NO tracked-container projection.
+    /// Integer then float return registers, in ABI order, at each register's
+    /// declared width (not projected to tracked containers).
     #[inline]
     pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
         let cc = &self.default_cc;
@@ -199,13 +182,12 @@ impl Function {
             .collect()
     }
 
-    /// The `(base, byte offset)` of a Store/Load's address.  `None` when `node`
-    /// is not a Store/Load, or its address is not SP-rooted, or it has not been
-    /// decomposed yet.  Offsets compare only when their bases match.
+    /// The `(base, byte offset)` of a Store/Load's address; `None` when `node`
+    /// is not a Store/Load, its address is not SP-rooted, or it is not yet
+    /// decomposed. Offsets compare only when their bases match.
     pub fn stack_offset(&self, node: NodeId) -> Option<(ValueId, i128)> {
         let addr = self.access_address(node)?;
-        // Stack only: a heap address resolves through the same interner but is a
-        // different region, so it is not an SP offset.
+        // A heap slot shares the interner but is not an SP offset.
         match self.memory_decomp(addr) {
             (crate::MemDecomp::Stack(_), slot) => slot,
             _ => None,
@@ -221,10 +203,9 @@ impl Function {
     }
 
     /// Retains only nodes reachable from [`Self::entry`], remapping every
-    /// overlay table through the same translation and returning it.
-    /// Pre-compaction `NodeId` / `ValueId` / `UseId` values are invalidated;
-    /// callers holding one MUST rewrite it through the returned
-    /// [`NodeIdRemap`].  Entries whose node did not survive are dropped.
+    /// overlay table and dropping entries whose node died. Invalidates every
+    /// earlier `NodeId` / `ValueId` / `UseId`; rewrite held ones through the
+    /// returned [`NodeIdRemap`].
     pub fn compact(&mut self) -> NodeIdRemap {
         // The pre-order yields the entry first, so it stays node 0.
         let reachable: Vec<NodeId> = self.walk().collect();
@@ -233,8 +214,8 @@ impl Function {
         debug_assert!(matches!(self.node_kind(self.entry()), NodeKind::Entry));
         self.side_tables.remap(&remap);
         self.memos.get_mut().remap(&remap);
-        // The dedup cache keys on `NodeKind`, which carries the `IntConstId`, so
-        // the id rewrite MUST precede the cache rebuild.
+        // The dedup cache keys on `NodeKind`, which carries the `IntConstId`,
+        // so the payload GC must precede the cache rebuild.
         self.side_tables.gc_payload_tables(&mut self.graph);
         self.graph.rebuild_cache();
         remap

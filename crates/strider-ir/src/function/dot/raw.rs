@@ -1,6 +1,5 @@
-//! Raw graph renderer for debugging: the graph **exactly as stored**, one DOT
-//! node per reachable-from-entry [`NodeId`], one edge per input edge, and
-//! side-table state inline.
+//! Raw graph renderer for debugging: the graph exactly as stored, one DOT
+//! node per reachable [`NodeId`], one edge per input, side-table state inline.
 
 use ::dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
 use dashu_int::UBig;
@@ -10,9 +9,8 @@ use crate::function::Function;
 use crate::node::{NodeId, NodeKind};
 use crate::{IRViewer, IRWalker};
 
-/// The raw label's spelling of an interned constant: the decimal value at any
-/// width, never a storage form. Rendered graphs are compared across builds, so
-/// this text is an artifact.
+/// A constant's decimal value at any width. Rendered graphs are compared
+/// across builds, so this spelling must stay fixed.
 pub(super) fn const_label(value: &UBig) -> String {
     format!("{value}")
 }
@@ -181,7 +179,7 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
 }
 
 impl Function {
-    /// The renderer of the graph **exactly as stored**, in the dark theme.
+    /// The renderer of the graph exactly as stored, in the dark theme.
     pub fn raw_graph_dot(&self) -> GraphDot<impl GraphDotDumper + '_> {
         GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark())
     }
