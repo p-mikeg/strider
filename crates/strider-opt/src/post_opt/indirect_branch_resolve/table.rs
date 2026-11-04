@@ -1,40 +1,16 @@
 //! Table-dispatch arm of the indirect-branch classifier.
 //!
-//! A switch lowers to `branch f(index)` for one bounded index, whether the
-//! table lives in rodata, on the stack, or behind a GP/GOT indirection.  Rather
-//! than pattern-match each addressing shape, this arm finds the index and then
-//! delegates the addressing to the abstract evaluator, pinning the index across
-//! its proven strided range and folding the dispatch cone for each value.  A
-//! cone whose every input is one phi of constants is folded for each constant
-//! instead, which is exact where the range is their hull.
+//! A switch lowers to `branch f(index)` for one bounded index, wherever the
+//! table lives.  This arm finds the index, or a phi of constants every input of
+//! the dispatch cone passes through, and folds the cone through the abstract
+//! evaluator ([`eval`](super::eval)) once per value.  Every value must fold, or
+//! the site defers: a `Multiple` missing a runtime target drops an edge.
 //!
-//! The foldings the evaluator covers are listed on [`eval`](super::eval).  A
-//! cone needing anything else resolves to `None` and the branch defers: sound
-//! but less eager.
-//!
-//! # Soundness
-//!
-//! Two independent gates must hold before committing to `Multiple`.
-//!
-//! A BOUNDED INDEX, from an `if (idx < N)` guard, a mask, or a shift.  The cap
-//! is on the entry COUNT, not the span, so a sparse scaled `idx*8` is
-//! enumerable while a dense wide range is not.  A width-only range, one exactly
-//! filling its extend-stripped type width, is a raw loaded table ENTRY and is
-//! rejected, so table data is never enumerated as an index.  A load whose
-//! address adds no bounded index reads a field through a pointer, not a
-//! table, and its width is its bound.
-//!
-//! A COMPLETE FOLD: every value in the range must fold to a constant target.
-//! Any failure returns `None`, because a `Multiple` omitting a real runtime
-//! target would wire a CFG with missing edges.
-//!
-//! Over-approximating the bound never drops a real edge, but a surplus arm is a
-//! live edge whose bytes are decoded like any other, so the range enumerated
-//! must be one proven for the index the address scales.  Under-approximating
-//! is unsound.  A KnownBits field bound beside a guard on overlapping bits of
-//! the same value that neither encloses the field nor is connected to it is
-//! not taken: the guard may size the table, and the field then reaches the
-//! next one.
+//! Known limits of the field-index rule, seen only in hand-written asm: a range
+//! a read guard narrows is trusted as the table's bound, though an unread test
+//! (a mask, a carry, a test looping back) or a guard a later truncate loses may
+//! be tighter; and a test reading the cell through a phi reads no bits of it.
+//! Each seats cells the code rules out.
 
 use super::index_range::{Interval, MAX_WALK, ScaleOp, Step, scale_of, strip_to_cell, width_mask};
 use super::{MAX_TABLE_ENTRIES, SiteClassifier};
@@ -44,31 +20,21 @@ use strider_ir::IntBinaryOp;
 use strider_ir::eval;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 
-/// The value the enumeration pins, the values to pin it to, and the constant
-/// those carry: the index takes `x - rebase` for each `x` in `range`.
-///
-/// `rebase` is non-zero where the bound came from a guarded sibling
-/// `Add(index, rebase)` rather than from the index itself, so `range` is in the
-/// sibling's coordinate and the offsets between index and address are checked
-/// there too.
+/// The value the enumeration pins: `index` takes `x - rebase` for each `x` in
+/// `range`.  A non-zero `rebase` means the bound is on a guarded sibling
+/// `Add(index, rebase)`, in whose coordinate `range` is.
 #[derive(Clone, Copy)]
 struct PinnedIndex {
     index: ValueId,
     range: Interval,
     rebase: u128,
-    /// `index`'s type mask, the width `rebase` wraps at.  Carried because
-    /// only [`SiteClassifier::bounded_index`], which admits an index only at a type that has
-    /// one, can read it without a fallible second look.
+    /// `index`'s type mask, the width `rebase` wraps at.
     mask: u128,
 }
 
 impl SiteClassifier<'_> {
-    /// The table-dispatch arm, over the dispatch value of an `IndirectBranch` or
-    /// the selector of an already-seated `Switch`.
-    ///
-    /// `site` is the `IndirectBranch` or `Switch` being resolved; it scopes the
-    /// index-range query to that node, never the first one that happens to share
-    /// the dispatch value.
+    /// The table-dispatch arm over `target_value`, the dispatch value of `site`
+    /// (an `IndirectBranch` or seated `Switch`), which scopes the range queries.
     pub(crate) fn classify_dispatch_value(
         &mut self,
         site: NodeId,
@@ -76,66 +42,44 @@ impl SiteClassifier<'_> {
         mode_value: Option<ValueId>,
     ) -> Option<ResolvedTargets> {
         let function = self.function();
-        // A `Load[reg]` function pointer has no bounded dominator and defers here.
         let (pinned, values) = self.dispatch_domain(target_value, site)?;
 
         let ev = &mut self.eval;
         let pruned = super::eval::cone_order_pruned(function, target_value, pinned);
-        // The branch's committed ISA mode (an interworking `bx`/`jr`-dispatch),
-        // `(entry & 1)`, evaluated per index so each arm carries its own mode.
+        // An interworking branch's committed mode, evaluated per arm.
         let mode = mode_value.map(|mv| (mv, super::eval::cone_order_pruned(function, mv, pinned)));
-        // `collect::<Option<_>>` bails the moment a value fails to fold, which
-        // fails closed.
         let targets: Vec<ResolvedTarget> = values
             .into_iter()
             .map(|x| {
-                // One memo for both roots: they are siblings over one dispatch
-                // word (`And(word, 1)` and `And(word, ~1)`), so everything under
-                // `word` folds once.
+                // One memo for both roots, siblings over one dispatch word.
                 ev.begin_index(pinned, x);
                 let addr = ev.eval_root(&pruned, target_value)?;
                 let isa_bit = match &mode {
-                    // The branch commits an ISA mode per target; that mode MUST fold.
-                    // If it does not, fail closed (`?` defers the whole branch),
-                    // rather than decode the target in a guessed mode.
+                    // A committed mode that does not fold defers the branch.
                     Some((mv, order)) => Some(ev.eval_root(order, *mv)? != 0),
-                    // No mode switch bound to this branch: an in-mode jump table
-                    // that inherits the mode flowing into the branch.
+                    // The mode flowing into the branch.
                     None => None,
                 };
                 Some(ResolvedTarget::new(addr, isa_bit))
             })
             .collect::<Option<_>>()?;
-        // `table` sorts by `(addr, isa_bit)` and drops exact duplicates, so two
-        // arms left on one address carry opposite modes.  `addr` is
-        // mode-bit-masked, so words `X` and `X | 1` land on one address that way.
-        // A disagreement defers the whole site: `None` is the mode FLOWING into
-        // the branch, which a mode-committing branch contradicts.
+        // `table` drops exact duplicates, so two arms left on one address
+        // disagree on mode, which defers the site.
         let seated = ResolvedTargets::table(targets);
         let arms = seated.arms();
-        // Nothing to enumerate defers the site too: `table([])` is `Withdrawn`,
-        // which would overrule a caller's seed where `None` only defers.
+        // `table([])` is `Withdrawn`, which would overrule a caller's seed.
         (!arms.is_empty() && arms.windows(2).all(|w| w[0].addr != w[1].addr)).then_some(seated)
     }
 
-    /// What to enumerate for `target`, the value pinned and the values to pin
-    /// it to: a bounded index across its range, or the phi every input of the
-    /// dispatch cone passes through across its constants.
-    ///
-    /// The phi's constants are the values it really takes, where its range is
-    /// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  One outside the
-    /// phi's range at the site, or ruled out by an `== k` guard on the way, is
-    /// dropped.  They are taken where the phi bounds no index too, as for a jump
-    /// to a phi of labels.  Where a bounded index is found as well, a constant
-    /// the index range excludes is dropped, since both bound the same runtime
-    /// value; where the index does not fold under some constant, the range is
-    /// enumerated as it is without them.
+    /// The value to pin for `target` and the values to pin it to: the constants
+    /// of the phi every input of the dispatch cone passes through, which are
+    /// exact where a range is only their hull, else a bounded index across its
+    /// range.  With both, a constant the index range excludes is dropped; where
+    /// the index does not fold under some constant, the range alone is used.
     fn dispatch_domain(&mut self, target: ValueId, site: NodeId) -> Option<(ValueId, Vec<u128>)> {
         let function = self.function();
         let chain = dominator_chain(function, target)?;
         let source = chain.last().copied().unwrap_or(target);
-        // A constant the site's range or an equality guard on the way excludes
-        // never reaches the branch.
         let constants = super::index_range::phi_constants(
             function,
             source,
@@ -152,13 +96,9 @@ impl SiteClassifier<'_> {
         if let Some(values) = constants.and_then(|k| self.constants_in_range(k, hit, source)) {
             return Some((source, values));
         }
-        // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
-        // it visits exactly the reachable indices.  A stride wider than `usize` (a
-        // scaled wide-type range) defers rather than silently stepping by 1 and
-        // enumerating the full dense span.
+        // `stride` divides the value spacing; one wider than `usize` defers.
         let step = usize::try_from(hit.range.stride()).ok()?;
-        // A known bit the interval cannot carry, or an equality on the way,
-        // still excludes values inside it.
+        // Known bits and equality guards exclude values inside the interval.
         let scales = self.ranges.index_scales(hit.index);
         let values = (hit.range.lo()..=hit.range.hi())
             .step_by(step)
@@ -196,18 +136,9 @@ impl SiteClassifier<'_> {
         Some(kept)
     }
 
-    /// The shallowest genuinely-bounded, non-width-only, non-constant value of
-    /// `chain`, the values that DOMINATE the target in its variability cone.
-    ///
-    /// Requiring dominance excludes a bypassed sub-branch: in a rotate
-    /// `(x<<2) | (x>>30)`, `x>>30` has the tightest interval but does not dominate.
-    ///
-    /// SHALLOWEST here is target-rooted, nearest the dispatch value, not
-    /// entry-rooted, and it is the one enumerated rather than the deepest: it sits
-    /// just below the address arithmetic with every guard/mask/shift applied, so
-    /// enumerating it visits exactly the reachable slots.  A deeper
-    /// (further-from-dispatch) node's bound can be looser, and enumerating
-    /// out-of-bounds slots defers a branch that should have resolved.
+    /// The bounded index nearest the target in `chain`, the target's dominators
+    /// in its variability cone.  Dominance excludes a bypassed sub-branch: in a
+    /// rotate `(x<<2) | (x>>30)`, `x>>30` is tightest but does not dominate.
     fn decompose_index(&mut self, chain: &[ValueId], site: NodeId) -> Option<PinnedIndex> {
         let function = self.function();
         let hits: Vec<(usize, PinnedIndex)> = chain
@@ -216,12 +147,9 @@ impl SiteClassifier<'_> {
             .filter_map(|(depth, &v)| self.bounded_index(site, v).map(|hit| (depth, hit)))
             .collect();
         let shallowest = *hits.first()?;
-        // A candidate that strips to a cell of a table the evaluator folds bounds
-        // the table DATA, not the index the address scales.  A narrowing mask on
-        // the cell is what puts its range below its load width and past
-        // `bounded_index`.  Where the chain carries a bounded value BELOW that
-        // load, inside its address, that one is the index; a second mask on the
-        // cell itself is not, so the depth comparison is against the load.
+        // A candidate stripping to a masked cell of a foldable table bounds the
+        // table DATA; the index is a bounded value below that load, in its
+        // address.
         let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
             .and_then(|cell| chain.iter().position(|&v| v == cell))
             .and_then(|at| hits.iter().copied().find(|&(depth, _)| depth > at))
@@ -229,12 +157,8 @@ impl SiteClassifier<'_> {
         offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
     }
 
-    /// Is `iv`, the range of `value` at `site`, one a table index can be
-    /// enumerated over?  `mask` is the index type's mask.
-    ///
-    /// The trust checks weigh what `iv` leaves against tests the range does
-    /// not read, and a range `narrowed` past its KnownBits bound by a read
-    /// guard leaves only the bits below its top.
+    /// Can a table index be enumerated over `iv`, the range of `value` at
+    /// `site`?  `mask` is the index type's mask.
     fn enumerable(&mut self, site: NodeId, mask: u128, value: ValueId, iv: Interval) -> bool {
         if !index_bound_ok(mask, iv) {
             return false;
@@ -246,19 +170,9 @@ impl SiteClassifier<'_> {
                 .guard_left_unconnected(value, site, iv, narrowed)
     }
 
-    /// A genuinely-bounded non-constant integer whose bound is a real narrowing,
-    /// not just its type width.  A loaded table ENTRY, bounded only by its load
-    /// width, is excluded: enumerating one folds to bogus targets.
-    ///
-    /// The guard can sit on a sibling `v + k` the dispatch cone does not contain,
-    /// which is what `switch (x)` over a negative case base lowers to once
-    /// ConstantFold has merged `k` into the table base.  `Add` is modular at one
-    /// width, so a bound on the sibling is a bound on `v` pinned `k` lower, and the
-    /// tightest such sibling is taken.
-    ///
-    /// A range [`RangeMap::guard_left_unconnected`] flags is not one.
-    ///
-    /// [`RangeMap::guard_left_unconnected`]: super::index_range::RangeMap::guard_left_unconnected
+    /// `v` as an enumerable index, bounded by its own range or by the tightest
+    /// guarded sibling `v + k` outside the dispatch cone (a `switch` over a
+    /// negative case base, once `k` folds into the table base).
     fn bounded_index(&mut self, site: NodeId, v: ValueId) -> Option<PinnedIndex> {
         let function = self.function();
         debug_assert!(
@@ -266,8 +180,6 @@ impl SiteClassifier<'_> {
             "the dominator chain skips constants"
         );
         let ty = function.value_type_opt(v).filter(|t| t.is_integer())?;
-        // A type past the `u128` carrier has no mask, and `index_bound_ok` rejects
-        // every interval there, so nothing below would pass anyway.
         let mask = ty.int_mask_u128()?;
         let iv = self.ranges.range_of(v, site);
         if self.enumerable(site, mask, v, iv) {
@@ -310,30 +222,16 @@ impl SiteClassifier<'_> {
             .min_by_key(|hit| hit.range.count())
     }
 
-    /// Is `v`'s range no narrower than its type width allows?  A raw
-    /// byte load fills its cell width exactly, making it table DATA, not an index,
-    /// unless it is a field read through a pointer ([`Self::loads_a_field`]) that no
-    /// dominating test bounds unread
-    /// ([`RangeMap::cell_test_left_unread`](super::index_range::RangeMap::cell_test_left_unread)).
+    /// Does `iv` cover every value `v`'s cell can produce, making `v` table
+    /// DATA rather than an index?  A field read through a pointer
+    /// ([`Self::loads_a_field`]) is instead asked
+    /// [`RangeMap::cell_test_left_unread`](super::index_range::RangeMap::cell_test_left_unread).
     ///
-    /// Keying on the RANGE rather than on "is it load-derived" is load-bearing: a
-    /// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
-    /// though it strips to a `Load`.
-    ///
-    /// Zero-extends, truncates, masks clearing only known-zero bits and constant
-    /// scalings are stripped first ([`strip_to_cell`]), then replayed
-    /// innermost-first over the cell's `1 << w` consecutive values, tracking their
-    /// spacing: a divide collapses the set only by however much it outruns the
-    /// spacing a preceding multiply built up, so `(cell << 2) >> 1` keeps all
-    /// `1 << w`.  A truncate, and then the OUTPUT width, wrap the set
-    /// ([`wrap`]): `zext(i8) << 25` at `I32` has 128 distinct values, not 256,
-    /// and `trunc8(i32)` has 256.  A scale past the `u128` carrier, a floor over
-    /// an unrelated spacing, a wrap that leaves no progression, and a strip
-    /// longer than [`MAX_WALK`] all answer "width-only", which defers the
-    /// site rather than enumerating a cell.
-    /// An unrecognised producer is not a failure: the strip ends there and the
-    /// count is taken at that value's own width.  `w < 128` keeps the shift
-    /// well-defined.
+    /// The steps [`strip_to_cell`] strips are replayed over the cell's `1 << w`
+    /// values, tracking their spacing and wrapping at each truncate and the
+    /// output width ([`wrap`]): `zext(i8) << 25` at `I32` has 128 values.  Any
+    /// step that leaves no countable progression, or a strip longer than
+    /// [`MAX_WALK`], answers `true`.
     fn is_width_only(&mut self, site: NodeId, v: ValueId, iv: Interval, narrowed: bool) -> bool {
         let function = self.function();
         let Some(strip) = strip_to_cell(function, v, |and| {
@@ -347,9 +245,6 @@ impl SiteClassifier<'_> {
                 .ranges
                 .cell_test_left_unread(v, &strip, site, iv, narrowed);
         }
-        // Defer, as every other bail here does: with no width there is no cell
-        // count to compare the range against, so nothing disproves table DATA;
-        // past the carrier there is no count.
         let Some(w) = function
             .value_type_opt(base)
             .map(|t| t.bit_width())
@@ -377,10 +272,7 @@ impl SiteClassifier<'_> {
                     count = count.div_ceil(c / spacing);
                     spacing = 1;
                 }
-                // Floor over a spacing that neither divides nor is divided leaves
-                // no arithmetic progression to count.
                 Some(ScaleOp::Udiv(_)) => return true,
-                // A zero-extend or an identity mask keeps the set.
                 None => {}
             }
         }
@@ -391,11 +283,8 @@ impl SiteClassifier<'_> {
         }
     }
 
-    /// Whether `v` is a load through a pointer: its address is no constant, and
-    /// no term it adds ranges at `site` over few enough values to index a table.
-    /// A cell of a table sits at the table's base plus a bounded index, wherever
-    /// the table lives; a field of a struct, or a byte through a pointer, sits at
-    /// an unbounded register or phi plus an offset.
+    /// Whether `v` is a load through a pointer: a non-constant address none of
+    /// whose added terms is bounded at `site` like a table index.
     fn loads_a_field(&mut self, site: NodeId, v: ValueId) -> bool {
         let function = self.function();
         if !matches!(function.kind_of_value(v), NodeKind::Load(_)) {
@@ -431,10 +320,8 @@ impl SiteClassifier<'_> {
 /// The values that dominate `target` in its variability cone, nearest first,
 /// or `None` when `target` is a constant.
 ///
-/// The cone traverses THROUGH a load [`foldable_load_address`] passes into its
-/// address, and stops at any other load, phis and opaque sources.  A virtual
-/// ENTRY feeds every root, so the deepest value of the chain, where it is a
-/// root, is the only one.
+/// The cone passes through a load [`foldable_load_address`] accepts and stops
+/// at any other load, phis and opaque sources.
 fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<Vec<ValueId>> {
     // `None` is the virtual ENTRY.
     let mut succs: rustc_hash::FxHashMap<Option<ValueId>, Vec<Option<ValueId>>> =
@@ -445,8 +332,6 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
         if function.int_const_u128(v).is_some() || !seen.insert(v) {
             continue;
         }
-        // The addressing arithmetic, a foldable load's address, or nothing for
-        // an opaque source.
         let inputs: Vec<ValueId> = match function.kind_of_value(v) {
             NodeKind::Load(_) => foldable_load_address(function, v).into_iter().collect(),
             NodeKind::InitialVar(_)
@@ -459,11 +344,8 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
         };
         let mut has_var_input = false;
         for p in inputs {
-            // An SP-decomposable base is a symbolic BASE, not a variable, so it
-            // is skipped like a const; otherwise `sp` becomes a second root and
-            // the real index stops dominating the target.  `decompose` accepts
-            // `sp + const` and alignment masks but rejects `sp & 0xF`, which is
-            // a bounded VALUE and must stay a candidate index.
+            // An SP-rooted base is skipped like a const, or `sp` would be a
+            // second root the index does not dominate.
             if is_base_operand(function, p) {
                 continue;
             }
@@ -472,18 +354,15 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
             stack.push(p);
         }
         if !has_var_input {
-            succs.entry(None).or_default().push(Some(v)); // a cone root
+            succs.entry(None).or_default().push(Some(v));
         }
     }
     if !seen.contains(&target) {
         return None;
     }
-    // Each vertex is asked for its successors once, as it is discovered.
     let doms =
         graph_algorithms::dominance::dominators(None, |v| succs.remove(&v).unwrap_or_default());
 
-    // The idom chain above the target is the target-rooted shallow-to-deep
-    // order, so the first bounded hit IS the shallowest; it ends at the ENTRY.
     let mut chain: Vec<ValueId> = Vec::new();
     let mut at = target;
     while let Some(Some(up)) = doms.immediate_dominator(Some(at)) {
@@ -493,9 +372,7 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
     Some(chain)
 }
 
-/// The cell `v` reduces to, through the width changes, masks and constant
-/// scalings between a load and the address arithmetic, when that is a load of
-/// a table the evaluator can fold.
+/// The load `v` strips to ([`strip_to_cell`]), when the evaluator can fold it.
 fn foldable_cell_load(function: &strider_ir::Function, v: ValueId) -> Option<ValueId> {
     let cell = strip_to_cell(function, v, |_| true)?.cell;
     (matches!(function.kind_of_value(cell), NodeKind::Load(_))
@@ -506,10 +383,8 @@ fn foldable_cell_load(function: &strider_ir::Function, v: ValueId) -> Option<Val
 /// Whether the constant offsets applied to `index` on its way to the address
 /// keep `range` a contiguous unsigned interval.
 ///
-/// `shallower` is the dominator chain above `index`, target-rooted. An offset
-/// that wraps `range` past zero (`(x & 7) - 2`) names slots below the table
-/// that no guard excludes, since the guards the classifier could not read are
-/// the ones on the offset value; enumerating `x` would seat them.
+/// `shallower` is the dominator chain above `index`, target-rooted.  An offset
+/// wrapping `range` past zero (`(x & 7) - 2`) names slots below the table.
 fn offsets_keep_range(
     function: &strider_ir::Function,
     shallower: &[ValueId],
@@ -551,12 +426,8 @@ fn offsets_keep_range(
 /// The address of a load whose address is a const or SP-rooted base, or has
 /// one as an operand of its producer; `None` otherwise.
 ///
-/// The check is operand-level because a stack table load
-/// `Load[(sp+base) + idx*stride]` has an INDEX-DEPENDENT address that never
-/// decomposes as a whole, though its `sp+base` operand does.  So it also
-/// passes loads the evaluator cannot fold: `Load(reg + 8)`, a vtable slot or
-/// struct field, and `Load(call())`, whose constant callee is an input.  Those
-/// fold to nothing, so the site defers.
+/// Operand-level, since a stack table's `(sp+base) + idx*stride` decomposes
+/// only in part; it also passes loads the evaluator then fails to fold.
 fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
     let addr = function.int_inputs(load).next()?;
     let foldable = is_base_operand(function, addr)
@@ -572,12 +443,7 @@ fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
     function.int_const_u128(v).is_some() || crate::mem_analysis::decompose(function, v).is_some()
 }
 
-/// Is `iv` a non-empty, enumerable, genuinely-narrowed range under the type
-/// mask `mask`?
-///
-/// A type past 128 bits has no mask and never reaches here: the interval's
-/// `u128` carrier cannot represent its top, so every interval there would read
-/// as narrowed.
+/// Is `iv` a non-empty, enumerable range narrower than the type mask `mask`?
 fn index_bound_ok(mask: u128, iv: Interval) -> bool {
     !iv.is_empty() && iv.hi() < mask && iv.count() <= u128::from(MAX_TABLE_ENTRIES)
 }
@@ -594,7 +460,7 @@ fn wrap(count: u128, spacing: u128, mask: u128) -> Option<(u128, u128)> {
         return Some((count, spacing));
     }
     // `spacing * i` covers every multiple of the power of two shared with the
-    // modulus, once `i` runs over that many consecutive values.
+    // modulus once `i` spans that many values.
     let shift = spacing.trailing_zeros().min(mask.count_ones());
     (count > mask >> shift).then_some(((mask >> shift) + 1, eval::bit(shift)))
 }
