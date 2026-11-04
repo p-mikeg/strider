@@ -1,5 +1,5 @@
-//! `pcode_at` / `fingerprint_pcode` look up the CFG's own lift-time decodes
-//! rather than re-decoding, so a mid-function ISA-mode switch renders right.
+//! `pcode_at` / `fingerprint_pcode` read the CFG's own decodes, never
+//! re-decode, so a mid-function ISA-mode switch renders right.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -11,15 +11,13 @@ use crate::errors::into_strider_err;
 use crate::node::PyNode;
 use crate::strider_cls::PyLifter;
 
-/// Control-flow graph of a single function, from `Lifter.build_cfg` or
-/// `Lifter.analyze`. Renders to Graphviz dot / dark-themed HTML, and serves
-/// the p-code audit trail (`pcode_at` / `fingerprint_pcode`).
+/// Control-flow graph of one function, from `Lifter.build_cfg` or
+/// `Lifter.analyze`.
 #[pyclass(name = "Cfg", module = "strider.cfg", frozen)]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
-    /// The `Lifter` that built `inner`.
     pub(crate) lifter: Py<PyLifter>,
-    /// That lifter's arch, kept so a render never borrows `lifter`.
+    /// Kept so a render never borrows `lifter`.
     pub(crate) arch: strider_target::SleighArch,
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
@@ -53,8 +51,7 @@ impl PyCfg {
         }
     }
 
-    /// `center` as a region id this CFG has (`u32::MAX` is petgraph's end
-    /// sentinel, never a region).
+    /// `u32::MAX` is petgraph's end sentinel, never a region.
     fn region_id(&self, center: u32) -> PyResult<strider_cfg::RegionId> {
         if center != u32::MAX {
             let id = strider_cfg::RegionId::new(center as usize);
@@ -80,8 +77,7 @@ impl PyCfg {
         render(&d, html, path)
     }
 
-    /// Ops of one machine instruction are joined with `"; "` in `insn_index`
-    /// order.
+    /// Ops joined with `"; "` in `insn_index` order.
     fn pcode_map(&self) -> &HashMap<u64, String> {
         self.pcode_map.get_or_init(|| {
             let mut grouped: HashMap<u64, Vec<(u64, &rsleigh::Insn)>> = HashMap::new();
@@ -116,9 +112,8 @@ impl PyCfg {
         self.lifter.clone_ref(py)
     }
 
-    /// Every machine address this CFG cannot vouch for, with why, sorted and
-    /// deduplicated. Empty is complete. Check it before trusting an absence
-    /// ("no store to X"): code behind a listed address may be missing.
+    /// Sorted `(machine_addr, reason)` pairs this CFG cannot vouch for; empty
+    /// is complete. Check it before trusting an absence ("no store to X").
     ///
     /// `"unresolved_branch"` and `"unverified_seed"` name a dispatch site; the
     /// other five a branch target:
@@ -151,44 +146,35 @@ impl PyCfg {
         incomplete_list(self.inner.incomplete())
     }
 
-    /// Exposes `lifter` so the cyclic GC sees a cycle through a `Cfg` to the
-    /// Lifter's Python reader.
+    /// Lets the cyclic GC see a cycle through `lifter` to its Python reader.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.lifter)
     }
 
-    /// Render the CFG to DOT. Returns the DOT string when `path` is
-    /// `None`, otherwise writes it to `path` and returns `None`.
-    /// `style` selects the dot theme (default `"dark_cfg"`).
+    /// Render to DOT: the string when `path` is `None`, else written to
+    /// `path`. `style` is the theme (default `"dark_cfg"`).
     #[pyo3(signature = (path=None, style=None))]
     fn to_dot(&self, path: Option<&str>, style: Option<&str>) -> PyResult<Option<String>> {
         self.render_dot(style, false, path)
     }
 
-    /// Render the CFG to a standalone HTML page. Returns the HTML string
-    /// when `path` is `None`, otherwise writes it and returns `None`.
-    /// `style` selects the dot theme (default `"dark_cfg"`).
+    /// Render to a standalone HTML page: the string when `path` is `None`,
+    /// else written to `path`. `style` is the theme (default `"dark_cfg"`).
     #[pyo3(signature = (path=None, style=None))]
     fn to_html(&self, path: Option<&str>, style: Option<&str>) -> PyResult<Option<String>> {
         self.render_dot(style, true, path)
     }
 
-    /// The lifted p-code for the machine instruction at `addr`: every p-code
-    /// op decoded there, joined with `"; "`, or `None` when this CFG decoded
-    /// nothing at `addr`.
-    ///
-    /// An instruction lifting to no p-code ops (x86 `endbr64`) also gives
+    /// The p-code ops this CFG decoded at `addr`, joined with `"; "`, or
+    /// `None`. An instruction lifting to no ops (x86 `endbr64`) also gives
     /// `None`; `Lifter.pcode_at` returns `""` for it.
     fn pcode_at(&self, addr: u64) -> Option<String> {
         self.pcode_map().get(&addr).cloned()
     }
 
-    /// `node`'s asm fingerprint as `(addr, text)` p-code pairs sorted by
-    /// address, skipping an address this CFG has no decode for. `[]` for
-    /// structural nodes carrying no fingerprint.
-    ///
-    /// Raises `StriderError` for a `node` from a function another `Cfg`
-    /// produced.
+    /// `node`'s asm fingerprint as sorted `(addr, pcode)` pairs, skipping an
+    /// address this CFG has no decode for; `[]` for a structural node. Raises
+    /// `StriderError` for a `node` of another `Cfg`'s function.
     fn fingerprint_pcode(
         slf: &Bound<'_, Self>,
         py: Python<'_>,
@@ -223,8 +209,8 @@ impl PyCfg {
         )
     }
 
-    /// Pretty neighborhood DOT around region `center`: BFS over predecessor
-    /// and successor regions, capped at `max_nodes`.
+    /// DOT of the regions within `depth` edges of region `center`, capped at
+    /// `max_nodes`.
     #[pyo3(signature = (center, depth=5, max_nodes=60))]
     fn neighborhood_dot(&self, center: u32, depth: usize, max_nodes: usize) -> PyResult<String> {
         let node = self.region_id(center)?;
@@ -256,8 +242,7 @@ impl PyCfg {
             .collect()
     }
 
-    /// The index of the region owning `addr`; where regions overlap, the one
-    /// with the greatest start.
+    /// The region holding `addr`; of overlapping ones, the latest start.
     fn region_at(&self, addr: u64) -> Option<u32> {
         self.inner
             .region_containing(strider_cfg::PcodeInsnAddr::at_machine_start(addr))

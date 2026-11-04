@@ -1,7 +1,6 @@
 use pyo3::prelude::*;
 
-/// A Sleigh address space, exposed as the `RAM` / `REGISTER` / `CONST` /
-/// `UNIQUE` class constants (instances, not callables).
+/// A Sleigh address space: `VnSpace.RAM`, `REGISTER`, `CONST` or `UNIQUE`.
 #[pyclass(name = "VnSpace", module = "strider.sleigh", frozen, eq, hash)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyVnSpace {
@@ -43,8 +42,7 @@ impl PyVnSpace {
         }
     }
 
-    /// The space's name (`"RAM"`, `"REGISTER"`, `"CONST"`, `"UNIQUE"`,
-    /// or `"OTHER"`).
+    /// `"RAM"`, `"REGISTER"`, `"CONST"`, `"UNIQUE"` or `"OTHER"`.
     pub(crate) fn name(&self) -> &'static str {
         use rsleigh::VnSpace as S;
         [
@@ -58,7 +56,6 @@ impl PyVnSpace {
         .unwrap_or("OTHER")
     }
 
-    /// `VnSpace.<NAME>`, or `<VnSpace OTHER 'c'>` with the space's shortcut.
     fn __repr__(&self) -> String {
         match self.name() {
             "OTHER" => format!("<VnSpace OTHER {:?}>", self.inner.shortcut()),
@@ -67,7 +64,7 @@ impl PyVnSpace {
     }
 }
 
-/// A Sleigh varnode: `(space, offset, size_in_bytes)`. Construct via
+/// A Sleigh varnode `(space, offset, size_in_bytes)`, from
 /// `SleighArch.reg("RAX")` or `Vn(space, off, size)`.
 #[pyclass(name = "Vn", module = "strider.sleigh", frozen, eq, hash)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -83,7 +80,7 @@ impl PyVn {
 
 #[pymethods]
 impl PyVn {
-    /// Construct a varnode from `(space, offset, size_in_bytes)`.
+    /// A varnode from `(space, offset, size_in_bytes)`.
     #[new]
     fn new(space: PyVnSpace, off: u64, size: u32) -> Self {
         Self {
@@ -113,7 +110,6 @@ impl PyVn {
         self.inner.size
     }
 
-    /// The space, offset and size, e.g. `%[0x20]:8` for a register varnode.
     fn __repr__(&self) -> String {
         format!("{}", self.inner)
     }

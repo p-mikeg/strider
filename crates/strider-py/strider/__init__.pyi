@@ -1,9 +1,9 @@
-"""Type stubs for the strider Python bindings.
+"""Strider: lift a native function to a sea-of-nodes IR and query it.
 
-The public API is the domain submodules `strider.ir`, `strider.lift`,
-`strider.cfg`, `strider.sleigh`, `strider.reader`, `strider.opt`,
-`strider.pattern` and `strider.template`, plus `StriderError`. Import classes
-from their submodule (`from strider.ir import Function`).
+The API is the submodules `strider.ir`, `strider.lift`, `strider.cfg`,
+`strider.sleigh`, `strider.reader`, `strider.opt`, `strider.pattern` and
+`strider.template`, plus `StriderError`. Import classes from their submodule
+(`from strider.ir import Function`).
 """
 
 from __future__ import annotations
@@ -24,14 +24,14 @@ __all__: list[str]
 
 class StriderError(Exception):
     """Raised when an analysis fails, a pattern is malformed, or an argument
-    has a bad value, a malformed ELF included. A wrong type raises
-    `TypeError`, an int out of range `OverflowError` (an `entry` raises
-    `StriderError`), a range-checked option `ValueError`, a file `load_elf`
-    finds is not an ELF or targets an unsupported arch or ABI `ValueError`,
-    and a missing path `FileNotFoundError`.
+    (a malformed ELF included) has a bad value. Otherwise a wrong type raises
+    `TypeError`, an out-of-range int `OverflowError` (`entry` raises
+    `StriderError`), a range-checked option `ValueError`, a missing path
+    `FileNotFoundError`, and `load_elf` on a non-ELF file or an unsupported
+    arch or ABI `ValueError`.
 
-    `.backtrace` is the message followed by the Rust backtrace (empty when
-    raised from Python); `STRIDER_BACKTRACE=1` appends it to the message."""
+    `.backtrace` is the message plus the Rust backtrace (empty when raised
+    from Python); `STRIDER_BACKTRACE=1` appends it to the message."""
 
     backtrace: str
     ...

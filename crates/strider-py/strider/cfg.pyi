@@ -1,4 +1,4 @@
-"""Type stubs for strider.cfg: the control-flow graph and its options."""
+"""The control-flow graph and its options."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ IncompleteReason = Literal[
 INCOMPLETE_REASONS: tuple[IncompleteReason, ...]
 
 class Cfg:
-    """Control-flow graph of a single function, produced by
-    `Lifter.build_cfg` and returned as `AnalyzeResult.cfg`."""
+    """Control-flow graph of one function, from `Lifter.build_cfg` or
+    `AnalyzeResult.cfg`."""
     @property
     def lifter(self) -> Lifter:
         """The `Lifter` that built this CFG."""
@@ -41,40 +41,31 @@ class Cfg:
         path: Optional[str] = ...,
         style: Optional[DotStyle] = ...,
     ) -> Optional[str]:
-        """Render the CFG to DOT. Returns the DOT string when `path` is
-        `None`, otherwise writes it to `path` and returns `None`.
-        `style` selects the theme (default `"dark_cfg"`)."""
+        """Render to DOT: the string when `path` is `None`, else written to
+        `path`. `style` is the theme (default `"dark_cfg"`)."""
         ...
     def to_html(
         self, path: Optional[str] = ..., style: Optional[DotStyle] = ...
     ) -> Optional[str]:
-        """Render the CFG to a standalone HTML page. Returns the HTML string
-        when `path` is `None`, otherwise writes it and returns `None`.
-        `style` selects the theme (default `"dark_cfg"`)."""
+        """Render to a standalone HTML page: the string when `path` is
+        `None`, else written to `path`. `style` is the theme (default
+        `"dark_cfg"`)."""
         ...
     def pcode_at(self, addr: int) -> Optional[str]:
-        """The p-code lifted from the machine instruction at `addr`, joined
-        with `"; "`, or `None` when this CFG stored no decode for `addr`.
-
-        A lookup against this CFG's own decodes, so it is right across an
-        ISA-mode switch (ARM/Thumb, MIPS16). An instruction that lifts to no
-        p-code ops (`endbr64`) also gives `None`; `Lifter.pcode_at` returns
-        `""` for it.
+        """The p-code ops this CFG decoded at `addr`, joined with `"; "`, or
+        `None`. Right across an ISA-mode switch. An instruction lifting to no
+        ops (`endbr64`) also gives `None`; `Lifter.pcode_at` returns `""`.
         """
         ...
     def fingerprint_pcode(self, node: Node) -> list[tuple[int, str]]:
-        """The asm addresses recorded on `node` paired with their p-code
-        text, sorted by address.
-
-        An address this CFG has no decode for is skipped. Structural nodes
-        (Entry, InitialMemory, InitialVar, Region, phis) give `[]`.
-
-        Raises `StriderError` for a `node` from a function another `Cfg`
-        lifted.
+        """`node`'s asm addresses paired with their p-code, sorted, skipping
+        an address this CFG has no decode for. Structural nodes (Entry,
+        InitialMemory, InitialVar, Region, phis) give `[]`. Raises
+        `StriderError` for a `node` of another `Cfg`'s function.
         """
         ...
     def entry(self) -> int:
-        """The region index of the CFG entry, the default explorer center."""
+        """The region index of the CFG entry."""
         ...
     def neighborhood_dot(
         self,
@@ -82,14 +73,14 @@ class Cfg:
         depth: int = ...,
         max_nodes: int = ...,
     ) -> str:
-        """DOT for the regions within `depth` hops of region `center`
-        (predecessors and successors), capped at `max_nodes`."""
+        """DOT of the regions within `depth` edges of region `center`, capped
+        at `max_nodes`."""
         ...
     @property
     def incomplete(self) -> list[tuple[int, IncompleteReason]]:
-        """Every machine address this CFG cannot vouch for, with why, sorted
-        and deduplicated. Empty is complete. Check it before trusting an
-        absence ("no store to X"): code behind a listed address may be missing.
+        """Sorted `(machine_addr, reason)` pairs this CFG cannot vouch for;
+        empty is complete. Check it before trusting an absence ("no store to
+        X").
 
         `"unresolved_branch"` and `"unverified_seed"` name a dispatch site; the
         other five a branch target:
@@ -120,63 +111,48 @@ class Cfg:
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:
-        """The index of the region whose instruction range contains `addr`,
-        else `None`. Where regions overlap, the one with the greatest start."""
+        """The region holding `addr`, else `None`; of overlapping ones, the
+        latest start."""
         ...
     def _region_texts(self) -> dict:
-        """Disassembly text for every region, keyed by region index. The
-        search corpus for the CFG explorer."""
+        """Disassembly text per region index."""
         ...
 
 class CfgOptions:
     """Options controlling how the CFG is built.
 
-    `function_max_size` bounds how far past the entry to decode; omit it for
-    unbounded (`0` raises `ValueError`). Code that falls through past the
-    bound tail-calls the address there, which `Cfg.incomplete` names
-    `"past_function_end"`. `allow_code_before_start_addr`
-    permits blocks below the entry address; it raises `ValueError` beside a
-    size, which already fixes the extent.
+    `function_max_size` bounds how far past the entry to decode (omit for
+    unbounded); a fall-through past it is `"past_function_end"`.
+    `allow_code_before_start_addr` permits blocks below the entry; it raises
+    `ValueError` beside a size.
 
     `known_targets` maps a dispatch address to its targets, or to `"return"`
-    to seat it as a function return, instead of deferring to the classifier.
-    An empty list seats nothing.
+    to seat it as a function return. An empty list seats nothing.
 
-    `call_other_abis` classifies Sleigh user-op names, winning over the
-    built-in table. Each value is a `strider.sleigh.CallOtherAbi`: one of
-    the four footprint-free classes, or `CallOtherAbi.custom(...)` naming
-    implicit registers.
+    `call_other_abis` maps Sleigh user-op names to a
+    `strider.sleigh.CallOtherAbi`, winning over the built-in table.
 
     `no_return_targets` lists direct-call targets that never return (`exit`,
-    `panic`): a call to one ends its block, under `build_cfg` and `analyze`
-    alike. A target is the address the call instruction names. A Thumb or
-    MIPS16 one is listed at its even address (`addr & ~1`). A ppc64 ELFv2
+    `panic`). A Thumb or MIPS16 one is listed at `addr & ~1`. A ppc64 ELFv2
     call sharing the callee's TOC lands at `Symbol.local_entry`, which
-    `ElfLifter.analyze` and `ElfLifter.build_cfg` add for every listed
-    `address`; on a plain `Lifter`, list `local_entry` yourself.
+    `ElfLifter` adds for each listed `address`; on a plain `Lifter`, list
+    it yourself.
 
-    `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
-    data rather than code (an ARM literal pool): a branch or fall-through into
-    one is reported in `Cfg.incomplete` as `"undecodable_target"`, never
-    decoded. The instruction at the entry address decodes even inside one.
-    `ElfLifter.analyze` and `ElfLifter.build_cfg` fill it from the ELF's
-    mapping symbols when empty. A range that ends at or below its start
-    raises `ValueError`.
-
-    `fragment_ranges` lists `(start, end)` address ranges, end exclusive,
-    outside the bound that are still this function's code (GCC's
-    `<name>.cold` partitions): a branch into one is followed rather than
-    tail-called, and a fall-through past one's end is `"past_function_end"`.
-    `ElfLifter.analyze` and `ElfLifter.build_cfg` fill it when empty from the
-    sized `<name>.cold` / `<name>.cold.N` symbols of each function symbol at
-    the entry. A range that ends at or below its start raises `ValueError`.
+    `data_ranges` lists `(start, end)` ranges, end exclusive, of data (an
+    ARM literal pool): a branch or fall-through into one is
+    `"undecodable_target"`, never decoded, except at the entry.
+    `fragment_ranges` lists ranges outside the bound that are still this
+    function's code (GCC `<name>.cold`): a branch into one is followed, and
+    a fall-through past one's end is `"past_function_end"`. `ElfLifter`
+    fills an empty one from the ELF's `$d` mapping symbols or sized
+    `<name>.cold[.N]` symbols. A range ending at or below its start raises
+    `ValueError`.
     """
 
     @property
     def function_max_size(self) -> Optional[int]: ...
     @property
     def allow_code_before_start_addr(self) -> bool: ...
-    # Read-only views, built once.
     @property
     def known_targets(self) -> Mapping[int, Union[tuple[int, ...], Literal["return"]]]: ...
     @property
@@ -198,7 +174,6 @@ class CfgOptions:
         fragment_ranges: Sequence[tuple[int, int]] = ...,
         no_return_targets: Iterable[int] = ...,
     ) -> None:
-        """Build the options. Raises `ValueError` for
-        `function_max_size=0`, and for a size with
+        """Raises `ValueError` for `function_max_size=0`, or a size with
         `allow_code_before_start_addr=True`."""
         ...
