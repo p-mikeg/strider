@@ -341,11 +341,9 @@ impl PyBoundCapture {
              whether it bound, int(m[c]) for its value",
         ))
     }
-    /// Equal to an int matching the captured constant in either signed or
-    /// unsigned spelling (`-8` and `0xFFFFFFF8` both match a 32-bit -8), or to
-    /// a `BoundCapture` whose constant agrees. Two non-integer captures are
-    /// equal when they bound the same value of the same function; an unbound
-    /// one equals nothing. Unhashable.
+    /// Equal to an int spelling the captured constant signed or unsigned, or
+    /// to a `BoundCapture` that bound the same constant or value; an unbound
+    /// one equals nothing.
     fn __richcmp__(
         &self,
         py: Python<'_>,

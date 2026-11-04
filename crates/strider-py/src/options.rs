@@ -348,15 +348,8 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
     if b { "True" } else { "False" }
 }
 
-/// Unchecked claims about the analysed code, keyword-only; a wrong claim
-/// makes the answer wrong. Clearing all nine still takes memory to be RAM and
-/// the float controls to be the IEEE default.
-///
-/// Five default `True`: `stack_global_disjoint`,
-/// `assume_incoming_args_survive_calls`,
-/// `return_slots_survive_untracked_writes`, `msr_register_keeps_mode` and
-/// `fp_rounding_mode_is_nearest`. An omitted or `None` field takes its
-/// default.
+/// Unchecked claims about the analysed code; a wrong claim makes the answer
+/// wrong.
 #[pyclass(eq, name = "AssumptionOptions", module = "strider.lift", frozen)]
 #[derive(Clone, Default, PartialEq)]
 pub struct PyAssumptionOptions {
@@ -427,9 +420,8 @@ macro_rules! assumption_fields {
                 Self::with_fields(AssumptionOptions::default(), $($name),*)
             }
 
-            /// Every claim cleared, then the ones named set. With none named,
-            /// the sound floor for RAM-like memory and IEEE-default float
-            /// controls.
+            /// Every claim cleared, then the ones named set; with no argument,
+            /// the sound floor.
             #[staticmethod]
             #[allow(clippy::too_many_arguments)]
             #[pyo3(signature = (*, $($name = None),*))]
@@ -461,57 +453,41 @@ macro_rules! assumption_fields {
 
 assumption_fields! {
     /// The stack never overlaps constant-address memory (`.data`, `.rodata`,
-    /// `.bss`, MMIO) (default `True`). Wrong only where a constant address
-    /// equals `sp + K`.
+    /// `.bss`, MMIO). Default `True`.
     stack_global_disjoint: bool,
 
-    /// A call leaves the incoming stack-argument slots alone (default `True`);
-    /// read by incoming-argument detection only. A pointer into them handed to
-    /// a callee is caught; one reaching a callee through a callee-preserved
-    /// register is not. A `custom` convention homing register arguments next
-    /// to the stack ones (ARM, MIPS, PPC64, riscv, Win64) must pass
-    /// `reg_args_adjoin_stack_args=True`.
+    /// A call leaves the incoming stack-argument slots alone unless handed a
+    /// pointer into them. Default `True`; read by incoming-argument detection.
     assume_incoming_args_survive_calls: bool,
 
-    /// A store rooted at an SP base other than the entry SP (e.g. `sp & -16`)
-    /// is disjoint from the probed location; read by incoming-argument
-    /// detection only.
+    /// A store rooted at an SP base other than the entry SP (`sp & -16`) misses
+    /// the probed slot; read by incoming-argument detection.
     distinct_sp_bases_disjoint: bool,
 
-    /// A callee leaves the outgoing-argument slots the caller wrote alone, so
-    /// a spill at the stack top survives the call (the psABIs allow such
-    /// writes). Inert without `escape_analysis` or `noalias_allocators`.
+    /// A callee leaves the outgoing-argument slots the caller wrote alone.
+    /// Inert without `escape_analysis` or `noalias_allocators`.
     callee_preserves_stack_args: bool,
 
-    /// Callee addresses of pure `noalias` heap allocators (a size in, a fresh
-    /// pointer out). Each allocation is disjoint from every other, the stack
-    /// and every constant address, so an arena allocator does not qualify.
-    /// Deallocation is not modelled. Reads back sorted, deduplicated.
+    /// Callee addresses of pure `malloc`-like allocators, sorted. Each result
+    /// overlaps no other allocation, stack slot or constant address, so an arena
+    /// allocator does not qualify.
     noalias_allocators: Vec<Addr>,
 
     /// When no stack address escapes to a callee, forward a spill load across
-    /// a call and, under `stack_global_disjoint`, past an opaque store. The
-    /// claim: no callee reads one from a register its convention preserves.
+    /// a call (and, under `stack_global_disjoint`, past an opaque store).
     escape_analysis: bool,
 
-    /// Untracked RAM stores, callees and user-ops leave the saved return
-    /// address and entry SP slots alone (default `True`). Read by
-    /// return-target verification only; off, such a return is unverified.
+    /// Untracked stores, callees and user-ops leave the saved return address
+    /// and entry SP slots alone. Default `True`; off, such a return is unverified.
     return_slots_survive_untracked_writes: bool,
 
-    /// An ARM `msr cpsr_c, rN` writes the mode already in force, so it
-    /// re-banks nothing (default `True`); the immediate form and `cps` still
-    /// switch. Wrong for a mode built in a register or restored after a later
-    /// switch (Linux's `safe_svcmode_maskall`). Read by the lift, so
-    /// `Function.optimize` refuses to add it.
+    /// An ARM `msr cpsr_c, rN` writes the mode already in force; the
+    /// immediate form and `cps` still switch. Default `True`; a lift-time claim.
     msr_register_keeps_mode: bool,
 
-    /// Float conversions reading the dynamic rounding mode (MXCSR.RC, x87 RC
-    /// at `fst`/`fstp`, FPSCR.RN, FPSCR.RMode, FPCR.RMode, FCSR.RM) round to
-    /// nearest even (default `True`); x87 `fist`, `fistp`, `frndint` always
-    /// read RC. Off, each selects among the four modes. Wrong after
-    /// `fesetround`. Read by the lift, so `Function.optimize` refuses to add
-    /// it.
+    /// Float conversions reading the dynamic rounding mode round to nearest
+    /// even; off, each selects among the four modes. Wrong after `fesetround`.
+    /// Default `True`; a lift-time claim.
     fp_rounding_mode_is_nearest: bool,
 }
 
