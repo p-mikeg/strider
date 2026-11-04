@@ -427,8 +427,9 @@ class ElfLifter(Lifter):
         `no_return_targets` address or `per_address_ccs` key at a ppc64 ELFv2
         symbol's `address` also covers its `Symbol.local_entry`.
 
-        Raises `TypeError` when `entry` is neither `str` nor `int`, and
-        `StriderError` when the binary changed on disk since loading.
+        Raises `TypeError` when `entry` is a `bool` or neither `str` nor
+        `int`, and `StriderError` when the binary changed on disk since
+        loading.
         """
         return self._analyze_elf(self._elf, entry, self._cc if cc is None else cc, opts)
 

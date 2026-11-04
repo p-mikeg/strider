@@ -260,7 +260,7 @@ class Lifter:
         """Lift, optimise and resolve the function at address `entry`.
 
         `ElfLifter.analyze` also takes a symbol name and a default `cc`. A
-        bad `entry` raises `StriderError`. Returns even when incomplete:
+        `bool` `entry` raises `TypeError`, another bad one `StriderError`. Returns even when incomplete:
         check `Cfg.incomplete` before trusting an absence ("no store to X").
 
         Releases the GIL unless `mem` or `rom` is a Python object. A daemon
