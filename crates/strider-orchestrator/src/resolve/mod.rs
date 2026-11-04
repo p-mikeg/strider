@@ -30,9 +30,7 @@ use sites::SiteTable;
 /// a site that narrows twice is withdrawn and reported earlier.
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
-/// `items`, counting each read in tests: the unit the fold's cost bounds are
-/// stated in. Every target read in the fold must go through it, or the cost
-/// tests cannot see that read.
+/// `items`, counting each read in tests for the fold's cost tests.
 fn visit<I: IntoIterator>(items: I) -> impl Iterator<Item = I::Item> {
     items.into_iter().inspect(|_| {
         #[cfg(test)]
@@ -52,16 +50,13 @@ enum Termination {
 struct LoopState<'s> {
     /// Every site's answer, over the caller's seeds.
     sites: SiteTable<'s>,
-    /// Sticky: a site that lost ground in ANY round, or whose seat the loop
-    /// withdrew or trimmed, is not claimed complete by a later round that
-    /// re-derives the smaller set.
+    /// Sticky: sites that lost ground in any round, or whose seat the loop
+    /// withdrew or trimmed.
     derived_incomplete: Vec<PcodeInsnAddr>,
-    /// Sticky: the flag fires on the round that seats the guessed arm, and
-    /// every later round finds that arm already seated.
+    /// Sticky: only the round that seats a guessed-mode arm flags it.
     assumed_modes: Vec<PcodeInsnAddr>,
-    /// Every round's target reasons, sticky: a round's inexact or stubbed
-    /// edge fed the classifier, whose answers persist into every later round,
-    /// so a final cfg without that edge does not mean none was used.
+    /// Every round's target reasons: an inexact edge fed answers that
+    /// outlive its round.
     incomplete: Incompleteness,
     /// Rounds folded into `sites`.
     folds: usize,
@@ -93,9 +88,8 @@ where
         let pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
         let start_addr = MachineInsnAddr::from(entry);
         let mut st = LoopState::new(opts.cfg.known_targets);
-        // Every round rebuilds the whole function from the seat set: cfg, lift
-        // and pipeline. Carrying a round's work forward would make the cfg a
-        // function of more than the seats, which is what convergence rests on.
+        // Every round rebuilds everything from the seats alone: convergence
+        // rests on the cfg being a function of them.
         let mut result = loop {
             let (round, resolutions) = self.build_round(
                 start_addr,
@@ -105,8 +99,7 @@ where
                 &pipeline,
                 classify,
             )?;
-            // A stale round still carries a seat the loop has since withdrawn
-            // or trimmed, so it is no answer even when nothing else moves.
+            // A stale round still seats what the loop has since refused.
             let stale = st.observe(&round);
             if round.is_settled() && !stale {
                 break st.finish(round, Termination::Converged)?;
@@ -142,14 +135,11 @@ impl<'s> LoopState<'s> {
     }
 
     /// Records `round`'s reports and freezes every site whose seat it
-    /// refused. Returns whether `round` still carries a seat the loop has
-    /// since changed: converging on it would publish a `Switch` at a site the
-    /// reports call unresolved.
+    /// refused. Returns whether it refused any, so `round` is stale.
     fn observe(&mut self, round: &Round) -> bool {
         let cfg = &round.cfg;
-        // BEFORE the refusals land: a withdrawn seat asks for no arm, so the
-        // loss would vanish, and for a classifier-derived table it is the
-        // only report the site gets.
+        // Before the refusals: a withdrawn seat asks for no arm, which would
+        // hide the loss.
         self.derived_incomplete
             .extend(seated_arm_losses(cfg, &self.sites));
         let clashing: Vec<PcodeInsnAddr> = cfg.incomplete().of(Reason::IsaModeConflict).collect();
@@ -161,8 +151,7 @@ impl<'s> LoopState<'s> {
         );
         self.incomplete.absorb(cfg.incomplete());
         let stale = !refused.is_empty();
-        // Frozen: the classifier re-derives the cut arms every round, so an
-        // open site would re-seat them and cycle until the iteration cap.
+        // Frozen, or the classifier re-derives the cut arms and cycles.
         for (site, keep) in refused {
             self.sites.freeze(site, keep);
             self.derived_incomplete.push(site);
@@ -193,15 +182,9 @@ impl<'s> LoopState<'s> {
     ///
     /// As [`SiteTable::fold`].
     fn finish(mut self, round: Round, end: Termination) -> Result<AnalyzeResult> {
-        // The cap is spent on a round nothing has folded yet, so its own
-        // verdict is only known by folding it. Into a COPY of the loop's own
-        // answers (the seeds are borrowed, never copied), with no narrow-twice
-        // freeze: the returned `cfg` was built from the seats as they stand,
-        // and this is a report, not a decision. Kept, where the fold that
-        // produced it is discarded: it is the settled answer BOTH seed-aware
-        // reports are read against, and reading one against the pre-fold set
-        // would call a site that the last round grew past its seed "exactly the
-        // seed".
+        // The cap round's classifications fold into a copy, which only the
+        // reports read: the published cfg is built from the seats as they
+        // stand.
         let (still_growing, folded) = match end {
             Termination::Converged => (Vec::new(), None),
             Termination::CapReached(resolutions) => {
@@ -209,8 +192,6 @@ impl<'s> LoopState<'s> {
                 let progress = folded.fold(&round.flowing_anchors(), resolutions)?;
                 self.derived_incomplete.extend(progress.derived_incomplete);
                 self.assumed_modes.extend(progress.assumed_modes);
-                // Only the LAST round's growth: a site that settled earlier is
-                // not "still growing when the cap ran out".
                 (progress.grew, Some(folded))
             }
         };
@@ -236,19 +217,14 @@ impl<'s> LoopState<'s> {
                 incomplete_derived: &self.derived_incomplete,
             },
         );
-        // A caller that seeded `return` asserted the answer the IR could not
-        // prove, whether the CFG seated it at a `BranchIndirect` or a p-code
-        // `RETURN` op ended the region: `UnverifiedSeed`, not unresolved.
+        // A caller-seeded unproven return is `UnverifiedSeed`.
         let (seeded_returns, mut returns): (Vec<_>, Vec<_>) = returns
             .into_iter()
             .partition(|addr| caller_seeded_return(settled, *addr));
         unresolved.append(&mut returns);
         let mut unverified = unverified_seeded_sites(&cfg, &switches, &unclassified, settled);
         unverified.extend(seeded_returns);
-        // Derived once from the final cfg, then extended with the rounds'
-        // accumulated guesses, filtered to the ones still seated: a site whose
-        // seat the loop withdrew carries no guessed arm any more, and
-        // `UnverifiedSeed` claims the answer is whole.
+        // A withdrawn site carries no guessed arm.
         unverified.extend(
             self.assumed_modes
                 .into_iter()
