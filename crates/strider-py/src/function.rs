@@ -90,7 +90,7 @@ impl PyFunction {
         })
     }
 
-    /// Run an optimizer pipeline (default: the default pipeline) over this
+    /// Run an optimizer pipeline (the default pipeline when `None`) over this
     /// graph in place. `assumptions` join `self.assumptions`; none is
     /// withdrawn. Raises `StriderError` before running if `assumptions` leaves
     /// out a claim in force or adds `msr_register_keeps_mode` /
@@ -122,10 +122,10 @@ impl PyFunction {
     /// Render the IR graph to Graphviz DOT. Returns the string when `path` is
     /// `None`, else writes it to `path` and returns `None`.
     ///
-    /// `pretty=False` renders the graph exactly as stored (every node
-    /// reachable from entry, one edge per input). `pretty=True` inlines
-    /// constants, adds virtual nodes and names registers; a theme name in place
-    /// of `True` picks the dot theme.
+    /// `pretty=False` (default) renders the graph exactly as stored (every
+    /// node reachable from entry, one edge per input). `pretty=True` inlines
+    /// constants, adds virtual nodes and names registers; a theme name in
+    /// place of `True` picks the dot theme.
     #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
     fn to_dot(&self, path: Option<&str>, pretty: Pretty) -> PyResult<Option<String>> {
         self.render(path, &pretty, /* html */ false)
