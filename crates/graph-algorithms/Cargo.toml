@@ -9,10 +9,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-# `oracle`: brute-force graph definitions, the oracle the dominance and walk
-# tests here and in strider-ir, -opt, -lift and -pattern check against.
-# std-only and off by default; strider-ir-test-utils enables it to re-export
-# the module as `graph_oracle`. Mirrors strider-graph's `test-injectors`.
+# The brute-force `oracle` module and `walk::acyclic_postorder`, for tests.
+# strider-ir-test-utils re-exports `oracle` as `graph_oracle`.
 test-util = []
 
 [dependencies]
