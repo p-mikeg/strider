@@ -1,6 +1,3 @@
-//! Raw graph renderer for debugging: the graph exactly as stored, one DOT
-//! node per reachable [`NodeId`], one edge per input, side-table state inline.
-
 use ::dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
 use dashu_int::UBig;
 use rustc_hash::FxHashMap;
