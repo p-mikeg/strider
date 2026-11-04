@@ -1,6 +1,3 @@
-//! A value read as a run of bits of the value below it, so a guard on one
-//! expression of those bits bounds another.
-
 use cranelift_entity::SecondaryMap;
 
 use strider_ir::eval::{bit, mask_below};

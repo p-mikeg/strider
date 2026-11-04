@@ -1,17 +1,3 @@
-//! Detects stack-passed function arguments and records them in
-//! `FunctionSideTables::arg_index_to_values`. A post-pass: it needs the
-//! optimized memory graph.
-//!
-//! A candidate is a `Load[InitialVar(sp) + K]` with `K` in a stack slot and no
-//! shadowing def on its memory chain. Ordinals start at
-//! `arg_passing_regs.len()`; the first slot with no anchored load ends the
-//! prefix, as does an argument some dirty load reaches past.
-//!
-//! Known limit: stack-passed arguments are numbered positionally across
-//! register classes, so a stack-passed float takes the next ordinal after the
-//! integer argument registers (`arg_passing_regs.len() + n`) and an
-//! integer-arg query can bind it; telling them apart needs the signature.
-
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
@@ -19,6 +5,16 @@ use crate::Result;
 use crate::mem_analysis::{MemExpr, MemQuery, Policy, ReachingDef};
 use crate::pipeline::Optimizer;
 
+/// Registers the function's stack-passed arguments as argument values.
+///
+/// A candidate is a `Load[InitialVar(sp) + K]` with `K` in a stack slot and no
+/// shadowing def on its memory chain. Ordinals start at
+/// `arg_passing_regs.len()`; the first slot with no anchored load ends the
+/// prefix, as does an argument some dirty load reaches past.
+///
+/// Known limit: stack arguments are numbered after the integer argument
+/// registers whatever their class, so an integer-arg query can bind a
+/// stack-passed float; telling them apart needs the signature.
 pub struct FunctionArgDetect;
 
 impl Optimizer for FunctionArgDetect {

@@ -1,5 +1,3 @@
-//! What each claim about a return target rests on.
-
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IntBinaryOp};

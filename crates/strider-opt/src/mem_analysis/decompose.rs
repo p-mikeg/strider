@@ -11,8 +11,7 @@ use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 use super::ring::wrap_to_addr_width;
 use super::{MemExpr, MemKind};
 
-/// Memoised per `ValueId` on the function, for every node the walk passes;
-/// [`super::stamp`] says when the memo is drained.
+/// Memoised on the function for every node the walk passes.
 pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> {
     if let Some(verdict) = memoised(function, value) {
         return verdict;
@@ -34,7 +33,7 @@ pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> 
 
 #[cfg(test)]
 thread_local! {
-    /// Total [`descend`] iterations, the unit the spine-complexity test counts.
+    /// Total [`descend`] iterations.
     pub(super) static SPINE_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -109,7 +108,6 @@ fn descend(function: &Function, value: ValueId) -> (Vec<(ValueId, Step)>, End) {
     }
 }
 
-/// Whether `spine` holds an alignment mask.
 fn aligned(spine: &[(ValueId, Step)]) -> bool {
     spine.iter().any(|(_, step)| matches!(step, Step::Align))
 }
@@ -145,7 +143,6 @@ fn unwind(
     })
 }
 
-/// Memoises `verdict` for `v` and returns it.
 fn commit(function: &Function, v: ValueId, verdict: Option<MemExpr>) -> Option<MemExpr> {
     match verdict {
         Some(e) if e.kind == MemKind::Stack => function.set_stack_slot(v, e.base, e.offset),

@@ -1,6 +1,3 @@
-//! `MemQuery`, the per-pass memo the alias queries run through, and the
-//! `Policy` each query runs under.
-
 use std::cell::{OnceCell, RefCell};
 
 use rustc_hash::FxHashMap;
@@ -317,7 +314,6 @@ pub(crate) enum ReachingDef {
 }
 
 impl ReachingDef {
-    /// The def itself.
     pub(crate) fn node(self) -> NodeId {
         match self {
             Self::Match(node) | Self::Clean(node) | Self::Blocked(node) => node,

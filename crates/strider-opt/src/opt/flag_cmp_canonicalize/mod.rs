@@ -20,8 +20,6 @@
 //! `Xor(Sless(a, b), 1)`, then each cond code's tree of those collapses.
 //! `MI`/`PL` stays as lifted: `Sless(a-b, 0)` differs from `Sless(a, b)` on
 //! overflow.
-//!
-//! Runs before `IfCondInversion`, so the cond carries at most one `Xor(_, 1)`.
 
 use crate::rewrite_rule::{Rule, RuleTable};
 use strider_ir::eval;
@@ -42,8 +40,7 @@ use crate::peephole::PeepholePass;
 pub struct FlagCmpCanonicalize;
 
 thread_local! {
-    /// Built once per thread; held outside the pass so it stays
-    /// `Sync`, as `Optimizer` requires.
+    /// Outside the pass so it stays `Sync`.
     static RULES: RuleTable = RuleTable::new(build_rules());
 }
 

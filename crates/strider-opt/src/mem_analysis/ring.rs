@@ -7,7 +7,6 @@ use strider_ir::eval::mask_below;
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
 
-/// Bit width of an address expression.
 pub(super) fn addr_bit_width(function: &Function, addr: ValueId) -> u32 {
     let ty = function
         .value_type(addr)

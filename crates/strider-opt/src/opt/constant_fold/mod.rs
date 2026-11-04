@@ -13,8 +13,7 @@ mod tests;
 pub struct ConstantFold;
 
 thread_local! {
-    /// Built once per thread; held outside the pass so it stays `Sync`, as
-    /// `Optimizer` requires.
+    /// Outside the pass so it stays `Sync`.
     static RULES: RuleTable = RuleTable::new(rules::build_rules());
 }
 

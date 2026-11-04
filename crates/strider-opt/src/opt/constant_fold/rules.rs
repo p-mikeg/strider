@@ -127,8 +127,8 @@ fn coefficient(mul: Option<UBig>, shift: Option<UBig>) -> UBig {
     }
 }
 
-/// Reassociation and mask-merging: constant-folding across nested
-/// `Add`/`Sub`/`And`, mask distribution, and const-on-right canonicalisation.
+/// Reassociation, shift merging, mask distribution and const-on-right
+/// canonicalisation.
 fn build_reassoc_and_mask_rules() -> Vec<Rule> {
     let (x, y, c1, c2, c3) = (
         Capture::new(),

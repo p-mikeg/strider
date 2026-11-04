@@ -1,16 +1,13 @@
-//! Table-dispatch arm of the indirect-branch classifier.
+//! Table dispatch: a switch lowers to `branch f(index)` for one bounded index.
+//! The index, or a phi of constants every input of the dispatch cone passes
+//! through, is enumerated and the cone folded per value through
+//! [`eval`](super::eval). Every value must fold, or the site defers: a
+//! `Multiple` missing a runtime target drops an edge.
 //!
-//! A switch lowers to `branch f(index)` for one bounded index, wherever the
-//! table lives.  This arm finds the index, or a phi of constants every input of
-//! the dispatch cone passes through, and folds the cone through the abstract
-//! evaluator ([`eval`](super::eval)) once per value.  Every value must fold, or
-//! the site defers: a `Multiple` missing a runtime target drops an edge.
-//!
-//! Known limits of the field-index rule, seen only in hand-written asm: a range
-//! a read guard narrows is trusted as the table's bound, though an unread test
-//! (a mask, a carry, a test looping back) or a guard a later truncate loses may
-//! be tighter; and a test reading the cell through a phi reads no bits of it.
-//! Each seats cells the code rules out.
+//! Known limit (hand-written asm only): a range a read guard narrows is
+//! trusted as the table's bound, though an unread test or a guard a later
+//! truncate loses may be tighter, and a test reading the cell through a phi
+//! reads no bits of it. Each seats cells the code rules out.
 
 use super::index_range::{Interval, MAX_WALK, ScaleOp, Step, scale_of, strip_to_cell, width_mask};
 use super::{MAX_TABLE_ENTRIES, SiteClassifier};

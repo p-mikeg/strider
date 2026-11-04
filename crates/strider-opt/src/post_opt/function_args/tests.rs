@@ -970,10 +970,10 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
 /// A `CallOther` reaches the memory chain only when its ABI says it clobbers
 /// memory, and once there it blocks under either setting of
 /// `assume_incoming_args_survive_calls`: the callee is opaque, so nothing can
-/// be inferred from its arguments.  The claim granted is the load-bearing
-/// leg: that relaxation speaks for a conforming callee's frame discipline,
-/// and a syscall handed a pointer into the incoming-argument area has none;
-/// at the floor the `CallOther` arm answers as a plain `Call` does.
+/// be inferred from its arguments. With the claim granted, the relaxation
+/// speaks for a conforming callee's frame discipline, which a syscall handed
+/// a pointer into the incoming-argument area lacks; at the floor the
+/// `CallOther` arm answers as a plain `Call` does.
 #[test]
 fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> {
     for claimed in [true, false] {

@@ -18,7 +18,6 @@ pub(super) const PEEL_STEPS: usize = 8;
 /// Peel steps per arm of a phi in one run.
 pub(super) const PEEL_VISITS_PER_ARM: usize = 2 * PEEL_STEPS;
 
-/// Folds every masked use of each phi in `phis`.
 pub(super) fn fold_masked_uses(edit: &mut crate::EditFunction<'_>, phis: &[NodeId]) -> Result<()> {
     let mut walked = Vec::new();
     for &phi in phis {

@@ -1,12 +1,7 @@
-//! Dominator-scoped per-`(value, region)` integer ranges for the jump-table
-//! classifier. Seeds: `If(IntCmp(v, const))` edge guards (back-propagated
-//! through `Add(X, const)`, shared by every expression of the same bits),
-//! KnownBits bounds and strides, guards recovered at a `Region` every
-//! predecessor of which bounds the same value, per-phi-arm edge guards, and
-//! monotone constant scalings.
+//! Dominator-scoped integer ranges per `(value, region)`.
 //!
-//! SOUNDNESS: `range_of` may widen toward top (anything uncertain), but never
-//! returns an interval tighter than the real runtime value set.
+//! SOUNDNESS: `range_of` may widen toward top, but never returns an interval
+//! tighter than the runtime value set.
 
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -94,7 +89,6 @@ pub(crate) struct RangeMap<'f> {
 }
 
 impl<'f> RangeMap<'f> {
-    /// The ranges of `function`.
     pub(crate) fn new(function: &'f strider_ir::Function) -> Self {
         build(
             function,
