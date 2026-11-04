@@ -723,8 +723,8 @@ fn current_query_function(py: Python<'_>) -> Option<crate::function::FunctionAt>
     CURRENT_QUERY_FUNCTION.with(|c| c.borrow().last().map(|at| at.clone_ref(py)))
 }
 
-/// Runs a `.when()` predicate on a `Match` rooted at `node`; a raise counts
-/// as no-match.
+/// Runs a `.when()` predicate on a `Match` rooted at `node`; a raise is
+/// stashed and re-raised by the query.
 fn run_when_predicate(
     node: strider_ir::node::NodeId,
     bindings: &strider_pattern::Bindings,
