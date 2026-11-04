@@ -1,6 +1,6 @@
 //! Two's-complement integer evaluation at a declared width, over unbounded
-//! [`UBig`]. Total at every integer width; `None` means the operation is
-//! undefined (divide by zero, `INT_MIN / -1`) or `ty` is a float.
+//! [`UBig`]. Total at every integer width; `None` means a divide by zero, a
+//! signed `INT_MIN / -1`, or a float `ty`.
 //!
 //! [`bit`], [`mask_below`] and [`sign_bit`] are `u128` helpers instead.
 
@@ -151,6 +151,8 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
         }
         IntBinaryOp::Sdiv => {
             let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
+            // P-code wraps `INT_MIN / -1` to `INT_MIN`, but Ghidra's 64-bit
+            // host division is UB there, so it is left unfolded.
             if sr == IBig::ZERO || (sl == signed_min(ty) && sr == IBig::NEG_ONE) {
                 return None;
             }
@@ -159,7 +161,7 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
         }
         IntBinaryOp::Srem => {
             let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
-            // INT_MIN % -1 is 0, but hardware idiv faults; undefined, as Sdiv.
+            // INT_MIN % -1 is 0; left unfolded, as Sdiv.
             if sr == IBig::ZERO || (sl == signed_min(ty) && sr == IBig::NEG_ONE) {
                 return None;
             }
