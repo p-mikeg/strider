@@ -17,18 +17,14 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 /// The CFG skeleton: only `Control` edges are followed, so the result holds
 /// control-flow nodes alone.
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
-    // The walk's visited set IS the answer, so the yielded items are dropped.
     let mut walk = PreOrder::new(FnSuccs::new(|n| cfg_succs(graph, n)), iter::once(entry));
     walk.by_ref().for_each(drop);
     walk.into_visited()
 }
 
 /// Control-reachable from `entry` and unable to reach a terminator: an
-/// exit-free control cycle plus everything that only reaches it, which
-/// `validate` rejects and the lifter seats an `Unreachable` sink on.
-///
-/// A dangling control output counts as an exit, so an already-malformed
-/// function reports that malformation rather than this one.
+/// exit-free control cycle plus everything that only reaches it. A dangling
+/// control output counts as an exit.
 pub fn stranded_nodes(graph: &Graph, entry: NodeId) -> NodeIdSet {
     let cfg = cfg_reachable(graph, entry);
 
@@ -101,11 +97,9 @@ pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item =
         .map(|(succ, _use_idx)| succ)
 }
 
-/// Two disjoint sets: every data predecessor (walking value / memory /
-/// dispatch edges BACKWARD, so each def precedes its uses) and every CFG
-/// successor (walking control edges FORWARD).
-///
-/// Dead CFG inputs still show up while they hang off a live node as data.
+/// Every data predecessor (non-control edges backward) and every CFG successor
+/// (control edges forward). A dead CFG input still shows up while a live node
+/// uses it as data.
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
@@ -121,8 +115,7 @@ impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
 
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
-/// Pre-order from `entry`, so `entry` is yielded FIRST. Order is otherwise
-/// unspecified, and "reachable" includes dead CFG inputs.
+/// Pre-order from `entry`, yielded first; reaches dead CFG inputs too.
 pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs(graph), iter::once(entry))
 }
@@ -196,16 +189,10 @@ fn mem_succs(function: &Function, node: NodeId) -> impl Iterator<Item = NodeId> 
         .filter(|&consumer| is_memory_chain_kind(function.node_kind(consumer)))
 }
 
-/// The memory-touching nodes reachable forward from `function`'s
-/// `InitialMemory` root, in pre-order, the root included.
-///
-/// Consumers that merely read the final token without touching memory (a
-/// `Return`'s memory input, an `IndirectBranch`'s memory slot) are excluded.
-/// Empty when no `InitialMemory` is reachable from the entry.
-///
-/// The walk follows structural use-lists, so on a NON-compacted graph the
-/// result can include a memory op that is not itself reachable from it,
-/// e.g. a dead `Store` still consuming the live token.
+/// The memory-chain nodes reachable forward from the entry-reachable
+/// `InitialMemory`, in pre-order, root included; empty without one. Excludes
+/// mere token readers (`Return`, `IndirectBranch`). Follows raw use-lists, so
+/// on an uncompacted graph it can include a dead `Store` on the live token.
 pub fn memory_reachable(function: &Function) -> Vec<NodeId> {
     let graph = function.graph();
     let Some(root) = walk_graph(graph, function.entry())
@@ -214,7 +201,5 @@ pub fn memory_reachable(function: &Function) -> Vec<NodeId> {
         return Vec::new();
     };
 
-    // The walk's visited tracker dedups and breaks cycles, such as a
-    // loop-header `MemPhi` back-edge.
     PreOrder::new(FnSuccs::new(|n| mem_succs(function, n)), iter::once(root)).collect()
 }
