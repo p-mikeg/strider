@@ -77,6 +77,29 @@ fn nested_graph(rng: &mut Rng) -> Vec<Vec<u32>> {
     succs
 }
 
+/// The loop `h` heads, if any: its DFS descendants that reach it inside its
+/// DFS subtree.
+fn subtree_loop(preds: &[Vec<u32>], dfs: &DepthFirst, h: u32) -> Option<Vec<bool>> {
+    let below = |v: u32| dfs.is_ancestor(dfs.num[h as usize], dfs.num[v as usize]);
+    let mut body = vec![false; preds.len()];
+    body[h as usize] = true;
+    let mut work: Vec<u32> = preds[h as usize]
+        .iter()
+        .copied()
+        .filter(|&v| below(v))
+        .collect();
+    if work.is_empty() {
+        return None;
+    }
+    while let Some(v) = work.pop() {
+        if !body[v as usize] {
+            body[v as usize] = true;
+            work.extend(preds[v as usize].iter().copied().filter(|&u| below(u)));
+        }
+    }
+    Some(body)
+}
+
 fn small(lists: &[Vec<u32>]) -> Vec<SmallVec<[u32; 2]>> {
     lists.iter().map(|l| l.iter().copied().collect()).collect()
 }
@@ -125,19 +148,21 @@ fn check(succs: &[Vec<u32>], tally: &mut Tally) {
         }
     }
     let forest = LoopForest::new(&s_preds, &dfs);
-    assert_eq!(
-        forest.is_some(),
-        graph_oracle::is_reducible(succs, 0),
-        "{succs:?}"
-    );
-    let Some(forest) = forest else {
-        tally.irreducible += 1;
-        return;
-    };
     let dom = graph_oracle::dom_matrix(succs, 0);
     let bodies: Vec<Option<Vec<bool>>> = (0..n as u32)
-        .map(|h| graph_oracle::natural_loop(succs, &dom, h))
+        .map(|h| subtree_loop(&preds, &dfs, h))
         .collect();
+    if graph_oracle::is_reducible(succs, 0) {
+        for (h, body) in bodies.iter().enumerate() {
+            assert_eq!(
+                body,
+                &graph_oracle::natural_loop(succs, &dom, h as u32),
+                "loop of {h} in {succs:?}"
+            );
+        }
+    } else {
+        tally.irreducible += 1;
+    }
     let size = |h: usize| {
         bodies[h]
             .as_ref()
@@ -157,6 +182,13 @@ fn check(succs: &[Vec<u32>], tally: &mut Tally) {
             innermost.map_or(NONE, |h| h as u32),
             "loop of {x} in {succs:?}"
         );
+        let undominated = body
+            .as_ref()
+            .is_some_and(|b| (0..n).any(|y| b[y] && !dom[x][y]));
+        assert_eq!(
+            forest.irreducible[x], undominated,
+            "irreducible {x} in {succs:?}"
+        );
     }
     let (order, block_end) = forest.nested_order(&s_preds, &dfs);
     let mut pos = vec![NONE; n];
@@ -167,7 +199,7 @@ fn check(succs: &[Vec<u32>], tally: &mut Tally) {
     assert!(!pos.contains(&NONE), "every node placed: {order:?}");
     for (u, ss) in succs.iter().enumerate() {
         for &v in ss {
-            if !dom[v as usize][u] {
+            if !dfs.is_ancestor(dfs.num[v as usize], dfs.num[u]) {
                 assert!(
                     pos[u] < pos[v as usize],
                     "forward edge {u}->{v} runs back in {order:?}"
