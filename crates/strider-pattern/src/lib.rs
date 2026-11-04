@@ -36,9 +36,8 @@ pub use node_builders::{
 pub use template::template_pat::TemplatePat;
 pub use template::{Template, TemplateCtx, instantiate, instantiate_guarded};
 
-/// Reached from the `*_const_with!` macros via the reserved `in_ty` identifier.
-/// An `IntCmp` root's output type is always `I1`, so signed / carry handling
-/// has to read the operand type instead.
+/// The root's first operand type, `in_ty` in the `*_const_with!` macros (an `IntCmp` root's own
+/// type is `I1`).
 pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node::ValueType> {
     let input = ctx.function.node_inputs(ctx.root).into_iter().next()?;
     ctx.function.value_kind(input).as_value()

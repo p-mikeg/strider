@@ -19,8 +19,7 @@ pub const MAX_PATTERN_NODES: usize = 256;
 /// [`super::walk::Read`]), `None` at 2^64 or more. An alternation charges its
 /// heaviest arm to the first and every arm to the second.
 fn unfolded(graph: &PatGraph) -> Vec<(usize, Option<u64>)> {
-    // Every producer is built before its consumers, so id order is a
-    // topological one.
+    // Id order is topological: producers are built first.
     let mut size: Vec<(usize, Option<u64>)> = Vec::with_capacity(graph.all_node_ids().count());
     for node in graph.all_node_ids() {
         let inputs = graph
@@ -39,9 +38,8 @@ fn unfolded(graph: &PatGraph) -> Vec<(usize, Option<u64>)> {
     size
 }
 
-/// The most nodes a query recurses through, never below the raw node count,
-/// so a multi-sink graph still reports its size. Taken over every node rather
-/// than from the root, which is not derived yet and may not exist.
+/// The most nodes a query recurses through, at least the raw node count. Taken over every node,
+/// since the root may not exist.
 fn unfolded_nodes(size: &[(usize, Option<u64>)]) -> usize {
     size.iter().map(|s| s.0).max().unwrap_or(0).max(size.len())
 }
@@ -54,27 +52,19 @@ fn consumers(graph: &PatGraph, node: NodeId) -> impl Iterator<Item = NodeId> + '
 pub struct Pattern {
     pub(crate) graph: PatGraph,
     pub(crate) cast_mask: CastMask,
-    /// Resolved once at seal and memoized, verdict included.
+    /// Resolved at seal.
     root: Result<NodeId, String>,
     /// Per pat node, indexed by `NodeId::as_u32`.
     inputs: Vec<super::walk::NodeInputs>,
     pub(crate) holds_first_of: bool,
-    /// The `first_of` that skips the arms past one that matched: the first
-    /// built, when one edge path leads to it from the root.
+    /// The `first_of` that skips arms past one that matched: the first built, if one edge path
+    /// reaches it from the root.
     pub(crate) pruned_first_of: Option<NodeId>,
 }
 
 impl Pattern {
-    /// Whether the root vertex's kind spec can admit `kind`.
-    ///
-    /// A pre-filter for a caller trying MANY patterns at one node, as the fold
-    /// rule table does: `Matcher::new` plus `match_at` allocate per attempt and
-    /// the root check happens inside, so a rule whose root cannot match still
-    /// paid for the attempt. `discriminant` alone does not separate them (every
-    /// `IntBinaryOp` shares one), so this compares the spec, payload included.
-    ///
-    /// `true` for a refused pattern and for an alternation root, so the
-    /// reject or the arm walk still reaches `match_at`.
+    /// Whether the root's kind spec, payload included, can admit `kind`: a cheap pre-filter
+    /// before `match_at`. `true` for a refused pattern and an alternation root.
     #[must_use]
     pub fn root_admits_kind(&self, kind: &strider_ir::node::NodeKind) -> bool {
         let Ok(root) = self.root() else {
@@ -84,18 +74,15 @@ impl Pattern {
         vertex.is_alternation() || vertex.kind.matches(kind)
     }
 
-    /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
-    /// resolves and memoizes the match root. A build-time `refusal` is
-    /// preferred over the structural verdict: it names the spelling, while the
-    /// verdict describes whatever the refused lowering left built.
+    /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder): resolves the match root.
+    /// A build-time `refusal` takes precedence over the structural verdict.
     pub(crate) fn from_graph(graph: PatGraph, refusal: Option<String>) -> Self {
         let size = unfolded(&graph);
         let count = unfolded_nodes(&size);
         let root = if let Some(why) = refusal {
             Err(why)
         } else if count > MAX_PATTERN_NODES {
-            // A shared operand is walked once per slot naming it, so a chain of
-            // them unfolds past what a `usize` counts.
+            // A chain of shared operands can unfold past `usize`.
             let count = match count {
                 usize::MAX => format!("over 2^{}", usize::BITS),
                 n => n.to_string(),
@@ -108,7 +95,6 @@ impl Pattern {
             crate::graph_ext::derive_root(&graph).map_err(|e| e.to_string())
         };
         let inputs = super::walk::collect_node_inputs(&graph, &size, root.is_ok());
-        // A pattern's reads are counted in a `u64`.
         let root = root.and_then(|r| {
             if size.iter().any(|s| s.1.is_none()) {
                 return Err(
@@ -143,13 +129,12 @@ impl Pattern {
         unfolded_nodes(&unfolded(&self.graph))
     }
 
-    /// The structure is frozen at seal, so a match attempt reads this instead
-    /// of rebuilding the edge list per operand ordering.
+    /// `node`'s inputs, resolved at seal.
     pub(crate) fn inputs_of(&self, node: NodeId) -> &super::walk::NodeInputs {
         &self.inputs[node.as_u32() as usize]
     }
 
-    /// O(1) read of the verdict memoized at construction.
+    /// The match root, resolved at seal.
     ///
     /// # Errors
     /// If the pattern is rootless, multi-sink, or was refused at build time.
@@ -184,12 +169,8 @@ impl Pattern {
             )
     }
 
-    /// The captures bound on EVERY successful match, as opposed to
-    /// [`Self::bound_captures`], which reports every capture appearing anywhere
-    /// in the graph.
-    ///
-    /// The two differ only under an alternation: `one_of` binds whichever arm
-    /// fires, so a capture present in some arms but not all is not guaranteed.
+    /// The captures bound on every successful match. Differs from [`Self::bound_captures`] only
+    /// by captures some but not all alternation arms bind.
     ///
     /// # Errors
     /// If the pattern is rootless or multi-sink.
@@ -198,8 +179,7 @@ impl Pattern {
         Ok(self.guaranteed_from(self.root()?, &mut memo))
     }
 
-    /// A pattern graph is acyclic, so the memo makes this linear and the
-    /// recursion terminates.
+    /// Memoized over the acyclic pattern graph, so linear.
     fn guaranteed_from(
         &self,
         node: NodeId,
@@ -209,15 +189,11 @@ impl Pattern {
             return hit.clone();
         }
         let mut out: FxHashSet<crate::capture::Capture> = FxHashSet::default();
-        // This node's own capture, and any on the values it produces, bind
-        // whenever the node matches at all.
         out.extend(self.graph.node_kind(node).captures.iter().copied());
         for &vertex in self.graph.node_outputs(node) {
             out.extend(self.graph.value_kind_ref(vertex).captures.iter().copied());
         }
-        // Each input contributes its own vertex capture plus everything its
-        // producer guarantees. For an alternation those are ARMS, so the vertex
-        // capture belongs to that arm and must not be hoisted out of the
+        // An alternation input's vertex capture belongs to its arm, so it stays inside the
         // intersection.
         let per_input: Vec<FxHashSet<crate::capture::Capture>> =
             crate::graph_ext::consumed_inputs(&self.graph, node)
@@ -229,14 +205,12 @@ impl Pattern {
                 })
                 .collect();
         if self.graph.node_kind(node).is_alternation() {
-            // Exactly one arm fires, so only what EVERY arm binds is guaranteed.
             let mut arms = per_input.into_iter();
             if let Some(first) = arms.next() {
                 let common = arms.fold(first, |acc, arm| acc.intersection(&arm).copied().collect());
                 out.extend(common);
             }
         } else {
-            // Every operand must match, so all of their captures bind.
             for caps in per_input {
                 out.extend(caps);
             }
@@ -260,14 +234,12 @@ impl Pattern {
         self
     }
 
-    /// Adds `m` to the cast-walk-through mask; the matcher then skips the
-    /// selected cast kinds transparently. After every `first_of`, each operand
-    /// under a masked cast keeps the matches at the outermost cast level any
-    /// match kept so far reached, the operands settling in the order they are
-    /// written, an inner one before the one holding it, so a guard coupling two
-    /// of them answers by which is written first. A query under a mask runs
-    /// every configuration before it answers, on the terms
-    /// [`OneOf::first`](crate::OneOf::first) gives under Cost.
+    /// Adds `m` to the cast mask: an operand produced by a selected cast also matches at the
+    /// cast's input.
+    ///
+    /// Per operand, only the matches at the outermost cast level are kept. Operands settle after
+    /// every `first_of`, in written order, inner before outer, so a guard coupling two of them
+    /// depends on which is written first. Costs as [`OneOf::first`](crate::OneOf::first) does.
     pub fn ignore_casts_mask(mut self, m: CastMask) -> Self {
         self.cast_mask |= m;
         self

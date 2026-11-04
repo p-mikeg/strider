@@ -11,10 +11,8 @@ pub trait MatchPat: IntoExpr + Send {
         self.into_expr().lower(b, Slot::Value, false)
     }
 
-    /// Nothing consumes the root's output, so a value anchor there also
-    /// accepts the memory token of a node producing no value at all: a `Call`
-    /// under a convention with no return or clobber registers, which
-    /// a builder's `build` reaches through its memory anchor.
+    /// Lower as a root, whose value anchor also accepts the memory token of a node with no value
+    /// output.
     fn into_pattern(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         self.into_expr().lower(&mut b, Slot::Root, false);
@@ -57,9 +55,8 @@ pub trait CaptureExt: MatchPat + 'static {
             Box::new(move |m, _node, ty, bnd| ty.is_some_and(|ty| f(m, ty, bnd)));
         MatchOnly(self.into_expr().deco(Deco::Guard(guard)))
     }
-    /// Gate on a predicate running before inputs are descended into. It may
-    /// run more than once per candidate, and on nodes the full match rejects;
-    /// see [`NodePredicate`](crate::matcher::NodePredicate).
+    /// Gate on a predicate run before inputs are descended into; see
+    /// [`NodePredicate`](crate::matcher::NodePredicate).
     fn filter<F>(self, f: F) -> MatchOnly
     where
         F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static + Send,
@@ -76,8 +73,7 @@ pub trait CaptureExt: MatchPat + 'static {
     fn of_width(self, n: u32) -> MatchOnly {
         MatchOnly(self.into_expr().deco(Deco::Width(n)))
     }
-    /// [`of_width`](Self::of_width) pinning the exact type rather than the
-    /// width.
+    /// Pins the output-vertex type.
     fn value_ty(self, ty: strider_ir::node::ValueType) -> MatchOnly {
         MatchOnly(self.into_expr().deco(Deco::Ty(ty)))
     }

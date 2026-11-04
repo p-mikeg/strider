@@ -1,13 +1,9 @@
-//! Constant-literal typed builders.
+//! Constant-literal builders.
 //!
-//! `int_const`'s match wraps the query into the constant's own declared
-//! width, so `int_const(u128::MAX)` matches a width-relative all-ones
-//! constant up to I128 and, at I256 and I512, the constant `2^128 - 1` those
-//! widths spell out. The all-ones of a width the query does not fix is
-//! [`int_const_all_ones`], which no literal names: `int_const` names one
-//! value, that one is relative to whatever width it is matched at.
-//! `int_const_any_width` additionally recognises the value held at a narrower
-//! width and widened into the constant's type, by zero or by sign extension.
+//! `int_const` wraps the query into the constant's declared width, so `int_const(u128::MAX)`
+//! matches all-ones up to `I128` and `2^128 - 1` at `I256` / `I512`; [`int_const_all_ones`] is
+//! all-ones at any width. `int_const_any_width` also matches the value zero- or sign-extended from
+//! a narrower width.
 
 use std::cell::RefCell;
 
@@ -38,9 +34,8 @@ fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(&UBi
     Some((stored, ty))
 }
 
-/// An `IntConst`-variant leaf gated on `pred(stored_value, output_type)`,
-/// failing if the value can't be read at all. `IntConstId` is per function, so
-/// the variant prefilters and the value is read at match time.
+/// An `IntConst` leaf gated on `pred(stored_value, output_type)`. `IntConstId` is per function,
+/// so the value is read at match time.
 fn int_const_leaf(
     pin: Option<ValueType>,
     pred: impl Fn(&UBig, ValueType) -> bool + 'static + Send,
@@ -55,12 +50,8 @@ fn int_const_leaf(
     }
 }
 
-/// Build-side twin for a value known at pattern-build time, interned at the
-/// resolved output width, into which a negative is wrapped.
-///
-/// A non-negative value passes through raw: the shift-count saturation in
-/// `template` reads whether the value exceeds the width, which a wrap here
-/// would erase.
+/// Build side of a literal: a negative is wrapped into the resolved width. A non-negative one
+/// stays raw, since `template`'s shift-count saturation reads whether it exceeds the width.
 fn const_template(v: IBig, ty: TemplateTy) -> ConstWith {
     ConstWith {
         kind: TemplateKind::FnIntConst(Box::new(move |ctx| {
@@ -75,21 +66,15 @@ fn const_template(v: IBig, ty: TemplateTy) -> ConstWith {
     }
 }
 
-/// A constant valid on both sides, given each side's form only when it is
-/// lowered.
+/// A constant valid on both sides.
 pub(crate) enum Const {
-    /// Wraps `v` into the matched node's output width, and masks the stored
-    /// payload to it, before comparing. `v` is signed and unbounded, so a
-    /// negative names its two's complement at whatever width it is matched
-    /// at.
+    /// `v` wrapped into the matched node's output width; a negative is its two's complement there.
     Int(IBig),
     /// An `I1` constant.
     Bool(bool),
     /// `v` however it was width-extended into the constant's own type.
     AnyWidth(i64),
-    /// Every bit of the constant's own output type set, at any declared
-    /// width. On the build side, all-ones of the width it is evaluated at; a
-    /// float, whose `eval::all_ones` is 0 and no complement's mask, skips the
+    /// All-ones at the constant's own integer width. On the build side a float root skips the
     /// rewrite.
     AllOnes,
 }
@@ -131,13 +116,11 @@ impl Const {
 }
 
 /// The all-ones constant of whatever integer width it is matched at.
-/// Match-only: no `u128` literal names an I256 or I512 all-ones.
 pub fn int_const_all_ones() -> MatchOnly {
     MatchOnly(Const::AllOnes.into())
 }
 
-/// True when `v` is the zero or sign extension of its own low `w` bits, i.e.
-/// a `w`-wide value.
+/// True when `v` is a `w`-wide value: the zero or sign extension of its low `w` bits.
 fn fits_width(v: u128, w: usize) -> bool {
     if w >= 128 {
         return true;
@@ -146,11 +129,9 @@ fn fits_width(v: u128, w: usize) -> bool {
     above == 0 || ((v >> (w - 1)) & 1 == 1 && above == !mask_below(w as u32))
 }
 
-/// True when `v` is a value at `out_ty` that `stored`, an `out_ty`-wide
-/// constant, equals, or is `v` held at a supported integer width (not `I1`) at
-/// most as wide as `out_ty` and widened to it by zero or sign extension. Every
-/// `ValueType` width is a candidate rather than only the powers of two: an
-/// `I40` constant is not reachable through an `I32` or `I64` probe.
+/// True when `stored` (at `out_ty`) is `v`, or `v` held at a supported integer width (not `I1`)
+/// no wider than `out_ty` and zero- or sign-extended to it. Every supported width is tried, not
+/// only powers of two.
 fn value_at_some_width(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
     match u128::try_from(stored) {
         Ok(s) => narrow_at_some_width(s, out_ty, v),
@@ -165,13 +146,11 @@ fn narrow_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
         return false;
     }
     let output_mask = mask_below(output_width as u32);
-    // `v` must itself BE a value at the width it is compared at, or a search
-    // for `0x1234` matches a stored `0x34` on the low bits they share.
+    // `v` must fit the width, or `0x1234` matches a stored `0x34`.
     if (stored & output_mask) == (v & output_mask) && fits_width(v, output_width) {
         return true;
     }
-    // `I1` is a boolean, not a source width: a one-bit candidate would make
-    // every odd `v` match the constants `1` and all-ones.
+    // Not `I1`: every odd `v` would match `1` and all-ones.
     for w in ValueType::SUPPORTED
         .into_iter()
         .filter(|t| t.is_integer() && !t.is_bool())
@@ -191,8 +170,7 @@ fn narrow_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
         if above == 0 {
             return true; // zero-extended form
         }
-        // Past 128 bits a sign extension leaves the carrier, and the mask
-        // stops at bit 127.
+        // Past 128 bits the sign extension leaves the `u128` carrier.
         if output_width <= 128
             && sign_bit_w != 0
             && (low & sign_bit_w) != 0
@@ -204,9 +182,8 @@ fn narrow_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
     false
 }
 
-/// [`value_at_some_width`] for a `stored` past the `u128` carrier, which `v`
-/// reaches sign-extended out of `I128`, or zero-extended from an integer width
-/// between `I128` and `out_ty`.
+/// [`value_at_some_width`] for a `stored` past `u128`: `v` sign-extended out of `I128`, or
+/// zero-extended from a width between `I128` and `out_ty`.
 fn past_the_carrier(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
     let i128_ty = ValueType::int(128);
     let lo = eval::mask(stored, i128_ty);
@@ -223,12 +200,8 @@ fn past_the_carrier(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
         })
 }
 
-/// Matches `v` however it was width-extended into the constant's own output
-/// type: exact, widened by zero extension, or widened by sign extension. A
-/// 32-bit `-50` widened to `IntConst(0x0000_0000_FFFF_FFCE)` at `I64`, and a
-/// positive `128` widened to `IntConst(0xFFFF_FFFF_FFFF_FF80)` from `I8`, are
-/// both forms the bit-exact [`int_const`] cannot match. Any member of
-/// `values` matches.
+/// Matches any of `values`, exact or zero- / sign-extended into the constant's output type (e.g.
+/// `128` as `0xFFFF_FFFF_FFFF_FF80` from `I8`, which [`int_const`] misses).
 fn any_width_leaf(values: Vec<u128>) -> Leaf {
     int_const_leaf(None, move |stored, out_ty| match u128::try_from(stored) {
         Ok(s) => values.iter().any(|&v| narrow_at_some_width(s, out_ty, v)),
@@ -278,10 +251,9 @@ impl<T: Into<i64> + Copy> IntConstAnyWidthArg for &[T] {
     }
 }
 
-/// Match `value` however it was width-extended into the constant it is stored
-/// in; given a collection, any member of it. `value` must fit the width it is
-/// matched at, so `0x1234` never matches `0x34` at `I8`. An empty collection
-/// matches nothing.
+/// Match `value` (or any member of a collection) however it was width-extended into the
+/// constant. `value` must fit the width it is matched at, so `0x1234` never matches `0x34` at
+/// `I8`.
 pub fn int_const_any_width<A: IntConstAnyWidthArg>(value: A) -> A::Pat {
     value.into_int_const_any_width()
 }
@@ -334,10 +306,8 @@ impl FloatConstArg for Capture {
     }
 }
 
-/// Match a `FloatConst` whose IEEE 754 bit pattern equals `bits`; given a
-/// [`Capture`], any `FloatConst`, bound to it. As a template, `bits` is the
-/// pattern at the width the constant is evaluated at, and a set bit above
-/// that width refuses the rewrite.
+/// Match a `FloatConst` with IEEE 754 bit pattern `bits`; given a [`Capture`], any `FloatConst`,
+/// bound to it. As a template, a set bit above the evaluated width refuses the rewrite.
 pub fn float_const<A: FloatConstArg>(bits: A) -> A::Pat {
     bits.into_float_const()
 }
@@ -358,12 +328,9 @@ pub fn any_float_const() -> MatchOnly {
     MatchOnly(Leaf::new(kind).into())
 }
 
-/// Any member of `set`, masked to the output width on both sides like the
-/// single-value form, or `int_const([u128::MAX])` would miss the `I32`
-/// all-ones constant `int_const(u128::MAX)` finds.
+/// Any member of `set`, both sides masked to the output width as in the single-value form.
 fn int_const_set(set: Vec<IBig>) -> MatchOnly {
-    // The width is only known per candidate, so the masked set is built once
-    // per width met rather than scanning the candidates for each.
+    // The masked set, built once per width met.
     let by_width: RefCell<Vec<(usize, FxHashSet<UBig>)>> = RefCell::new(Vec::new());
     MatchOnly(
         int_const_leaf(None, move |stored, ty| {
@@ -435,17 +402,10 @@ impl<T: Into<IBig> + Copy> IntConstArg for &[T] {
     }
 }
 
-/// Match an `IntConst` whose stored value equals `value` wrapped into the
-/// output width; given a collection, any member of it; given a [`Capture`],
-/// any integer constant, bound to it. The query is wrapped too, so `0x1234`
-/// matches `0x34` at `I8` and `-1` matches the all-ones constant of any
-/// width. `value` is any integer, [`UBig`] or [`IBig`] included, so a
-/// constant of any declared width is nameable; a width-relative all-ones at
-/// a width the query does not fix is [`int_const_all_ones`]. An empty
-/// collection matches nothing.
-///
-/// The collection form stays one pattern vertex carrying a set-membership
-/// test, so it costs what the scalar form costs.
+/// Match an `IntConst` equal to `value` wrapped into the output width; given a collection, any
+/// member; given a [`Capture`], any integer constant, bound to it. Wrapping means `0x1234`
+/// matches `0x34` at `I8` and `-1` matches all-ones at any width. `value` may be [`UBig`] or
+/// [`IBig`].
 pub fn int_const<A: IntConstArg>(value: A) -> A::Pat {
     value.into_int_const()
 }
@@ -455,10 +415,9 @@ pub fn int_const<A: IntConstArg>(value: A) -> A::Pat {
 pub struct ConstWith {
     kind: TemplateKind,
     ty: TemplateTy,
-    /// Captures the closure reads, declared so the rewrite coverage check sees
-    /// them; the `*_const_with!` macros fill this from their capture list.
+    /// Captures the closure reads, for the rewrite coverage check.
     caps: Vec<crate::Capture>,
-    /// Those of them read as an `Option`, from the list's `kind?` entries.
+    /// Captures read as an `Option`.
     opt_caps: Vec<crate::Capture>,
 }
 
@@ -470,8 +429,7 @@ impl ConstWith {
         self
     }
 
-    /// Declares a capture the closure resolves to an `Option`, which the
-    /// coverage check lets bind on only some alternation arms.
+    /// Declares a capture the closure reads as an `Option`; it may bind on only some arms.
     #[must_use]
     pub fn declare_optional(mut self, c: crate::Capture) -> Self {
         self.opt_caps.push(c);
@@ -498,10 +456,9 @@ impl IntoExpr for ConstWith {
 impl TemplatePat for ConstWith {}
 impl crate::template::template_pat::sealed::Sealed for ConstWith {}
 
-/// Types the wrapped node's value output to the width of a bound LHS capture,
-/// for when an interior node's width comes from a captured operand the rewrite
-/// root does not expose (`Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)`: the
-/// `I1` root has no `x`-wide input to inherit).
+/// Types the wrapped node's output to a bound LHS capture's width, for an interior node the
+/// root cannot type (`Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)`: the `I1` root has no
+/// `x`-wide input).
 pub struct CaptureTyped(Expr);
 
 impl IntoExpr for CaptureTyped {
@@ -513,6 +470,7 @@ impl IntoExpr for CaptureTyped {
 impl TemplatePat for CaptureTyped {}
 impl crate::template::template_pat::sealed::Sealed for CaptureTyped {}
 
+/// `inner`, typed to `cap`'s bound width.
 pub fn capture_typed<P: TemplatePat + 'static>(cap: crate::Capture, inner: P) -> CaptureTyped {
     CaptureTyped(inner.into_expr().capture_typed(cap))
 }
@@ -546,9 +504,8 @@ where
     }
 }
 
-/// A `FloatConst` whose IEEE 754 bit pattern `f` computes at rewrite time, at
-/// the width it is evaluated at (`TemplateTy::InheritRoot`). A set bit above
-/// that width refuses the rewrite.
+/// A `FloatConst` whose IEEE 754 bit pattern `f` computes at rewrite time
+/// (`TemplateTy::InheritRoot`). A set bit above that width refuses the rewrite.
 pub fn float_const_with_fn<F>(f: F) -> ConstWith
 where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static + Send,
@@ -606,9 +563,7 @@ mod any_width_tests {
         ));
     }
 
-    /// A query wider than the candidate width is not that width's value, so
-    /// sharing its low bits is not a match. Comparing only the low `w` bits
-    /// made every constant a hit for any query ending in the same byte.
+    /// A query wider than the candidate width does not match on shared low bits.
     #[test]
     fn a_query_with_bits_above_the_candidate_width_does_not_match() {
         // 0 is not 256, 0x1_0000 or 0x1_0000_0000 at any width.

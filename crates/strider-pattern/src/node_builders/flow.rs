@@ -1,16 +1,9 @@
-//! # Slot conventions, per the IR `expected_signature`
+//! Control-flow node patterns. Slots, per `expected_signature`:
 //!
-//! * `Call` inputs `[ctrl(0), mem(1), target(2), sp(3), arg0(4), arg1(5),
-//!   ...]`, outputs `[Control(0), Memory(1), clobbers...]`.
-//!   [`CallPat::arg`] shifts by +4, past the stack-pointer anchor at raw
-//!   slot 3.
-//! * `CallOther` inputs `[ctrl(0), mem(1), arg0(2), ...]`, outputs
-//!   `[Control(0), Memory(1), ...]`. [`CallOtherPat::arg`] writes the raw
-//!   input slot, unshifted.
-//! * `Return` inputs `[ctrl(0), mem(1), retval0(2), retval1(3), ...]`, no
-//!   outputs. [`RetPat::ret_val`] shifts by +2.
-//! * `If` inputs `[ctrl(0), cond(1)]`, outputs `[Control(0) true,
-//!   Control(1) false]`.
+//! * `Call` in `[ctrl, mem, target, sp, args...]`, out `[Control, Memory, ...]`.
+//! * `CallOther` in `[ctrl, mem, args...]`, out `[Control, Memory, ...]`.
+//! * `Return` in `[ctrl, mem, retvals...]`, no outputs.
+//! * `If` in `[ctrl, cond]`, out `[Control true, Control false]`.
 
 use super::{delegate_node_pat, node_match_pat};
 use strider_ir::node::{NodeKind, SwitchTableId, ValueType};
@@ -32,14 +25,12 @@ impl CallPat {
         Self(self.0.input(NodeKind::CALL_TARGET_SLOT, p))
     }
 
-    /// [`int_const`]`(addr)` on the target, so `addr` is truncated to the
-    /// target's width like any `int_const` query.
+    /// [`int_const`]`(addr)` on the target, truncated to the target's width.
     pub fn at(self, addr: u64) -> Self {
         self.target(int_const(u128::from(addr)))
     }
 
-    /// 0-based past `ctrl` / `mem` / `target` / `sp`, so raw input slot
-    /// `idx + 4`.
+    /// Argument `idx`: raw input slot `idx + 4`.
     pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(
             self.0
@@ -47,48 +38,35 @@ impl CallPat {
         )
     }
 
-    /// Input [`NodeKind::CTRL_MEM_SLOT`], taking a `store` / `mem_phi` / prior
-    /// `call`.
+    /// Input [`NodeKind::CTRL_MEM_SLOT`].
     pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
         Self(self.0.input_mem(NodeKind::CTRL_MEM_SLOT, p))
     }
 
-    /// When nested as a value operand, pins the operand to the declared
-    /// result output at raw slot 2, so a caller-saved clobber output cannot
-    /// match. No effect on a root or memory producer.
+    /// As a value operand, matches only the result output (raw slot 2), not a
+    /// clobber. No effect on a root or memory producer.
     pub fn res(self) -> Self {
         Self(self.0.pin_anchor_slot())
     }
 }
 
-/// Commits a sibling-output constraint onto a multi-output family builder.
+/// A multi-output node builder that takes output constraints.
 pub trait WithOutput: Sized {
     fn with_output(self, slot: Option<usize>, aspect: OutputAspect) -> Self;
 
-    /// A sibling output at raw slot `slot`. A leaf, naming the output value
-    /// itself rather than recursing into what it feeds; which slot is which is
-    /// per node kind, laid out by the IR's `expected_signature`.
+    /// The output at raw slot `slot`.
     fn output(self, slot: usize) -> OutputPat<Self> {
         OutputPat::at(self, Some(slot))
     }
 
-    /// Some output rather than a fixed slot; otherwise [`output`](Self::output).
-    ///
-    /// Enumerating: `find_all` dedups at value granularity, so every
-    /// qualifying output is its own match. The collapse to one match per node
-    /// is `strider-py`'s, in `dedup_matches`.
+    /// Any output; each qualifying output is its own `find_all` match.
     fn any_output(self) -> OutputPat<Self> {
         OutputPat::at(self, None)
     }
 }
 
-/// Commits one sibling-output constraint, then returns the family builder so
-/// the chain continues.
-///
-/// One `.output(slot)` call carries exactly one aspect: capture, width or
-/// type. Call it again on the same slot for a second vertex.
-///
-/// `slot` is `None` for the existential `.any_output()`.
+/// One output constraint (capture, width or type), returning the node builder.
+/// `slot` is `None` for `.any_output()`.
 pub struct OutputPat<B: WithOutput> {
     parent: B,
     slot: Option<usize>,
@@ -117,8 +95,8 @@ delegate_node_pat! { CallPat, 0, [capture, build, input, any_input, ctrl], with_
 
 impl MemPat for CallPat {}
 
-/// Nests as a value operand through the first value output. Loose: any
-/// value output matches, and in a raw slot any output. `.res()` tightens it.
+/// A `Call`. As a value operand any value output matches (any output in a raw
+/// slot); [`CallPat::res`] narrows it to the result.
 pub fn call() -> CallPat {
     CallPat(
         Node::new(KindSpec::variant_of(&NodeKind::Call { cc: None }))
@@ -127,8 +105,7 @@ pub fn call() -> CallPat {
     )
 }
 
-/// A `CallOther` is a Sleigh `CALLOTHER` user-op: an opaque
-/// architecture-specific instruction modelled outside the pcode core.
+/// A Sleigh `CALLOTHER` user-op.
 pub struct CallOtherPat(Node);
 
 impl CallOtherPat {
@@ -139,7 +116,7 @@ impl CallOtherPat {
         )
     }
 
-    /// Filters on `Function::call_other_name`. Repeated, every name must hold.
+    /// Filters on `Function::call_other_name`; repeated, every name must hold.
     pub fn name(self, name: impl Into<String>) -> Self {
         let want = name.into();
         Self(self.0.with_node_predicate(Box::new(move |matcher, n| {
@@ -147,8 +124,7 @@ impl CallOtherPat {
         })))
     }
 
-    /// The raw input slot, unshifted: control, memory and args are addressed
-    /// uniformly.
+    /// Raw input slot `idx`, unshifted.
     pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(self.0.raw_input(idx, p))
     }
@@ -158,7 +134,7 @@ impl CallOtherPat {
         Self(self.0.input_mem(NodeKind::CTRL_MEM_SLOT, p))
     }
 
-    /// See [`CallPat::res`]. Here it excludes implicit-write clobber outputs.
+    /// See [`CallPat::res`].
     pub fn res(self) -> Self {
         Self(self.0.pin_anchor_slot())
     }
@@ -177,12 +153,11 @@ pub fn call_other() -> CallOtherPat {
     )
 }
 
-/// A `Return` has no outputs, so the pattern is rooted on the node itself and
-/// a capture binds the node.
+/// A `Return`. It has no outputs, so a capture binds the node.
 pub struct RetPat(Node);
 
 impl RetPat {
-    /// 0-based past ctrl and mem, so raw input slot `idx + 2`.
+    /// Return value `idx`: raw input slot `idx + 2`.
     pub fn ret_val<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(self.0.input(NodeKind::Return.input_head_len() + idx, p))
     }
@@ -194,10 +169,8 @@ pub fn ret() -> RetPat {
     RetPat(Node::new(KindSpec::Exact(NodeKind::Return)))
 }
 
-/// Inputs `[ctrl, mem, target]` plus the optional interworking ISA mode after
-/// them, reached through [`input`](Self::input) and present only on a
-/// mode-switching branch. No outputs, so the pattern is rooted on the node
-/// itself; [`any_input`](Self::any_input) reaches the mode input too.
+/// An `IndirectBranch`: inputs `[ctrl, mem, target]`, plus an ISA mode on a
+/// mode-switching branch. No outputs.
 pub struct IndirectBranchPat(Node);
 
 impl IndirectBranchPat {
@@ -218,8 +191,7 @@ pub fn indirect_branch() -> IndirectBranchPat {
     IndirectBranchPat(Node::new(KindSpec::Exact(NodeKind::IndirectBranch)))
 }
 
-/// Inputs `[ctrl]` plus the optional memory token an exit-free-cycle sink
-/// carries; no outputs.
+/// An `Unreachable`: inputs `[ctrl]` plus an optional memory token; no outputs.
 pub struct UnreachablePat(Node);
 
 delegate_node_pat! { UnreachablePat, 0, [capture, build, input, any_input, ctrl] }
@@ -228,9 +200,8 @@ pub fn unreachable() -> UnreachablePat {
     UnreachablePat(Node::new(KindSpec::Exact(NodeKind::Unreachable)))
 }
 
-/// The function's unique entry node: no inputs, one control output at slot 0.
-/// Producing a control output means an `EntryPat` also nests as a control
-/// operand, as in `region().input(0, entry())` or `.ctrl(entry())`.
+/// The function's entry node: no inputs, one control output, so it nests as a
+/// control operand (`.ctrl(entry())`).
 pub struct EntryPat(Node);
 
 pub fn entry() -> EntryPat {
@@ -241,17 +212,13 @@ pub fn entry() -> EntryPat {
 
 delegate_node_pat! { EntryPat, 0, [capture, build], with_output }
 
-/// Joins control edges at a CFG merge: one variadic Control input per
-/// predecessor at raw slots `0..N`, no fixed prefix. Anchored on the control
-/// output at slot 0; the `PhiToken` output at slot 1 is reachable through
-/// [`output`](Self::output).
+/// A `Region`: one control input per predecessor at slots `0..N`. Anchored on
+/// the control output at slot 0; the `PhiToken` at slot 1 is
+/// [`output`](Self::output)`(1)`.
 pub struct RegionPat(Node);
 
 impl RegionPat {
-    /// Raw input slot `idx`. The sub-pattern must be control-rooted
-    /// (`entry()`, `region()`), a `call` / `call_other`, or an untyped
-    /// wildcard (`var`, `anything`): a typed value sub can never bind a
-    /// Control edge.
+    /// Raw input slot `idx`. A typed value sub-pattern never matches there.
     pub fn input<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(self.0.raw_input(idx, p))
     }
@@ -265,15 +232,11 @@ pub fn region() -> RegionPat {
 
 delegate_node_pat! { RegionPat, 0, [capture, build, any_input], with_output }
 
-/// Inputs `[ctrl, selector]`, one control output per arm. No anchor
-/// output, so the pattern is rooted on the node itself; `output` /
-/// `any_output` reach the arm edges.
+/// A `Switch`: inputs `[ctrl, selector]`, one control output per arm.
 pub struct SwitchPat(Node);
 
 impl SwitchPat {
-    /// Input [`NodeKind::SWITCH_SELECTOR_SLOT`], the value the switch
-    /// dispatches on. The arms' addresses are the control outputs, not this
-    /// slot.
+    /// Input [`NodeKind::SWITCH_SELECTOR_SLOT`].
     pub fn selector<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(NodeKind::SWITCH_SELECTOR_SLOT, p))
     }
@@ -287,27 +250,22 @@ pub fn switch() -> SwitchPat {
 
 delegate_node_pat! { SwitchPat, 0, [capture, build, input, any_input, ctrl], with_output }
 
-/// An `If` carries two control-output vertices, true at slot 0 and false at
-/// slot 1.
+/// An `If`: control outputs true at slot 0, false at slot 1.
 pub struct IfPat(Node);
 
 impl IfPat {
-    /// Input [`NodeKind::IF_COND_SLOT`]; [`NodeKind::CTRL_SLOT`] is the ctrl
-    /// predecessor.
+    /// Input [`NodeKind::IF_COND_SLOT`].
     pub fn cond<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(NodeKind::IF_COND_SLOT, p))
     }
 
-    /// Binds control output slot 0, propagated into the outer `Match`. Unlike
-    /// the successor `Region`, this value survives single-input-region
-    /// collapse, so it is the stable handle for the edge join constraints,
-    /// and for joining the arm's consumer: the same capture on that
-    /// consumer's control input.
+    /// Binds the true control output. Unlike the successor `Region`, it
+    /// survives single-input-region collapse, so join constraints use it.
     pub fn capture_true(self, c: Capture) -> Self {
         Self(self.0.capture_control_output(NodeKind::IF_TRUE_OUT_SLOT, c))
     }
 
-    /// See [`capture_true`](Self::capture_true).
+    /// Binds the false control output; see [`capture_true`](Self::capture_true).
     pub fn capture_false(self, c: Capture) -> Self {
         Self(
             self.0
@@ -356,9 +314,8 @@ mod tests {
         );
     }
 
-    /// Characterizes `IfPat`'s lowering: which vertices it declares, in which
-    /// order, carrying which captures. The operand cones come first, the two
-    /// control outputs lead the `If`'s own, and the node captures land last.
+    /// Pins `IfPat`'s lowering: operand cones first, then the two control
+    /// outputs, then the output constraints.
     #[test]
     fn if_lowering_declares_its_vertices_in_a_pinned_order() {
         let (t, f, n, out) = (
@@ -429,8 +386,7 @@ root=Ok(3) total_nodes=5
         );
     }
 
-    /// Diffs line by line: `assert_eq!` on two long strings escapes them into
-    /// one unreadable line.
+    /// Line-by-line diff, readable unlike `assert_eq!` on two long strings.
     #[track_caller]
     fn same_shape(got: &str, want: &str) {
         assert_eq!(

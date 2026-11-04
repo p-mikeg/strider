@@ -28,9 +28,8 @@ pub struct PatValueRef(ValueId);
 #[derive(Clone, Copy)]
 pub struct PatNodeRef(NodeId);
 
-/// The match root is derived structurally, so the seal takes no root handle.
-/// An input is wired from a node built before its consumer; any other wiring
-/// is refused.
+/// Low-level pattern-graph builder. The root is derived at [`Self::finish`]; an input must come
+/// from a node built before its consumer, or the wiring is refused.
 #[derive(Default)]
 pub struct MatcherBuilder {
     pub(crate) core: BuildGraph<PatNode, PatValue>,
@@ -47,8 +46,7 @@ impl MatcherBuilder {
         self.leaf(KindSpec::Any)
     }
 
-    /// Records a build-time refusal; every query on the sealed pattern then
-    /// fails with the first one recorded.
+    /// Records a build-time refusal; queries on the sealed pattern fail with the first recorded.
     pub fn reject(&mut self, why: String) {
         self.core.reject(why);
     }
@@ -59,8 +57,7 @@ impl MatcherBuilder {
         self.value_output(n, 0)
     }
 
-    /// Consumes `l` at slot `0` and `r` at slot `1`, one value output at
-    /// slot `0`.
+    /// Consumes `l` at slot `0` and `r` at slot `1`, one value output at slot `0`.
     pub fn binary(&mut self, op: IntBinaryOp, l: PatValueRef, r: PatValueRef) -> PatValueRef {
         let n = self.add_node(PatNode::exact(NodeKind::IntBinaryOp(op)));
         self.input(n, 0, l);
@@ -73,26 +70,14 @@ impl MatcherBuilder {
         self.add_node(PatNode::from_kind(kind))
     }
 
-    /// Matches if any alternative matches the node. The alternatives wire as
-    /// this node's inputs, but the matcher tries each against the *same* IR
-    /// node rather than as operands, enumerating every arm that matches (a
-    /// union). Empty `alts` matches nothing. `find_all` dedups on the binding
-    /// signature, so arms that match one node identically are one row.
-    ///
-    /// The alternation output is the wildcard kind, so it nests in a
-    /// value, control, or memory slot alike; the arms discriminate.
-    ///
-    /// Enumeration is multiplicative under
-    /// [`find_all`](crate::Matcher::find_all); see [`crate::OneOf::new`].
+    /// A union: every arm is tried against the same IR node. Empty `alts` matches nothing. The
+    /// output is the wildcard kind, so it fits any slot. See [`crate::OneOf::new`] for cost.
     pub fn one_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
         self.alternation(alts, Role::OneOf)
     }
 
-    /// Like [`Self::one_of`] but an ordered choice, not a union: see
-    /// [`crate::OneOf::first`]. An arm rejected by a guard above the
-    /// alternation produces no match, so the choice falls through to the next
-    /// arm. Each output a root match anchors on settles on its own, and one
-    /// read several times settles its reads in read order.
+    /// Like [`Self::one_of`] but an ordered choice: see [`crate::OneOf::first`]. Each anchored
+    /// root output settles on its own.
     pub fn first_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
         self.alternation(alts, Role::FirstOf)
     }
@@ -111,8 +96,7 @@ impl MatcherBuilder {
         self.wire(node, crate::matcher::InputSlot::At(slot), prod);
     }
 
-    /// Existential: `prod` matches *some* input of the node rather than a
-    /// fixed one; the wiring records `InputSlot::Any` for that operand.
+    /// Existential: `prod` matches some input of the node, not a fixed one.
     pub fn input_any(&mut self, node: PatNodeRef, prod: PatValueRef) {
         self.wire(node, crate::matcher::InputSlot::Any, prod);
     }
@@ -132,8 +116,7 @@ impl MatcherBuilder {
         self.add_output(node, PatValue::value(slot))
     }
 
-    /// A slot-0 value output relaxed to the wildcard kind: the output an
-    /// alternation node or a value-less kind synthesises.
+    /// A slot-0 output of the wildcard kind.
     pub fn any_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
         let out = self.value_output(node, 0);
         self.set_output_any(out);
@@ -162,21 +145,15 @@ impl MatcherBuilder {
         self.out_of(out).kind = OutputKindSpec::Any;
     }
 
-    /// `any_output()`: an output vertex satisfied by any of the node's outputs.
-    /// Unlike [`Self::any_value_output`], which relaxes the KIND of slot 0, this
-    /// enumerates the slots, so a capture on it binds each in turn.
-    ///
-    /// Sibling `any_output` vertices on one node claim no slot from each other,
-    /// so two of them can bind the same output; the existential `any_input`
-    /// counterpart is injective.
+    /// `any_output()`: an output vertex enumerating the node's outputs, a capture binding each in
+    /// turn. Unlike `any_input`, sibling vertices may bind the same output.
     pub fn any_slot_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
         let out = self.any_value_output(node);
         self.out_of(out).slot_mode = SlotMode::Enumerated;
         out
     }
 
-    /// Widens an `AnyValue` output to also accept a valueless node's memory
-    /// token.
+    /// Widens an `AnyValue` output to also accept a valueless node's memory token.
     pub fn set_token_fallback(&mut self, out: PatValueRef) {
         self.out_of(out).token_fallback = true;
     }
@@ -185,45 +162,35 @@ impl MatcherBuilder {
         self.out_of(out).width = Some(bits);
     }
 
-    /// Pins `out` to its own slot: the matched output must be produced there.
-    /// On an [`Self::any_slot_value_output`] vertex the pin replaces the
-    /// enumeration.
+    /// Pins `out` to its own slot, replacing an [`Self::any_slot_value_output`] enumeration.
     pub fn pin_value_out_slot(&mut self, out: PatValueRef) {
         self.out_of(out).slot_mode = SlotMode::Pinned;
     }
 
-    /// Binds the matched output's value (`Binding::Value`), e.g.
-    /// `int_add(var(x), ..)` captures `x`'s value, not its node. Additive:
-    /// `var(x).capture(y)` binds both.
+    /// Binds the matched output's value (`Binding::Value`). Additive: `var(x).capture(y)` binds
+    /// both.
     pub fn capture_output(&mut self, out: PatValueRef, c: crate::capture::Capture) {
         self.out_of(out).captures.push(c);
     }
 
-    /// Forces every slot consuming `out` to bind the SAME IR value. Wiring one
-    /// vertex into two slots does not: the matcher visits them independently.
+    /// Forces every slot consuming `out` to bind the same IR value, which wiring alone does not.
     /// See [`PatValue::identity`](crate::matcher::PatValue).
     pub(crate) fn pin_shared_identity(&mut self, out: PatValueRef) {
         self.out_of(out).identity = Some(crate::capture::Capture::internal());
     }
 
-    /// Binds the matched node (`Binding::Node`), for zero-value-output roots
-    /// like `Return` / `If`. Additive, like [`Self::capture_output`].
+    /// Binds the matched node (`Binding::Node`). Additive, like [`Self::capture_output`].
     pub fn capture_node(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
         self.core.graph.node_kind_mut(node.0).captures.push(c);
     }
 
-    /// Composes with any predicate already on `out`'s producer rather than
-    /// replacing it: a builder installs its own core constraint through this
-    /// slot (`stack_only`, `int_const(v)`, `phi_for(vn)`, ...), and a `.filter()`
-    /// layered on top must narrow that, never delete it. Both are node-only, so
-    /// evaluation order is immaterial.
+    /// Adds a node predicate to `out`'s producer, alongside any already there.
     pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::matcher::NodePredicate) {
         let node = PatNodeRef(self.core.graph.producer(out.0));
         self.set_node_predicate_at(node, f);
     }
 
-    /// Node-keyed form of [`Self::set_node_predicate`], for a node-rooted
-    /// pattern with no anchor output to address it through.
+    /// Node-keyed form of [`Self::set_node_predicate`].
     pub fn set_node_predicate_at(&mut self, node: PatNodeRef, f: crate::matcher::NodePredicate) {
         self.core
             .graph
@@ -232,18 +199,14 @@ impl MatcherBuilder {
             .push(f);
     }
 
-    /// [`Self::set_post_match`] for a guard that needs the matched output's
-    /// `ValueType` (`when_match`). A control / memory / phi-token vertex or a
-    /// kind with no value output can never supply one, so the guard would
-    /// reject every match whatever it returns; refuse instead.
+    /// [`Self::set_post_match`] for a guard needing the output's `ValueType` (`when_match`).
+    /// Refused on a root that produces no value output.
     pub(crate) fn set_post_match_typed(
         &mut self,
         out: PatValueRef,
         f: crate::matcher::PostMatchFn,
     ) {
-        // The value-less kinds whose anchor output does not already say so. A
-        // `Store` or `Region` is value-less too; its memory or control anchor
-        // is what the output check catches.
+        // Value-less kinds whose anchor output's kind does not already say so.
         let untyped_kind = self.kind_of(out).kind.is_variant_in(&[
             NodeKind::If,
             NodeKind::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
@@ -270,9 +233,7 @@ impl MatcherBuilder {
         self.kind_of(out).post_matches.push(f);
     }
 
-    /// Disables commutative operand reordering on `out`'s producer. Refused on
-    /// an alternation: its inputs are alternatives, not operands, so nothing
-    /// reads the flag.
+    /// Disables commutative operand reordering on `out`'s producer. Refused on an alternation.
     pub fn set_force_ordered(&mut self, out: PatValueRef) {
         match &mut self.kind_of(out).role {
             Role::Operands { ordered } => *ordered = true,
@@ -285,7 +246,7 @@ impl MatcherBuilder {
         }
     }
 
-    /// Single-rootedness is resolved here and reported at match time.
+    /// Seals the pattern; a rootless or multi-sink graph is reported at match time.
     pub fn finish(self) -> Pattern {
         Pattern::from_graph(self.core.graph, self.core.refusal)
     }

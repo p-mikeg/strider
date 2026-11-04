@@ -1,12 +1,10 @@
-//! Every pattern is an [`Expr`] tree, lowered once into the builder of the
-//! side it is used on. A child is an `Expr`, and the slot it sits in is passed
-//! down at lowering, so a node declares per slot which output it nests
+//! Every pattern is an [`Expr`] tree, lowered once into the builder of the side it is used on.
+//! The consumer slot is passed down at lowering, so a node picks per slot the output it nests
 //! through.
 //!
-//! `.ordered()` pins the operand order of the node holding the pair a pattern
-//! was written with. It is a lowering flag: an [`Op`] pins itself, or with
-//! `ordered_at` its operand (`int_ne` pins its `int_eq`); an alternation is
-//! refused; [`Inner::Shared`] has no pair to pin.
+//! `.ordered()` pins the operand order of the node holding the written pair: an [`Op`] itself, or
+//! its `ordered_at` operand (`int_ne` pins its `int_eq`). On an alternation it is refused;
+//! [`Inner::Shared`] has no pair to pin.
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IntBinaryOp, IntUnaryOp};
@@ -21,22 +19,16 @@ use crate::node_builders::MemPat;
 use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
 use crate::typed::consts::{Const, ConstWith};
 
-/// The flavour of consumer slot an operand is lowered into, passed down
-/// through decorations and alternation arms to the output each one nests
-/// through.
+/// The kind of consumer slot an operand is lowered into.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Slot {
     Value,
-    /// A raw input, of whatever edge kind the node's signature puts there:
-    /// lowered as a value, a node with outputs of several kinds nesting
-    /// through any of them.
+    /// A raw input of any edge kind: lowered as a value, nesting through any output.
     Raw,
     Memory,
-    /// A control predecessor: lowered as a value, its output retyped to
-    /// `Control`.
+    /// A control predecessor: lowered as a value, retyped to `Control`.
     Control,
-    /// A pattern's root: lowered as a value, its output also taking a
-    /// valueless node's memory token.
+    /// A pattern's root: lowered as a value, falling back to a valueless node's memory token.
     Root,
 }
 
@@ -44,15 +36,13 @@ pub(crate) enum Slot {
 #[doc(hidden)]
 pub struct Expr(Inner);
 
-/// A pattern as an [`Expr`]. The side it is valid on is a marker:
-/// [`MatchPat`] and [`TemplatePat`].
+/// A pattern as an [`Expr`]; [`MatchPat`] / [`TemplatePat`] mark the side it is valid on.
 #[doc(hidden)]
 pub trait IntoExpr: Sized {
     fn into_expr(self) -> Expr;
 }
 
-/// The escape hatch for a front end that builds the tree itself. A part met
-/// on a side it is not valid on refuses the pattern.
+/// For a front end that builds the tree itself. A part on the wrong side refuses the pattern.
 impl IntoExpr for Expr {
     fn into_expr(self) -> Expr {
         self
@@ -71,12 +61,10 @@ enum Inner {
     /// A constant, given its per-side form at lowering.
     Const(Const),
     Deco(Box<(Expr, Deco)>),
-    /// Matches if an arm does, the arms tried against the same IR node:
-    /// every matching arm enumerated, or with `first` only the first.
+    /// Arms tried at the same IR node: all enumerated, or with `first` only the first that matches.
     Alt(Vec<Expr>, bool),
-    /// The operands, each lowered once and pinned to one IR value, then
-    /// consumed at every slot of `body` naming them: `float_eq(x, x)` would
-    /// otherwise accept two different operands.
+    /// Operands lowered once and pinned to one IR value each, then read at every slot of `body`
+    /// naming them, so `float_eq(x, x)` needs the same value twice.
     Shared(Vec<Expr>, fn(&[PatValueRef]) -> Expr),
     /// An operand [`Inner::Shared`] lowered.
     At(PatValueRef),
@@ -87,8 +75,7 @@ enum Inner {
 /// A node with no operands and one value output.
 pub(crate) struct Leaf {
     pub(crate) kind: KindSpec,
-    /// `Any` relaxes the output to the wildcard kind, so value-less kinds
-    /// (`Region`, `MemPhi`, ...) match too.
+    /// `Any` lets value-less kinds (`Region`, `MemPhi`, ...) match.
     pub(crate) out: Option<OutputKindSpec>,
     pub(crate) width: Option<u32>,
     pub(crate) pred: Option<NodePredicate>,
@@ -158,8 +145,7 @@ impl Leaf {
     }
 }
 
-/// A value op: one node over one or two operands at input slots 0 and 1,
-/// nesting through value output 0.
+/// One node over one or two operands at input slots 0 and 1, nesting through value output 0.
 pub(crate) struct Op {
     kind: KindSpec,
     ty: Option<ValueType>,
@@ -207,22 +193,18 @@ impl Op {
 
 /// An annotation on the output the inner expression lowers to.
 pub(crate) enum Deco {
-    /// Binds the matched value; on the build side, a `var()`'s second
-    /// capture names the binding it reuses.
+    /// Binds the matched value; in a template, over a `var()` only.
     Capture(Capture),
     /// A node predicate, run before the inputs are descended into.
     Filter(NodePredicate),
-    /// A post-match guard handed the output's type; refused where there is
-    /// none.
+    /// A post-match guard given the output's type.
     Guard(PostMatchFn),
     /// A post-match guard.
     PostMatch(PostMatchFn),
     Width(u32),
     Ty(ValueType),
     Ordered,
-    /// Nests through the inner expression's value output in a memory slot
-    /// too: `inputs_of_width` reads a node with value inputs and a value
-    /// output.
+    /// Nests through the value output even in a memory slot (`inputs_of_width`).
     AsValue,
     /// Types the built value from the width of a bound LHS capture.
     TyOf(Capture),
@@ -235,8 +217,7 @@ const BUILD_SIDE: &str = "a build-only pattern (a constant computed at rewrite t
 
 impl Drop for Expr {
     fn drop(&mut self) {
-        // A tower of boxed operands dropped in place unwinds a frame per
-        // level.
+        // Deferred: dropping a deep tower in place recurses a frame per level.
         if matches!(
             self.0,
             Inner::Op(_) | Inner::Node(_) | Inner::Deco(_) | Inner::Alt(..) | Inner::Shared(..)
@@ -276,9 +257,8 @@ impl From<ConstWith> for Expr {
     }
 }
 
-/// The build side of the escape hatch. An `Expr` is not a
-/// [`TemplatePat`](crate::TemplatePat), so a Rust rewrite cannot take one as
-/// its RHS; a match-only part refuses the template through its root.
+/// Build side for a front end. An `Expr` is not a [`TemplatePat`](crate::TemplatePat); a
+/// match-only part refuses the template.
 impl Expr {
     #[doc(hidden)]
     pub fn into_template(self) -> crate::Template {
@@ -297,15 +277,13 @@ impl Expr {
         Self(Inner::Deco(Box::new((self, d))))
     }
 
-    /// Runs `f` once the whole sub-pattern matches, whatever its root
-    /// output; `false` fails the match.
+    /// Runs `f` once the sub-pattern matches; `false` fails the match.
     #[doc(hidden)]
     pub fn post_match(self, f: PostMatchFn) -> Self {
         self.deco(Deco::PostMatch(f))
     }
 
-    /// Seals a node on its own anchor, as its builder's `build` does, and
-    /// anything else as [`MatchPat::into_pattern`].
+    /// Seals a node on its own anchor, anything else as [`MatchPat::into_pattern`].
     #[doc(hidden)]
     pub fn build(mut self) -> Pattern {
         match self.take() {
@@ -341,18 +319,16 @@ impl Expr {
         std::mem::replace(&mut self.0, Inner::Taken)
     }
 
-    /// `ordered` pins the operand order on the node holding the pair the
-    /// pattern was written with. The slot's own retyping lands on the output
-    /// the expression nests through, an alternation's arms each taking it on
-    /// theirs.
+    /// `ordered` pins the operand order on the node holding the written pair.
     pub(crate) fn lower(
         mut self,
         b: &mut MatcherBuilder,
         slot: Slot,
         ordered: bool,
     ) -> PatValueRef {
-        // Each arm is its own function: an unoptimised frame holds every
-        // arm's locals, and this one is on the stack once per recursion step.
+        // Each arm is its own function: an unoptimised frame holds every local it names, and this
+        // one is on the stack once per recursion step. The same holds for the frame-size notes
+        // below.
         let out = match self.take() {
             Inner::Leaf(l) => {
                 let out = l.lower(b);
@@ -381,8 +357,7 @@ impl Expr {
         out
     }
 
-    /// An operand at a `slot` consumer, one nesting level down: refused where
-    /// it can never match there.
+    /// An operand one nesting level down; refused where it can never match `slot`.
     fn lower_operand(self, b: &mut MatcherBuilder, slot: Slot, ordered: bool) -> PatValueRef {
         if let Some(why) = self.misfit(slot) {
             b.reject(why);
@@ -398,13 +373,12 @@ impl Expr {
         out
     }
 
-    /// A leaf lowers without recursing, so it costs no nesting step.
+    /// Lowers without recursing, so it costs no nesting step.
     fn is_flat(&self) -> bool {
         matches!(self.0, Inner::Leaf(_) | Inner::Const(_) | Inner::At(_))
     }
 
-    /// Why this operand can never match a `slot` consumer, looking through
-    /// its decorations to the node it nests through.
+    /// Why this operand, under its decorations, can never match a `slot` consumer.
     fn misfit(&self, slot: Slot) -> Option<String> {
         let mut e = self;
         loop {
@@ -425,8 +399,7 @@ impl Expr {
             Inner::Op(op) => op.lower_template(b),
             Inner::Const(c) => c.lower_template(b),
             Inner::Deco(d) => match *d {
-                // Only a `var()` is a template's `.capture()`: over anything
-                // else the discarded operands would vanish in silence.
+                // Only a `var()` captures in a template; elsewhere operands would be dropped.
                 (e, Deco::Capture(c)) => match &e.0 {
                     Inner::Leaf(l) if l.is_var() => b.capture(c),
                     _ => b.refuse(MATCH_SIDE),
@@ -477,8 +450,7 @@ fn lower_alt(
     if !b.core.enter_nesting(true) {
         return b.leaf(KindSpec::Any);
     }
-    // Loops, not iterator chains: an unoptimised adapter is a frame per call,
-    // held across each arm's recursion.
+    // A loop, not an iterator chain: frame size (see `Expr::lower`).
     let mut refs = Vec::with_capacity(arms.len());
     for a in arms {
         refs.push(a.lower(b, slot, false));
@@ -492,7 +464,7 @@ fn lower_alt(
     pin(b, out, ordered)
 }
 
-/// Each operand feeds several slots; the pin is what makes them agree on it.
+/// Each operand feeds several slots; the pin makes them agree on one value.
 fn lower_shared(
     b: &mut MatcherBuilder,
     operands: Vec<Expr>,
@@ -524,7 +496,6 @@ fn lower_deco(
     if !b.core.enter_nesting(false) {
         return b.leaf(KindSpec::Any);
     }
-    // A chain of decorations recurses here, one frame a link.
     let out = match e.0 {
         Inner::Deco(_) => {
             let mut e = e;
@@ -542,7 +513,7 @@ fn lower_deco(
 /// Applies `d` to `out`. A control slot retypes `out` first, so a typed guard
 /// sees it untyped.
 fn annotate(b: &mut MatcherBuilder, out: PatValueRef, d: Deco, slot: Slot) -> PatValueRef {
-    // Kept out of `lower_deco`'s frame, which is on the stack once per link.
+    // Kept out of `lower_deco`'s frame (see `Expr::lower`).
     if slot == Slot::Control {
         b.set_output_control(out);
     }
@@ -560,10 +531,9 @@ fn annotate(b: &mut MatcherBuilder, out: PatValueRef, d: Deco, slot: Slot) -> Pa
     out
 }
 
-/// The lowered shapes, each the canonical form the lifter emits.
+/// The lifter's canonical shapes.
 impl Expr {
-    /// One node of `kind` over one or two operands, nesting through value
-    /// output 0, its type pinned to `ty` where given.
+    /// One node of `kind` over one or two operands, typed `ty` where given.
     pub(crate) fn op<const N: usize>(
         kind: KindSpec,
         operands: [Expr; N],
@@ -595,8 +565,7 @@ impl Expr {
         Self::exact(NodeKind::IntBinaryOp(IntBinaryOp::Add), [l, neg])
     }
 
-    /// `int_xor(cmp, 1)`, the lifter's `!=` / `<=`; `.ordered()` pins `cmp`,
-    /// the node holding the pair the caller wrote.
+    /// `int_xor(cmp, 1)`, the lifter's `!=` / `<=`; `.ordered()` pins `cmp`.
     pub(crate) fn negated(cmp: Expr) -> Self {
         let xor = NodeKind::IntBinaryOp(IntBinaryOp::Xor);
         let mut e = Self::exact(xor, [cmp, Const::Bool(true).into()]);
@@ -613,15 +582,14 @@ impl Expr {
     }
 }
 
-/// The output a node predicate and capture attach to; it also doubles as the
-/// chaining handle for memory roots and the seal handle for value roots.
+/// The output a node's captures attach to and a consumer nests through.
 #[derive(Clone, Copy)]
 enum AnchorKind {
     Value(usize),
     Memory(usize),
     Control(usize),
-    /// No output vertex at all: captures attach to the node directly, and a
-    /// slot that wires an edge gets a synthesized `Any` output.
+    /// No output vertex: captures attach to the node, and a consumer gets a synthesized `Any`
+    /// output.
     None,
 }
 
@@ -641,19 +609,17 @@ pub(crate) struct Node {
     node_predicates: Vec<NodePredicate>,
     captures: Vec<Capture>,
     anchor: AnchorKind,
-    /// The value output a value slot nests through, where it is not the
-    /// anchor: a `Call` is anchored on its memory token.
+    /// The value output a value slot nests through when the anchor is not one (a `Call`).
     value_anchor: Option<usize>,
     output_width: Option<u32>,
     /// `(slot, bits)`.
     input_widths: Vec<(usize, u32)>,
-    /// Requires the matched value to be produced at exactly the anchor slot
+    /// The matched value must come from exactly the anchor slot
     /// ([`crate::matcher::SlotMode::Pinned`]).
     pin_anchor_slot: bool,
     /// At a pinned slot, or `None` for `any_output()`.
     outputs: Vec<(Option<usize>, OutputAspect)>,
-    /// Control-output vertices beyond the anchor, `(slot, capture)`: the two
-    /// arms of an `If`. Declared ahead of `outputs`.
+    /// Control-output vertices beyond the anchor, `(slot, capture)`: an `If`'s two arms.
     control_outputs: Vec<(usize, Option<Capture>)>,
 }
 
@@ -695,8 +661,7 @@ impl Node {
         self.with_anchor(AnchorKind::Memory(slot))
     }
 
-    /// Anchors on the control output at `slot`, so the node nests as a
-    /// control operand.
+    /// Anchors on the control output at `slot`.
     pub(crate) fn with_control_value(self, slot: usize) -> Self {
         self.with_anchor(AnchorKind::Control(slot))
     }
@@ -731,7 +696,7 @@ impl Node {
         self.wire(InputSlot::At(slot), Slot::Raw, p.into_expr())
     }
 
-    /// Existential: matches *some* input of the node rather than a fixed slot.
+    /// Matches *some* input of the node rather than a fixed slot.
     pub(crate) fn input_any<P: MatchPat + 'static>(self, p: P) -> Self {
         self.wire(InputSlot::Any, Slot::Raw, p.into_expr())
     }
@@ -746,16 +711,13 @@ impl Node {
         self.wire(InputSlot::At(slot), Slot::Memory, p.into_expr())
     }
 
-    /// The predicate short-circuits before child recursion. Composes with one
-    /// already set, like
-    /// [`MatcherBuilder::set_node_predicate_at`](crate::matcher::MatcherBuilder::set_node_predicate_at).
+    /// A node predicate, run before child recursion; ANDs with any already set.
     pub(crate) fn with_node_predicate(mut self, f: NodePredicate) -> Self {
         self.node_predicates.push(f);
         self
     }
 
-    /// The anchor output's width. A node-rooted pattern has no anchor, so it
-    /// is a no-op there.
+    /// The anchor output's width; a no-op without an anchor.
     pub(crate) fn with_output_width(mut self, bits: u32) -> Self {
         self.output_width = Some(bits);
         self
@@ -768,14 +730,12 @@ impl Node {
     }
 
     /// Binds the anchor output where there is one, otherwise the node.
-    /// Repeatable: every capture binds the same thing.
     pub(crate) fn capture(mut self, c: Capture) -> Self {
         self.captures.push(c);
         self
     }
 
-    /// A *sibling* output of the anchor. A leaf: it constrains the output
-    /// value itself and does not recurse into what that output feeds.
+    /// A sibling output of the anchor; constrains that output only, not what it feeds.
     pub(crate) fn output(mut self, slot: Option<usize>, aspect: OutputAspect) -> Self {
         self.outputs.push((slot, aspect));
         self
@@ -805,8 +765,7 @@ impl Node {
         }
     }
 
-    /// Why the node can never match a `slot` consumer: it nests through no
-    /// output of the slot's kind.
+    /// Why the node can never match a `slot` consumer.
     fn misfit(&self, slot: Slot) -> Option<String> {
         let outputless = self.kind.is_variant_in(&[
             NodeKind::Return,
@@ -834,17 +793,15 @@ impl Node {
         b.finish()
     }
 
-    /// Lowers into `b` for a `slot` consumer, through the anchor it reads,
-    /// an anchorless node through a synthesized `Any` output. With no slot,
-    /// on its own anchor: `None` for an anchorless kind like `Return` / `If`.
+    /// Lowers for a `slot` consumer through the anchor it reads (an anchorless node through a
+    /// synthesized `Any` output). With no slot, `None` for an anchorless kind like `Return`.
     fn lower(
         mut self: Box<Self>,
         b: &mut MatcherBuilder,
         slot: Option<Slot>,
         ordered: bool,
     ) -> Option<PatValueRef> {
-        // The fields stay in the box: this frame is on the stack once per
-        // nesting level, and an unoptimised one holds every local it names.
+        // The fields stay in the box: frame size (see `Expr::lower`).
         let anchor = slot.map_or(self.anchor, |s| self.anchor_for(s));
         let inputs = self.lower_inputs(b);
         let node = b.node(std::mem::replace(&mut self.kind, KindSpec::Any));
@@ -894,8 +851,7 @@ impl Node {
         wired
     }
 
-    /// The output constraints, predicates and captures, once the operands
-    /// are wired.
+    /// The output constraints, predicates and captures.
     fn finish(
         self: Box<Self>,
         b: &mut MatcherBuilder,
@@ -932,8 +888,7 @@ fn misfit(what: &str, name: &str) -> String {
     format!("an operand {what} sits in a {name} slot, which it can never match")
 }
 
-/// Sibling-output vertices on `node`: at a pinned slot, or enumerated over
-/// every slot for `any_output()`.
+/// Sibling-output vertices on `node`, at a pinned slot or any slot (`any_output()`).
 fn lower_outputs(
     b: &mut MatcherBuilder,
     node: PatNodeRef,
@@ -941,9 +896,7 @@ fn lower_outputs(
 ) {
     for (slot, aspect) in outputs {
         let out = match slot {
-            // The pin is what a single-vertex node (`switch`) needs: with no
-            // second vertex to pick between, the root lookup takes the only
-            // one and the slot would go unchecked.
+            // Pinned, or on a single-vertex node (`switch`) the slot goes unchecked.
             Some(slot) => {
                 let out = b.value_output(node, slot);
                 b.pin_value_out_slot(out);
@@ -951,9 +904,7 @@ fn lower_outputs(
             }
             None => b.any_slot_value_output(node),
         };
-        // Without a type pin, relax to the wildcard so a control or memory
-        // sibling output can still bind. A width pin still narrows it to a
-        // value of that width.
+        // Without a type pin, relax to the wildcard so a control or memory output can bind.
         match aspect {
             OutputAspect::Ty(ty) => b.set_value_ty(out, ty),
             OutputAspect::Capture(c) => {

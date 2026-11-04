@@ -1,6 +1,5 @@
-//! [`instantiate`] synthesises every `Build` node through the
-//! [`strider_ir::IRBuilder::create_node_attributed`] seam, so each implementor
-//! keeps its own attribution and liveness policy.
+//! Rewrite templates. [`instantiate`] creates every `Build` node through
+//! [`strider_ir::IRBuilder::create_node_attributed`].
 
 mod builder;
 mod ctx;
@@ -12,8 +11,7 @@ mod tests;
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
 pub use graph::Template;
-/// The vertex payloads behind a [`Template`]'s graph. Not the seam: a template
-/// is described through [`TemplateBuilder`], never by handing it a vertex.
+/// The vertex payloads behind a [`Template`]'s graph.
 pub(crate) use graph::{TmplNodeKind, TmplValue};
 
 pub use crate::typed::value_ops::ops::*;
@@ -34,74 +32,51 @@ use crate::graph_ext::consumed_inputs;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
 
-/// Unbounded: the value is interned at the resolved output width, whatever
-/// that width is.
+/// The value is interned at the resolved output width.
 pub type TemplateKindFnIntConst =
     Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<strider_ir::UBig> + Send>;
 
 /// How a template node materialises into fresh IR.
 pub enum TemplateKind {
     Exact(NodeKind),
-    /// The closure returns the `NodeKind` to materialise, given a
-    /// [`TemplateCtx`]; an `IntConst` is refused, as under `Exact`.
+    /// The closure returns the `NodeKind`; an `IntConst` is refused, as under `Exact`.
     Fn(TemplateKindFn),
-    /// The closure computes a [`strider_ir::UBig`] at rewrite time, interned
-    /// at the resolved output width.
+    /// The closure computes a [`strider_ir::UBig`], interned at the resolved output width.
     FnIntConst(TemplateKindFnIntConst),
 }
 
-/// The output type a template node declares for its value output. All three
-/// resolve at instantiation time.
+/// The output type a template node declares, resolved at instantiation.
 #[derive(Clone, Copy)]
 pub(crate) enum TemplateTy {
-    /// No width of its own: the one the node is evaluated at, which is the
-    /// rewrite root's output type unless an operand group pins another. A
-    /// shift count takes the shift's width, a constant that does not fit it
-    /// saturating; an operand at another slot that owes its node no width,
-    /// or an output no node consumes, must be typed.
+    /// The width the node is evaluated at: the root's type unless an operand
+    /// group pins another. A shift count takes the shift's width.
     InheritRoot,
-    /// The width of the value a bound LHS capture matched, for an interior
-    /// node whose width comes from a captured operand the root does not
-    /// expose (`Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)`: the `I1` root
-    /// has no `x`-wide input for `And` and its mask to inherit).
+    /// The width of the value a bound LHS capture matched
+    /// (`Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)`: `And` is `x`-wide, not `I1`).
     InheritBinding(crate::Capture),
-    /// Independent of the root.
+    /// A fixed type.
     Fixed(ValueType),
 }
 
 /// Materialises `template` as an IR sub-graph rooted at the returned output.
 ///
-/// `root_ty` types the root's operand group: the value it replaces.
-/// `lhs_root` reaches [`TemplateKind::Fn`] closures as [`TemplateCtx::root`];
-/// a pure-`Exact` template ignores it.
-///
-/// `proof_nodes` is unioned into the asm-fingerprint of every node created
-/// here.
-///
-/// Interior nodes may be multi-output; the returned value is the root node's
+/// `root_ty` types the value the root replaces. `lhs_root` is
+/// [`TemplateCtx::root`] for [`TemplateKind::Fn`] closures. `proof_nodes` is
+/// unioned into every created node's asm-fingerprint. Returns the root node's
 /// first value output.
 ///
-/// # Signature checking
-///
-/// [`strider_ir::validate`] is not run, so each node is checked here against
-/// its `NodeKind`'s `expected_signature`: the declared output kinds, the input
-/// count, each input slot's value kind and the operand widths. Input-slot
-/// wiring is checked too: a gap or a duplicate errors out. What the signature
-/// leaves open, such as which address a `Load` reads, is the author's.
+/// Each node is checked against its `expected_signature` (output kinds, input
+/// count, input kinds, operand widths, slot wiring); [`strider_ir::validate`]
+/// is not run.
 ///
 /// # Errors
 ///
-/// If the template is rootless, references an unbound capture, has a
-/// [`TemplateKind::Fn`] closure that itself errors, has gapped or duplicate
-/// input slots, has an `IntConst` built from a `NodeKind`, has a node no width
-/// reaches (an untyped fresh operand at an input that owes its node no width,
-/// an untyped output no node consumes, an output typed from a capture that
-/// bound no typed value, a node that declares no output), gives a node an
-/// input count, an output or an operand its node signature refuses, or if
-/// node creation yields no value output. Closure, unbound-capture, width,
-/// `IntConst`-from-`NodeKind` and wide-float refusals come before any node is
-/// built; a signature or wiring refusal is found mid-build, so the nodes
-/// created before it stay in `builder`'s function, dead.
+/// If the template is rootless, references an unbound capture, has a closure
+/// that errors, has gapped or duplicate slots, has an `IntConst` built from a
+/// `NodeKind`, has a node no width reaches, or gives a node something its
+/// signature refuses. Signature and wiring refusals are found mid-build, so
+/// nodes created before them stay in `builder`'s function, dead; every other
+/// refusal comes before any node is built.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
@@ -121,9 +96,8 @@ pub fn instantiate<B: IRBuilder>(
     )
 }
 
-/// [`instantiate`], calling `before_build` once every node's kind is resolved
-/// and before the first node is created, only when the template builds one.
-/// A closure's skip comes first, so a declined template never reaches it.
+/// [`instantiate`], calling `before_build` after every kind is resolved and
+/// before the first node is created, only if the template builds one.
 ///
 /// # Errors
 ///
@@ -138,12 +112,9 @@ pub fn instantiate_guarded<B: IRBuilder>(
     before_build: impl FnOnce(&Function) -> anyhow::Result<()>,
 ) -> anyhow::Result<ValueId> {
     let root = template.root()?;
-    // Ids run producers first but for a capture, which materialises before
-    // any node is built.
+    // Producers first, except captures, which materialise before any node is built.
     let order: Vec<NodeId> = template.graph.all_node_ids().collect();
 
-    // Scanned before the mutating build loop, which is what the immutable
-    // `function` borrow requires.
     let value_tys = resolve_value_tys(
         template,
         &order,
@@ -153,15 +124,11 @@ pub fn instantiate_guarded<B: IRBuilder>(
         root_ty,
     )?;
 
-    // Keyed on the output VERTEX rather than the producer node, so a
-    // multi-output interior node feeds the right slot to each consumer: a
-    // `Call`'s memory output and its value outputs must resolve to distinct
-    // IR outputs.
+    // Keyed by output vertex, so a multi-output node feeds each consumer its own slot.
     let mut materialised: Vec<Option<ValueId>> = vec![None; value_tys.by_vertex.len()];
     let mut root_value: Option<ValueId> = None;
 
-    // Every step first, so a closure's skip or an unbound capture declines
-    // the template before any node exists.
+    // Plan first, so a skip or an unbound capture declines before any node exists.
     let mut plan: Vec<(NodeId, NodeKind)> = Vec::with_capacity(order.len());
     let mut unbound = None;
     for vtx in order {
@@ -175,8 +142,7 @@ pub fn instantiate_guarded<B: IRBuilder>(
             );
         }
         let TmplNodeKind::Build(build) = &nd.kind else {
-            // A capture leaf IS its materialisation: its one output resolves
-            // to the LHS binding, reused verbatim as in `int_add(x, 0) -> x`.
+            // A capture leaf's output is its LHS binding.
             let out_vtx = template.graph.node_outputs(vtx)[0];
             let Some(TemplateTy::InheritBinding(cap)) = template.graph.value_kind_ref(out_vtx).ty
             else {
@@ -193,8 +159,6 @@ pub fn instantiate_guarded<B: IRBuilder>(
             }
             continue;
         };
-        // A closure computes against this node's own declared output type,
-        // not the rewrite root's.
         let value_ty = node_value_ty(template, vtx, &value_tys);
         let ctx = TemplateCtx {
             function: builder.function(),
@@ -211,9 +175,9 @@ pub fn instantiate_guarded<B: IRBuilder>(
             },
             TemplateKind::FnIntConst(f) => {
                 let mut v = f(&ctx)?;
-                // P-code tests the whole count against the width, so one that
-                // does not fit keeps every bit of the width set rather than
-                // wrapping back into range, as the lifter's count does.
+                // An inferred shift count that does not fit becomes `mask(v) | width`,
+                // which is >= width, so a shift by >= width keeps its p-code result
+                // instead of wrapping into range.
                 if first_value_output_vtx(template, vtx)
                     .is_some_and(|o| value_tys.saturated_counts.contains(&o))
                     && strider_ir::eval::mask(&v, value_ty) != v
@@ -225,11 +189,9 @@ pub fn instantiate_guarded<B: IRBuilder>(
             }
         };
 
-        // A template `FloatConst` carries raw IEEE bits with no width; the
-        // width is resolved here, and bits above it are another constant.
+        // Raw IEEE bits; bits above the resolved width are refused.
         if let NodeKind::FloatConst(bits) = kind {
             let ty = value_ty;
-            // The payload is a `u64`, so a wider float has no encoding here.
             anyhow::ensure!(
                 !(ty.is_float() && ty.byte_size() > 8),
                 "template float const at {ty}: the payload is a u64"
@@ -242,7 +204,6 @@ pub fn instantiate_guarded<B: IRBuilder>(
         }
         plan.push((vtx, kind));
     }
-    // After every closure, so a skip declines the template ahead of this.
     if let Some(cap) = unbound {
         anyhow::bail!("capture {cap:?} referenced in template but unbound by LHS");
     }
@@ -254,8 +215,6 @@ pub fn instantiate_guarded<B: IRBuilder>(
     for (vtx, kind) in plan {
         let inputs = collect_inputs(template, vtx, &materialised)?;
 
-        // Usually a single value output; a multi-output node such as a
-        // `Call` declares its memory output here too.
         let outputs = output_kinds_for(template, vtx, &value_tys)?;
         for (slot, got) in outputs.iter().enumerate() {
             let want = kind.expected_output_kind(slot).ok_or_else(|| {
@@ -276,8 +235,6 @@ pub fn instantiate_guarded<B: IRBuilder>(
 
         let node = builder.create_node_attributed(kind, inputs, outputs, proof_nodes);
 
-        // Map each template output vertex onto the IR output at the same
-        // slot, so multi-output consumers wire the right edge.
         let ir_outputs = builder.function().node_outputs(node);
         for out_vtx in template.graph.node_outputs(vtx).iter().copied() {
             let slot = template.graph.value_kind_ref(out_vtx).slot;
@@ -300,8 +257,8 @@ pub fn instantiate_guarded<B: IRBuilder>(
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
-/// A `IntConstId` indexes one function's interner at one width, so a template
-/// constant is interned at instantiation, at the node's resolved width.
+/// An `IntConstId` belongs to one function's interner, so template constants
+/// are interned at instantiation.
 fn raw_int_const() -> anyhow::Error {
     anyhow!(
         "template IntConst built from a NodeKind carries a IntConstId interned \
@@ -312,25 +269,23 @@ fn raw_int_const() -> anyhow::Error {
 /// Every value output's type, indexed by the output vertex.
 struct ValueTys {
     by_vertex: Vec<Option<ValueType>>,
-    /// Shift counts whose width is their shift's, inferred: a constant there
-    /// that does not fit saturates rather than wraps.
+    /// Shift counts whose width was inferred from their shift.
     saturated_counts: FxHashSet<TmplValueId>,
     root_ty: ValueType,
 }
 
 impl ValueTys {
-    /// Every value-output vertex is resolved, so `vtx` must be one.
+    /// `vtx` must be a value-output vertex.
     fn of(&self, vtx: TmplValueId) -> ValueType {
         self.by_vertex[idx(vtx)].expect("every value-output vertex is resolved")
     }
 }
 
-/// A vertex's position in a table spanning every vertex of the template.
+/// A vertex's index into a per-vertex table.
 fn idx(v: TmplValueId) -> usize {
     v.as_u32() as usize
 }
 
-/// The node's first value-output vertex.
 fn first_value_output_vtx(template: &Template, node_vtx: NodeId) -> Option<TmplValueId> {
     template
         .graph
@@ -340,8 +295,7 @@ fn first_value_output_vtx(template: &Template, node_vtx: NodeId) -> Option<TmplV
         .find(|&v| template.graph.value_kind_ref(v).ty.is_some())
 }
 
-/// The build kind a node declares up front. A `Fn` closure picks its kind at
-/// instantiation, so its slots relate no widths here.
+/// The node's `Exact` kind; a `Fn` closure's kind is unknown until instantiation.
 fn exact_kind(template: &Template, node_vtx: NodeId) -> Option<NodeKind> {
     match &template.graph.node_kind(node_vtx).kind {
         TmplNodeKind::Build(TemplateKind::Exact(k)) => Some(*k),
@@ -371,9 +325,8 @@ fn operand_postorder(template: &Template, root: NodeId) -> Vec<NodeId> {
     order
 }
 
-/// [`width_tie`] with a `Tied` head joined to `operand` in `groups`, the value
-/// vertices a node evaluates at one width. A head that IS the operand ties
-/// nothing and reads back as `NoHead`.
+/// [`width_tie`], unioning a `Tied` head with `operand` in `groups`. A head
+/// that is the operand itself reads back as `NoHead`.
 fn tie(
     groups: &mut UnionFind<u32>,
     kind: &NodeKind,
@@ -392,21 +345,16 @@ fn tie(
     }
 }
 
-/// Each value output's type. A node built with no declared type
-/// ([`TemplateTy::InheritRoot`]) takes the width of the group it is evaluated
-/// in, so a fresh constant in a comparison operand gets the OPERAND width and
-/// not the `I1` verdict the root carries. The rewrite root itself is what
-/// replaces the matched value, so its group takes `root_ty`. A shift count
-/// with no width of its own takes the shift's.
+/// Each value output's type. A [`TemplateTy::InheritRoot`] node takes its
+/// width group's type (so a comparison's constant operand gets the operand
+/// width, not `I1`); the root's group takes `root_ty`; an untyped shift count
+/// takes the shift's.
 ///
 /// # Errors
 ///
-/// If an output's width comes from nowhere, since any width picked here would
-/// be arbitrary: a group every member of which is built fresh with no
-/// declared type (at a slot [`NodeKind::operand_width`] leaves free, such as
-/// a `Popcount` operand, `strider_ir::validate` would accept the pick and the
-/// constant would hold a different value), an untyped output no template node
-/// consumes, or an output typed from a capture that bound no typed value.
+/// If an output's width comes from nowhere: a group with no typed member, an
+/// untyped output no node consumes, or an output typed from a capture that
+/// bound no typed value.
 fn resolve_value_tys(
     template: &Template,
     order: &[NodeId],
@@ -417,10 +365,9 @@ fn resolve_value_tys(
 ) -> anyhow::Result<ValueTys> {
     let len = template.graph.all_value_ids().count();
     let mut groups = UnionFind::new(len);
-    // The consumer that ties each vertex to a group, for the error naming it.
+    // The consumer that ties each vertex, for diagnostics.
     let mut tied_by: Vec<Option<(NodeKind, usize)>> = vec![None; len];
-    // `(count, shift output)`: a count with no width of its own takes the
-    // shift's, as the lifter emits it. Never the other way round.
+    // `(count, shift output)`.
     let mut counts: Vec<(TmplValueId, TmplValueId)> = Vec::new();
 
     for &node_vtx in order {
@@ -437,11 +384,9 @@ fn resolve_value_tys(
                     tied_by[idx(head)].get_or_insert((kind, slot));
                 }
                 WidthTie::NoHead => {}
-                // A conversion pins its input apart from its output.
                 WidthTie::Conversion(_) => {
                     tied_by[idx(producer)].get_or_insert((kind, slot));
                 }
-                // A free slot pins it to nothing.
                 WidthTie::Free => {
                     tied_by[idx(producer)].get_or_insert((kind, slot));
                     if matches!(kind, NodeKind::IntBinaryOp(op) if op.is_shift())
@@ -458,8 +403,8 @@ fn resolve_value_tys(
     let mut anchor = |groups: &mut UnionFind<u32>, vtx: TmplValueId, ty: ValueType| {
         group_ty.entry(groups.find_mut(vtx.as_u32())).or_insert(ty);
     };
-    // First wins, so the order is the graph's own: a capture can be built
-    // after its consumer, and its id would otherwise decide the anchor.
+    // First wins, in operand order rather than id order (a capture can have a
+    // later id than its consumer).
     for node_vtx in operand_postorder(template, root) {
         for vtx in template.graph.node_outputs(node_vtx).iter().copied() {
             let ty = match template.graph.value_kind_ref(vtx).ty {
@@ -472,14 +417,12 @@ fn resolve_value_tys(
             }
         }
     }
-    // Overrides whatever else the root's group holds, so a template that
-    // already types its nodes builds exactly what it built before.
+    // `root_ty` overrides any other type in the root's group.
     if let Some(vtx) = first_value_output_vtx(template, root) {
         let g = groups.find_mut(vtx.as_u32());
         group_ty.insert(g, root_ty);
     }
-    // To a fixpoint: a count can be the output of another shift whose own
-    // width comes from a count.
+    // To a fixpoint: a count can be another shift's output.
     let mut inferred: FxHashSet<u32> = FxHashSet::default();
     let mut changed = true;
     while changed {
@@ -503,7 +446,7 @@ fn resolve_value_tys(
         .collect();
 
     let mut by_vertex: Vec<Option<ValueType>> = vec![None; len];
-    // A capture's output is its binding, which `instantiate` reads instead.
+    // A capture's output is its binding, read by `instantiate`.
     for &node_vtx in order {
         if let TmplNodeKind::Capture = template.graph.node_kind(node_vtx).kind {
             continue;
@@ -567,7 +510,7 @@ fn resolve_value_tys(
     })
 }
 
-/// A template node as an error names it.
+/// A template node's name for diagnostics.
 fn node_name(template: &Template, node_vtx: NodeId) -> String {
     match &template.graph.node_kind(node_vtx).kind {
         TmplNodeKind::Build(TemplateKind::Exact(k)) => format!("{k:?}"),
@@ -577,10 +520,7 @@ fn node_name(template: &Template, node_vtx: NodeId) -> String {
     }
 }
 
-/// Masks `v` to `value_ty`'s width and stores it.
-/// A float `value_ty` has no integer literal to intern: the caller gave a
-/// float-typed root an integer constant, which is the rule's mistake, not a
-/// graph error to surface downstream, so it skips the rewrite.
+/// Interns `v` at `value_ty`, masked to its width. A float `value_ty` skips the rewrite.
 fn intern_fn_int_const<B: IRBuilder>(
     builder: &mut B,
     value_ty: ValueType,
@@ -592,9 +532,7 @@ fn intern_fn_int_const<B: IRBuilder>(
     Ok(NodeKind::IntConst(builder.intern_int_const(v, value_ty)))
 }
 
-/// In slot order, reading each producer's already-materialised IR output from
-/// `materialised`. A gapped or duplicate input slot is rejected here rather
-/// than silently closed or overwritten.
+/// The node's materialised inputs in slot order. A gapped or duplicate slot errors.
 fn collect_inputs(
     template: &Template,
     node_vtx: NodeId,
@@ -615,9 +553,7 @@ fn collect_inputs(
     densify(inputs_by_slot, "input")
 }
 
-/// The keys must be exactly `0..len`, or the dense `into_values()` shifts
-/// later slots down onto the wrong IR index, and the signature check then
-/// validates the wrong slot. `what` names the side for the diagnostic.
+/// The values in slot order; the keys must be exactly `0..len`.
 fn densify<T>(by_slot: BTreeMap<usize, T>, what: &str) -> anyhow::Result<Vec<T>> {
     if by_slot.keys().enumerate().any(|(i, &slot)| i != slot) {
         let slots: Vec<usize> = by_slot.keys().copied().collect();
@@ -630,15 +566,13 @@ fn densify<T>(by_slot: BTreeMap<usize, T>, what: &str) -> anyhow::Result<Vec<T>>
     Ok(by_slot.into_values().collect())
 }
 
-/// The resolved type of the node's first value output vertex. A node with no
-/// value output vertex falls back to the root's type.
+/// The type of the node's first value output, else the root's.
 fn node_value_ty(template: &Template, node_vtx: NodeId, value_tys: &ValueTys) -> ValueType {
     first_value_output_vtx(template, node_vtx).map_or(value_tys.root_ty, |v| value_tys.of(v))
 }
 
-/// Checks `inputs` against `kind`'s node signature: the input count, each
-/// slot's value kind, and the width an operand owes the output or operand 0,
-/// as `strider_ir::validate` enforces them.
+/// Checks `inputs` against `kind`'s signature: count, slot kinds and operand
+/// widths, as `strider_ir::validate` does.
 fn check_operand_types(
     kind: &NodeKind,
     inputs: &[ValueId],
@@ -719,8 +653,7 @@ fn check_conversion(
     Ok(())
 }
 
-/// Each output takes its own resolved type. A gapped or duplicate output slot
-/// is rejected, as on the input side.
+/// The node's output kinds in slot order. A gapped or duplicate slot errors.
 fn output_kinds_for(
     template: &Template,
     node_vtx: NodeId,

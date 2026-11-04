@@ -13,8 +13,7 @@ pub struct Any;
 
 impl IntoExpr for Any {
     fn into_expr(self) -> Expr {
-        // Relax the default value-output constraint so value-less kinds
-        // (`Region`, `MemPhi`, ...) match too.
+        // Value-less kinds (`Region`, `MemPhi`, ...) match too.
         Leaf::any().into()
     }
 }
@@ -34,7 +33,6 @@ pub struct Var {
 
 impl IntoExpr for Var {
     fn into_expr(self) -> Expr {
-        // Like `anything()`: matches regardless of what the node produces.
         Any.into_expr().capture(self.cap)
     }
 }
@@ -59,8 +57,7 @@ where
     anything().when_match(move |m, ty, _b| f(m, ty))
 }
 
-/// Match any value output exactly `n` bits wide. The width is checked both
-/// at the root and when nested inside an op.
+/// Match any value output exactly `n` bits wide.
 pub fn value_of_width(n: u32) -> MatchOnly {
     anything().of_width(n)
 }
@@ -88,8 +85,7 @@ pub fn any_float() -> MatchOnly {
 
 /// Any `I1`-typed node, constant or not.
 pub fn any_bool() -> MatchOnly {
-    // As `anything().bool_valued()`: the width alone narrows the relaxed
-    // output kind back to a value.
+    // The width alone narrows the output kind back to a value.
     let leaf = Leaf {
         width: Some(1),
         ..Leaf::any()
@@ -97,16 +93,10 @@ pub fn any_bool() -> MatchOnly {
     MatchOnly(leaf.into())
 }
 
-/// Match `inner` with every value input `n` bits wide. Also requires at least
-/// one value input and at least one value output.
+/// Match `inner` with at least one value input, every one `n` bits wide, and a value output.
 ///
-/// The width is read off the matched node's own value inputs, so it says
-/// nothing about what `inner`'s operand sub-patterns bind: under
-/// `ignore_casts` an operand reached through a cast keeps its own width.
-///
-/// The node predicate alone: pushing the width onto the operand vertices
-/// instead lands it on the ARMS of an alternation, which are not operands,
-/// and on the far side of a cast walk.
+/// The width is read off the matched node's own inputs: under `ignore_casts` an operand reached
+/// through a cast keeps its own width.
 pub fn inputs_of_width<I: MatchPat + 'static>(n: u32, inner: I) -> MatchOnly {
     let want = n as usize;
     let filter = Deco::Filter(Box::new(move |matcher, node| {
@@ -117,7 +107,6 @@ pub fn inputs_of_width<I: MatchPat + 'static>(n: u32, inner: I) -> MatchOnly {
 
 fn inputs_of_width_check(matcher: &crate::Matcher, node: NodeId, want: usize) -> bool {
     let f = matcher.function();
-    // Reject zero-value-output kinds (Return, IndirectBranch, ...).
     let has_value_output = f
         .node_outputs(node)
         .iter()
@@ -142,9 +131,7 @@ pub fn bool_inputs<I: MatchPat + 'static>(inner: I) -> MatchOnly {
     inputs_of_width(1, inner)
 }
 
-/// `InitialVar` carries a per-function index, not the varnode, so a
-/// function-independent pattern can't encode an exact `NodeKind`: it matches
-/// the discriminant.
+/// Matches the `InitialVar` discriminant: its index is per-function.
 fn initial_var_leaf() -> Leaf {
     Leaf::new(KindSpec::variant_of(&NodeKind::InitialVar(
         InitialVnId::from_index(0),
@@ -156,9 +143,7 @@ pub fn initial_var() -> MatchOnly {
     MatchOnly(initial_var_leaf().into())
 }
 
-/// Match the `InitialVar` whose tracked varnode contains `vn`. The IR keeps
-/// only the largest container, so a pinned sub-register (`eax`) matches its
-/// container (`rax`).
+/// Match the `InitialVar` whose tracked varnode contains `vn`, so `eax` matches `rax`.
 pub fn initial_var_for(vn: rsleigh::Vn) -> MatchOnly {
     let pred: NodePredicate = Box::new(move |m, node| {
         matches!(
