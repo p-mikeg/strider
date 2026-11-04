@@ -105,19 +105,10 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
     }
     let distinct_sp_bases_disjoint = policy.distinct_sp_bases_disjoint;
     match (load.class, store.class) {
-        // Different SP bases differ by an unknown amount, so their offsets are
-        // unrelated and normally may-alias.  `distinct_sp_bases_disjoint` opts
-        // into assuming they address disjoint regions, which stack-arg
-        // detection relies on: incoming-arg slots above the entry SP do not
-        // overlap frame locals rooted at an alignment-masked SP.
-        //
-        // The test is `lb != sb`, which is WIDER than that justification: it
-        // also calls two distinct alignment anchors disjoint from each other,
-        // which nothing proves. Unreachable today because `detect_stack_args`
-        // is the only reader and filters `base != initial_sp` before probing,
-        // so one side is always the entry SP. A second reader needs the
-        // `entry_sp_span` proof `in_own_frame` does for the same geometric
-        // fact, not this comparison.
+        // Different SP bases differ by an unknown amount.  Under
+        // `distinct_sp_bases_disjoint` the probe is at the entry SP
+        // (asserted in `MemQuery::nearest`), and incoming-arg slots above it
+        // do not overlap frame locals rooted at an alignment-masked SP.
         (
             StackRooted {
                 base: lb,

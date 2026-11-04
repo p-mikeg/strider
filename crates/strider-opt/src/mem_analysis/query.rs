@@ -143,6 +143,11 @@ impl MemQuery {
         policy: Policy,
         memoize: bool,
     ) -> NodeId {
+        debug_assert!(
+            !policy.distinct_sp_bases_disjoint
+                || !matches!(loc.class, AddrClass::StackRooted { base, .. } if !function.is_entry_sp(base)),
+            "distinct SP bases are disjoint only for a probe at the entry SP"
+        );
         let index = self.index(function);
         let mut walker = MemWalker {
             query: self,
