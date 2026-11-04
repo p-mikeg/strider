@@ -5,7 +5,8 @@ mod split;
 mod tests;
 
 pub(crate) use flow::{FlowContext, FlowVars, hold_var};
-use region_builder::{DecodeFailure, RegionBuilder, decode_failure};
+use petgraph::visit::EdgeRef;
+use region_builder::{DecodeFailure, RegionBuilder, decode_failure, is_call};
 pub(crate) use strider_target::FlowCommit;
 
 use petgraph::graph::NodeIndex;
@@ -113,6 +114,9 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// address decode in different contexts by construction, so a failure at
     /// one site says nothing about the same address reached from another.
     pub(super) refused_arms: Vec<(NodeIndex, PcodeInsnAddr)>,
+    /// Empty regions of zero-pcode-op instructions sealed onto a stub at bytes
+    /// that are not code; [`Self::finish`] ends every call falling into them.
+    pub(super) nops_into_no_code: Vec<NodeIndex>,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
@@ -133,6 +137,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             work_queue: Vec::new(),
             seeded_queue: Vec::new(),
             refused_arms: Vec::new(),
+            nops_into_no_code: Vec::new(),
             report: crate::BuildReport::default(),
             non_boundary_seats: rustc_hash::FxHashMap::default(),
             committed_next: rustc_hash::FxHashSet::default(),
@@ -741,6 +746,48 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
     }
 
+    /// The regions in `from` or falling into them through empty regions of
+    /// zero-pcode-op instructions whose last instruction is a call.
+    pub(super) fn calls_falling_into(
+        &self,
+        from: impl IntoIterator<Item = NodeIndex>,
+    ) -> Vec<NodeIndex> {
+        let mut stack: Vec<NodeIndex> = from.into_iter().collect();
+        let mut seen: rustc_hash::FxHashSet<NodeIndex> = stack.iter().copied().collect();
+        let mut calls = Vec::new();
+        while let Some(id) = stack.pop() {
+            let region = &self.region_graph[id];
+            if region.terminator != RegionTerminator::Unconditional {
+                continue;
+            }
+            match region.insns.last() {
+                Some(last) if is_call(last) => calls.push(id),
+                Some(_) => {}
+                None => stack.extend(
+                    self.region_graph
+                        .neighbors_directed(id, petgraph::Incoming)
+                        .filter(|&p| seen.insert(p)),
+                ),
+            }
+        }
+        calls
+    }
+
+    /// Re-seals `region`, which ends in a call whose fall-through holds no
+    /// code, as `NoReturn`.
+    fn end_as_no_return(&mut self, region: NodeIndex) {
+        let outgoing: Vec<_> = self
+            .region_graph
+            .edges_directed(region, petgraph::Outgoing)
+            .map(|e| e.id())
+            .collect();
+        for edge in outgoing {
+            self.region_graph.remove_edge(edge);
+            self.non_boundary_seats.remove(&edge);
+        }
+        self.region_graph[region].terminator = RegionTerminator::NoReturn;
+    }
+
     /// Removes every region no path from `entry` reaches.
     ///
     /// A dropped arm edge can orphan the region its arm decoded, and the
@@ -860,6 +907,15 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Drops the arms the lost successors refuse and every region the entry no
     /// longer reaches, then seals the cfg.
     fn finish(mut self, lost_successor: Vec<(NodeIndex, anyhow::Error)>) -> Result<Cfg> {
+        for nop in std::mem::take(&mut self.nops_into_no_code) {
+            let preds: Vec<_> = self
+                .region_graph
+                .neighbors_directed(nop, petgraph::Incoming)
+                .collect();
+            for call in self.calls_falling_into(preds) {
+                self.end_as_no_return(call);
+            }
+        }
         self.refuse_arms_reaching(lost_successor.iter().map(|(region, _)| *region));
         self.drop_refused_switch_arms();
         let start_addr = PcodeInsnAddr::at_machine_start(self.start_addr);
