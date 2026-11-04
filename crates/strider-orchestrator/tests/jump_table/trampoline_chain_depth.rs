@@ -136,3 +136,61 @@ fn the_iteration_cap_is_the_chain_depth_it_seats() {
     );
     assert_eq!(over_rounds, 257);
 }
+
+/// A seat the cap round refuses is not published: the loop builds once more
+/// from the frozen seats instead of returning the stale cfg.
+#[test]
+fn a_seat_refused_on_the_cap_round_is_not_published() {
+    use strider_cfg::{RegionTerminator, ResolvedTarget, ResolvedTargets};
+    use strider_orchestrator::opt::{ClassifiedSites, ReadOnlyMemory, classify_sites};
+
+    const UNMAPPED: u64 = 0x4000_1000;
+    let last = BASE + 256 * LINK;
+    let calls = std::cell::Cell::new(0usize);
+    // The 256th classification, the last one folded, also names an arm the
+    // cap round cannot decode.
+    let classify = |f: &strider_ir::Function,
+                    rom: Option<&dyn ReadOnlyMemory>|
+     -> anyhow::Result<ClassifiedSites> {
+        let mut found = classify_sites(f, rom)?;
+        calls.set(calls.get() + 1);
+        if calls.get() == 256 {
+            for targets in found.resolved.values_mut() {
+                if targets.arms().iter().any(|t| t.addr == last) {
+                    *targets = ResolvedTargets::table(vec![
+                        ResolvedTarget::new(last, None),
+                        ResolvedTarget::new(UNMAPPED, None),
+                    ]);
+                }
+            }
+        }
+        Ok(found)
+    };
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, chain(256), BASE, None);
+    let result = strider
+        .analyze_with_classifier(
+            BASE,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+            &classify,
+        )
+        .expect("a refused seat is a result, not an error");
+    assert!(calls.get() >= 257, "precondition: the cap was reached");
+    let frontier = last - 2;
+    assert!(
+        !result.cfg.regions().any(|r| matches!(
+            r.terminator,
+            RegionTerminator::Switch { addr, .. } if addr.machine_addr.addr == frontier
+        )),
+        "the cap round's refused seat must not be published",
+    );
+    assert!(
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .any(|a| a.machine_addr.addr == frontier),
+        "{}",
+        result.incomplete(),
+    );
+}
