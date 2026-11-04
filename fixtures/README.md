@@ -2,11 +2,10 @@
 
 `out/<arch>/<case>.elf` is built from `cases/<case>.{c,S}` by `make`, one
 target per (arch, case); every C case also builds an unlinked `.o` twin.
-Only the `.o` files the tests load are committed: four or five each on `x86`,
-`x64`, `arm`, `aarch64`, `mips64le` and `ppc64le`, one on `ppc32be`, none
-elsewhere. The `!` entries in the root `.gitignore` un-ignore those case names
-on EVERY arch, which is a superset of that set, so rebuilding another arch
-leaves its twins showing as untracked rather than ignored.
+Every `.o` under `out/` is committed: `strider-reader`'s release-only
+`read_digest` digests every image it finds there, so a twin missing from a
+clone fails it, and one built and left untracked is a new digest row to
+commit with its re-blessed `read_digest.txt`.
 
 The binaries are committed through Git LFS, so a clone without `git-lfs` gets
 129- or 130-byte pointer text where an ELF should be; run `git lfs pull` before
