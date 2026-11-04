@@ -179,6 +179,12 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.nodes.next_key()
     }
 
+    /// Whether `node` holds a dedup entry.
+    #[cfg(any(test, feature = "test-injectors"))]
+    pub fn is_cached(&self, node: NodeId) -> bool {
+        self.cache.contains(node)
+    }
+
     #[inline]
     pub fn has_node(&self, id: NodeId) -> bool {
         self.store.nodes.is_valid(id)

@@ -639,7 +639,9 @@ fn detach_evicts_a_cached_node() {
     let x = const_node(&mut g, 1);
     let y = const_node(&mut g, 2);
     let add = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    assert!(g.is_cached(add));
     g.detach_node_inputs(add);
+    assert!(!g.is_cached(add));
     assert_ne!(g.create_node(TestKind::Add, [x, y], [TestVal::Int]), add);
 }
 
