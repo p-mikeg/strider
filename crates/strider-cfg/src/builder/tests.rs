@@ -1340,3 +1340,61 @@ fn the_engine_space_table_is_the_sleighs_after_a_build() {
     assert_eq!(engine.space_ids(), &engine.sleigh().space_ids());
     assert_eq!(cfg.space_ids(), engine.space_ids());
 }
+
+/// The `InteriorTarget` report of each x86 `lock cmpxchg` re-entry shape,
+/// under every one of `seeds` visit orders.
+fn lock_reentry_reports(bytes: &[u8], seeds: std::ops::RangeInclusive<u64>) -> Vec<Vec<u64>> {
+    let mut seen = Vec::new();
+    for seed in seeds {
+        super::SHUFFLE_SEED.with(|s| s.set(Some(seed)));
+        let cfg = crate::DecodeEngine::new(
+            strider_target::SleighArch::x86(),
+            rsleigh::mem_readers::BufMemReader::new(bytes.to_vec(), 0x1000),
+        )
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &crate::CfgOptions::default())
+        .expect("build");
+        let interior: Vec<u64> = cfg
+            .incomplete()
+            .of(crate::Reason::InteriorTarget)
+            .map(PcodeInsnAddr::machine)
+            .collect();
+        if !seen.contains(&interior) {
+            seen.push(interior);
+        }
+    }
+    super::SHUFFLE_SEED.with(|s| s.set(None));
+    seen
+}
+
+/// A branch one byte into a `lock cmpxchg` heading its region re-enters the
+/// same instruction, whichever slice of the `cmpxchg` decodes first.
+///
+/// ```text
+/// lock loop:  1000 lock cmpxchg; 1004 jne 0x1001; 1006 ret
+/// glibc:      1000 je 0x1003; 1002 lock cmpxchg; 1006 jne 0x1003; 1008 ret
+/// ```
+#[test]
+fn a_lock_reentry_report_is_the_same_in_every_visit_order() {
+    for bytes in [
+        &[0xf0, 0x0f, 0xb1, 0x0f, 0x75, 0xfb, 0xc3][..],
+        &[0x74, 0x01, 0xf0, 0x0f, 0xb1, 0x0f, 0x75, 0xfb, 0xc3],
+    ] {
+        assert_eq!(lock_reentry_reports(bytes, 1..=64), [Vec::<u64>::new()]);
+    }
+}
+
+/// The `jne` to 0x1004 splits the `xor` region at the `lock` instruction,
+/// so the `jmp` one byte into it is exact once both have decoded.
+///
+/// ```text
+/// 1000 jne 0x1009; 1002 xor eax, eax; 1004 lock cmpxchg; 1008 ret
+/// 1009 jne 0x1004; 100b jmp 0x1005
+/// ```
+#[test]
+fn a_lock_reentry_judged_before_the_split_at_its_head_is_not_reported() {
+    let bytes = [
+        0x75, 0x07, 0x31, 0xc0, 0xf0, 0x0f, 0xb1, 0x0f, 0xc3, 0x75, 0xf9, 0xeb, 0xf8,
+    ];
+    assert_eq!(lock_reentry_reports(&bytes, 1..=64), [Vec::<u64>::new()]);
+}
