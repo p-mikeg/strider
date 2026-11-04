@@ -78,7 +78,7 @@ unresolved_branch [0x8049110.2]
 cfg
   0x80490e0 0 ops goto -> [0x80490e4]
   0x80490e4 69 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c000:4, u:0x8c800:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8c200:4, u:0x8ca00:4]
 frame_address_in_call_register reach=4
 arg 0 [%v9]
 arg 1 [%v16]
@@ -386,7 +386,7 @@ cfg
   0x8049380 10 ops cbranch 0x8049390 -> [0x8049384, 0x8049390]
   0x8049384 12 ops return -> []
   0x8049390 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xba700:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xba900:4]
 arg 0 [%v1]
 arg 1 [%v8]
 %v0:ctrl = entry

@@ -96,7 +96,7 @@ cfg
   0x4011d0 2 ops goto -> [0x4011d3]
   0x4011d3 38 ops cbranch 0x40119a -> [0x40119a, 0x4011df]
   0x4011df 19 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x17c00:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x6ad00:4, u:0x6af00:4, u:0x8c000:4]
+tracked [EAX, ECX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x17c00:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x6ad00:4, u:0x6af00:4, u:0x8c200:4]
 arg 1 [%v8]
 arg 2 [%v12]
 %v0:ctrl = entry
