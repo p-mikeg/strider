@@ -1,19 +1,4 @@
-//! Classifies the placeholder targets the lifter inserts at `BranchIndirect`
-//! sites.
-//!
-//! [`SiteClassifier::classify`] tries an ordered list of sound recognisers, first match
-//! wins: a literal `IntConst` address, an `InitialVar(lr)` return, a
-//! `Load(RAM)` return that [`ReturnTargets::returns_to_caller`] follows back
-//! to the saved link register, then `table::classify_dispatch_value` for
-//! rodata jump tables and on-stack label arrays.  No match leaves the target
-//! unresolved.
-//!
-//! Known limits of the field-index rule, seen only in crafted or hand-written
-//! asm, with no compiler shape found: a range a read guard narrows is trusted
-//! as the table's bound, though an unread test (a mask, a carry, a test
-//! looping back) or a guard a later truncate loses may be tighter; and a test
-//! reading the cell through a phi reads no bits of it. Each seats cells the
-//! code rules out.
+//! Classifies the targets of `BranchIndirect` placeholders and seated `Switch`es.
 
 use std::cell::LazyCell;
 
@@ -37,8 +22,7 @@ pub use return_target::ReturnTargets;
 /// still spans billions of them.
 pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
-/// `classify` on a classifier built for `function` alone; `classify_sites` is
-/// the production entry, which shares one across the function's sites.
+/// `SiteClassifier::classify` on a classifier built for `function` alone.
 #[cfg(any(test, feature = "test-util"))]
 pub fn classify_target(
     function: &strider_ir::Function,
@@ -51,36 +35,13 @@ pub fn classify_target(
 type LazyRanges<'f> =
     LazyCell<index_range::RangeMap<'f>, Box<dyn FnOnce() -> index_range::RangeMap<'f> + 'f>>;
 
-/// One function's dispatch-site recogniser.
-///
-/// Holds the ranges, which hold the function too, so no caller can pair a
-/// function with another one's ranges, nor ask about a site with ranges
-/// scoped to a different one. The memos every site's queries share live here
-/// as well: the abstract evaluator's memory index, and the claims the return
-/// verifier has settled.
+/// One function's dispatch-site recogniser, with the memos its sites share.
 ///
 /// # Soundness
 ///
-/// Every recogniser must identify the runtime target set UNAMBIGUOUSLY and
-/// fails closed on a partial proof, never under-approximating.  `Load(sp)` for
-/// a `pop pc`-style return, which a `push X; pop pc` tail call shares the shape
-/// of, is classified only where [`ReturnTargets`] follows the slot back to a
-/// store of the entry link register.  That walk honours a call-boundary claim
-/// of its own (`return_slots_survive_untracked_writes`), and it is the
-/// orchestrator that keeps the answer honest: the seated `Return` carries a
-/// return site, so every round re-checks the seat against its own IR. A
-/// verdict that rests on that claim is not reported; analysing again with the
-/// claim cleared is how a caller audits one.
-///
-/// Of the function's claims ([`strider_ir::Function::assumptions`]) the table
-/// walk's own memory queries honour `stack_global_disjoint` and the allocation
-/// identity `noalias_allocators` gives `decompose`, and no call-boundary
-/// relaxation (`Policy::strict`).  That keeps the relaxations out of
-/// the walk's own steps, not off the edge: every recogniser
-/// reads the IR the pipeline left, whose `LoadForward` forwards across a call
-/// under `escape_analysis`, `callee_preserves_stack_args` or a listed
-/// allocator.  A dispatch value forwarded that way arrives here folded, so a
-/// claim that is wrong for the input seats a wrong edge.
+/// Every recogniser fails closed on a partial proof, never under-approximating
+/// the target set. The IR it reads was forwarded under the function's claims, so
+/// a claim wrong for the input can still seat a wrong edge.
 pub(crate) struct SiteClassifier<'f> {
     function: &'f strider_ir::Function,
     /// Built on the first table query: a constant or link-register site never
@@ -94,9 +55,9 @@ pub(crate) struct SiteClassifier<'f> {
 }
 
 impl<'f> SiteClassifier<'f> {
-    /// The recogniser for `function`'s dispatch sites, with nothing computed
-    /// for any of them yet.  `rom` is the binary's read-only image, consulted
-    /// only by the rodata jump-table shape; `None` disables it.
+    /// The recogniser for `function`'s dispatch sites.  `rom` is the binary's
+    /// read-only image, read only by the rodata jump-table shape; `None`
+    /// disables it.
     pub(crate) fn new(
         function: &'f strider_ir::Function,
         rom: Option<&'f dyn ReadOnlyMemory>,
@@ -114,25 +75,18 @@ impl<'f> SiteClassifier<'f> {
         self.function
     }
 
-    /// The recognisers, in order, against the dispatch value of `site`, an
-    /// `IndirectBranch` placeholder or a seated `Switch`: a literal `IntConst`
+    /// The target set of `site`, an `IndirectBranch` or a seated `Switch`, by
+    /// the first recogniser to match its dispatch value: a literal `IntConst`
     /// address, an `InitialVar(lr)` return, a `Load(RAM)` return
     /// [`ReturnTargets::returns_to_caller`] follows back to the saved link
-    /// register, then the table arm.  `None` when the dispatch value matches
-    /// no known sound shape, which defers the site.
+    /// register, then the table arm.  `None` defers the site.
     ///
-    /// A seated `Switch` is re-derived from its retained selector, which reads
-    /// as a wider table once a loop back-edge through its own arms closes, or
-    /// folds to the one constant it jumps to; it carries the mode its
-    /// instruction commits, so a widened arm is evaluated in its own mode. It
-    /// was seated from a table, so it is no return.
+    /// A `Switch` is re-derived from its retained selector and is never a return.
     #[must_use]
     pub(crate) fn classify(&mut self, site: NodeId) -> Option<ResolvedTargets> {
         let f = self.function();
         let switch = matches!(f.node_kind(site), NodeKind::Switch(_));
-        // The ISA mode the site's instruction committed for its target(s),
-        // when it is an interworking branch; carried on the site as a live
-        // input and evaluated per resolved target below.
+        // The ISA mode an interworking branch commits for its targets.
         let (target_value, mode_value) = if switch {
             (f.switch_selector(site), f.switch_isa_mode(site))
         } else {
@@ -150,39 +104,28 @@ impl<'f> SiteClassifier<'f> {
             .or_else(|| self.classify_dispatch_value(site, target_value, mode_value))
     }
 
-    /// The literal target of an `IntConst` dispatch value.  A literal is
-    /// always a deterministic function of the pcode, so it is the only
-    /// possible target.
+    /// The literal target of an `IntConst` dispatch value.
     fn single_const_target(
         &self,
         target_value: ValueId,
         mode_value: Option<ValueId>,
     ) -> Option<ResolvedTargets> {
         let function = self.function();
-        // `int_const_u128` is `Some` only off an `IntConst`.
         let k = function.int_const_u128(target_value)?;
-        // A committed interworking mode MUST fold to a constant here; if it
-        // does not, fail closed (`?` defers the whole branch) rather than
-        // decode the const target in the flowing mode. Mirrors the table path
-        // (table.rs).
+        // A committed mode that does not fold defers the branch.
         let isa_bit = match mode_value {
             Some(mv) => Some(function.int_const_u128(mv)? != 0),
             None => None,
         };
-        // Reject rather than truncate a const with its high 64 bits set.
         Some(ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(
             u64::try_from(k).ok()?,
             isa_bit,
         )))
     }
 
-    /// `None` on stack-push ABIs (x86 / x86_64), which have no link register.
-    ///
-    /// A single-register pop into the PC (ARM `ldr pc,[sp],#4`) lifts to a
-    /// `BranchIndirect` over a stack load, not a `Return`, and once a call
-    /// sits between the push and the pop nothing folds that load back to the
-    /// link register.  [`ReturnTargets`] is what separates it from the
-    /// `push X; pop pc` tail call it looks like.
+    /// A return through the link register, directly or popped from the stack
+    /// (ARM `ldr pc,[sp],#4`); [`ReturnTargets`] tells the latter from a
+    /// `push X; pop pc` tail call.  `None` on ABIs with no link register.
     fn link_register_return(
         &mut self,
         branch: NodeId,
@@ -203,12 +146,8 @@ impl<'f> SiteClassifier<'f> {
     }
 }
 
-/// The value under an interworking mask, else `value` unchanged.
-///
-/// `BXWritePC` / `JXWritePC` emit `target & ~1`: the cleared bit is the ISA
-/// mode, which the branch carries separately, so the mask hides the
-/// `InitialVar(lr)` shape under it.  Only the exact low-bit mask is stripped;
-/// any other constant is real arithmetic on the target.
+/// The operand of an exact `target & ~1` interworking mask (`BXWritePC` /
+/// `JXWritePC`, whose cleared bit the branch carries separately), else `value`.
 fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> ValueId {
     let Some((operand, mask)) = crate::const_eval::var_and_const_of(
         function,
@@ -234,8 +173,7 @@ pub struct ClassifiedSites {
 }
 
 impl ClassifiedSites {
-    /// Every live dispatch site of `f`, none resolved: what a caller that does
-    /// not classify reports.
+    /// Every live dispatch site of `f`, none resolved.
     #[must_use]
     pub fn unresolved(f: &strider_ir::Function) -> Self {
         Self {
@@ -247,28 +185,20 @@ impl ClassifiedSites {
     }
 }
 
-/// Classifies every live `IndirectBranch` placeholder, and re-derives every
-/// live `Switch` from its retained selector, under the claims `f` holds.
-/// Reads `f` only.
-///
-/// A dispatch value only becomes classifiable once the optimizer has folded
-/// it into a recognizable shape, so `f` is the converged function.
+/// Classifies every live `IndirectBranch` and re-derives every live `Switch` of
+/// `f`, the optimized function.
 ///
 /// # Errors
 ///
-/// None; the `Result` is the shape of the orchestrator's classifier hook.
+/// None; the `Result` is the orchestrator's classifier-hook shape.
 pub fn classify_sites(
     f: &strider_ir::Function,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> crate::Result<ClassifiedSites> {
     let mut out = ClassifiedSites::unresolved(f);
-    // Most functions have neither kind, so the setup below is skipped then.
     if out.sites.is_empty() {
         return Ok(out);
     }
-    // Built once, since the graph does not change here: the ranges, the
-    // evaluator's memory index, and the return verifier's settled claims all
-    // carry from site to site.
     let mut classifier = SiteClassifier::new(f, rom);
     for &node in &out.sites {
         if let Some(targets) = classifier.classify(node) {
