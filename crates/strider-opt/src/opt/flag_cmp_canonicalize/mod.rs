@@ -16,6 +16,9 @@
 //! VS/VC  OV                          GT/LE  BoolAnd(Xor(ZR, 1), Equal(NG, OV)) / dual
 //! ```
 //!
+//! Flags held in register slots are zero-extended, so `Equal(NG, OV)` is
+//! matched as `Equal(ZeroExtend(NG), ZeroExtend(OV))`.
+//!
 //! Bottom-up, `ZR` and the `GE` tree become `Equal(a, b)` and
 //! `Xor(Sless(a, b), 1)`, then each cond code's tree of those collapses.
 //! `MI`/`PL` stays as lifted: `Sless(a-b, 0)` differs from `Sless(a, b)` on
