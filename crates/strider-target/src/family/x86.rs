@@ -477,8 +477,8 @@ impl CallingConvention {
     #[must_use]
     pub const fn x86_linux_kernel() -> Self {
         // `int 0x80` clobbers EAX/ECX/EDX through the sla's trailing
-        // `call [intloc]` (constructor `INT`), an ordinary `Call` under this
-        // convention.
+        // `call [intloc]` (constructor `INT`), an ordinary `Call` under the
+        // function's default convention.
         CallingConvention {
             arg_passing_regs: &["EAX", "EDX", "ECX"],
             ..X86_CDECL_BASE
