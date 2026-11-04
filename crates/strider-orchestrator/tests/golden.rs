@@ -6,7 +6,8 @@
 //! optimised IR with registers named. An `analyze` error is pinned as its
 //! message.
 //!
-//! A golden detects change; beyond the `INTENT` rows it does not judge it.
+//! A golden detects change; beyond the `INTENT` rows, and the `GAPS` that
+//! stand in for them on named arches, it does not judge it.
 //! Review a re-bless as a diff:
 //!
 //! ```text
