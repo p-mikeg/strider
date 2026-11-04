@@ -37,7 +37,7 @@ never names. The table gives that footprint per arch and user-op name:
 
 ## Adding to strider-target
 
-Each step is pinned by the named test.
+Each step is checked: leaving one out fails a test.
 
 - **CallOther row**: a `Row` in the family's `call_other` (or `common.rs`),
   then `UPDATE_EXPECT=1 cargo test -p strider-target --test call_other_snapshot`
