@@ -395,7 +395,7 @@ n2 Exact(If) caps=1 pred=0 Operands { ordered: false }
   out v6 Value slot=1 mode=Pinned width=None caps=0 ident=0 token=0
   in At(1) <- v0
   in At(0) <- v1
-root=Ok(2) total_nodes=3
+root=Ok(2) total_nodes=7
 ",
         );
     }
@@ -424,7 +424,7 @@ n3 Exact(If) caps=0 pred=0 Operands { ordered: false }
   in At(1) <- v0
   in At(0) <- v1
   in Any <- v2
-root=Ok(3) total_nodes=4
+root=Ok(3) total_nodes=5
 ",
         );
     }
