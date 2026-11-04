@@ -102,12 +102,16 @@ impl Match {
         self.bindings.matched_nodes()
     }
 
-    /// Sorted, deduplicated `(capture-id, bound-node-id)` pairs.
-    pub fn capture_signature(&self, graph: &Graph) -> Vec<(u32, u32)> {
-        let mut sig: Vec<(u32, u32)> = self
+    /// Sorted, deduplicated `(capture-id, bound-node-id, bound-value-id)`
+    /// triples, the value id `u32::MAX` for a capture bound to a node.
+    pub fn capture_signature(&self, graph: &Graph) -> Vec<(u32, u32, u32)> {
+        let mut sig: Vec<(u32, u32, u32)> = self
             .bindings
             .iter()
-            .filter_map(|(c, _)| self.node(c, graph).map(|n| (c.id(), n.as_u32())))
+            .filter_map(|(c, _)| {
+                let value = self.value(c).map_or(u32::MAX, |v| v.as_u32());
+                self.node(c, graph).map(|n| (c.id(), n.as_u32(), value))
+            })
             .collect();
         sig.sort_unstable();
         sig.dedup();
