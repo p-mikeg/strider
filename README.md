@@ -11,6 +11,9 @@ Strider is named after Aragorn's ranger alias: a tracker who finds what others
 miss. It hunts through compiled binaries, letting you ask precise questions
 about how a function behaves with no source and no debug symbols.
 
+It reads ELF images for x86 and x86-64, ARM/Thumb (little-endian, BE32, BE8),
+AArch64 (LE/BE), MIPS32/64 (LE/BE, MIPS16e) and PowerPC 32/64 (LE/BE).
+
 ## What it does
 
 ```
@@ -49,131 +52,57 @@ port = strider.explore.visualize(function, background=True)
 strider.explore.shutdown(port)
 ```
 
-## What's new in 0.2.0
+## What's new since 0.1.0
 
-[CHANGELOG.md](CHANGELOG.md) has the full list, breaking changes first.
+[CHANGELOG.md](CHANGELOG.md) has every change, breaking ones first.
 
-- **More images.** Unlinked `ET_REL` objects analyse with their code
-  relocations applied; an undefined symbol gets an address of its own, and a
-  relocation strider does not compute stops any read that reaches it, except
-  in writable data, where its field serves the file's bytes. ppc64
-  ELFv1 symbols resolve through their `.opd` descriptors.
-  `prog.add_symbol_file(path)` and `prog.add_symbols({name: addr})` name the
-  functions of a stripped image, `prog.add_elf(path)` merges a second one, and
-  `prog.symbol_at(addr)`, `symbol_opt(name)`, `iter_symbols()`,
-  `endianness` and `is_arm_be8` read what an image carries. Images are memory-mapped; `STRIDER_NO_MMAP=1`
-  reads them instead. `load_elf(relocated_got_is_rom=True)` serves `.got` and
-  `.data.rel.ro` as read-only, so a load through a GOT slot folds, except one
-  only the loader computes, such as an IFUNC's or a MIPS global entry for an
-  imported symbol.
-- **Completeness you can check.** `cfg.incomplete` lists every address the
-  analysis cannot vouch for, under one of seven reasons: an unresolved
-  indirect branch (a return whose target is not provably the caller's rides
-  there too), a site settled only by your own seed, an address reached in two
-  ISA modes, a branch target off an instruction boundary, outside the image,
-  or on bytes that hold no instruction, and flow past a sized function's end.
-  An empty list is a complete answer.
-  `function.validate()` reports three more shapes: a memory read that skips a
-  memory effect on its path, an `InitialVar` naming a varnode the function
-  never minted or typed against it wrongly, and a `Store` only a `Load` takes.
-- **Mixed instruction sets.** Each address decodes in the ISA mode of the edge
-  that reached it, and a resolved indirect target carries its own mode, so
-  ARM/Thumb interworking and MIPS16 code decode correctly.
-  `CfgOptions(known_targets=...)` seats answers of your own, and
-  `LifterOptions(resolve_indirect_branches=False)` turns the classifier off.
-  Bytes that hold no instruction are not decoded: an ARM or AArch64 image's
-  `$d` mapping symbols mark its literal pools automatically, and
-  `CfgOptions(data_ranges=...)` names ranges the symbols miss.
-- **ABIs.** `CallingConvention.custom(sleigh, ...)`, `cc.preserves_all()` /
-  `cc.preserves_regs()`, `arm_aapcs_soft`, and the kernel-internal PowerPC
-  flavours `powerpc_sysv32_linux_kernel()`, `powerpc64_elf_v1_linux_kernel()`
-  and `powerpc64_elf_v2_linux_kernel()`, which name no vector register and
-  which `load_elf` picks when `e_entry` is at or above `KERNELBASE`. Applied
-  per callee through
-  `LifterOptions(per_address_ccs=...)`. Analysis never reads a callee, so a
-  callee that pops its caller's stack (`ret $imm16`) or an i386 PC thunk needs
-  such an entry. `CfgOptions(call_other_abis=...)` classifies a Sleigh user-op
-  strider has no ABI for; `prog.user_op_names()` lists the ones the
-  architecture can emit.
-- **Smaller graphs.** A `Call` carries an output per clobbered REGISTER rather
-  than per tracked Sleigh varnode, and a Sleigh temporary gets a phi only
-  where one is live across a region boundary. On the 24 largest x86-64
-  functions of a release binary the lifted graph loses 26% of its nodes and
-  49% of its values to the first and a further 21% / 16% to the second, with
-  `build_ir` 1.31x faster and `analyze` 1.24x. A `Call`'s output slots are
-  therefore numbered differently than in 0.1.0, which a query reading
-  `.output(slot)` positionally has to follow. Asm fingerprints also no longer
-  name an instruction whose only contribution was dead code, such as a flag
-  computation a rewrite discarded.
-- **Memory precision.** `LifterOptions(assumptions=AssumptionOptions(...))`
-  states claims about the code the analysis cannot check;
-  `AssumptionOptions.none()` makes none of them. A control cycle that never
-  exits (`while (1)`, a spin loop) is anchored at lift time, so its stores and
-  their operands stay in the graph where 0.1.0 dropped them.
-- **Queries.** `first_of`, and `one_of` in any slot; `field` and `code_ptr` for
-  the shapes `ConstantFold` leaves; `find_unique_value`; `JoinPredicate` for
-  relations of your own; float arguments; `load().non_stack()` /
-  `store().heap_only()`; `.ordered()` on any binary pattern; a raw int wherever
-  a constant goes, up to 2^128-1; `indirect_branch().target(list)` and
-  `switch().selector(list)`. The builders share one vocabulary, declared in
-  the stubs as `runtime_checkable` protocols.
-- **Optimizer.** `ConstantFold` turns sums of scaled copies (`x + (x << 1)`)
-  into one `x * C`, `PhiCollapse` folds cycles of phis carrying one value, and
-  a pass that changed nothing is skipped until the graph changes.
-  `LifterOptions(pipeline=...)` replaces the pass list outright, and a pipeline
-  of your own runs with the GIL dropped as the default one does.
-  `Function.validate()` also checks the order of memory effects.
-- **Looking at results.** `Function.to_text()` prints a header and then one
-  line per node, stable across runs. `visualize(background=True)` serves the
-  pan-and-zoom explorer while you keep querying. `StriderError.backtrace`
-  carries the Rust trace.
-- **Threads.** `analyze` drops the GIL, so one lift handle per thread analyses
-  in parallel. A handle works from any thread; a call that needs one already
-  in use raises `StriderError` rather than misbehaving.
-- **Failing safely.** A pattern too large or too deep for the thread's stack
-  and an out-of-range operand index raise `StriderError` instead of crashing
-  the interpreter, and the wheel is built with overflow checks.
+- **More inputs.** Unlinked `.o` files (relocations applied, undefined symbols
+  given addresses), ppc64 ELFv1 descriptors, stripped images named with
+  `add_symbol_file` / `add_symbols`, and a second image merged with `add_elf`.
+- **Complete or says why.** `cfg.incomplete` lists each address the analysis
+  cannot vouch for, under one of seven reasons; empty means complete.
+- **Mixed instruction sets.** ARM/Thumb and MIPS16 code decodes in the mode of
+  the edge that reached it; `$d`-marked literal pools and `data_ranges` are
+  not decoded.
+- **Your own answers.** `known_targets`, `no_return_targets`, `data_ranges`,
+  `call_other_abis`, `per_address_ccs`, and `CallingConvention.custom` /
+  `CallOtherAbi.custom` for targets strider has no table for.
+- **Stated assumptions.** `AssumptionOptions` holds nine claims the analysis
+  cannot check (five on by default); `AssumptionOptions.none()` is the sound
+  floor and `function.assumptions` reads them back.
+- **Queries.** `one_of` / `first_of` in any slot, `field`, `code_ptr`,
+  `find_unique_value`, `JoinPredicate`, edge joins (`capture_true`), and
+  constants of any width; rewrites build from `strider.template`.
+- **Tooling.** `function.to_text()`, `strider.explore.visualize(...,
+  background=True)`, `StriderError.backtrace`; handles work on any thread and
+  `analyze` drops the GIL.
 
-## Upgrading from 0.2.0
+## Upgrading
 
-`cfg.is_complete()` is gone: `not cfg.incomplete` is the same test. The
-per-reason `Cfg` getters are gone: `cfg.incomplete` lists every
-`(address, reason)`. A callee that never returns goes in
-`CfgOptions(no_return_targets=...)`, at its decoded address (`addr & ~1` for a
-Thumb or MIPS16 symbol), not in a `CallingConvention.no_return()`. A handle
-works on any thread; `analyze`, `build_cfg` and `add_elf` hold it alone, and a
-call that meets one of them raises rather than waiting.
-[CHANGELOG.md](CHANGELOG.md) has the rest, breaking changes first.
+Most renames and removals raise, and [CHANGELOG.md](CHANGELOG.md) says how to
+port each. These change an answer without an error.
 
-## Upgrading from 0.1.0
+From 0.2.0:
 
-The query API was renamed, so the 0.1.0 quickstart's pattern lines no longer
-run: `add` is `int_add`, a bare string is no longer a capture operand (`Capture`
-is), and `hit.const_uint(c)` is `hit.uint(c)`. A `Node` was renamed the same way
-(`const_uint` / `const_int` / `const_bool` are `uint` / `sint` / `boolean`), and
-`wide_const_bytes()` is gone, `uint()` reading every width. `hit[c]` returns a
-`BoundCapture`, so `hit[c] is None` is always false; test `c in hit`.
-`prog.symbol(name)` returns a `Symbol` (`name`, `address`, `size`, `end`,
-`is_function`, `region`, `is_thumb`) where 0.1.0 returned a bare address, so
-arithmetic on one needs `.address`, and `symbol_size` is gone.
+- A `one_of` / `first_of` arm in a memory slot, and a `call()` /
+  `call_other()` in a raw slot (`input`, `any_input`, `phi_token`), also match
+  the call's memory or control edge: `store().mem(one_of([call().res()]))`
+  matched nothing and now matches.
+- A builder's `into_pat()` follows later edits to the builder.
+- `m[c] == v` compares at the constant's full width.
+- Rust: a repeated `CallOtherPat::name` or `PhiPat::for_vn` intersects.
 
-`LifterOptions(alias_mode=, calls_clobber=, assume_distinct_sp_bases_disjoint=)`
-raise `TypeError`: those claims moved into
-`LifterOptions(assumptions=AssumptionOptions(...))` as `stack_global_disjoint`,
-`assume_incoming_args_survive_calls` (inverted) and
-`distinct_sp_bases_disjoint`.
+From 0.1.0:
 
-A lift handle works from any thread, and `analyze`, `build_cfg` and `add_elf`
-hold it alone. To analyse in parallel, build a second handle over the same
-`prog.arch`, `prog.reader()` and `prog.rom()`, gathered before any analysis on
-`prog` is in flight, and call its `analyze(addr, prog.cc)`: a plain handle
-stores no default convention and carries no symbols, so it needs both the
-convention and an address. A handle decodes the image as it stood when it was
-built, so merge every ELF with `add_elf` before building the workers.
+- `ConstantFold` turns `x + x*2` into `x*3`, and a `Call`'s outputs are
+  numbered per clobbered register.
+- Five `AssumptionOptions` claims default on.
+- `hit[c] is None` is always false: test `c in hit`.
 
-A 0.1.0 pattern that now matches nothing has most often met `ConstantFold`'s
-repeated-term factoring: `x + x*2` reaches the query as `x*3`. Draw the function
-with `strider.explore.visualize(function)` to see the shape the optimizer left behind.
+Replacements for what is gone: `cfg.is_complete()` is `not cfg.incomplete`;
+`IfPat.true_branch` is an edge join, `[if_else().capture_true(t),
+region().any_input(t)]`; `strider.opt.CfgDetach`'s work is done by
+`DeadBranchElimination`; `entry()` and `region()` as a value operand raise.
 
 ## Documentation
 
@@ -189,8 +118,7 @@ The guides in [`docs/`](docs/):
   runnable examples.
 - [Optimizations](docs/optimizations.md): what each pass does, which is usually
   why a pattern's shape differs from the source.
-- [Changelog](CHANGELOG.md): what changed since 0.2.0, then what 0.2.0
-  changed, breaking entries first in each.
+- [Changelog](CHANGELOG.md): every release's changes, breaking entries first.
 
 [`crates/strider-py/examples/python/`](crates/strider-py/examples/python/) has
 seventeen runnable scripts, from a quickstart to custom target ABIs.
