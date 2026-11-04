@@ -275,6 +275,33 @@ pub(crate) mod memory_shapes {
         })
     }
 
+    /// `-O0`'s `if (verbose) call();` `n` times over a slot stored
+    /// `verbose`: each guard reloads the slot past the previous guard's call.
+    pub(crate) fn guard_chain(n: usize, verbose: u64) -> crate::Result<strider_ir::Function> {
+        shape(|b| {
+            store_const(b, 0, verbose)?;
+            for _ in 0..n {
+                let v = load(b, 0)?;
+                let zero = b.build_int_const(0u64, TY)?;
+                let cond = b.build_int_cmp_operation(v, zero, strider_ir::IntCmpOp::Equal, TY)?;
+                let (skip, guarded, merge) = (
+                    b.create_region_all()?,
+                    b.create_region_all()?,
+                    b.create_region_all()?,
+                );
+                b.build_if(cond, skip, guarded)?;
+                b.set_region(skip);
+                b.build_branch(merge)?;
+                b.set_region(guarded);
+                let target = b.build_int_const(0x1000u64, TY)?;
+                b.build_call(target, &[], &[], 0)?;
+                b.build_branch(merge)?;
+                b.set_region(merge);
+            }
+            Ok(())
+        })
+    }
+
     /// One loop whose body updates each of `n` accumulators from the next.
     pub(crate) fn accumulator_loop(n: usize) -> crate::Result<strider_ir::Function> {
         shape(|b| {

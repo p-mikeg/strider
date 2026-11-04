@@ -6,21 +6,36 @@
 //! blocks, including a `MemPhi` whose arms reach different defs; no value
 //! `Phi` is synthesized.  Which calls a load passes is
 //! [`crate::mem_analysis::Policy`]'s.
+//!
+//! A `MemPhi` whose arms agree once the arms a constant `If` never takes are
+//! dropped reads as that one arm, so a chain of guards on one constant settles
+//! in one sweep.
 
+use std::cell::Cell;
+
+use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer};
+use strider_ir::{Function, IRBuilderExt, IRViewer, UBig};
 
 use crate::Result;
 use crate::const_eval::LoadSlice;
-use crate::mem_analysis::{MemQuery, Policy, ReachingDef};
+use crate::mem_analysis::{MemQuery, Policy, ReachingDef, narrow_load_to};
 
 pub struct LoadForward;
+
+/// One sweep's memory query and [`settle`] memo.
+#[derive(Default)]
+pub(crate) struct Sweep {
+    query: MemQuery,
+    /// A memory value to the earliest one it equals.
+    settled: FxHashMap<ValueId, ValueId>,
+}
 
 // Not `PROPAGATE`: a forward reaches a consumer only through an address
 // edge, which the next pipeline iteration picks up.  One query per sweep: the
 // pass changes only `Load` edges and outputs, so every memory def stands.
 impl crate::peephole::PeepholePass for LoadForward {
-    type Sweep = MemQuery;
+    type Sweep = Sweep;
 
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Load(_))
@@ -28,12 +43,12 @@ impl crate::peephole::PeepholePass for LoadForward {
 
     fn try_rewrite(
         &self,
-        query: &mut MemQuery,
+        sweep: &mut Sweep,
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<Option<ValueId>> {
-        try_forward_load(edit, root, query)?;
+        try_forward_load(edit, root, sweep)?;
         Ok(None)
     }
 }
@@ -42,11 +57,23 @@ impl crate::peephole::PeepholePass for LoadForward {
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,
-    query: &MemQuery,
+    sweep: &mut Sweep,
 ) -> Result<()> {
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
-    let reaching = query.reach_and_narrow(edit, load, Policy::forward(edit.function()));
+    let query = &sweep.query;
+    let policy = Policy::forward(edit.function());
+    let mut reaching = query.reach_and_narrow(edit, load, policy);
+    // Each round lifts the edge onto a strict dominator.
+    while !matches!(reaching, ReachingDef::Match(_)) {
+        let mem = edit.load_mem(load);
+        let earlier = settle(&mut sweep.settled, edit.function(), mem);
+        if earlier == mem {
+            break;
+        }
+        narrow_load_to(edit, load, edit.producer(earlier));
+        reaching = query.reach_and_narrow(edit, load, policy);
+    }
 
     let ReachingDef::Match(clobber_node) = reaching else {
         return Ok(());
@@ -88,6 +115,103 @@ fn try_forward_load(
     edit.absorb_fingerprint(forwarded, addr);
     edit.replace_value(load_value, forwarded);
     Ok(())
+}
+
+/// The earliest memory value `mem` equals through [`settle_one`] steps,
+/// memoised in `settled`.
+fn settle(settled: &mut FxHashMap<ValueId, ValueId>, f: &Function, mem: ValueId) -> ValueId {
+    let mut path = Vec::new();
+    let mut cur = mem;
+    let end = loop {
+        if let Some(&done) = settled.get(&cur) {
+            break done;
+        }
+        match settle_one(f, cur) {
+            Some(next) => {
+                path.push(cur);
+                cur = next;
+            }
+            None => {
+                settled.insert(cur, cur);
+                break cur;
+            }
+        }
+    };
+    for v in path {
+        settled.insert(v, end);
+    }
+    end
+}
+
+/// The arm a `MemPhi` output equals: every arm on an edge some constant `If`
+/// can take carries it, and every other arm is derived from it through
+/// `Store` / `Call` / `CallOther`, so its def dominates the phi's region.
+fn settle_one(f: &Function, mem: ValueId) -> Option<ValueId> {
+    const ARM_STEPS: usize = 16;
+    let phi = f.producer(mem);
+    if !matches!(f.node_kind(phi), NodeKind::MemPhi) {
+        return None;
+    }
+    let mut live = None;
+    let mut dead = smallvec::SmallVec::<[ValueId; 2]>::new();
+    for (edge, arm) in f.phi_arms(phi) {
+        if never_taken(f, edge) {
+            dead.push(arm);
+        } else if *live.get_or_insert(arm) != arm {
+            return None;
+        }
+    }
+    let live = live.filter(|&m| m != mem)?;
+    for mut arm in dead {
+        let mut steps = 0;
+        while arm != live {
+            let def = f.producer(arm);
+            if steps == ARM_STEPS
+                || !matches!(
+                    f.node_kind(def),
+                    NodeKind::Store(_) | NodeKind::Call { .. } | NodeKind::CallOther { .. }
+                )
+            {
+                return None;
+            }
+            arm = f.memory_input_of(def)?;
+            steps += 1;
+        }
+    }
+    Some(live)
+}
+
+/// Whether control edge `edge` leaves, through single-predecessor regions
+/// and calls, the arm of an `If` its constant condition never takes.
+fn never_taken(f: &Function, mut edge: ValueId) -> bool {
+    const CTRL_STEPS: usize = 16;
+    for _ in 0..CTRL_STEPS {
+        let node = f.producer(edge);
+        match f.node_kind(node) {
+            NodeKind::If => {
+                let budget = Cell::new(32);
+                let Some(cond) = cone_const(f, f.if_cond(node), &budget) else {
+                    return false;
+                };
+                let taken = f.node_outputs(node)[usize::from(cond == UBig::ZERO)];
+                return edge != taken;
+            }
+            NodeKind::Region if f.node_inputs(node).len() == 1 => {
+                edge = f.node_inputs(node)[0];
+            }
+            NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
+                edge = f.node_inputs(node)[NodeKind::CTRL_SLOT];
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// `value` evaluated over constant leaves, visiting at most `budget` nodes.
+fn cone_const(f: &Function, value: ValueId, budget: &Cell<u32>) -> Option<UBig> {
+    budget.set(budget.get().checked_sub(1)?);
+    crate::const_eval::eval_node_const(f, value, &|v| cone_const(f, v, budget), None)
 }
 
 /// A wider store's value shifted right `shift` bits and truncated to the
