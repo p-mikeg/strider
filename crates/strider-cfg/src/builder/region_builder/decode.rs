@@ -40,8 +40,8 @@ pub(super) fn next_pcode_addr(
 pub(in crate::builder) enum DecodeFailure {
     /// The reader had no bytes here.
     Unmapped(u64),
-    /// No instruction decodes here: Sleigh rejected the bytes, or
-    /// [`crate::CfgOptions::data_ranges`] marks them as data.
+    /// No instruction lifts here: Sleigh rejected the bytes or has no p-code
+    /// for them, or [`crate::CfgOptions::data_ranges`] marks them as data.
     NotCode { addr: u64, marked_data: bool },
     /// A seeded arm's code fell through past the function's end.
     PastEnd(PcodeInsnAddr),
@@ -239,7 +239,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
                     rsleigh::error::BaseError::DataUnavailErr
                     | rsleigh::error::BaseError::PartiallyInitializedInsn,
                 ) => anyhow::Error::new(DecodeFailure::Unmapped(addr)).context(msg),
-                // How Sleigh rejects bytes (`BadDataError`, no constructor).
+                // `BadDataError` (no constructor) or `UnimplError` (no p-code).
                 rsleigh::error::GenericError::Base(
                     rsleigh::error::BaseError::UnexpectedCppException(_),
                 ) => anyhow::Error::new(DecodeFailure::NotCode {
