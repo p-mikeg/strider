@@ -1,11 +1,8 @@
-//! Fallible pattern operations return plain [`anyhow::Result`]. The one named
-//! sentinel, [`RewriteSkip`], lets a rewrite rule opt out without surfacing a
-//! hard error.
+//! [`anyhow::Result`], plus the [`RewriteSkip`] sentinel by which a rewrite rule declines.
 
 pub type Result<T> = anyhow::Result<T>;
 
-/// Returned by a closure inside a rewrite RHS to decline the rewrite,
-/// detected via [`is_skip`].
+/// Returned from a rewrite RHS closure to decline the rewrite; see [`is_skip`].
 #[derive(Debug, thiserror::Error)]
 #[error("rewrite rule opted to skip")]
 pub struct RewriteSkip;
@@ -19,8 +16,7 @@ pub fn is_skip(err: &anyhow::Error) -> bool {
     err.is::<RewriteSkip>()
 }
 
-/// A builder referenced a capture the LHS never bound, naming the capture
-/// kind (`"uint"`, `"float_bits"`, ...).
+/// A builder read a capture of `kind` (`"uint"`, ...) that the LHS never bound.
 pub fn missing_binding(kind: &'static str) -> anyhow::Error {
     anyhow::anyhow!("missing binding for capture of kind {kind}")
 }

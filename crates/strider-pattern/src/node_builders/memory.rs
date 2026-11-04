@@ -1,11 +1,5 @@
-//! Slot conventions, per the IR `expected_signature`:
-//!
-//! * `Load` inputs `[mem(0), addr(1)]`, output the loaded value at slot 0.
-//! * `Store` inputs `[mem(0), addr(1), data(2)]`, output the new memory token
-//!   at slot 0.
-//!
-//! `Load` is value-producing and nests as a value operand; `Store` is a
-//! memory-token root exposing its token via [`MemPat`].
+//! `Load` and `Store` patterns. A `Load` nests as a value operand; a `Store`
+//! produces a memory token ([`MemPat`]).
 
 use super::{delegate_node_pat, node_match_pat};
 use strider_ir::IRViewer;
@@ -17,11 +11,8 @@ use crate::matcher::{KindSpec, Pattern};
 use super::MemPat;
 use crate::expr::Node;
 
-/// The address-region filter of a `Load`/`Store` pattern: a mutually-exclusive
-/// choice, so the state can hold only one at a time and the last builder call
-/// wins. Every arm but `Any` demands a decomposition verdict, so on a function
-/// whose memory side-table is not populated they all see `Unknown` and match
-/// nothing.
+/// A `Load`/`Store` address-region filter; the last builder call wins. Every
+/// arm but `Any` needs a decomposition verdict, so without one it matches nothing.
 #[derive(Default)]
 enum RegionFilter {
     #[default]
@@ -65,21 +56,19 @@ impl RegionFilter {
     }
 }
 
-/// The region filter every builder that holds a `RegionFilter` exposes
-/// verbatim. `$region` names the field.
+/// The region-filter builder methods; `$region` names the field.
 macro_rules! delegate_region_filter {
     ($ty:ty, $region:ident) => {
         impl $ty {
             /// Requires the address to decompose to exactly `sp + k`. Replaces any
-            /// region filter set before it.
+            /// earlier region filter.
             pub fn stack_offset(mut self, k: i128) -> Self {
                 self.$region = RegionFilter::Stack { offset: Some(k) };
                 self
             }
 
-            /// Keeps only accesses whose address decomposes to a stack base, keeping an
-            /// offset a preceding [`stack_offset`](Self::stack_offset) pinned. The one
-            /// region filter that does not discard what came before.
+            /// Keeps only accesses whose address decomposes to a stack base. Keeps an
+            /// earlier [`stack_offset`](Self::stack_offset); replaces any other filter.
             pub fn stack_only(mut self) -> Self {
                 if !matches!(self.$region, RegionFilter::Stack { .. }) {
                     self.$region = RegionFilter::Stack { offset: None };
@@ -87,16 +76,15 @@ macro_rules! delegate_region_filter {
                 self
             }
 
-            /// Keeps only accesses proven to be heap-rooted or not memory-rooted.
-            /// An address with no decomposition verdict is rejected. Replaces any
-            /// region filter set before it.
+            /// Keeps only accesses proven heap-rooted or not memory-rooted. Replaces
+            /// any earlier region filter.
             pub fn non_stack(mut self) -> Self {
                 self.$region = RegionFilter::NonStack;
                 self
             }
 
-            /// Keeps only accesses whose address decomposes to a heap base (a pure
-            /// allocator's return pointer). Replaces any region filter set before it.
+            /// Keeps only accesses whose address decomposes to a heap base. Replaces
+            /// any earlier region filter.
             pub fn heap_only(mut self) -> Self {
                 self.$region = RegionFilter::Heap;
                 self
@@ -105,7 +93,7 @@ macro_rules! delegate_region_filter {
     };
 }
 
-/// Inputs `[mem(0), addr(1)]`, single output the loaded value.
+/// A `Load`: inputs `[mem, addr]`, output the loaded value.
 pub struct LoadPat {
     inner: Node,
     region: RegionFilter,
@@ -123,14 +111,13 @@ impl LoadPat {
         self
     }
 
-    /// Input [`NodeKind::ACCESS_MEM_SLOT`], taking a `store` / `mem_phi` /
-    /// `call`.
+    /// Input [`NodeKind::ACCESS_MEM_SLOT`].
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.inner = self.inner.input_mem(NodeKind::ACCESS_MEM_SLOT, p);
         self
     }
 
-    /// Pins the value output's width, which is the anchor.
+    /// Pins the loaded value's width.
     pub fn bit_width(mut self, n: u32) -> Self {
         self.inner = self.inner.with_output_width(n);
         self
@@ -158,11 +145,10 @@ pub fn load() -> LoadPat {
 delegate_node_pat! { LoadPat, inner, [capture, input, any_input], with_output }
 delegate_region_filter!(LoadPat, region);
 
-/// Inputs `[mem(0), addr(1), data(2)]`, single output the new memory token.
+/// A `Store`: inputs `[mem, addr, data]`, output the new memory token.
 pub struct StorePat {
     inner: Node,
-    /// A width needs SOME wired producer at the data slot to pin on, so
-    /// `configured` synthesises one when `data` was never called.
+    /// Whether `data` was set; a width needs a data producer to pin on.
     has_data: bool,
     bit_width: Option<u32>,
     region: RegionFilter,
@@ -187,14 +173,13 @@ impl StorePat {
         self
     }
 
-    /// Input [`NodeKind::ACCESS_MEM_SLOT`], taking a `store` / `mem_phi` /
-    /// `call`.
+    /// Input [`NodeKind::ACCESS_MEM_SLOT`].
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.inner = self.inner.input_mem(NodeKind::ACCESS_MEM_SLOT, p);
         self
     }
 
-    /// Pins the width of the data input, [`NodeKind::STORE_DATA_SLOT`].
+    /// Pins the stored value's width.
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);
         self
@@ -214,8 +199,6 @@ impl StorePat {
                     crate::typed::wildcards::anything(),
                 );
             }
-            // The stored value is an input, not an output, so the width pins
-            // on that input's producer output.
             inner = inner.with_input_width(NodeKind::STORE_DATA_SLOT, w);
         }
         region.apply(inner)

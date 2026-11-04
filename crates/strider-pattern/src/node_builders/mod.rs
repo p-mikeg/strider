@@ -1,7 +1,5 @@
-//! The IR's memory side-channel (`InitialMemory -> Store -> MemPhi -> Call ->
-//! Load`) is matched like the value and control chains: a memory token is a
-//! real `PatValue` vertex of the memory kind, so a memory-side builder's input
-//! and produced token are both genuine vertices.
+//! Per-node-kind pattern builders. A memory token is a pattern vertex like any
+//! value or control edge.
 
 pub mod flow;
 pub mod function_arg;
@@ -20,16 +18,9 @@ pub use function_arg::{
 pub use memory::{LoadPat, StorePat, load, store};
 pub use phi::{MemPhiPat, PhiPat, mem_phi, phi, phi_for};
 
-/// The forwarders every [`Node`](crate::expr::Node) wrapper repeats
-/// verbatim. `$inner` names the field, `0` for a newtype; each method is opted
-/// into by name, so a builder that has to do work in one of them (`StorePat`
-/// synthesises a data producer in `build`) simply leaves it out and writes its
-/// own.
-///
-/// Only the forwarders whose DOC is the same for every builder live here.
-/// `mem` and `target` name a specific slot per node kind, so they stay
-/// hand-written where that sentence is worth reading. A trailing
-/// `with_output` also forwards every [`WithOutput`] constraint.
+/// Forwarders shared by every [`Node`](crate::expr::Node) wrapper, opted into by
+/// name. `$inner` names the field (`0` for a newtype); a trailing `with_output`
+/// implements [`WithOutput`].
 macro_rules! delegate_node_pat {
     ($ty:ty, $inner:tt, [$($m:ident),* $(,)?] $(, $extra:ident)?) => {
         impl $ty {
@@ -61,9 +52,7 @@ macro_rules! delegate_node_pat {
         }
     };
     (@m $inner:tt, input) => {
-        /// Raw input slot `slot`, unshifted. Slot numbering is per node kind,
-        /// laid out by the IR's `expected_signature`; the named accessors are
-        /// the intended surface and this is the escape hatch beneath them.
+        /// Raw input slot `slot`, unshifted, per the IR's `expected_signature`.
         /// A `call` / `call_other` there binds any of its outputs.
         pub fn input<P: $crate::matcher::match_pat::MatchPat + 'static>(
             mut self,
@@ -75,8 +64,8 @@ macro_rules! delegate_node_pat {
         }
     };
     (@m $inner:tt, ctrl) => {
-        /// Input [`NodeKind::CTRL_SLOT`](strider_ir::node::NodeKind::CTRL_SLOT).
-        /// The sub-pattern's root produces a control edge, not a value.
+        /// Input [`NodeKind::CTRL_SLOT`](strider_ir::node::NodeKind::CTRL_SLOT),
+        /// a control edge.
         pub fn ctrl<P: $crate::matcher::match_pat::MatchPat + 'static>(mut self, p: P) -> Self {
             self.$inner = self
                 .$inner
@@ -85,25 +74,15 @@ macro_rules! delegate_node_pat {
         }
     };
     (@m $inner:tt, any_input) => {
-        /// Matches *some* input without pinning a slot. The candidates are the
-        /// inputs no fixed operand pinned, which on a commutative node is every
-        /// input, its fixed operands roaming both slots. The sub-pattern
-        /// discriminates: a typed value sub binds only a value input, while
-        /// `var` / `anything` also reaches the control and memory edges, and a
-        /// `call` / `call_other` any of its outputs.
-        /// Repeatable, each call adding one constraint; several existentials
-        /// on one node take distinct slots.
+        /// Matches some input no fixed operand pinned (on a commutative node,
+        /// any input). `var` / `anything` also reach control and memory edges.
+        /// Repeatable; several on one node take distinct slots.
         ///
         /// # Cost
         ///
-        /// `k` existentials over `n` candidate inputs enumerate all
-        /// `n * (n-1) * ... * (n-k+1)` injective assignments, whether or not
-        /// they capture: uncaptured ones share one binding signature and
-        /// collapse to a single reported match, so the cost is in
-        /// configurations explored rather than results, and a guard above
-        /// prunes none of them. It scales with the matched node's arity, so
-        /// pin a slot with `input` where that arity is large (a wide phi, a
-        /// variadic call).
+        /// `k` of these over `n` candidate inputs explore all
+        /// `n * (n-1) * ... * (n-k+1)` assignments; pin a slot with `input` on a
+        /// wide node.
         pub fn any_input<P: $crate::matcher::match_pat::MatchPat + 'static>(
             mut self,
             p: P,
@@ -115,8 +94,8 @@ macro_rules! delegate_node_pat {
 }
 pub(crate) use delegate_node_pat;
 
-/// A builder as an [`Expr`](crate::Expr), `$node` its configured node: every
-/// slot nests through what that node declares.
+/// Implements [`IntoExpr`](crate::IntoExpr) and `MatchPat` for each
+/// builder, `$node` its configured node.
 macro_rules! node_match_pat {
     ($($ty:ty => |$p:ident| $node:expr),* $(,)?) => {$(
         impl $crate::expr::IntoExpr for $ty {
@@ -137,11 +116,9 @@ thread_local! {
     static DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Drops `value` without recursing through the tower hanging off it: a chain
-/// of boxed operands one link per nesting level, which dropped in place
-/// unwinds a frame per level. A nested link's own drop lands back here and is
-/// popped by the outermost call instead. Once thread-local teardown has taken
-/// the pit away, `value` is dropped in place, the one option left.
+/// Drops `value` iteratively rather than one stack frame per nesting level: a
+/// nested link's drop is queued and popped by the outermost call. During
+/// thread-local teardown, `value` is dropped in place.
 pub fn defer_drop<T: Send + 'static>(value: T) {
     let mut boxed: Option<Box<dyn Send>> = Some(Box::new(value));
     let queued = DROP_PIT
@@ -151,8 +128,7 @@ pub fn defer_drop<T: Send + 'static>(value: T) {
     if !queued || DRAINING.replace(true) {
         return;
     }
-    // A panicking drop must not leave the flag set, or every later call parks
-    // its value in the pit and nothing drains it again.
+    // Reset on panic, or later values would park in the pit undrained.
     struct Draining;
     impl Drop for Draining {
         fn drop(&mut self) {
@@ -165,11 +141,8 @@ pub fn defer_drop<T: Send + 'static>(value: T) {
     }
 }
 
-/// Renders a sealed pattern's vertices in DECLARATION order, one line per pat
-/// node and one per output vertex and wired input.
-///
-/// Vertex order is observable: [`root_output_vertex_for`] picks among a node's
-/// output vertices and [`anchor_repeats`] compares vertex identity.
+/// Renders a pattern's vertices in declaration order, which matching observes
+/// ([`root_output_vertex_for`], [`anchor_repeats`]).
 ///
 /// [`root_output_vertex_for`]: crate::matcher::walk::root_output_vertex_for
 /// [`anchor_repeats`]: crate::matcher::walk::anchor_repeats
@@ -229,7 +202,5 @@ pub(crate) fn pattern_shape(pat: &crate::Pattern) -> String {
     out
 }
 
-/// A sub-pattern that produces a memory token, so it can be chained into a
-/// consumer's memory input slot. This bound is what keeps a value-only
-/// pattern out of a memory slot.
+/// A sub-pattern that produces a memory token, accepted in a memory input slot.
 pub trait MemPat: crate::matcher::match_pat::MatchPat {}

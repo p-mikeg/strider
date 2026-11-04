@@ -1,6 +1,4 @@
-//! Construction verbs for a [`Template`]. A [`TmplNodeKind::Build`] node is
-//! built from an exact `NodeKind`, or from a rewrite-time closure through
-//! [`dynamic_leaf`](TemplateBuilder::dynamic_leaf).
+//! Construction verbs for a [`Template`].
 
 use strider_ir::node::{NodeKind, ValueType};
 
@@ -9,8 +7,7 @@ use crate::template::graph::{Template, TmplNode, TmplNodeKind, TmplValue};
 use crate::template::{TemplateKind, TemplateTy};
 use strider_graph::{NodeId, ValueId};
 
-/// A node's output, scoped to the builder that produced it. A match-side
-/// output is not one:
+/// A template node's output. A match-side output is not one:
 ///
 /// ```compile_fail,E0308
 /// use strider_ir::node::NodeKind;
@@ -24,8 +21,7 @@ use strider_graph::{NodeId, ValueId};
 #[derive(Clone, Copy)]
 pub struct TmplValueRef(ValueId);
 
-/// A node, scoped to the builder that produced it. No other id names one, so
-/// a capture, whose node is never handed out, takes no input:
+/// A template node. A capture's node is never handed out, so it takes no input:
 ///
 /// ```compile_fail,E0308
 /// use strider_pattern::Capture;
@@ -37,15 +33,10 @@ pub struct TmplValueRef(ValueId);
 #[derive(Clone, Copy)]
 pub struct TmplNodeRef(NodeId);
 
-/// # The raw verbs are checked at instantiation
-///
-/// [`leaf`](Self::leaf) declares a canonical output signature. The raw verbs
-/// ([`node`](Self::node), [`input`](Self::input), the `*_output` slot verbs)
-/// enforce only [`input`](Self::input)'s build order when called;
-/// [`instantiate`](crate::template::instantiate) checks every node against its
-/// node signature and refuses a gapped or duplicate input slot. No verb
-/// declares a control output, so a node whose signature has one (`Call`,
-/// `Region`, `If`, ...) cannot be built.
+/// Builds a [`Template`]. The raw verbs ([`node`](Self::node),
+/// [`input`](Self::input), the `*_output` verbs) are checked against each node's
+/// signature only at [`instantiate`](crate::template::instantiate). No verb
+/// declares a control output, so `Call`, `Region`, `If`, ... cannot be built.
 #[derive(Default)]
 pub struct TemplateBuilder {
     core: BuildGraph<TmplNode, TmplValue>,
@@ -58,23 +49,19 @@ impl TemplateBuilder {
         Self::default()
     }
 
-    /// Declares a capture a dynamic-kind closure reads at instantiation. It has
-    /// no vertex, so without this the construction-time coverage check cannot
-    /// see it and an LHS that never binds it errors mid-rewrite instead.
+    /// Declares a capture a closure reads, so the coverage check sees it.
     pub fn declare_capture(&mut self, c: crate::Capture) {
         self.declared_captures.push(c);
     }
 
-    /// Declares a capture the closure reads as an `Option`, so it may bind on
-    /// only some alternation arms. The coverage check still refuses one the
-    /// LHS mentions nowhere, and the relaxation drops away if another use in
-    /// the same template needs `c` bound.
+    /// Declares a capture a closure reads as an `Option`, so it may bind on only
+    /// some alternation arms. The LHS must still mention it, and another use
+    /// that needs it bound overrides this.
     pub fn declare_optional_capture(&mut self, c: crate::Capture) {
         self.optional_captures.push(c);
     }
 
-    /// One value output at slot 0. A template node is built, so it names a
-    /// kind, not a match spec:
+    /// A node with one value output at slot 0. It takes a kind, not a match spec:
     ///
     /// ```compile_fail,E0308
     /// use strider_pattern::matcher::KindSpec;
@@ -85,15 +72,12 @@ impl TemplateBuilder {
         self.build(TemplateKind::Exact(kind), &[], TemplateTy::InheritRoot)
     }
 
-    /// A leaf whose kind or constant a closure computes at rewrite time, from
-    /// [`TemplateKind::Fn`] or [`TemplateKind::FnIntConst`];
-    /// `TemplateKind::Exact(k)` builds what [`leaf`](Self::leaf)`(k)` does.
+    /// A leaf from any [`TemplateKind`], such as a rewrite-time closure.
     pub fn dynamic_leaf(&mut self, kind: TemplateKind) -> TmplValueRef {
         self.build(kind, &[], TemplateTy::InheritRoot)
     }
 
-    /// One node over `inputs` at slots `0..`, nesting through its value
-    /// output at slot 0, typed `ty`.
+    /// One node over `inputs` at slots `0..`, its value output at slot 0 typed `ty`.
     pub(crate) fn build(
         &mut self,
         kind: TemplateKind,
@@ -108,53 +92,48 @@ impl TemplateBuilder {
         self.add_value(n, TmplValue { slot: 0, ty })
     }
 
-    /// Bare: no inputs or outputs yet.
+    /// A node with no inputs or outputs yet.
     pub fn node(&mut self, kind: NodeKind) -> TmplNodeRef {
         self.add_node(TmplNodeKind::Build(TemplateKind::Exact(kind)))
     }
 
-    /// `prod` comes from a node built before `node`, or from a
-    /// [`capture`](Self::capture), which may be built anywhere.
+    /// Wires `prod` into `node`'s `slot`. `prod` must come from a node built
+    /// before `node`, or from a [`capture`](Self::capture).
     pub fn input(&mut self, node: TmplNodeRef, slot: usize, prod: TmplValueRef) {
         if self.core.add_input(node.0, prod.0, self.is_capture(prod)) {
             self.core.graph.node_kind_mut(node.0).input_slots.push(slot);
         }
     }
 
-    /// Inherits the rewrite root's type unless one is set.
+    /// A value output, inheriting the rewrite root's type unless one is set.
     pub fn value_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
         let ty = Some(TemplateTy::InheritRoot);
         self.add_value(node, TmplValue { slot, ty })
     }
 
+    /// A memory output.
     pub fn memory_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
         self.add_value(node, TmplValue { slot, ty: None })
     }
 
-    /// Types the materialised node independently of the rewrite root. On a
-    /// capture, which keeps its binding's type, the template is refused.
+    /// Fixes `out`'s type. Refused on a capture.
     pub fn set_value_ty(&mut self, out: TmplValueRef, ty: ValueType) {
         self.set_ty(out, TemplateTy::Fixed(ty));
     }
 
-    /// Types `out` from the width of a bound LHS capture. On a capture, which
-    /// keeps its binding's type, the template is refused.
+    /// Types `out` from a bound LHS capture's value. Refused on a capture.
     pub fn set_value_ty_of_binding(&mut self, out: TmplValueRef, cap: crate::Capture) {
         self.set_ty(out, TemplateTy::InheritBinding(cap));
     }
 
-    /// A `TmplNodeKind::Capture` leaf, its output typed from `c`'s binding.
-    /// At instantiation it resolves to the LHS binding for `c`, reused
-    /// verbatim. Returns only a [`TmplValueRef`], so an input can never be
-    /// wired into a capture node.
+    /// A leaf that instantiates as the LHS binding for `c`.
     pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {
         let n = self.add_node(TmplNodeKind::Capture);
         let ty = Some(TemplateTy::InheritBinding(c));
         self.add_value(n, TmplValue { slot: 0, ty })
     }
 
-    /// See [`BuildGraph::enter_nesting`]: a template is charged to the stack
-    /// alone.
+    /// See [`BuildGraph::enter_nesting`]; a template is charged to the stack alone.
     pub(crate) fn enter_nesting(&mut self) -> bool {
         self.core.enter_nesting(false)
     }
@@ -174,8 +153,7 @@ impl TemplateBuilder {
         self.capture(crate::Capture::internal())
     }
 
-    /// A refused or multi-sink template surfaces through
-    /// [`Template::root`].
+    /// The finished template; a refusal surfaces through [`Template::root`].
     pub fn finish(self) -> Template {
         Template {
             graph: self.core.graph,
@@ -201,7 +179,7 @@ impl TemplateBuilder {
         matches!(self.core.graph.node_kind(node).kind, TmplNodeKind::Capture)
     }
 
-    /// Refused when `out` is a capture; a memory output has no type to set.
+    /// Refused on a capture; a no-op on a memory output.
     fn set_ty(&mut self, out: TmplValueRef, ty: TemplateTy) {
         if self.is_capture(out) {
             return self.core.reject(
@@ -257,9 +235,6 @@ mod tests {
 
     #[test]
     fn capture_is_a_node_whose_output_inherits_its_binding() {
-        // A capture is a `Capture` node whose one output is typed
-        // `InheritBinding(c)`; a buildable node is `Build(_)` with a typed
-        // output.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
         let _built = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| {
@@ -268,8 +243,6 @@ mod tests {
         let _cap = b.capture(c);
         let t = b.finish();
 
-        // Exactly one Build node and one Capture node, the id on the
-        // capture's output.
         let mut saw_build = false;
         let mut saw_capture = false;
         for node in t.graph.all_node_ids() {

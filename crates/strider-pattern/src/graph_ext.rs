@@ -1,22 +1,18 @@
-//! Pattern inputs are **sparse**: `call().arg(0, ...)` wires only raw input
-//! slot 4. The generic graph stores inputs densely, so each input's original
-//! consumer slot rides on the node payload ([`HasInputSlots::input_slots`]),
-//! parallel to the generic graph's input order.
-//! [`consumed_inputs`] zips the two back together.
+//! Pattern inputs are sparse (`call().arg(0, ...)` wires only raw slot 4) while the graph stores
+//! them densely, so each input's slot rides on the node payload
+//! ([`HasInputSlots::input_slots`]).
 
 use anyhow::anyhow;
 use strider_graph::{Graph, NeverCacheable, NodeId, ValueId};
 
 pub(crate) trait HasInputSlots {
-    /// A plain index on the build side; on the match side an existential
-    /// names no index.
+    /// An index, or on the match side possibly an existential.
     type Slot: Copy;
-    /// Consumer slots, one per input, parallel to the generic graph's input
-    /// order.
+    /// Consumer slots, parallel to the graph's input order.
     fn input_slots(&self) -> &[Self::Slot];
 }
 
-/// Recovers each input's sparse consumer slot from the node payload.
+/// Each input with its consumer slot.
 pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
     graph: &Graph<N, V, NeverCacheable>,
     node: NodeId,
@@ -30,13 +26,10 @@ pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
         .collect()
 }
 
-/// The root is the unique sink, derived structurally rather than stored. A
-/// node with no outputs is vacuously a sink, which is what roots `ret()` /
-/// `switch()` / `if_else()`.
+/// The root: the unique sink. A node with no outputs is a sink.
 ///
 /// # Errors
-/// Unless there is exactly one sink: zero means an empty graph, more than one
-/// means multi-rooted.
+/// Unless there is exactly one sink.
 pub(crate) fn derive_root<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::Result<NodeId> {
     let sinks: Vec<NodeId> = graph
         .all_node_ids()

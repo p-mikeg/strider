@@ -7,8 +7,7 @@ use crate::matcher::Matcher;
 #[derive(PartialEq, Eq)]
 pub enum KindSpec {
     Any,
-    /// Variant-agnostic: any node sharing the discriminant, e.g. "any
-    /// `IntBinaryOp`".
+    /// Any node sharing the discriminant, e.g. any `IntBinaryOp`.
     Variant(Discriminant<NodeKind>),
     /// Variant and payload.
     Exact(NodeKind),
@@ -42,10 +41,8 @@ impl KindSpec {
     }
 }
 
-/// Accept or reject the matched IR node. Takes no output type; a closure that
-/// needs one derives it from the node. It may run more than once per
-/// candidate, and on nodes the full match would reject: the root's operands are
-/// screened before the root is matched, at both slots of an unordered pair.
+/// Accept or reject the matched IR node. May run more than once per candidate, and on nodes the
+/// full match rejects (operands are screened before the root is matched).
 pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool + Send>;
 
 /// Runs once the node's inputs have matched. Below the root it sees the
@@ -60,26 +57,20 @@ pub type PostMatchFn =
 pub(crate) enum InputSlot {
     /// One IR input slot.
     At(usize),
-    /// Any input not taken by a fixed operand (`any_input`). A sub reaches the
-    /// slots of its own output kind; a wildcard reaches any input, control /
-    /// memory / `PhiToken` slots included.
+    /// Any input not taken by a fixed operand (`any_input`), of the sub-pattern's output kind;
+    /// a wildcard reaches every slot.
     Any,
 }
 
 pub(crate) struct PatNode {
     pub(crate) kind: KindSpec,
-    /// Binds the matched *node* (`Binding::Node`). Only for value-less roots
-    /// (`Return`, `IndirectBranch`, `Switch`, `Unreachable`, `If`) with no
-    /// value output vertex to anchor a value capture on. Repeatable: every
-    /// listed capture binds that node.
+    /// Each binds the matched node (`Binding::Node`); for roots with no value output to capture.
     pub(crate) captures: Vec<crate::capture::Capture>,
     /// Run before descending into inputs; all must hold.
     pub(crate) node_predicates: Vec<NodePredicate>,
     pub(crate) post_matches: Vec<PostMatchFn>,
     pub(crate) role: Role,
-    /// Consumer input slot per input, parallel to the generic graph's input
-    /// order. A pattern's inputs are sparse (`call().arg(0, ..)` wires only
-    /// raw slot 4), so the original slot is recorded here.
+    /// The IR input slot of each pattern input, in graph input order (inputs are sparse).
     pub(crate) input_slots: Vec<InputSlot>,
 }
 
@@ -88,8 +79,7 @@ pub(crate) struct PatNode {
 pub(crate) enum Role {
     /// Operands; `ordered` suppresses commutative reordering.
     Operands { ordered: bool },
-    /// `one_of`: the inputs are alternative sub-patterns tried against the
-    /// *same* IR node, every matching arm enumerated (a union).
+    /// `one_of`: alternative sub-patterns tried against the same IR node, every matching arm kept.
     OneOf,
     /// `first_of`: [`Role::OneOf`] kept to the first arm that matches.
     FirstOf,
@@ -126,9 +116,7 @@ impl PatNode {
 
 #[derive(PartialEq)]
 pub(crate) enum OutputKindSpec {
-    /// Value, control, memory, or phi-token: the unconstrained wildcard behind
-    /// `anything()` / `var()`. A `width` constraint can still narrow it to a value
-    /// output of that width.
+    /// Any output, including phi-token: `anything()` / `var()`.
     Any,
     AnyValue,
     Value(ValueType),
@@ -139,9 +127,8 @@ pub(crate) enum OutputKindSpec {
 /// How a value vertex reads its `slot`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SlotMode {
-    /// An anchor position only: as an anchor (a root's sole vertex, or an
-    /// operand's producer) it takes the output being matched, whatever its
-    /// slot; as a sibling it sits at `slot`.
+    /// As an anchor (root's sole vertex, or an operand's producer), the output being matched; as
+    /// a sibling, `slot`.
     Loose,
     /// The matched output must be produced at `slot`.
     Pinned,
@@ -151,33 +138,24 @@ pub(crate) enum SlotMode {
 
 pub(crate) struct PatValue {
     pub(crate) slot: usize,
-    /// What `slot` means. Sibling `Enumerated` vertices on one node are NOT
-    /// injective, unlike an existential input: each enumerates every output
-    /// independently, so two of them can settle on the same one.
+    /// What `slot` means. Sibling `Enumerated` vertices may settle on the same output.
     pub(crate) slot_mode: SlotMode,
     pub(crate) kind: OutputKindSpec,
-    /// Not implied by `kind`: `Value(ValueType)` fixes int-vs-float too, while
-    /// `value_of_width(32)` means "any 32-bit value", which no `kind` arm
-    /// spells.
+    /// A width of any value type, which no `kind` arm spells.
     pub(crate) width: Option<u32>,
-    /// Where value captures live: `int_add(var(x), ..)` binds `x` here.
-    /// Repeatable: `var(x).capture(y)` binds both to the matched value.
+    /// Each binds the matched value.
     pub(crate) captures: Vec<crate::capture::Capture>,
     /// Widens an `AnyValue` vertex to also accept the memory token of a node
     /// with no value output. Set on a pattern root's output (and its
     /// alternation arms), where nothing consumes the edge.
     pub(crate) token_fallback: bool,
-    /// A crate-minted capture pinning ONE vertex consumed at several pattern
-    /// slots to a single IR value. Structural sharing alone does not do it:
-    /// each slot is matched on its own, so `float_eq(x, x)` would otherwise
-    /// accept two different operands. Never a caller's capture, and filtered
-    /// out of a `Match`.
+    /// An internal capture pinning a vertex consumed at several slots to one IR value (each slot
+    /// is matched on its own). Filtered out of a `Match`.
     pub(crate) identity: Option<crate::capture::Capture>,
 }
 
 impl PatValue {
-    /// Unconstrained but for the kind, which is what separates the three
-    /// constructors below; every other field starts empty.
+    /// Unconstrained but for the kind.
     fn of_kind(slot: usize, kind: OutputKindSpec) -> Self {
         Self {
             slot,

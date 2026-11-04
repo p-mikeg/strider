@@ -1,10 +1,5 @@
-//! Raw input slot 0 is the phi-token edge from the owning `Region`, so
-//! predecessor 0's value sits at slot 1. `.phi_input(i, p)` addresses
-//! predecessors directly; `.input(i, p)` is the raw slot every other builder's
-//! `input` is.
-//!
-//! `Phi` produces a value output at slot 0; `MemPhi` produces a memory token
-//! there and implements [`MemPat`] so a `load` / `store` can chain off it.
+//! `Phi` and `MemPhi` patterns. Raw input slot 0 is the owning `Region`'s phi
+//! token, so predecessor `i` is at slot `i + 1`.
 
 use super::{delegate_node_pat, node_match_pat};
 use strider_ir::IRViewer;
@@ -20,8 +15,6 @@ use crate::expr::Node;
 fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
     Box::new(move |m, n| {
         let v = m.function().node_outputs(n)[0];
-        // The tag stores the largest container, so a pinned sub-register
-        // matches its container.
         m.function()
             .get_vn_for_value(v)
             .is_some_and(|got| vn_container::vn_contains(&got, &want))
@@ -37,21 +30,20 @@ impl PhiPat {
         Self(self.0.input(NodeKind::Phi.input_head_len() + idx, p))
     }
 
-    /// The ownership edge, carrying the owning `Region`'s `PhiToken` output.
+    /// The owning `Region`'s `PhiToken` input.
     pub fn phi_token<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.raw_input(NodeKind::PHI_TOKEN_SLOT, p))
     }
 
-    /// Narrows to the lifter-emitted SSA phi whose `value_vn` tag contains
-    /// `vn`, so a sub-register matches its container's phi. Repeated, every
+    /// Narrows to a phi whose `value_vn` tag contains `vn`. Repeated, every
     /// `vn` must hold.
     pub fn for_vn(self, vn: rsleigh::Vn) -> Self {
         Self(self.0.with_node_predicate(phi_var_limit(vn)))
     }
 }
 
+/// Any `Phi`.
 pub fn phi() -> PhiPat {
-    // Captures and predicates anchor on the value output at slot 0.
     PhiPat(Node::value(KindSpec::variant_of(&NodeKind::Phi), 0))
 }
 
@@ -62,13 +54,11 @@ pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
     phi().for_vn(vn)
 }
 
-/// The memory-token phi at join points, producing its token at output slot 0.
-/// Same slot layout as [`PhiPat`], with a memory token per predecessor.
+/// A `MemPhi`: [`PhiPat`]'s slot layout, with a memory token per predecessor.
 pub struct MemPhiPat(Node);
 
 impl MemPhiPat {
     /// Predecessor `idx`'s incoming memory token.
-    /// The sub-pattern must be a memory producer.
     pub fn phi_input<M: MemPat + 'static>(self, idx: usize, p: M) -> Self {
         Self(self.0.input_mem(NodeKind::MemPhi.input_head_len() + idx, p))
     }
