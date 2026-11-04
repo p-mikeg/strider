@@ -110,7 +110,8 @@ pub struct PostOrder<G: GraphRef> {
 }
 
 impl<G: GraphRef> PostOrder<G> {
-    /// Roots pop last-first, so in a derived RPO an earlier root comes first.
+    /// Roots pop last-first, so in a derived RPO an earlier root precedes
+    /// every later root that does not reach it.
     pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
         Self {
             graph,
