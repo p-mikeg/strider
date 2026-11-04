@@ -1540,3 +1540,26 @@ fn a_mips32_copy_off_the_dynsym_is_a_hole_to_its_mappings_end() {
         );
     }
 }
+
+/// GCC's mips64 `.gpdword` jump-table entry is `R_MIPS_GPREL32 | R_MIPS_64`,
+/// an 8-byte field this loader does not compute: neither half is served.
+#[test]
+fn an_uncomputed_8_byte_mips64_composite_serves_no_byte() {
+    use strider_reader::ReadOnlyMemory as _;
+    let path = common::fixtures_out().join("mips64be/switch_masked_loop.o");
+    let elf = strider_reader::OwnedElf::open(&path).expect("open");
+    let obj = elf.checked_file().expect("file");
+    let rodata = obj.section_by_name(".rodata").expect(".rodata");
+    let base = strider_reader::elf::ElfSectionLayout::new(&obj).section_base(&rodata);
+    let reader = strider_reader::ElfFileMemReader::new(
+        &elf,
+        strider_reader::elf::RelocationMode::Applied { got_is_rom: false },
+    )
+    .expect("reader");
+    let mut half = [0u8; 4];
+    assert!(!reader.try_read(base, &mut half), "high half");
+    assert!(
+        !reader.try_read(base + 4, &mut half),
+        "low half served as {half:02x?}"
+    );
+}
