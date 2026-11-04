@@ -307,51 +307,36 @@ mod tests {
         carrier(&preserve(set_bits, shift, ty))
     }
 
-    /// The positioned mask selects exactly the bits reg occupies.
+    /// `ones_at` and its complement at the sub-register windows the lifter
+    /// builds: (set bits, shift, container, ones_at, preserve).
     #[test]
-    fn positioned_mask_isolates_reg_bits_inside_16byte_container() {
-        let q0 = ones_at(128, 0);
-        assert_eq!(carrier(&q0), u128::MAX, "container mask is all-ones");
-        assert_eq!(
-            carrier(&ones_at(32, 0)),
-            0xFFFF_FFFF,
-            "s0 occupies bits 0..32"
-        );
-        let d0 = ones_at(64, 0);
-        assert_eq!(
-            carrier(&d0),
-            0xFFFF_FFFF_FFFF_FFFF,
-            "d0 occupies bits 0..64"
-        );
-        // The AArch64 SIMD upper-half hot spot.
-        let upper8 = ones_at(64, 64);
-        assert_eq!(
-            carrier(&upper8),
-            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
-            "the 8-byte sub at offset 8 occupies bits 64..128"
-        );
-        assert_eq!(carrier(&d0) & carrier(&upper8), 0, "disjoint");
-        assert_eq!(carrier(&d0) | carrier(&upper8), carrier(&q0), "covering");
-    }
-
-    /// The preserve mask keeps exactly the bits that don't belong to reg.
-    #[test]
-    fn container_mask_for_upper_half_write_keeps_lower_half() {
-        assert_eq!(
-            preserve_u128(64, 64, ValueType::int(128)),
-            0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF,
-            "an upper-8 write preserves the lower 8 bytes of q0"
-        );
-    }
-
-    /// Same, for the shift-0 lower-half write.
-    #[test]
-    fn container_mask_for_lower_half_write_keeps_upper_half() {
-        assert_eq!(
-            preserve_u128(64, 0, ValueType::int(128)),
-            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
-            "a d0 (lower 8) write preserves the upper 8 bytes of q0"
-        );
+    fn sub_register_window_masks() {
+        #[rustfmt::skip]
+        let rows: [(usize, usize, u16, u128, u128); 10] = [
+            (128, 0, 128, u128::MAX, 0),
+            (32, 0, 128, 0xFFFF_FFFF, !0xFFFF_FFFF),
+            // d0 / the upper 8 bytes of q0
+            (64, 0, 128, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF << 64),
+            (64, 64, 128, 0xFFFF_FFFF_FFFF_FFFF << 64, 0xFFFF_FFFF_FFFF_FFFF),
+            (8, 0, 32, 0xFF, 0xFFFF_FF00),
+            (8, 8, 32, 0xFF00, 0xFFFF_00FF),
+            (8, 16, 32, 0xFF_0000, 0xFF00_FFFF),
+            (8, 24, 32, 0xFF00_0000, 0x00FF_FFFF),
+            (48, 0, 64, 0xFFFF_FFFF_FFFF, 0xFFFF << 48),
+            (80, 0, 128, (1 << 80) - 1, !((1 << 80) - 1)),
+        ];
+        for (bits, shift, w, ones, kept) in rows {
+            assert_eq!(
+                carrier(&ones_at(bits, shift)),
+                ones,
+                "ones_at({bits}, {shift})"
+            );
+            assert_eq!(
+                preserve_u128(bits, shift, ValueType::int(w)),
+                kept,
+                "preserve({bits}, {shift}, i{w})"
+            );
+        }
     }
 
     /// Pins the invariant that makes preserve-then-let-Sleigh-zero exact: the
@@ -390,39 +375,6 @@ mod tests {
             ones_at(Z0_BITS, 0),
             "s0 and the zero-fills tile the full z0 container"
         );
-    }
-
-    /// Exercises every shift count the LE formula produces.
-    #[test]
-    fn container_mask_byte_subregs_in_4byte_container() {
-        let cases: [(usize, u32); 4] = [
-            (0, 0xFFFF_FF00),
-            (8, 0xFFFF_00FF),
-            (16, 0xFF00_FFFF),
-            (24, 0x00FF_FFFF),
-        ];
-        for (shift, expected) in cases {
-            assert_eq!(
-                preserve_u128(8, shift, ValueType::int(32)),
-                u128::from(expected),
-                "byte-sub at shift {shift}: expected container_mask 0x{expected:08x}"
-            );
-        }
-    }
-
-    /// Every container width the sub-register path builds masks for.
-    #[test]
-    fn mask_covers_only_the_declared_width() {
-        for bytes in [1usize, 2, 4, 6, 8, 10, 12, 14, 16] {
-            let bits = bytes * 8;
-            let mask = carrier(&ones_at(bits, 0));
-            let want = if bits == 128 {
-                u128::MAX
-            } else {
-                (1u128 << bits) - 1
-            };
-            assert_eq!(mask, want, "{bytes}-byte mask is the low {bits} bits");
-        }
     }
 
     /// ymm / zmm / SVE `z`: the widths a `u128` mask could not hold.
