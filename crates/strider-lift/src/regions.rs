@@ -1,6 +1,3 @@
-//! Per-region lift: one IR region per CFG region, each region's instructions
-//! in dominator-tree pre-order, then the edges no terminator wired.
-
 use anyhow::Result;
 
 use crate::{FunctionLifter, pruned_ssa};
@@ -76,12 +73,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 }
                 self.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, region_map)?;
             }
-            // Fingerprint contributor for the terminator handlers: the region's
-            // last pcode insn. A region with none (a synthetic tail-call stub,
-            // or a run of zero-op instructions) falls back to its predecessor's
-            // branch or fall-through, or its nodes carry no fingerprint and fail
-            // the validator. A predecessor with no pcode insn contributes its
-            // region start. `max` picks one when several branches share a stub.
+            // The terminator's fingerprint address: the region's last pcode
+            // insn, else (a stub, a zero-op run) a predecessor's last insn or
+            // start, the `max` when several share it. Unfingerprinted nodes
+            // fail the validator.
             let term_addr = region
                 .insns
                 .last()

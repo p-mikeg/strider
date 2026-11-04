@@ -20,8 +20,7 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// runs an identical one, so a register store resolves alike on both sides.
     pub(crate) pcode_consts: super::pcode_consts::PcodeConsts,
     /// The first value written to `ISAModeSwitch` at a machine address, and
-    /// that address: the mode its branch targets decode in. First, because ARM
-    /// `ldr pc,addrmode2` writes a constant 0 after the call. The region's
+    /// that address: the mode its branch targets decode in. The region's
     /// `IndirectBranch` takes it iff they share the address.
     pub(crate) pending_isa_mode: Option<(strider_ir::node::ValueId, u64)>,
     /// Each `Region` node's last machine address: the branch leaving it.

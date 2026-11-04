@@ -50,12 +50,10 @@ pub struct LiftSites {
     /// `IndirectBranch` placeholder.
     pub unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 
-    /// Seated `Switch` sites, keyed like `unresolved_branches`. The resolver
-    /// re-derives each round, so it can widen a table resolved early.
+    /// Seated `Switch` sites, keyed like `unresolved_branches`.
     pub switch_anchors: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 
-    /// Every Sleigh `RETURN` lifted to a `Return`; only the optimised IR can
-    /// show its target is the caller's return address.
+    /// Every Sleigh `RETURN` lifted to a `Return`.
     pub return_sites: Vec<ReturnSite>,
 }
 
@@ -74,8 +72,6 @@ pub struct Lifter<R: rsleigh::MemReader> {
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
-    /// A lift engine over `reader`, with the Sleigh built from `arch`.
-    ///
     /// # Errors
     ///
     /// When [`strider_cfg::DecodeEngine::new`] fails.
@@ -101,9 +97,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// [`Self::check_cc`], plus: an override must name the function's own
-    /// stack pointer. `build_call` adjusts the function's SP while the clobber
-    /// split reads the override's, so a different SP would be clobbered and
-    /// every stack offset past the call lost.
+    /// stack pointer; otherwise the call clobbers the function's SP, losing
+    /// every stack offset past it.
     pub(crate) fn check_override_cc(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -162,9 +157,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// Rejects a `Cfg` whose Load / Store space ids (raw `AddrSpace` pointers
-    /// of the engine that decoded it) are not live spaces of this engine,
-    /// before [`Self::decode_space_id`] reads any. Not proof of origin: a
-    /// dropped engine's reused address passes.
+    /// of the engine that decoded it) are not live spaces of this engine. Not
+    /// proof of origin: a dropped engine's reused address passes.
     fn check_cfg_space_ids(&self, cfg: &strider_cfg::Cfg) -> Result<()> {
         for wrapped in cfg.regions().flat_map(|region| region.insns.iter()) {
             if !matches!(
@@ -213,12 +207,10 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// Lifts `cfg`, which must have been built with `cfg_opts`. `cc` is the
     /// default convention; a direct Call to a key of `per_address_ccs` uses
     /// that override. `cc` and every override must be built against this
-    /// engine's registers and fit its arch. The function holds `claims`
-    /// ([`strider_ir::Function::assumptions`]); the lift itself reads
+    /// engine's registers. The function holds `claims`; the lift itself reads
     /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`] and
     /// [`strider_ir::AssumptionOptions::fp_rounding_mode_is_nearest`].
-    /// Incompleteness is reported by [`strider_cfg::Cfg::incomplete`], not
-    /// as an error.
+    /// Incompleteness is [`strider_cfg::Cfg::incomplete`], not an error.
     ///
     /// # Errors
     ///

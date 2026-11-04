@@ -1,5 +1,3 @@
-//! What the entry region binds before any instruction is lifted.
-
 use anyhow::Result;
 
 use crate::FunctionLifter;

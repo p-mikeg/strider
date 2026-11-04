@@ -47,9 +47,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::Popcount => self.handle_popcount(insn)?,
             Opcode::Lzcount => self.handle_lzcount(insn)?,
             Opcode::Piece => self.handle_piece(insn)?,
-            // Decompiler-internal: SLEIGH lowers bitrange assignments to
-            // shift-and-mask, and the rest are minted by the decompiler's type
-            // recovery, `ActionSegmentize` and SSA construction.
+            // Decompiler-internal: Sleigh lowers bitrange assignments to
+            // shift-and-mask, and the decompiler mints the rest.
             Opcode::Extract
             | Opcode::Insert
             | Opcode::PtrAdd

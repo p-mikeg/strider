@@ -1624,13 +1624,9 @@ pub(super) fn lift_bytes_with_opts(
         .function)
 }
 
-/// A function bounded by symbol size whose last instruction is a call has no
-/// in-function code after it, so `strider-cfg` ends the region `NoReturn` and
-/// the lifter must sink the open control edge into `Unreachable`.  It does
-/// that for `Opcode::Call`; `Opcode::CallIndirect` reaches the same terminator
-/// (`region_builder`'s `is_branch_tail_call` arm) and must too, or the
-/// `Call` node keeps a control output nothing consumes and `validate` rejects
-/// the whole function.
+/// A size-bounded function whose last instruction is a call ends `NoReturn`,
+/// and the lifter sinks the open control edge into `Unreachable`, for
+/// `Opcode::Call` and `Opcode::CallIndirect` alike.
 #[test]
 fn trailing_call_sinks_into_unreachable_direct_and_indirect() {
     for (label, bytes) in [
