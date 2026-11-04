@@ -362,7 +362,7 @@ checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
 
 [[package]]
 name = "dot"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
 ]
@@ -387,7 +387,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "entity-utils"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cranelift-entity",
  "rustc-hash 2.1.2",
@@ -504,7 +504,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "graph-algorithms"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cranelift-entity",
  "entity-utils",
@@ -1041,7 +1041,7 @@ dependencies = [
 
 [[package]]
 name = "read-only-memory"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
 ]
@@ -1323,7 +1323,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "strider-cfg"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "dot",
@@ -1337,7 +1337,7 @@ dependencies = [
 
 [[package]]
 name = "strider-graph"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "strider-ir"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "strider-ir-test-utils"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
@@ -1388,7 +1388,7 @@ dependencies = [
 
 [[package]]
 name = "strider-lift"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "graph-algorithms",
@@ -1404,7 +1404,7 @@ dependencies = [
 
 [[package]]
 name = "strider-opt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "strider-orchestrator"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1450,7 +1450,7 @@ dependencies = [
 
 [[package]]
 name = "strider-pattern"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1469,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "strider-py"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "dot",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "strider-reader"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1504,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "strider-target"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "expect-test",
@@ -1619,7 +1619,7 @@ checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "vn-container"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rsleigh",
  "rustc-hash 2.1.2",

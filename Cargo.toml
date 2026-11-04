@@ -8,7 +8,7 @@ exclude = ["externals/rsleigh"]
 
 [workspace.package]
 edition = "2024"
-version = "0.2.0"
+version = "0.3.0"
 license = "MIT"
 repository = "https://github.com/p-mikeg/strider"
 # Above edition 2024's own 1.85 floor: `u32::is_multiple_of` needs 1.87. Naming
