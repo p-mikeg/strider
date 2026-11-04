@@ -3,8 +3,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
 
-// Statics, so `Default` can lend a `&'a`.
-
 /// An empty target table, for a `CfgOptions` literal naming every field.
 pub static NO_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
@@ -50,10 +48,9 @@ impl FunctionBound {
 #[derive(Clone, Debug)]
 pub struct CfgOptions<'a> {
     pub bound: FunctionBound,
-    /// More of this function's code outside `bound`, such as GCC's
-    /// `<name>.cold` partitions: a branch into one is an edge, and a
-    /// fall-through past one's end is [`crate::Reason::PastFunctionEnd`]
-    /// under either bound.
+    /// More of this function's code outside `bound` (GCC `<name>.cold`): a
+    /// branch into one is an edge, a fall-through past its end
+    /// [`crate::Reason::PastFunctionEnd`].
     pub fragment_ranges: DataRanges,
     /// Caller-seeded answers per `BranchIndirect`, read through
     /// [`CfgOptions::seated`]; an unlisted site defers.
@@ -66,9 +63,8 @@ pub struct CfgOptions<'a> {
     /// through [`Self::local_entries`]; a call to one ends its region
     /// `NoReturn`.
     pub no_return_targets: &'a FxHashSet<u64>,
-    /// Where a call sharing a ppc64 ELFv2 callee's TOC enters it, so a
-    /// `no_return_targets` or per-address convention entry keyed by the
-    /// callee's global entry matches that call too.
+    /// ppc64 ELFv2 local entries, so a table keyed by a callee's global entry
+    /// matches a call to its local entry too.
     pub local_entries: &'a LocalEntries,
     /// Caller classifications for user-op names, ahead of the built-in tables.
     pub call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
@@ -124,9 +120,8 @@ impl DataRanges {
     }
 }
 
-/// `(local entry, global entry)` pairs, sorted: the ppc64 ELFv2 functions a
-/// call sharing their TOC enters past their global entry, at the symbol plus
-/// `strider_reader::elf::local_entry_offset`.
+/// Sorted `(local entry, global entry)` pairs: where a ppc64 ELFv2 call
+/// sharing the callee's TOC enters it.
 #[derive(Clone, Default, Debug)]
 pub struct LocalEntries(Vec<(u64, u64)>);
 
@@ -205,7 +200,6 @@ pub fn seated_in(
     map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     addr: PcodeInsnAddr,
 ) -> Option<&ResolvedTargets> {
-    // At index 0 the fallback repeats the exact probe's miss.
     map.get(&addr)
         .or_else(|| map.get(&PcodeInsnAddr::at_machine_start(addr.machine())))
 }

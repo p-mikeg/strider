@@ -133,12 +133,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         clash
     }
 
-    /// Enqueues `addr` as a direct successor of `parent` (branch or
-    /// fall-through), inheriting [`Self::descent`].
-    ///
-    /// `isa_mode` is the parent region's: a direct edge switches no mode.
-    /// `flowing` is the parent's live value of each flowing committed var
-    /// (`RegionBuilder::flowing_commits`), empty for the entry.
+    /// Enqueues `addr` as a direct successor of `parent`, inheriting
+    /// [`Self::descent`]. `isa_mode` is the parent's (a direct edge switches no
+    /// mode), `flowing` its live flowing commits, empty for the entry.
     pub(super) fn enqueue(
         &mut self,
         parent: Option<NodeIndex>,

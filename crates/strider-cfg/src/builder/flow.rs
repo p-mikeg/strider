@@ -1,13 +1,8 @@
-//! Flowing decode context: as in GHIDRA's `ContextDatabase`, each flowing
-//! var holds a value committed per address.
-//!
-//! A committed (`globalset`) var is re-derived by
-//! `RegionBuilder::rederive_flow`, not pinned: a pin's forward paint stops at
-//! the next change point, where an earlier build's commit sits.
-//!
-//! A cold entry is pinned to the pspec defaults and each region to the
-//! context that flowed to it, so a resolved target or a backward edge decodes
-//! in it.
+//! Flowing decode context: as in GHIDRA's `ContextDatabase`, each var holds a
+//! value committed per address. A cold entry pins the pspec defaults and each
+//! region the context that flowed to it. A `globalset` var is re-derived
+//! (`RegionBuilder::rederive_flow`), not pinned: a pin's paint stops at the
+//! next change point, where an earlier build's commit may sit.
 
 /// The context vars the sla marks as flowing
 /// ([`strider_target::DecodeTables::flow_vars`]).

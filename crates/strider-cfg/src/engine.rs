@@ -6,29 +6,16 @@ use crate::{Cfg, CfgOptions, MachineInsnAddr, Result};
 /// A Sleigh engine and the decode context it carries across functions.
 ///
 /// `Sleigh` keeps every `globalset` past the build that made it, so each
-/// entry is pinned back to its ISA mode's context and each build re-derives
-/// its own commits: every [`Self::build_cfg`] decodes as a fresh engine would.
-///
-/// ```no_run
-/// use rsleigh::mem_readers::BufMemReader;
-/// use strider_cfg::{CfgOptions, DecodeEngine};
-/// use strider_target::SleighArch;
-///
-/// let arch = SleighArch::x86_64();
-/// let reader = BufMemReader::new(vec![0xc3], 0x1000);
-/// let mut engine = DecodeEngine::new(arch, reader)?;
-/// let cfg = engine.build_cfg(0x1000u64.into(), &CfgOptions::default())?;
-/// # Ok::<(), anyhow::Error>(())
-/// ```
+/// [`Self::build_cfg`] re-pins its entry and re-derives its own commits,
+/// decoding as a fresh engine would.
 pub struct DecodeEngine<R: rsleigh::MemReader> {
     pub(crate) sleigh: rsleigh::Sleigh<R>,
     pub(crate) arch: strider_target::SleighArch,
     pub(crate) tables: &'static strider_target::DecodeTables,
     /// The sla's address spaces, fixed for the engine's lifetime.
     space_ids: rsleigh::SpaceIds,
-    /// The entry context each ISA mode last pinned, keyed by the mode value
-    /// ([`strider_target::SleighArch::entry_mode_context`]), `None` for an
-    /// arch without one.
+    /// The entry context each ISA mode last pinned, keyed by mode value
+    /// (`None`: no ISA mode).
     entry_contexts: FxHashMap<Option<u32>, FlowContext>,
 }
 
@@ -36,13 +23,10 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     /// An engine over `reader`, with the Sleigh built from `arch`.
     ///
     /// # Errors
-    ///
     /// When the sla does not load.
     ///
     /// # Panics
-    ///
-    /// When the preset and its sla disagree
-    /// ([`strider_target::SleighArch::decode_tables`]).
+    /// When the preset and its sla disagree.
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
         // Before the tables, whose own Sleigh panics where this one errs.
         let sleigh = arch.sleigh(reader)?;
@@ -56,15 +40,15 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         })
     }
 
-    /// The CFG of the function at `entry`. On an arch with an ISA-mode var the
-    /// entry's low bit selects the mode (Thumb, MIPS16e) and the function
-    /// decodes at `entry & !1`. Never errs on incompleteness:
-    /// [`Cfg::incomplete`] names what it cannot vouch for.
+    /// The CFG of the function at `entry`. With an ISA-mode var the entry's
+    /// low bit selects the mode (Thumb, MIPS16e) and decoding starts at
+    /// `entry & !1`. Incompleteness is reported in [`Cfg::incomplete`], not
+    /// as an error.
     pub fn build_cfg(&mut self, entry: MachineInsnAddr, opts: &CfgOptions) -> Result<Cfg> {
         self.builder(entry, opts)?.build()
     }
 
-    /// The entry pinned, and a builder over this engine.
+    /// Pins the entry and returns a builder over this engine.
     pub(crate) fn builder<'a>(
         &'a mut self,
         entry: MachineInsnAddr,
@@ -76,9 +60,9 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         } else {
             entry.addr
         };
-        // Pinned to the context this mode last produced, not the defaults:
-        // several vars alias the mode bit, and re-pinning defaults would
-        // commit on every call to a bounded replay log.
+        // The context this mode last produced, not the defaults: several vars
+        // alias the mode bit, and re-pinning defaults would commit on every
+        // call to a bounded replay log.
         let mode_key = entry_mode.map(|(_, value)| value);
         let tables = self.tables;
         // A cold mode pins the pspec defaults.

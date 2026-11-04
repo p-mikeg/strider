@@ -604,11 +604,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(true)
     }
 
-    /// Seals onto a [`Builder::edge_to_stub`] stub at `cur_addr` when the
-    /// fall-through from `from` ran past a [`crate::FunctionBound::Size`] or
-    /// fragment end, reporting [`crate::Reason::PastFunctionEnd`]; returns
-    /// whether it sealed. Off a seeded arm it is a [`DecodeFailure::PastEnd`]
-    /// `Err`, dropping the arm.
+    /// Seals onto a stub at `cur_addr` when the fall-through from `from` ran
+    /// past a `Size` or fragment end, reporting
+    /// [`crate::Reason::PastFunctionEnd`]; returns whether it sealed. Off a
+    /// seeded arm it errs with [`DecodeFailure::PastEnd`] instead.
     fn seal_past_function_end(
         &mut self,
         from: PcodeInsnAddr,
