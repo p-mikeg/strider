@@ -175,15 +175,8 @@ fn arm_arch_uses_the_thumb_bit_to_decode_a_thumb_function() {
 /// declares `GDTR`/`IDTR` at 12 bytes and `LDTR`/`TR` at 14.
 #[test]
 fn every_declared_register_width_maps_to_a_value_type() {
-    for arch in [
-        strider_target::SleighArch::x86_64(),
-        strider_target::SleighArch::x86(),
-        strider_target::SleighArch::aarch64(),
-        strider_target::SleighArch::arm(),
-        strider_target::SleighArch::mipsle64(),
-        strider_target::SleighArch::ppc64be(),
-    ] {
-        let preset = arch.preset();
+    for &preset in strider_target::ArchPreset::ALL {
+        let arch = preset.arch();
         let regs = arch.probe_regs();
         let unmappable: Vec<(&str, u32)> = regs
             .iter()
