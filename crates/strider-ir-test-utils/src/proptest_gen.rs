@@ -267,10 +267,8 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
             let Some(src) = pools.pick(*src_width, *src_idx) else {
                 return;
             };
-            // Both builders NO-OP when the source already fits, returning the
-            // input: pushing that into the destination bucket poisons the pool
-            // with a value of the wrong width, which every later step that
-            // picks it then rejects.
+            // Both builders return the input unchanged when it already fits;
+            // pushing that would put a wrong-width value in the bucket.
             if let Ok(v) = b.truncate_if_needed(src, *dst_width)
                 && v != src
             {
@@ -302,10 +300,8 @@ mod tests {
     use strider_ir::node::NodeKind;
     use strider_ir::{IRViewer, IRWalker};
 
-    /// A widening `EmitTruncate` no-ops, so the builder hands back the I32
-    /// input. Pushed into the I64 bucket it displaces nothing but shifts every
-    /// later pick, and the step that lands on it fails its width check and
-    /// emits nothing.
+    /// A widening `EmitTruncate` returns the I32 input, which must not enter
+    /// the I64 bucket.
     #[test]
     fn a_no_op_width_change_does_not_poison_the_destination_bucket() {
         let f = replay(&[
