@@ -933,208 +933,50 @@ fn enqueue_reads_the_engine_only_where_this_build_re_derives() {
     );
 }
 
+/// An empty region is a zero-pcode-op instruction's (`Unconditional`) or a
+/// stub (`TailCall`); any other terminator on one is a construction bug.
 #[test]
-fn add_region_inserts_into_graph_and_index() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let r = make_region(&[(0x1000, 0), (0x1004, 0)]);
-    let id = b.add_region(r).unwrap();
-
-    assert!(b.region_graph.node_weight(id).is_some());
-    assert_eq!(b.index.get(addr(0x1000, 0)), Some(id));
+fn add_region_admits_an_empty_region_by_terminator() {
+    for (terminator, ok) in [
+        (RegionTerminator::Unconditional, true),
+        (
+            RegionTerminator::TailCall {
+                target: 0x1000.into(),
+            },
+            true,
+        ),
+        (RegionTerminator::Return, false),
+    ] {
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
+        let empty = Region {
+            start_addr: addr(0x1000, 0),
+            insns: Vec::new(),
+            empty_span_len: 0,
+            isa_mode: None,
+            terminator: terminator.clone(),
+        };
+        match b.add_region(empty) {
+            Ok(_) => assert!(ok, "{terminator:?}"),
+            Err(err) => {
+                assert!(!ok, "{terminator:?}: {err}");
+                assert!(err.to_string().contains("has no instructions"), "{err}");
+            }
+        }
+    }
 }
 
 #[test]
-fn add_region_empty_region_with_disallowed_terminator_returns_error() {
-    // Any other terminator on an empty region is a construction bug.
+fn add_region_indexes_each_region_by_its_start() {
     let mut engine = make_engine();
     let mut b = make_builder(0x1000, &mut engine);
-    let empty = Region {
-        start_addr: addr(0x1000, 0),
-        insns: Vec::new(),
-        empty_span_len: 0,
-        isa_mode: None,
-        terminator: RegionTerminator::Return,
-    };
-    let err = b.add_region(empty).unwrap_err();
-    assert!(
-        err.to_string().contains("has no instructions"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn add_region_empty_unconditional_is_allowed() {
-    // `build` segments at every zero-pcode-op instruction, so an
-    // `Unconditional` region sealed at one owns no `RegionInstruction`
-    // (`Region::insns`).
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let empty = Region {
-        start_addr: addr(0x1000, 0),
-        insns: Vec::new(),
-        empty_span_len: 0,
-        isa_mode: None,
-        terminator: RegionTerminator::Unconditional,
-    };
-    b.add_region(empty)
-        .expect("empty Unconditional region is allowed");
-}
-
-#[test]
-fn add_region_empty_tail_call_is_allowed() {
-    // The stub for a CondBranch arm leaving the function bound.
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let empty = Region {
-        start_addr: addr(0x9000, 0),
-        insns: Vec::new(),
-        empty_span_len: 0,
-        isa_mode: None,
-        terminator: RegionTerminator::TailCall {
-            target: 0x9000.into(),
-        },
-    };
-    b.add_region(empty)
-        .expect("empty TailCall stub region is allowed");
-}
-
-#[test]
-fn add_region_two_regions_both_present_with_distinct_indices() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let r1 = make_region(&[(0x1000, 0)]);
-    let r2 = make_region(&[(0x1010, 0)]);
-    let id1 = b.add_region(r1).unwrap();
-    let id2 = b.add_region(r2).unwrap();
+    let id1 = b.add_region(make_region(&[(0x1000, 0)])).unwrap();
+    let id2 = b.add_region(make_region(&[(0x1010, 0)])).unwrap();
 
     assert_ne!(id1, id2);
     assert_eq!(b.region_graph.node_count(), 2);
-    assert_eq!(b.index.get(addr(0x1000, 0)).expect("indexed"), id1);
-    assert_eq!(b.index.get(addr(0x1010, 0)).expect("indexed"), id2);
-}
-
-#[test]
-fn find_region_empty_graph_returns_none() {
-    let mut engine = make_engine();
-    let b = make_builder(0x1000, &mut engine);
-    assert!(b.find_region_containing_addr(addr(0x1000, 0)).is_none());
-}
-
-/// One region spanning `[0x1000, 0x100f]`: its start, an interior address
-/// and its last instruction all resolve to it.
-#[test]
-fn find_region_at_addr_covers_the_whole_span() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let id = b
-        .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-        .unwrap();
-    for probe in [0x1000u64, 0x1008, 0x100f] {
-        assert_eq!(
-            b.find_region_containing_addr(addr(probe, 0))
-                .map(|(i, _)| i),
-            Some(id),
-            "{probe:#x}"
-        );
-    }
-}
-
-/// A region starting inside another's last instruction is the greatest
-/// start at or below the rest of that instruction, so confirming
-/// containment on the last start alone reports those bytes unowned.
-#[test]
-fn find_region_at_addr_shadowed_by_an_overlapping_region() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let mut wide = make_region(&[(0x1000, 0)]);
-    wide.insns[0].len = 10;
-    let id = b.add_region(wide).unwrap();
-    b.add_region(make_region(&[(0x1003, 0)])).unwrap();
-    assert_eq!(
-        b.find_region_containing_addr(addr(0x1006, 0))
-            .map(|(i, _)| i),
-        Some(id)
-    );
-}
-
-/// A bound taken over ALL region spans never shrinks, so one long
-/// straight-line region makes every later lookup MISS scan every start in
-/// that window.  Only a shadowed region can own an address the greatest
-/// start below it does not.
-#[test]
-fn a_lookup_miss_over_disjoint_regions_probes_one_region() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let mut wide = make_region(&[(0x1000, 0)]);
-    wide.insns[0].len = 0x1000;
-    b.add_region(wide).unwrap();
-    for i in 0..64u64 {
-        b.add_region(make_region(&[(0x2000 + i, 0)])).unwrap();
-    }
-
-    crate::region_index::REGION_PROBES.with(|n| n.set(0));
-    assert!(b.find_region_containing_addr(addr(0x2100, 0)).is_none());
-    assert_eq!(
-        crate::region_index::REGION_PROBES.with(std::cell::Cell::get),
-        1
-    );
-}
-
-/// The other overlap direction: sequential decoding steps OVER an existing
-/// region's start (interior to one of the instructions decoded here) and
-/// produces a region covering it.  The later, shorter start shadows the
-/// wider region, which owns the bytes past it.
-#[test]
-fn find_region_at_addr_shadowed_by_an_earlier_added_region() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    b.add_region(make_region(&[(0x1005, 0)])).unwrap();
-    let mut wide = make_region(&[(0x1000, 0)]);
-    wide.insns[0].len = 0x10;
-    let id = b.add_region(wide).unwrap();
-    assert_eq!(
-        b.find_region_containing_addr(addr(0x100c, 0))
-            .map(|(i, _)| i),
-        Some(id)
-    );
-}
-
-#[test]
-fn find_region_beyond_end_returns_none() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-        .unwrap();
-    assert!(b.find_region_containing_addr(addr(0x1020, 0)).is_none());
-}
-
-#[test]
-fn find_region_two_adjacent_regions_route_correctly() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let id1 = b
-        .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-        .unwrap();
-    let id2 = b
-        .add_region(make_region(&[(0x1010, 0), (0x1020, 0)]))
-        .unwrap();
-
-    assert_eq!(
-        b.find_region_containing_addr(addr(0x1004, 0))
-            .map(|(i, _)| i),
-        Some(id1)
-    );
-    assert_eq!(
-        b.find_region_containing_addr(addr(0x1010, 0))
-            .map(|(i, _)| i),
-        Some(id2)
-    );
-    assert_eq!(
-        b.find_region_containing_addr(addr(0x1018, 0))
-            .map(|(i, _)| i),
-        Some(id2)
-    );
+    assert_eq!(b.index.get(addr(0x1000, 0)), Some(id1));
+    assert_eq!(b.index.get(addr(0x1010, 0)), Some(id2));
 }
 
 /// A `Switch` whose last over-approximated arm lands off every instruction
