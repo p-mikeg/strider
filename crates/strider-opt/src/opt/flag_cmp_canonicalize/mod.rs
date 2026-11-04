@@ -1,9 +1,8 @@
-//! Collapses the multi-node "flag-tree" conditions that flag-register
-//! architectures emit for `cmp`-then-branch into a single
+//! Collapses the flag-tree conditions of a `cmp`-then-branch into a single
 //! [`strider_ir::IntCmpOp`] on the original `(a, b)` pair.
 //!
-//! AArch64 `cmp a, b` lifts (post `IntSub` / `IntLessEqual` canonicalisation)
-//! to four flags, and each cond code reads a fixed boolean tree of them:
+//! AArch64 `cmp a, b` lifts to four flags, and each cond code reads a fixed
+//! boolean tree of them:
 //!
 //! ```text
 //! diff = Add(a, Neg(b))
@@ -17,14 +16,12 @@
 //! VS/VC  OV                          GT/LE  BoolAnd(Xor(ZR, 1), Equal(NG, OV)) / dual
 //! ```
 //!
-//! Bottom-up, `ZR` and the `GE` tree first become `Equal(a, b)` and
+//! Bottom-up, `ZR` and the `GE` tree become `Equal(a, b)` and
 //! `Xor(Sless(a, b), 1)`, then each cond code's tree of those collapses.
-//! `MI`/`PL` (bare `NG`) stays as lifted: `Sless(a-b, 0)` differs from
-//! `Sless(a, b)` when the subtraction overflows.  `CS`/`CC` and `VS`/`VC` are
-//! already in `(a, b)` form.
+//! `MI`/`PL` stays as lifted: `Sless(a-b, 0)` differs from `Sless(a, b)` on
+//! overflow.
 //!
-//! Run before `IfCondInversion`, so the cond carries at most one `Xor(_, 1)`
-//! layer.
+//! Runs before `IfCondInversion`, so the cond carries at most one `Xor(_, 1)`.
 
 use crate::rewrite_rule::{Rule, RuleTable};
 use strider_ir::eval;
@@ -45,19 +42,15 @@ use crate::peephole::PeepholePass;
 pub struct FlagCmpCanonicalize;
 
 thread_local! {
-    /// Built once per thread, and held here rather than in the pass so the
-    /// pass stays `Send`; see `ConstantFold`.
+    /// Built once per thread; held outside the pass to keep it `Send`.
     static RULES: RuleTable = RuleTable::new(build_rules());
 }
 
 impl PeepholePass for FlagCmpCanonicalize {
     type Sweep = ();
-    /// An atom's comparison is what the enclosing combiner reads, so the
-    /// consumers go again in the same sweep.
+    /// An atom's comparison is what the enclosing combiner reads.
     const PROPAGATE: bool = true;
 
-    /// Every rule roots at a comparison, at the `And`/`Or`/`Xor` of a boolean
-    /// tree, or at the `Truncate` / `Xor` a CR-bit test reaches here as.
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         RULES.with(|rules| rules.admits(kind))
     }
@@ -128,8 +121,7 @@ fn sub_relation(
 }
 
 fn build_rules() -> Vec<Rule> {
-    // Captures may be shared across rules: each rule matches with fresh
-    // `Bindings`, so "same node everywhere" binds intra-rule only.
+    // Captures are shared across rules; each rule binds them afresh.
     let a = Capture::new();
     let b = Capture::new();
     // The compared constant `N` and a second constant `M`.
@@ -139,8 +131,7 @@ fn build_rules() -> Vec<Rule> {
     let c1 = Capture::new();
     let x = Capture::new();
 
-    // Bottom-up, the flag terms first become comparisons on `(a, b)` (the
-    // atoms), then each cond code's tree of them collapses (the combiners).
+    // The atoms: flag terms to comparisons on `(a, b)`.
     let mut rules: Vec<Rule> = vec![
         // The variable-arity CR pack does not fit the fixed-shape DSL.
         Rule::Fold {
@@ -152,7 +143,7 @@ fn build_rules() -> Vec<Rule> {
             },
             fold: canonicalize_cr_bit_test,
         },
-        // `!!x -> x`: a negated atom under the cond code's own negation.
+        // `!!x -> x`
         Rule::rewrite(bool_not(bool_not(var(a))), var(a)),
         // Z:  Equal(Add(a, Neg(b)), 0) -> Equal(a, b)
         Rule::rewrite(
@@ -161,10 +152,7 @@ fn build_rules() -> Vec<Rule> {
         ),
         // The Thumb "false" flag test (BNE / BCC / BPL / BVC):
         //    IntEqual(ZeroExtend(b), 0) -> Xor(b, 1)
-        // `of_width(1)` is load-bearing: `zext(b) == 0` equals `!b` only for an
-        // `I1` `b`.  Unguarded, a chained zero-extend (I1->I8->I32) binds `b` to
-        // the wider intermediate and yields a malformed complement.  The "true"
-        // test is the CR-bit arm's one-term pack.
+        // `zext(b) == 0` equals `!b` only for an `I1` `b`.
         Rule::rewrite(
             int_eq(int_zero_extend(var(b).of_width(1)), int_const(0u128)),
             template::bool_not(var(b)),
@@ -179,11 +167,8 @@ fn build_rules() -> Vec<Rule> {
             template::bool_not(template::int_slt(var(a), var(b))),
         ),
     ];
-    // GE on a constant operand (`cmp a, N`), after ConstantFold collapsed
-    // `Add(a, Neg(N))` to `Add(a, M)`, `M = -N`:
+    // GE on a constant operand (`cmp a, N`), `M = -N`:
     //   Equal(ZeroExtend(Sless(Add(a, M), 0)), ZeroExtend(Sborrow(a, N))) -> Xor(Sless(a, N), 1)
-    // `N = 0` is not this shape: `Add(a, 0)` folds to `a` and `Sborrow(a, 0)`
-    // to false.
     rules.push(Rule::rewrite(
         int_eq(
             int_zero_extend(int_slt(int_add(var(a), int_const(m)), int_const(0u128))),
@@ -194,7 +179,7 @@ fn build_rules() -> Vec<Rule> {
     ));
     // The `cmn a, N` sibling, a compare against `-N`:
     //   Equal(ZeroExtend(Sless(Add(a, N), 0)), ZeroExtend(Scarry(a, N))) -> Xor(Sless(a, -N), 1)
-    // Guarded to `N != INT_MIN`, whose negation `2^(W-1)` no `Sless` names.
+    // Guarded to `N != INT_MIN`.
     rules.push(Rule::rewrite(
         int_eq(
             int_zero_extend(int_slt(int_add(var(a), int_const(n)), int_const(0u128))),
@@ -209,11 +194,9 @@ fn build_rules() -> Vec<Rule> {
             ),
         )),
     ));
-    // Offset-base sibling, `cmp X, N` on `X = Add(b, C1)` (a loop's `i + 1`),
-    // after ConstantFold reassociated the flag operand `Add(X, -N)` into
-    // `Add(b, C2)`, guarded to `C2 == C1 - N`:
+    // Offset-base sibling, `cmp X, N` on `X = Add(b, C1)`, guarded to
+    // `C2 == C1 - N`:
     //   Equal(ZeroExtend(Sless(Add(b, C2), 0)), ZeroExtend(Sborrow(X, N))) -> Xor(Sless(X, N), 1)
-    // Not covered: `C1 == N`, whose `Add(b, 0)` folds to `b`.
     rules.push(Rule::rewrite(
         int_eq(
             int_zero_extend(int_slt(int_add(var(b), int_const(m)), int_const(0u128))),
@@ -230,9 +213,7 @@ fn build_rules() -> Vec<Rule> {
     //   LS/LE:  Or(less, Equal(a, b))                  -> Xor(less(b, a), 1)
     //   HI/GT:  And(Xor(less, 1), Xor(Equal(a, b), 1)) -> less(b, a)
     // and the offset-base form, `X = Add(b, C1)` against `N` with the Z term
-    // solved for `b` (`Equal(Add(b, C2), 0) -> Equal(b, C3)`), guarded to
-    // `C3 == N - C1`: a switch whose cases start at a nonzero base. The `less`
-    // operand and the `Equal` base are distinct nodes, so these key on `b`.
+    // solved to `Equal(b, C3)`, guarded to `C3 == N - C1`.
     let offset_guard = move |edit: &strider_pattern::Matcher, _ty, binds: &Bindings| {
         sub_relation(binds, edit.function(), m, n, c1, b)
     };
@@ -275,9 +256,8 @@ fn build_rules() -> Vec<Rule> {
     combiners!(int_lt);
     combiners!(int_slt);
 
-    // `Equal(op(x), C) -> Equal(x, op^-1(C))` for a bijective `op`, each side
-    // of one width.  The fresh const takes `x`'s width, not the `Equal` root's
-    // `I1`.
+    // `Equal(op(x), C) -> Equal(x, op^-1(C))` for a bijective `op` at one
+    // width; the fresh const takes `x`'s width.
     macro_rules! solve {
         ($op_x:expr, [$($cap:expr),*], $inverse:expr $(,)?) => {
             rules.push(Rule::rewrite(
@@ -288,9 +268,7 @@ fn build_rules() -> Vec<Rule> {
             ));
         };
     }
-    // `Equal(Add(x, C1), C2) -> Equal(x, C2 - C1)`: fixed-width add wraps mod
-    // 2^W and `Equal` tests that residue.  The Z term the constant-operand and
-    // offset-base combiners read is this atom's output.
+    // `Equal(Add(x, C1), C2) -> Equal(x, C2 - C1)`
     solve!(
         int_add(var(a), int_const(n)),
         [n],
@@ -310,11 +288,8 @@ fn build_rules() -> Vec<Rule> {
         int_const_with!([m: uint, ty] => negate(&m, ty).ok_or_else(strider_pattern::skip)?),
     );
 
-    // `Sless(ShiftLeft(x, C), 0):I1 -> Xor(Equal(And(x, mask), 0), 1):I1`,
-    // mask = 1 << (W-1-C): a signed `< 0` on a left-shifted value tests bit
-    // (W-1-C) of `x`.  The `And`/mask/`0` are width `W` via `capture_typed(x,
-    // ..)`; the `Xor`/`1` are `I1`.  Guarded to `C < W`: at or above the width
-    // `x << C` is 0 and the test is const-false, a different rewrite.
+    // `Sless(ShiftLeft(x, C), 0):I1 -> Xor(Equal(And(x, 1 << (W-1-C)), 0), 1):I1`,
+    // guarded to `C < W`.
     rules.push(Rule::rewrite(
         int_slt(int_shl(var(x), int_const(n)), int_const(0u128)).when_match(move |edit, _ty, b| {
             let f = edit.function();
@@ -328,10 +303,7 @@ fn build_rules() -> Vec<Rule> {
                     var(x),
                     capture_typed(
                         x,
-                        // `ty` is this const's own width, `x`'s, which is the
-                        // width the guard bounds `n` against; the `Sless`
-                        // slot-0 type is a second width that only a validated
-                        // graph agrees with.
+                        // `ty` is `x`'s width, the one the guard bounds `n` by.
                         int_const_with!([n: uint, ty] => eval::ones_at(
                             1,
                             ty.bit_width()
@@ -349,13 +321,9 @@ fn build_rules() -> Vec<Rule> {
     rules
 }
 
-/// Rewrites a CR-bit test to the boolean sitting at the tested bit: the
-/// `Truncate(v):I1` of bit 0, or the `Xor(Equal(v, 0), 1):I1` of `v != 0`,
-/// where [`BitTracer`] proves that bit (every bit, for `!= 0`, all but one
-/// known zero) equal to one `I1`. A PowerPC CR pack
-/// `Truncate(ShiftRight(Or(ShiftLeft(ZeroExtend(cmp_i), pos_i) ...), k))`
-/// reaches `cmp_i` at `pos_i == k`, and the Thumb "true" flag test
-/// `Xor(Equal(ZeroExtend(b:I1), 0), 1)` reaches `b`.
+/// Rewrites a CR-bit test (`Truncate(v):I1` of bit 0, or `Xor(Equal(v, 0),
+/// 1):I1` with all but one bit known zero) to the `I1` [`BitTracer`] proves
+/// sits at the tested bit: a PowerPC CR pack or the Thumb "true" flag test.
 fn canonicalize_cr_bit_test(
     edit: &mut crate::EditFunction<'_>,
     root: NodeId,
@@ -368,9 +336,7 @@ fn canonicalize_cr_bit_test(
     let Some((cond_out, cmp)) = tracer.tested_boolean(root) else {
         return Ok(None);
     };
-    // `replace_value` absorbs only the root's fingerprint; the nodes the
-    // proof read go into the boolean too, or the pack's addresses vanish
-    // when it is culled.
+    // `replace_value` absorbs only the root's fingerprint; add the proof's.
     let proof = tracer.proof;
     let into = edit.producer(cmp);
     for n in proof {
@@ -513,7 +479,6 @@ impl<V: IRViewer + ?Sized> BitTracer<'_, V> {
                     return Bit::Unknown;
                 };
                 self.proof.push(f.producer(count));
-                // At or past the width p-code shifts every bit out.
                 if eval::shift_out_of_range(c, ty) {
                     return Bit::Zero;
                 }
@@ -532,7 +497,7 @@ impl<V: IRViewer + ?Sized> BitTracer<'_, V> {
                 if f.int_const_u128(b).is_some() {
                     std::mem::swap(&mut a, &mut b);
                 }
-                // An absorbing bit decides alone, and only its trace is proof.
+                // An absorbing bit decides alone; only its trace is proof.
                 let absorbing = match op {
                     IntBinaryOp::And => Bit::Zero,
                     IntBinaryOp::Or => Bit::One,

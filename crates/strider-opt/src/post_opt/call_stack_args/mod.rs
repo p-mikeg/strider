@@ -11,15 +11,12 @@ use crate::pipeline::Optimizer;
 #[cfg(test)]
 mod tests;
 
-/// The contiguous prefix of stack-arg slots `0..k` the call's [`ArgPrefix`]
-/// anchors, stopping at the first slot no whole store of its own reaches.
-/// Offsets are relative to the CALL-TIME SP, and a store wider than one slot
-/// is ONE argument spanning several slots.
+/// The contiguous prefix of stack-arg slots the call's [`ArgPrefix`] anchors,
+/// stopping at the first slot no whole store of its own reaches. Offsets are
+/// relative to the call-time SP; a store wider than one slot is one argument.
 ///
-/// The prefix over-collects: once lowered to memory, argument pushes are
-/// indistinguishable from incidental in-window stack writes, so every plausible
-/// store is collected.  A `Call` on the chain ends collection, since the callee
-/// may overwrite the frame.
+/// Over-collects: argument pushes are indistinguishable from incidental stack
+/// writes. A `Call` on the chain ends collection.
 fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
@@ -45,11 +42,8 @@ fn collect_stack_args(
         .collect()
 }
 
-/// The inputs a `Call` carries before any collection: `[control, memory,
-/// target, sp]` plus one per register-passed argument, integer then float, the
-/// layout the lifter builds.  Re-derived per run rather than remembered, so a
-/// second run over the same `Function` replaces the first run's tail instead of
-/// appending a duplicate of it.
+/// The inputs a `Call` carries before any collection: the head plus one per
+/// register-passed argument, integer then float. A second run truncates to it.
 fn register_arity(
     function: &strider_ir::Function,
     cc: &strider_target::BuiltCallingConvention,
@@ -75,14 +69,11 @@ impl Optimizer for CallStackArgCollect {
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &crate::OptCtx<'_>,
     ) -> Result<()> {
-        // The owned `Vec` lets the immutable borrow end before the mutation loop
-        // takes `edit` mutably.
         let calls: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Call { .. }))
             .collect();
         let query = MemQuery::default();
-        // `float_arg_prefix` scans the tracked set per float register, so the
-        // unoverridden calls share one scan.
+        // Shared by every call without an override.
         let default_arity = register_arity(edit.function(), edit.function().default_cc());
         for call_id in calls {
             let (stack_args, arity) = {
@@ -91,8 +82,6 @@ impl Optimizer for CallStackArgCollect {
                 let Some(stack_args) = cc.stack_args else {
                     continue;
                 };
-                // `get_cc` hands back the default itself when the call carries
-                // no override.
                 let arity = if std::ptr::eq(cc, function.default_cc()) {
                     default_arity
                 } else {
