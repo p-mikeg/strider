@@ -1,6 +1,3 @@
-//! Matches a function-argument carrier recorded by `FunctionArgDetect`: an
-//! `InitialVar` for a register-passed arg, a `Load` for a stack-passed one.
-
 use strider_ir::IRViewer;
 use strider_ir::node::{FunctionArgSource, NodeKind};
 
@@ -19,7 +16,8 @@ pub enum FunctionArgClass {
     Any,
 }
 
-/// A function-argument carrier pattern.
+/// A function-argument carrier recorded by `FunctionArgDetect`: an `InitialVar` for a
+/// register-passed arg, a `Load` for a stack-passed one.
 pub struct FunctionArgPat {
     source: Option<FunctionArgSource>,
     class: FunctionArgClass,

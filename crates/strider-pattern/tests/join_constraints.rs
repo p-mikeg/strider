@@ -513,15 +513,9 @@ fn a_constraint_prunes_before_the_rest_of_the_product_is_built() {
     );
 }
 
-/// The join is indexed on the captures both sides always bind, which prunes
-/// pairs that cannot agree. Agreement implies the bindings resolve to the same
-/// node, so the index can only ever remove impossible pairs, but that is the
-/// kind of claim worth checking rather than asserting.
-///
-/// This compares the real join against a brute-force cartesian reference over
-/// shapes chosen to exercise the tricky cases: a shared capture, no shared
-/// capture at all, a capture one side leaves unbound (an alternation arm that
-/// did not fire), and three-pattern joins.
+/// The indexed join equals a brute-force cartesian reference over a shared
+/// capture, no shared capture, a capture one side leaves unbound (an
+/// alternation arm that did not fire), and three-pattern joins.
 #[test]
 fn the_indexed_join_returns_exactly_the_cartesian_product() {
     let (function, _) = diamond_with_calls();
@@ -620,10 +614,8 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
 }
 
 /// A pattern that binds no capture is still identified by where it matched, so
-/// a join holding one reports every one of its matches. Keying the dedup on
-/// bindings alone made all of them collapse to an arbitrary survivor, and
-/// then adding a capture to ONE side SHRANK the reported cross product, which
-/// is the opposite of what a capture does.
+/// a join holding one reports every one of its matches, and adding a capture
+/// to one side never shrinks the cross product.
 #[test]
 fn a_capture_free_pattern_does_not_collapse_the_cross_product() {
     let (function, _) = diamond_with_calls();

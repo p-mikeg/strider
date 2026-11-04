@@ -8,9 +8,7 @@ pub(crate) mod walk;
 pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
-/// The vertex payloads behind a [`Pattern`]'s graph.
 pub(crate) use vertex::{InputSlot, OutputKindSpec, PatNode, PatValue, Role, SlotMode};
-/// The types [`MatcherBuilder`]'s signatures name.
 pub use vertex::{KindSpec, NodePredicate, PostMatchFn};
 
 use std::cell::OnceCell;
@@ -268,16 +266,11 @@ impl<'f> Matcher<'f> {
             .next())
     }
 
-    /// Run several patterns and keep the tuples (one [`Match`] per pattern, in input order) where
-    /// every [`crate::Capture`] shared between patterns binds the same node, or the same value
-    /// where both bind values.
-    ///
-    /// Worst case O(N1 * ... * NM) in the per-pattern match counts; each constraint prunes as soon
-    /// as the patterns binding its captures are in the row. A capture-free pattern joins as a
-    /// cross-product. Tuples are deduplicated by the bindings of every capture they bind.
-    ///
-    /// A tuple survives iff every [`JoinConstraint`] in `constraints` holds; one the graph cannot
-    /// answer drops the tuple, negated or not.
+    /// The tuples (one [`Match`] per pattern, in input order) where every [`crate::Capture`]
+    /// shared between patterns binds the same node, or the same value where both bind values,
+    /// and every [`JoinConstraint`] holds. An unanswerable constraint drops the tuple, negated or
+    /// not. A capture-free pattern joins as a cross-product; tuples are deduplicated by their
+    /// capture bindings. Worst case O(N1 * ... * NM) in the per-pattern match counts.
     ///
     /// # Errors
     /// If any pattern is not a single-rooted, acyclic graph (see
@@ -421,11 +414,8 @@ fn level_constraints<'c>(
     by_level
 }
 
-/// Every row of `acc` extended by each match of pattern `j` it agrees with and
-/// `keep` accepts.
-///
-/// Bucketed by the nodes the [`join_key_captures`] resolve to: agreeing bindings resolve to
-/// the same node, so only same-bucket pairs are checked with [`row_agrees`].
+/// Every row of `acc` extended by each match of pattern `j` it agrees with and `keep` accepts.
+/// Agreeing bindings resolve to the same node, so only pairs sharing a [`join_key`] are checked.
 fn join_level(
     per_pat: &[Vec<Match>],
     acc: &[Vec<usize>],

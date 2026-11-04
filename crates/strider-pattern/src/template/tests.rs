@@ -54,8 +54,8 @@ fn cmp_over_i64() -> Function {
     .unwrap()
 }
 
-/// The reported shape: a fresh constant at a comparison's operand 0, whose
-/// width is the operand's and not the `I1` the root carries.
+/// A fresh constant at a comparison's operand 0 takes the operand's width, not
+/// the `I1` the root carries.
 #[test]
 fn a_fresh_const_at_a_comparison_operand_takes_the_operand_width() {
     let x = Capture::new();

@@ -1,6 +1,3 @@
-//! `Load` and `Store` patterns. A `Load` nests as a value operand; a `Store`
-//! produces a memory token ([`MemPat`]).
-
 use super::{delegate_node_pat, node_match_pat};
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};

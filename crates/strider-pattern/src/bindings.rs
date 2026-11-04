@@ -1,5 +1,3 @@
-//! Capture-to-binding journal backing every pattern match.
-
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer};
 

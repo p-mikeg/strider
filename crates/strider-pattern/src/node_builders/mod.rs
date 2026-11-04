@@ -1,6 +1,3 @@
-//! Per-node-kind pattern builders. A memory token is a pattern vertex like any
-//! value or control edge.
-
 pub mod flow;
 pub mod function_arg;
 pub mod memory;

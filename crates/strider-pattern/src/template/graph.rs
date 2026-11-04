@@ -1,7 +1,3 @@
-//! The [`Template`] graph: [`Build`](TmplNodeKind::Build) nodes and
-//! [`Capture`](TmplNodeKind::Capture) leaves resolved through the LHS
-//! [`Bindings`](crate::Bindings).
-
 use rustc_hash::FxHashSet;
 use strider_graph::{Graph, NeverCacheable, NodeId};
 

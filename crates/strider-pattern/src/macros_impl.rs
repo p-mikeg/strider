@@ -1,36 +1,25 @@
-//! `int_const_with!`, `bool_const_with!` and `float_const_with!`: the `*_const_with_fn` builder
-//! with a closure that resolves each listed LHS capture against [`Bindings`](crate::Bindings),
-//! then evaluates the body.
-//!
-//! Each list entry is `name: kind`:
-//!
-//!   * `uint`: `Bindings::get_uint`, yielding `UBig`.
-//!   * `float_bits`: `Bindings::get_float_bits`, yielding `u64`.
-//!   * `float_binary_op` / `float_unary_op` / `float_cmp_op`
-//!
-//! Two reserved bare identifiers:
-//!
-//!   * `ty`: the constant's own output type ([`crate::TemplateCtx::root_ty`]).
-//!   * `in_ty`: `Option<ValueType>`, the type at the LHS root's input slot 0 if it is a typed
-//!     value.
-//!
-//! A missing binding raises [`missing_binding`](crate::missing_binding). `kind?` yields an
-//! `Option` instead and relaxes the rewrite coverage check, for a capture only some alternation
-//! arms bind.
-
-/// Bracket-list grammar is in the module docs.
+/// [`int_const_with_fn`](crate::int_const_with_fn) with a closure that binds each listed LHS
+/// capture, then evaluates the body: `int_const_with!([a: uint, ty] => ...)`.
+///
+/// Each entry is `name: kind`, `kind` one of `uint` (`UBig`), `float_bits` (`u64`),
+/// `float_binary_op`, `float_unary_op`, `float_cmp_op`. A missing binding raises
+/// [`missing_binding`](crate::missing_binding); `kind?` yields an `Option` instead, for a capture
+/// only some alternation arms bind. Bare `ty` is the constant's own type
+/// ([`TemplateCtx::root_ty`](crate::TemplateCtx::root_ty)), bare `in_ty` the LHS root's slot-0
+/// input type as `Option<ValueType>`.
 #[macro_export]
 macro_rules! int_const_with {
     ($($t:tt)*) => { $crate::__const_with!(int_const_with_fn; $($t)*) };
 }
 
-/// Builds an `IntConst` typed `I1`.
+/// [`int_const_with!`](crate::int_const_with) building an `IntConst` typed `I1`.
 #[macro_export]
 macro_rules! bool_const_with {
     ($($t:tt)*) => { $crate::__const_with!(bool_const_with_fn; $($t)*) };
 }
 
-/// The body must evaluate to a `u64` IEEE 754 bit pattern.
+/// [`int_const_with!`](crate::int_const_with) building a `FloatConst`; the body evaluates to its
+/// `u64` IEEE 754 bit pattern.
 #[macro_export]
 macro_rules! float_const_with {
     ($($t:tt)*) => { $crate::__const_with!(float_const_with_fn; $($t)*) };

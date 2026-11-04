@@ -185,12 +185,8 @@ fn deep_alternating_cast_chain_walked_through() {
     );
 }
 
-/// A blanket cast mask must not hide a cast the pattern itself names.
-///
-/// `try_operand` used to jump straight to the DEEPEST value of a cast chain, so
-/// for the operand `zext(trunc(s))` under a mask selecting both, the
-/// intermediate `Truncate` was never offered and a pattern naming it silently
-/// found nothing. Every level is tried now, outermost first.
+/// A blanket cast mask must not hide a cast the pattern itself names: under a
+/// mask selecting both, `zext(trunc(s))` offers the intermediate `Truncate` too.
 #[test]
 fn a_masked_chain_still_matches_a_cast_the_pattern_names() {
     let mut t = Tb::empty();

@@ -1,10 +1,3 @@
-//! Constant-literal builders.
-//!
-//! `int_const` wraps the query into the constant's declared width, so `int_const(u128::MAX)`
-//! matches all-ones up to `I128` and `2^128 - 1` at `I256` / `I512`; [`int_const_all_ones`] is
-//! all-ones at any width. `int_const_any_width` also matches the value zero- or sign-extended from
-//! a narrower width.
-
 use std::cell::RefCell;
 
 use rustc_hash::FxHashSet;
@@ -404,8 +397,8 @@ impl<T: Into<IBig> + Copy> IntConstArg for &[T] {
 
 /// Match an `IntConst` equal to `value` wrapped into the output width; given a collection, any
 /// member; given a [`Capture`], any integer constant, bound to it. Wrapping means `0x1234`
-/// matches `0x34` at `I8` and `-1` matches all-ones at any width. `value` may be [`UBig`] or
-/// [`IBig`].
+/// matches `0x34` at `I8` and `-1` matches all-ones at any width, but `u128::MAX` is
+/// `2^128 - 1` at `I256` (see [`int_const_all_ones`]). `value` may be [`UBig`] or [`IBig`].
 pub fn int_const<A: IntConstArg>(value: A) -> A::Pat {
     value.into_int_const()
 }
