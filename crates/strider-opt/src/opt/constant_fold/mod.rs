@@ -13,19 +13,13 @@ mod tests;
 pub struct ConstantFold;
 
 thread_local! {
-    /// Building the set costs ~250us, more than a whole run of the pass over a
-    /// small function, so it is built once per thread. Held HERE rather than in
-    /// the pass, which keeps the pass `Send`: a rule's closures carry no
-    /// auto-trait bound at all, so an owning field of ANY kind, `Rc`, `Arc` or
-    /// plain `Box`, would make the pass `!Send` and a pipeline unable to cross
-    /// a thread.
+    /// Built once per thread (~250us); held outside the pass to keep it `Send`.
     static RULES: RuleTable = RuleTable::new(rules::build_rules());
 }
 
 impl PeepholePass for ConstantFold {
     type Sweep = ();
-    /// A fold makes its consumers' operands constant, which the same sweep can
-    /// fold next.
+    /// A fold makes its consumers' operands constant.
     const PROPAGATE: bool = true;
 
     fn matches_kind(&self, kind: &NodeKind) -> bool {

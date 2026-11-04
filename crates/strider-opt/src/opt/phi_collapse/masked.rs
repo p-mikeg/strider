@@ -1,13 +1,9 @@
 //! Folds `And(phi, C)` to `v` when every arm of the phi, masked by `C`, is
-//! `v`, an arm that reaches the `And` or the phi itself agreeing with any
-//! `v`: a loop that saves `(hi & ~C) | (phi & C)` on its back edge keeps the
-//! masked bits it entered with. The dominance argument is Braun's, as in the
-//! parent module.
+//! `v`, an arm reaching the `And` or the phi itself agreeing with any `v`.
 //!
 //! Each arm is peeled through a bounded chain of `And` / `Or` / `Xor` with a
-//! constant or known-zero operand, never through a phi, and a run spends at
-//! most [`PEEL_VISITS_PER_ARM`] steps per arm of each phi, so a phi under many
-//! masks stays linear; a mask past its phi's budget is left alone.
+//! constant or known-zero operand, never through a phi, at most
+//! [`PEEL_VISITS_PER_ARM`] steps per arm of each phi per run.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp};
@@ -19,8 +15,7 @@ use crate::opt::known_bits::{KnownBitsFacts, const_only, node_known_bits};
 /// Nodes one arm of a masked phi is peeled through.
 pub(super) const PEEL_STEPS: usize = 8;
 
-/// Peel steps the masked-phi fold may take per arm of a phi in one run, so a
-/// phi with many masked uses stays linear in its arm count.
+/// Peel steps per arm of a phi in one run.
 pub(super) const PEEL_VISITS_PER_ARM: usize = 2 * PEEL_STEPS;
 
 /// Folds every masked use of each phi in `phis`.
@@ -80,10 +75,9 @@ enum Masked {
 /// `None` when two arms disagree, every arm is [`Masked::Itself`], or the
 /// peel `budget` runs out.
 ///
-/// Each arm other than an `Itself` one is available on its predecessor edge,
-/// and so is anything it is peeled to. An `Itself` arm's edge is dominated by
-/// the phi's `Region`, so every first entry into the `Region` comes through an
-/// agreeing arm, and the agreed value dominates the `Region`.
+/// Every non-`Itself` arm, and what it peels to, is available on its edge; an
+/// `Itself` arm's edge is dominated by the phi's `Region`, so the agreed value
+/// dominates the `Region`.
 fn masked_phi_value(
     edit: &mut crate::EditFunction<'_>,
     phi: NodeId,
@@ -92,7 +86,6 @@ fn masked_phi_value(
     walked: &mut Vec<NodeId>,
     budget: &mut usize,
 ) -> Result<Option<ValueId>> {
-    // `masked_use` read `and_out` off a single value output.
     let ty = edit
         .value_type_opt(and_out)
         .expect("the masked And's output is a value");
@@ -190,14 +183,12 @@ fn peel(
     Some((Masked::Of(x), witness))
 }
 
-/// Operand levels [`known_zero`] reads below a value: enough for a flag
-/// pack `Or(ShiftLeft(ZeroExtend(flag), k), ...)` whose redundant mask
-/// KnownBits has dropped.
+/// Operand levels [`known_zero`] reads below a value, enough for a flag pack
+/// `Or(ShiftLeft(ZeroExtend(flag), k), ...)`.
 const KNOWN_ZERO_DEPTH: u32 = 4;
 
-/// Bits of `v` the known-bits transfer proves zero from at most
-/// [`KNOWN_ZERO_DEPTH`] levels of its operand cone, so no map is built.
-/// Every node it reads is pushed onto `read`.
+/// Bits of `v` proven zero from at most [`KNOWN_ZERO_DEPTH`] levels of its
+/// operand cone; every node read is pushed onto `read`.
 fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId, read: &mut Vec<NodeId>) -> u128 {
     known_bits_near(edit.function(), v, KNOWN_ZERO_DEPTH, read).zeros
 }

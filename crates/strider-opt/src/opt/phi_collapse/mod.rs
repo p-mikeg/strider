@@ -1,21 +1,15 @@
 //! Braun redundant-phi elimination for `Phi` and `MemPhi` ("Simple and
 //! Efficient Construction of SSA Form", section 3.2).
 //!
-//! Inputs are `[phi_token, val_0, val_1, ...]`. The phi graph has an edge from
-//! each phi to every phi among its value inputs. A strongly connected component
-//! whose value inputs from outside itself are exactly ONE value is that value:
-//! every use of every phi in it is redirected there. A single trivial phi, one
-//! whose inputs other than itself are one value, is the one-phi case. A
-//! component with two or more outside values is a genuine merge, and the same
-//! test runs again over the components of its phis that take no outside value.
-//! Zero outside values (a fully self-referential cycle) is left alone.
+//! A strongly connected component of the phi graph whose value inputs from
+//! outside itself are exactly one value is replaced by that value. With two or
+//! more, the test reruns over the components of its phis that take no outside
+//! value; with zero it is left alone. Every value input counts, dead
+//! predecessor edge or not.
 //!
-//! Every value input counts, dead predecessor edge or not.
-//!
-//! Braun's argument needs each arm's definition to dominate the phi, which
-//! fails on a `Region` unreachable from entry: `phi(token, Add(phi, 2))` is
-//! then a one-member component whose single outside value is the `Add`, and
-//! collapsing onto it closes a non-phi data cycle.  Such a phi is skipped.
+//! A phi over a `Region` unreachable from entry is skipped: Braun's argument
+//! needs each arm to dominate the phi, and collapsing there can close a non-phi
+//! data cycle.
 
 use cranelift_entity::SecondaryMap;
 use strider_ir::IRViewer;
@@ -64,11 +58,8 @@ impl Optimizer for PhiCollapse {
     }
 }
 
-/// Redirects every use of the phis in `scc` to `value`, then kills them.
-///
-/// Killed here rather than by the end-of-iteration cull, so a dead phi stops
-/// counting as a live consumer of its Region's phi-token and `RegionCollapse`
-/// can detach that Region in the same iteration.
+/// Redirects every use of the phis in `scc` to `value`, then kills them, so
+/// `RegionCollapse` can detach their Region in the same iteration.
 fn collapse(edit: &mut crate::EditFunction<'_>, scc: &[NodeId], value: ValueId) {
     for &phi in scc {
         let [out] = edit
