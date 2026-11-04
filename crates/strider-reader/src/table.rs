@@ -3,23 +3,19 @@ use std::collections::BTreeSet;
 use crate::{MemReadError, MemRegion, RegionIndex, Result, collapse_equal_starts};
 
 /// Lookup table over possibly-overlapping [`MemRegion`]s, a read costing
-/// O(log n) through a [`RegionIndex`]. Equal starts collapse, last wins.
+/// O(log n). Equal starts collapse, last wins.
 #[derive(Debug)]
 pub struct MemRegionsLookupTable {
     /// Ascending by start address, one region per start.
     regions: Vec<MemRegion>,
     pub(crate) index: RegionIndex,
-    /// One `regions` index per distinct mapping behind them, for
-    /// [`check_unchanged`].
-    ///
-    /// [`check_unchanged`]: Self::check_unchanged
+    /// One `regions` index per distinct mapping behind them.
     mappings: Vec<usize>,
     /// Bytes in the largest region: the most one read can return.
     max_region_len: usize,
 }
 
 impl MemRegionsLookupTable {
-    /// Two regions sharing a start address collapse to the later one.
     pub fn new<I: IntoIterator<Item = MemRegion>>(regions: I) -> Self {
         let mut regions = collapse_equal_starts(regions.into_iter().collect());
         regions.sort_unstable_by_key(MemRegion::start_addr);
@@ -75,12 +71,9 @@ impl MemRegionsLookupTable {
         Ok(())
     }
 
-    /// Reads bytes at `addr` from whichever region wins; `None` when none
-    /// contains `addr`. Partial reads are possible, see [`MemRegion::read`].
-    ///
-    /// `out` is filled from exactly one region: the highest-start one fully
-    /// covering the request, else the one covering the most of it (ties to
-    /// the highest start).
+    /// [`MemRegion::read`] from one region: the highest-start one fully
+    /// covering the request, else the one serving the most bytes from `addr`
+    /// (ties to the highest start).
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let winner = self
             .index
@@ -99,7 +92,7 @@ impl MemRegionsLookupTable {
         Some(buf)
     }
 
-    /// Fills all of `buf` with the raw mapped bytes, or errors.
+    /// Fills all of `buf`.
     ///
     /// # Errors
     ///
@@ -141,8 +134,7 @@ impl MemRegionsLookupTable {
     }
 }
 
-/// Instruction fetch: [`MemRegionsLookupTable::read`], erring with what a
-/// failed read served nothing for.
+/// [`MemRegionsLookupTable::read`], erring with why nothing was served.
 impl rsleigh::MemReader for MemRegionsLookupTable {
     type Err = MemReadError;
 

@@ -15,8 +15,7 @@ pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
     OwnedElf::open(path)
 }
 
-/// An owned ELF's bytes. [`object::File`] borrows them, so
-/// [`checked_file`](Self::checked_file) re-parses rather than storing one.
+/// An owned ELF's bytes.
 pub struct OwnedElf {
     backing: FileBytes,
 }
@@ -35,22 +34,21 @@ pub enum RelocationMode {
     /// Nothing: each field serves its file-initial bytes, an addend or `ld`'s
     /// link-time value rather than its target.
     Unapplied,
-    /// Applied by this loader, which then maps every writable section for
-    /// fetch too. `got_is_rom` also serves `.got`, PPC32's `.got2` and
-    /// `.data.rel.ro` as ROM: an unchecked claim that nothing writes them
-    /// after the loader (full RELRO; PPC32 code relocating its own `.got2`
-    /// breaks it) and that a symbol the image defines binds to that
-    /// definition. A slot only the loader computes stays a hole. `.got.plt`
-    /// is not served; a lazily bound slot the link puts in `.got` (ARM's
-    /// `R_ARM_JUMP_SLOT`) is, at its bound value.
+    /// Applied by this loader; fetch then maps writable sections too.
+    /// `got_is_rom` also serves `.got`, PPC32's `.got2` and `.data.rel.ro` as
+    /// ROM, an unchecked claim that nothing writes them after the loader (full
+    /// RELRO; PPC32 code relocating its own `.got2` breaks it) and that a
+    /// symbol the image defines binds to that definition. A slot only the
+    /// loader computes stays a hole. `.got.plt` is not served; a lazily bound
+    /// slot the link puts in `.got` (ARM's `R_ARM_JUMP_SLOT`) is, at its bound
+    /// value.
     Applied { got_is_rom: bool },
 }
 
 /// One image's views, from one parse and one layout.
 #[derive(Debug)]
 pub struct ElfImage {
-    /// Instruction fetch: code and read-only mappings, plus writable ones when
-    /// relocated.
+    /// Code and read-only mappings, plus writable ones when relocated.
     pub fetch: Vec<MemRegion>,
     /// The runtime-immutable mappings, plus `.got`, `.got2` and `.data.rel.ro`
     /// under `got_is_rom`.
@@ -94,8 +92,8 @@ impl OwnedElf {
         Ok(Self { backing })
     }
 
-    /// Re-parses the mapping behind [`check_unchanged`](Self::check_unchanged),
-    /// since parsing a shortened mapping is an uncatchable SIGBUS.
+    /// Parses the mapping after [`check_unchanged`](Self::check_unchanged):
+    /// parsing a shortened mapping is an uncatchable SIGBUS.
     ///
     /// # Errors
     ///
@@ -108,7 +106,7 @@ impl OwnedElf {
     }
 
     /// Compares one `stat` of the mapped file with the one [`open`](Self::open)
-    /// took. Always `Ok` for bytes read or handed in rather than mapped.
+    /// took; `Ok` for bytes not mapped.
     ///
     /// # Errors
     ///
@@ -209,10 +207,9 @@ impl OwnedElf {
         })
     }
 
-    /// The mappings `source` and `filter` select, over a parse (behind the
-    /// caller's [`checked_file`](Self::checked_file)), its layout and its
-    /// [`loader_view`](super::dynamic::loader_view). When the view is unread,
-    /// a relocating load serves no writable, non-executable mapping.
+    /// The mappings `source` and `filter` select over a
+    /// [`checked_file`](Self::checked_file) parse. When `view` is unread, a
+    /// relocating load serves no writable, non-executable mapping.
     ///
     /// # Errors
     ///

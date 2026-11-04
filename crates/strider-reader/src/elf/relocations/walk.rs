@@ -1,6 +1,3 @@
-//! Finding the relocation entries: which tables a walk reads, and each
-//! entry decoded once.
-
 use object::{
     Architecture as A, Object, ObjectSection, RelocationFlags, RelocationKind, RelocationTarget,
 };

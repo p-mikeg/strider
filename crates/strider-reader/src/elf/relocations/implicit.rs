@@ -1,6 +1,3 @@
-//! Holes over what the loader writes without a relocation entry to say so:
-//! `R_*_COPY` objects, the MIPS primary GOT and the lazy-binding GOT header.
-
 use object::{Architecture as A, Object, ObjectSection, ObjectSymbol, ObjectSymbolTable};
 
 use crate::MemRegion;
@@ -142,8 +139,8 @@ pub(super) fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
 
 /// Holes over the two lazy-binding GOT header words the loader writes with
 /// no relocation record: ARM's at `DT_PLTGOT + 4` / `+ 8`, secure-PLT PPC32's
-/// at `DT_PPC_GOT + 4` / `+ 8`. Only with a `DT_JMPREL`, `DF_BIND_NOW` or
-/// not. A hole names the arch's `JUMP_SLOT`.
+/// at `DT_PPC_GOT + 4` / `+ 8`, when a `DT_JMPREL` is present (whether or not
+/// `DF_BIND_NOW` is set). A hole names the arch's `JUMP_SLOT`.
 pub(super) fn lazy_got_header(ctx: &mut Ctx<'_, '_>) {
     use object::elf;
     let obj = ctx.obj;

@@ -181,8 +181,7 @@ pub(crate) fn loader_view(obj: &object::File<'_>) -> LoaderView {
 
 /// A placed table, read.
 enum Walked<'d> {
-    /// `SHT_REL` / `SHT_RELA` entries of `ent` bytes: `(file address, bytes)`
-    /// each.
+    /// `SHT_REL` / `SHT_RELA` entries of `ent` bytes, each `(address, bytes)`.
     Plain {
         sh_type: u32,
         addr: u64,

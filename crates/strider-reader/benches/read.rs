@@ -1,7 +1,5 @@
-//! Loading a relocated image, and fetching from it, over
-//! `STRIDER_BENCH_ELF`: a kernel-size image whose dynamic relocations the
-//! loader walks. A fixture carries too few patches to measure, so with the
-//! variable unset nothing runs.
+//! Loading and reading a relocated image named by `STRIDER_BENCH_ELF` (a
+//! kernel-size image with dynamic relocations); unset, nothing runs.
 //!
 //! ```text
 //! STRIDER_BENCH_ELF=/path/to/vmlinux cargo bench -p strider-reader --bench read
@@ -74,7 +72,6 @@ fn read_benches(c: &mut Criterion) {
             }
         });
     });
-    // The code and read-only image an `ElfFileMemReader` serves.
     group.bench_function("file_reader", |b| {
         b.iter(|| {
             black_box(ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("file reader"))

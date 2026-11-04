@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
-/// A shared byte buffer regions are cut from: a memory-mapped file or an
-/// owned allocation. Cloning shares.
+/// A shared byte buffer: a memory-mapped file or an owned allocation.
 ///
 /// A mapped file must not change on disk while mapped, else a read tears or
 /// SIGBUSes past a new end; [`check_unchanged`](Self::check_unchanged) catches
@@ -25,9 +24,8 @@ struct MappedFile {
     identity: FileIdentity,
 }
 
-/// The mapped inode's size and mtime when mapped: a hint, blind to a
-/// same-size rewrite within one second. Whole seconds because drvfs truncates
-/// mtime on `utimensat`.
+/// The mapped inode's size and mtime, blind to a same-size rewrite within one
+/// second. Whole seconds because drvfs truncates mtime on `utimensat`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FileIdentity {
     len: u64,
@@ -47,7 +45,7 @@ impl FileIdentity {
         }
     }
 
-    /// What differs from `now`, for the error message; `None` when equal.
+    /// What differs from `now`; `None` when equal.
     fn diff(&self, now: &Self) -> Option<String> {
         if self == now {
             return None;
@@ -65,8 +63,7 @@ impl FileIdentity {
 /// Cap on the capacity reserved from a `stat` size, which may be bogus.
 const MAX_RESERVED_READ: u64 = 64 << 20;
 
-/// The first `len` bytes of `file`, `len` being its `stat` size, so a
-/// growing file or a `/proc` file that stats empty stops there.
+/// The first `len` bytes of `file`, `len` being its `stat` size.
 fn read_all(file: &mut std::fs::File, len: u64) -> std::io::Result<Vec<u8>> {
     use std::io::Read as _;
     let reserve = usize::try_from(len.min(MAX_RESERVED_READ)).unwrap_or(0);
@@ -81,8 +78,8 @@ impl FileBytes {
     }
 
     /// Maps `path` read-only, reading it instead when mapping fails or
-    /// `STRIDER_NO_MMAP=1` is set (a mapping turns a paging error, live on a
-    /// network or 9p mount, into SIGBUS).
+    /// `STRIDER_NO_MMAP` is set to anything but `0` (a mapping turns a paging
+    /// error on a network or 9p mount into SIGBUS).
     ///
     /// # Errors
     ///
@@ -127,8 +124,8 @@ impl FileBytes {
         }
     }
 
-    /// One `stat` of the mapped file against its identity when mapped;
-    /// always `Ok` for owned bytes.
+    /// One `stat` of the mapped file against its identity when mapped; `Ok`
+    /// for owned bytes.
     ///
     /// # Errors
     ///
@@ -152,8 +149,7 @@ impl FileBytes {
         }
     }
 
-    /// Identity of the backing mapping, so regions sharing one stat it once.
-    /// `None` for owned bytes.
+    /// Identity of the backing mapping; `None` for owned bytes.
     pub(crate) fn mapping_id(&self) -> Option<usize> {
         match &self.0 {
             Store::Owned(_) => None,

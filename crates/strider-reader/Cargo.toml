@@ -10,10 +10,8 @@ publish.workspace = true
 readme = "README.md"
 
 [features]
-# Exposes `OwnedElf::regions`, one region set cut by an `elf::LoadFilter`,
-# `LoadFilter` itself and `MemRegion::patch_count` to this crate's tests and
-# bench. Off in production, where `OwnedElf::image` is the one way to cut an
-# image's fetch and ROM.
+# `OwnedElf::regions`, `elf::LoadFilter` and `MemRegion::patch_count`, for
+# this crate's tests and bench.
 test-util = []
 
 [dependencies]

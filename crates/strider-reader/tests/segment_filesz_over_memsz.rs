@@ -1,11 +1,6 @@
-//! `p_filesz > p_memsz`: the FILE holds more bytes than the image MAPS.
-//!
-//! No toolchain emits it, but `object` parses it and strider's input domain is
-//! untrusted binaries. The mapped extent came from `p_filesz` while the
-//! writable/executable bookkeeping came from `p_memsz`, so the tail past
-//! `p_memsz` was served as if mapped, and, for a writable-and-executable
-//! PT_LOAD, served through a `ReadOnlyMemory` view whose whole contract is
-//! that nothing there can change under the analysis.
+//! `p_filesz > p_memsz`: the file holds more bytes than the image maps. Only
+//! `p_memsz` is served, the extent the writable / executable sets track, so
+//! the tail past it reaches neither view.
 
 use strider_reader::elf::RelocationMode;
 use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};

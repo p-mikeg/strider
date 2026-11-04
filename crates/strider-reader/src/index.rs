@@ -1,14 +1,12 @@
 use crate::MemRegion;
 
-/// Ascending-start index over a slice of [`MemRegion`]s, answering which
-/// cover a request through a max-end tree. Yields indices into the slice,
-/// which must not be reordered while held; among equal starts, the highest
-/// slice index first.
+/// Index over a slice of [`MemRegion`]s answering which cover a request.
+/// Yields indices into the slice, which must not be reordered while held;
+/// among equal starts, the highest slice index first.
 #[derive(Debug)]
 pub struct RegionIndex {
     /// Ascending by `start`, equal starts in slice order.
     entries: Vec<IndexEntry>,
-    /// Each entry's `end_addr`, in the same order.
     ends: MaxEnd,
 }
 
@@ -18,7 +16,6 @@ struct IndexEntry {
     /// Greatest `end_addr` of this entry and every lower-start one: nothing at
     /// or below this start reaches past it.
     reach: u64,
-    /// Index into the indexed slice.
     index: usize,
 }
 
@@ -31,8 +28,7 @@ impl RegionIndex {
         Self::from_ranges(&ranges)
     }
 
-    /// The index over `[start, end)` ranges, yielding indices into `ranges`
-    /// exactly as [`new`](Self::new) yields them into a region slice.
+    /// The index over `[start, end)` ranges, yielding indices into `ranges`.
     pub fn from_ranges(ranges: &[(u64, u64)]) -> Self {
         let mut order: Vec<usize> = (0..ranges.len()).collect();
         // Stable, so equal starts keep slice order.

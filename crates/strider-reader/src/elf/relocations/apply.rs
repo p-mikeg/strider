@@ -1,6 +1,3 @@
-//! Applying one relocation entry: resolving its symbol, computing its value
-//! and encoding it into the field.
-
 use object::{
     Architecture as A, Object, ObjectSection, ObjectSymbol, ObjectSymbolTable, RelocationKind,
 };

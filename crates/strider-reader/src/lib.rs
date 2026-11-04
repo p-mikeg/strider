@@ -14,8 +14,8 @@ pub use region::MemRegion;
 pub(crate) use region::{MAX_PATCH_LEN, Patch, collapse_equal_starts};
 pub use table::MemRegionsLookupTable;
 
-/// Error type for every [`rsleigh::MemReader`] impl: an `anyhow::Error`
-/// satisfying `std::error::Error + 'static`.
+/// The [`rsleigh::MemReader`] error: an `anyhow::Error` as a
+/// `std::error::Error + 'static`.
 #[derive(Debug)]
 pub struct MemReadError(pub(crate) anyhow::Error);
 

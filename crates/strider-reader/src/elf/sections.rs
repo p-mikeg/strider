@@ -1,8 +1,5 @@
-//! ELF to [`MemRegion`] loaders.
-//!
-//! ET_EXEC / ET_DYN walk PT_LOAD headers; ET_REL and every other kind walk
-//! sections, each rebased through [`ElfSectionLayout`]. Both walks keep one
-//! region per loaded start: sections first-wins, segments widest-wins.
+//! Both walks keep one region per loaded start: sections first-wins, segments
+//! widest-wins.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,24 +19,21 @@ pub enum RegionSource {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoadFilter {
-    /// `.text`, `.rodata`, `.plt`, `.eh_frame`, plus a writable-but-executable
-    /// mapping: what an instruction FETCH may reference.
+    /// Executable or non-writable mappings: what an instruction fetch may
+    /// reference.
     CodeAndReadOnly,
-    /// Immutable mappings only. The ROM feeds `LoadReadOnly`, which folds a
-    /// constant-address load without consulting the memory chain, so a writable
-    /// mapping here makes a store-then-reload fold to its file-initial value.
+    /// Immutable mappings only. `LoadReadOnly` folds a constant-address load
+    /// past the memory chain, so a writable mapping here would fold a
+    /// store-then-reload to its file-initial value.
     ImmutableOnly,
-    /// [`ImmutableOnly`](Self::ImmutableOnly) plus `.got`, PPC32's `.got2` and
-    /// `.data.rel.ro`, relocated: the unchecked claim
+    /// [`ImmutableOnly`](Self::ImmutableOnly) plus relocated `.got`, `.got2`
+    /// and `.data.rel.ro` (the claim of
     /// [`RelocationMode::Applied`](super::RelocationMode::Applied)'s
-    /// `got_is_rom` states. A slot whose value only the loader computes is a
-    /// hole: an uncomputed relocation, an `R_*_COPY` object, the ARM / PPC32
-    /// lazy-binding header words, MIPS implicit GOT entries.
-    ///
-    /// `.got.plt` is not served; a lazily bound slot the link puts in `.got`
-    /// (ARM's `R_ARM_JUMP_SLOT`) is, at its bound value. Only sections
-    /// `SHF_ALLOC | SHF_WRITE` and not `SHF_TLS` are served, and none when a
-    /// table the dynamic tags place cannot be read.
+    /// `got_is_rom`). A slot whose value only the loader computes is a hole:
+    /// an uncomputed relocation, an `R_*_COPY` object, the ARM / PPC32
+    /// lazy-binding header words, MIPS implicit GOT entries. Only
+    /// `SHF_ALLOC | SHF_WRITE`, non-`SHF_TLS` sections are added, and none
+    /// when a table the dynamic tags place cannot be read.
     ImmutableAndRelocatedGot,
     /// Every allocatable mapping, `.data` / `.got` / `.data.rel.ro` included.
     AllAllocatable,
@@ -55,7 +49,6 @@ impl LoadFilter {
         }
     }
 
-    /// PT_LOAD only, see [`accepts`](Self::accepts).
     fn segment_accepts(self, p_flags: u32) -> bool {
         self.accepts(
             p_flags & object::elf::PF_W != 0,
@@ -63,7 +56,6 @@ impl LoadFilter {
         )
     }
 
-    /// Requires [`is_mapped`], then [`accepts`](Self::accepts).
     fn section_accepts(self, sh_flags: u64) -> bool {
         is_mapped(sh_flags)
             && self.accepts(
@@ -139,7 +131,7 @@ fn relocated_got_ranges(
 
 /// The mappings one walk accepted, and which addresses are writable.
 pub(crate) struct LoadedImage {
-    /// One per start, as a lookup table over them keeps.
+    /// One per start.
     pub(crate) regions: Vec<MemRegion>,
     /// Every writable mapping the walk saw, filtered out or not.
     pub(crate) writable: AddressSet,
@@ -211,8 +203,7 @@ pub fn without_ranges(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRe
     kept
 }
 
-/// Non-empty `[start, end)` ranges, ascending, disjoint and non-touching,
-/// which the queries' binary searches rely on.
+/// Non-empty `[start, end)` ranges, ascending, disjoint and non-touching.
 #[derive(Clone, Debug, Default)]
 pub struct AddressSet(Vec<(u64, u64)>);
 
@@ -431,7 +422,8 @@ impl ElfSectionLayout {
         Some((r.got_base.checked_add(offset)?, r.word as usize))
     }
 
-    /// The PowerPC64 TOC pointer: `.TOC.`, `0x8000` past the object's `.toc`.
+    /// The PowerPC64 TOC pointer: `0x8000` past the object's `.toc`, else
+    /// past the synthetic GOT.
     pub(crate) fn toc_base(&self) -> Option<u64> {
         self.0.as_ref()?.toc_base
     }
@@ -457,10 +449,8 @@ impl ElfSectionLayout {
         Some(r.bases.get(&index.0)?.wrapping_add(sym.address()))
     }
 
-    /// [`try_symbol_address`], falling back to the bare `st_value`; for
-    /// naming, not patching.
-    ///
-    /// [`try_symbol_address`]: Self::try_symbol_address
+    /// [`try_symbol_address`](Self::try_symbol_address), falling back to the
+    /// bare `st_value`; for naming, not patching.
     pub fn symbol_address<'d>(&self, sym: &impl object::ObjectSymbol<'d>) -> u64 {
         self.try_symbol_address(sym)
             .unwrap_or_else(|| sym.address())
@@ -572,7 +562,7 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
 }
 
 /// `(r_offset, r_type, r_sym, r_addend)` of every relocation against the
-/// section `target`, see [`opd_entries`].
+/// section `target`.
 fn opd_relocations(
     f: &object::read::elf::ElfFile64<'_, object::Endianness>,
     target: usize,
@@ -675,8 +665,8 @@ fn align_up(value: u64, align: u64) -> u64 {
         .unwrap_or(value)
 }
 
-/// The regions `source` and `filter` select, as windows into `bytes`, the
-/// whole image `obj` was parsed from.
+/// The regions `source` and `filter` select, as windows into `bytes`, which
+/// `obj` was parsed from.
 ///
 /// # Errors
 ///

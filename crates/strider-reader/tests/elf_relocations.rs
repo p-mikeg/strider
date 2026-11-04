@@ -916,8 +916,8 @@ fn every_region_covering_a_site_serves_the_patched_bytes() {
 }
 
 /// A site every one of 64 overlapping mappings covers is served patched by
-/// each of them, from one shared patch list: a crafted image chooses the
-/// overlap, and no longer the memory the patches take.
+/// each of them, from one shared patch list, so a crafted overlap does not
+/// multiply the memory the patches take.
 #[test]
 fn every_one_of_many_overlapping_mappings_serves_a_sites_patch() {
     let bytes = common::elf_fixture::build_overlapping_loads_rela_elf(64, 512);
