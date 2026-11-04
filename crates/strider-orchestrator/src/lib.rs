@@ -148,7 +148,7 @@ where
     /// changing or the iteration cap, the discovery depth limit, runs out. A
     /// site that narrows twice is withdrawn.
     ///
-    /// Returns whatever it cannot vouch for: check
+    /// Returns even when it cannot vouch for every path: check
     /// [`AnalyzeResult::incomplete`] before trusting an absence. An unresolved
     /// site keeps its placeholder. A site the cfg consumed as a `TailCall`, or
     /// as a `Return` the caller seeded, is [`Reason::UnverifiedSeed`].
