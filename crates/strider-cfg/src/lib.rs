@@ -75,10 +75,9 @@ impl Cfg {
             .map(|(id, _)| id)
     }
 
-    /// Seeded or derived arms dropped because they, or code they lead to
-    /// without passing another `Switch`, failed to decode. Each names the arm
-    /// and the site it was seated from; the failing bytes are reported as
-    /// [`Reason::UndecodableTarget`].
+    /// Seeded or derived arms dropped because they, or code they reach before
+    /// another `Switch`, failed to decode, each with its site. The failing
+    /// bytes are in [`Self::incomplete`].
     pub fn undecodable_seeded_targets(&self) -> &[UndecodableTarget] {
         &self.report.undecodable_seeded
     }
@@ -101,15 +100,14 @@ impl Cfg {
         &self.report.link_register_seated
     }
 
-    /// Live sites seated as a `TailCall` because the answer was a single
-    /// target outside the function.
+    /// Live sites seated as a `TailCall` from a single out-of-function target.
     pub fn tail_call_seated(&self) -> &[PcodeInsnAddr] {
         &self.report.tail_call_seated
     }
 
-    /// The ISA-mode bit flowing into the indirect branch at `site`: the mode
-    /// a mode-less target seated there decodes in. `None` off a sealed
-    /// indirect branch, or with no ISA-mode var.
+    /// The ISA-mode bit flowing into the indirect branch at `site`, which a
+    /// mode-less target seated there decodes in. `None` off a sealed indirect
+    /// branch, or with no ISA-mode var.
     pub fn flowing_isa_bit_at_site(&self, site: PcodeInsnAddr) -> Option<bool> {
         self.report.flowing_isa_bits.get(&site).copied()
     }

@@ -46,42 +46,28 @@ reasons! {
     /// Other committed vars are not compared.
     IsaModeConflict => "isa_mode_conflict",
     /// Inside a region but off every boundary (a MIPS delay slot too), or a
-    /// region start a later decode stepped over. A direct branch keeps an
-    /// inexact edge to the region holding the first op of the instruction
-    /// containing the target; a `Switch` arm is dropped. A branch past an
-    /// x86 `lock` prefix into the instruction heading its region is exact and
-    /// not reported.
+    /// region start a later decode stepped over. A direct branch edges to the
+    /// region holding the containing instruction's first op; a `Switch` arm is
+    /// dropped. A branch past an x86 `lock` prefix heading its region is exact.
     InteriorTarget => "interior_target",
     /// No bytes back the instruction here (a MIPS branch with an unmapped
     /// delay slot names itself); the edge leaves through a `TailCall` stub.
-    /// Off a seeded arm, a decode running into them drops the arm unless a
-    /// call precedes them, which ends `NoReturn`; a branch from the arm, or
-    /// an arm onto an existing stub, keeps it. An unmapped entry fails the
-    /// build.
+    /// Off a seeded arm, falling into them drops the arm unless a call
+    /// precedes them (`NoReturn`); a branch into them keeps it. An unmapped
+    /// entry fails the build.
     UnmappedTarget => "unmapped_target",
-    /// Holds no liftable instruction: Sleigh rejects the bytes or has no
-    /// p-code for them (`unimpl`), or
-    /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks them.
-    /// A branch, a fall-through into data, or a zero-p-code-op run a call
-    /// falls into leaves through a `TailCall` stub; a call falling into them,
-    /// directly or through such a run, ends `NoReturn`.
-    /// Any other fall-through into rejected bytes fails the build. Off a
-    /// seeded arm, as for [`Self::UnmappedTarget`], the arm is dropped and
-    /// named by
-    /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets);
-    /// an arm or region off one whose decode fails for any unnamed reason is
-    /// named here at its start.
+    /// No liftable instruction: Sleigh rejects the bytes, has no p-code for
+    /// them, or [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges)
+    /// marks them. A branch or a fall-through into data leaves through a
+    /// `TailCall` stub, a call falling into them ends `NoReturn`, and any other
+    /// fall-through fails the build. Off a seeded arm the arm is dropped; a
+    /// decode there failing for an unnamed reason is named at its start.
     UndecodableTarget => "undecodable_target",
-    /// A fall-through, not-taken path or conditional instruction's skip of
-    /// itself ran off a [`FunctionBound::Size`](crate::FunctionBound::Size)
-    /// or [`CfgOptions::fragment_ranges`](crate::CfgOptions::fragment_ranges)
-    /// end, named at the first address past the last decoded instruction. It
-    /// leaves through a `TailCall` stub; a call returning there ends
-    /// `NoReturn` unless its target is in
-    /// [`CfgOptions::no_return_targets`](crate::CfgOptions::no_return_targets).
-    /// Off a seeded arm the arm is dropped instead. Under
-    /// [`FunctionBound::Open`](crate::FunctionBound::Open), only past a
-    /// fragment.
+    /// A fall-through, not-taken path or conditional skip ran off a
+    /// [`FunctionBound::Size`](crate::FunctionBound::Size) or fragment end
+    /// (under `Open`, only a fragment's), named at the first address past it.
+    /// It leaves through a `TailCall` stub, or ends a call's region
+    /// `NoReturn`. Off a seeded arm the arm is dropped instead.
     PastFunctionEnd => "past_function_end",
 }
 

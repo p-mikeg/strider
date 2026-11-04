@@ -115,12 +115,9 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
     }
 
     /// Resets the `noflow` vars at `addr` to their defaults, re-lifting the
-    /// previous instruction so its own commits land again.
-    ///
-    /// Not for a region starting mid-instruction: it continues a p-code
-    /// stream decoded in the context committed at those bytes, and a reset
-    /// would splice in another constructor's (armv4t `movne lr,pc; bxne r3`
-    /// loses its call, `LRset` being committed at the `bx`).
+    /// previous instruction so its own commits land again. Skipped for a
+    /// region starting mid-instruction, whose p-code continues the context
+    /// committed there (armv4t `movne lr,pc; bxne r3` would lose its call).
     fn hold_transients(&mut self, addr: u64) -> Result<()> {
         let defaults = &self.builder.engine.tables.transient_defaults;
         if defaults.is_empty() {
@@ -170,14 +167,10 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         Ok(wrote)
     }
 
-    /// Makes the commit-able context at `at` this build's own: erases each var,
-    /// then re-lifts `from` so its own `globalset` lands again. The erase
-    /// paints forward to the next change point, with, per class:
-    ///
-    /// - [`FlowCommit::NoFlow`]: the pspec default; a live IT state painted
-    ///   forward would predicate what follows.
-    /// - [`FlowCommit::Flowing`]: the value in force at `from`; the default
-    ///   would cancel a mode an earlier instruction set.
+    /// Makes the committable context at `at` this build's own: writes each
+    /// var, then re-lifts `from` so its `globalset` lands again. A
+    /// [`FlowCommit::NoFlow`] var gets its pspec default (a live IT state would
+    /// predicate what follows), a [`FlowCommit::Flowing`] one its value at `from`.
     fn rederive_flow(&mut self, at: u64, from: u64) -> Result<()> {
         let mut wrote = false;
         for &(name, flow, default) in &self.builder.engine.tables.flow_commit {
