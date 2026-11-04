@@ -205,6 +205,14 @@ mod tests {
         let base = t(&[(0x2000, None), (0x3000, None)]);
         assert!(base.narrows_to(&t(&[(0x2000, None)])), "a lost address");
         assert!(
+            base.narrows_to(&t(&[(0x2000, None), (0x4000, None)])),
+            "one gained, one lost"
+        );
+        assert!(
+            t(&[(0x2000, None)]).narrows_to(&t(&[(0x3000, None)])),
+            "one swapped for another"
+        );
+        assert!(
             !base.narrows_to(&t(&[(0x2000, None), (0x3000, None), (0x4000, None)])),
             "growth"
         );
