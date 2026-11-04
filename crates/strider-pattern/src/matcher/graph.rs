@@ -6,11 +6,9 @@ use super::vertex::{PatNode, PatValue, PostMatchFn};
 
 pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 
-/// Pattern nodes one query may recurse through. The engine is
-/// continuation-passing, so the stack grows with the tree-unfolded node count
-/// (a vertex feeding several slots is walked once per slot), plus one frame per
-/// output vertex past a node's first. Under the cap a query fits the 2 MiB a
-/// spawned thread gets.
+/// Pattern nodes one query may recurse through, counted tree-unfolded (a vertex once per consumer
+/// slot) plus one per output vertex past a node's first. Under it a query fits a spawned thread's
+/// 2 MiB stack.
 pub const MAX_PATTERN_NODES: usize = 256;
 
 /// Per pat node: the most nodes one match configuration recurses through
@@ -222,11 +220,7 @@ impl Pattern {
     /// Runs after the whole match, seeing every capture; `false` rejects it.
     /// The type is the matched output's, `None` for a control, memory or
     /// `PhiToken` edge or a zero-output node.
-    /// Composes with a guard already on the root, like
-    /// [`MatcherBuilder::set_post_match`](crate::matcher::MatcherBuilder::set_post_match).
-    ///
-    /// A pattern with no unique sink root has nowhere to put the guard; it
-    /// already errors at query time, so this is a no-op there.
+    /// Composes with a guard already on the root. A no-op on a pattern with no unique root.
     pub fn with_root_post_match(mut self, f: PostMatchFn) -> Self {
         if let Ok(&root) = self.root.as_ref() {
             self.graph.node_kind_mut(root).post_matches.push(f);

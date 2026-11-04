@@ -1,5 +1,3 @@
-//! The capture handle, for both data and control positions.
-
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
