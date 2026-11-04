@@ -170,6 +170,48 @@ fn a_branch_into_the_zero_pcode_op_run_past_a_call_keeps_a_successor() {
     assert_eq!(call.terminator, RegionTerminator::NoReturn);
 }
 
+/// Which predecessor reaches the zero-pcode-op run first does not change the
+/// verdict: a branch into the run explored before the call's fall-through.
+#[test]
+fn a_zero_pcode_op_run_into_bad_bytes_is_decided_whichever_edge_comes_first() {
+    // test eax, eax ; je 0x1009 ; call 0x2000 ; 0x1009 nop ; 0x100a bad
+    let call_first = [
+        0x85, 0xc0, 0x74, 0x05, 0xe8, 0xf7, 0x0f, 0x00, 0x00, 0x90, 0x06, 0x06, 0x06, 0x06,
+    ];
+    // test eax, eax ; jne 0x1006 ; jmp 0x100b ; call 0x2000 ; 0x100b nop ; 0x100c bad
+    let branch_first = [
+        0x85, 0xc0, 0x75, 0x02, 0xeb, 0x05, 0xe8, 0xf5, 0x0f, 0x00, 0x00, 0x90, 0x06, 0x06, 0x06,
+        0x06,
+    ];
+    for (bytes, call, bad) in [
+        (&call_first[..], 0x1004, 0x100a),
+        (&branch_first[..], 0x1006, 0x100c),
+    ] {
+        let cfg = build(
+            &SleighArch::x86_64(),
+            bytes.to_vec(),
+            0x1000,
+            &CfgOptions::default(),
+        )
+        .expect("a nop run into bad bytes must not fail the function");
+        assert_eq!(
+            cfg.incomplete()
+                .of(strider_cfg::Reason::UndecodableTarget)
+                .collect::<Vec<_>>(),
+            &[at(bad)]
+        );
+        let call = cfg
+            .regions()
+            .find(|r| r.insns.iter().any(|i| i.addr.machine() == call))
+            .expect("the call decodes");
+        assert_eq!(
+            call.terminator,
+            RegionTerminator::NoReturn,
+            "call at {call:?}"
+        );
+    }
+}
+
 /// The same for a literal pool a `$d` mapping symbol marks, which is what real
 /// `gcc -O2 -fPIC` output puts after a call to an unmarked no-return callee.
 #[test]
