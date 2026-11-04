@@ -156,6 +156,18 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 - An index with a constant offset that can go below zero, such as
   `(x & 7) - 2`.
 
+## Known limits
+
+- Chained switches (a jump table whose arm holds another) are found one
+  re-lift round per level; past 256 levels the rest stay
+  `"unresolved_branch"`.
+- PowerPC float code lifts to far more p-code than other ISAs because the
+  FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
+- A long chain of constant guards held only in registers can reach the
+  1024-iteration cap, and the analysis raises.
+- A pattern nesting commutative nodes `d` deep can cost up to 2^d match
+  attempts, even when nothing matches; `.ordered()` pins the operand order.
+
 ## Using a different pipeline
 
 Build passes with the `strider.opt` builders and pass them as
