@@ -797,157 +797,28 @@ fn build_returns_error_even_when_some_names_are_valid() {
     );
 }
 
-/// Expected link-register Sleigh name per preset, `None` for stack-push ISAs
-/// that hold the return address on the stack.  Drives every link-register
-/// test below; adding a preset means adding one row.
-struct LinkRegCase {
-    name: &'static str,
-    cc: fn() -> CallingConvention,
-    arch: fn() -> crate::arch::SleighArch,
-    expected_lr_name: Option<&'static str>,
-}
-
-fn link_reg_cases() -> Vec<LinkRegCase> {
-    vec![
-        LinkRegCase {
-            name: "ARM AAPCS",
-            cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm,
-            expected_lr_name: Some("lr"),
-        },
-        LinkRegCase {
-            name: "ARM AAPCS (Thumb)",
-            cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm_thumb,
-            expected_lr_name: Some("lr"),
-        },
-        LinkRegCase {
-            name: "ARM AAPCS (BE)",
-            cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm_be,
-            expected_lr_name: Some("lr"),
-        },
-        LinkRegCase {
-            name: "AArch64 AAPCS64",
-            cc: CallingConvention::aarch64_aapcs64,
-            arch: crate::arch::SleighArch::aarch64,
-            expected_lr_name: Some("x30"),
-        },
-        LinkRegCase {
-            name: "AArch64 AAPCS64 (BE)",
-            cc: CallingConvention::aarch64_aapcs64,
-            arch: crate::arch::SleighArch::aarch64be,
-            expected_lr_name: Some("x30"),
-        },
-        LinkRegCase {
-            name: "MIPS O32 (LE)",
-            cc: CallingConvention::mips_o32,
-            arch: crate::arch::SleighArch::mipsle32,
-            expected_lr_name: Some("ra"),
-        },
-        LinkRegCase {
-            name: "MIPS O32 (BE)",
-            cc: CallingConvention::mips_o32,
-            arch: crate::arch::SleighArch::mipsbe32,
-            expected_lr_name: Some("ra"),
-        },
-        LinkRegCase {
-            name: "MIPS N64 (LE)",
-            cc: CallingConvention::mips_n64,
-            arch: crate::arch::SleighArch::mipsle64,
-            expected_lr_name: Some("ra"),
-        },
-        LinkRegCase {
-            name: "MIPS N64 (BE)",
-            cc: CallingConvention::mips_n64,
-            arch: crate::arch::SleighArch::mipsbe64,
-            expected_lr_name: Some("ra"),
-        },
-        LinkRegCase {
-            name: "PowerPC SysV 32 (BE)",
-            cc: CallingConvention::powerpc_sysv32,
-            arch: crate::arch::SleighArch::ppc32be,
-            expected_lr_name: Some("LR"),
-        },
-        LinkRegCase {
-            name: "PowerPC SysV 32 (LE)",
-            cc: CallingConvention::powerpc_sysv32,
-            arch: crate::arch::SleighArch::ppc32le,
-            expected_lr_name: Some("LR"),
-        },
-        LinkRegCase {
-            name: "PowerPC ELFv1 (BE)",
-            cc: CallingConvention::powerpc64_elf_v1,
-            arch: crate::arch::SleighArch::ppc64be,
-            expected_lr_name: Some("LR"),
-        },
-        LinkRegCase {
-            name: "PowerPC ELFv2 (LE)",
-            cc: CallingConvention::powerpc64_elf_v2,
-            arch: crate::arch::SleighArch::ppc64le,
-            expected_lr_name: Some("LR"),
-        },
-        LinkRegCase {
-            name: "x86-64 SysV",
-            cc: CallingConvention::x86_64_systemv,
-            arch: crate::arch::SleighArch::x86_64,
-            expected_lr_name: None,
-        },
-        LinkRegCase {
-            name: "x86 cdecl",
-            cc: CallingConvention::x86_cdecl,
-            arch: crate::arch::SleighArch::x86,
-            expected_lr_name: None,
-        },
-    ]
-}
-
-/// Every link-register ISA preset resolves `link_register` to the arch's
-/// LR under the documented Sleigh name.  Pinning all of them catches a typo or
-/// rename in any one `link_register`.
+/// Every preset on every arch it names resolves `link_register` to its
+/// family's LR, none on stack-push x86.
 #[test]
-fn link_register_set_for_link_register_presets() {
-    for c in link_reg_cases() {
-        let Some(expected_name) = c.expected_lr_name else {
-            continue;
-        };
-        let regs = regs_for((c.arch)());
-        let built = (c.cc)()
-            .build(&regs)
-            .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
-        let expected_vn = regs.name_to_vn(expected_name).unwrap_or_else(|| {
-            panic!(
-                "{}: expected LR name {:?} must resolve in arch's Sleigh regs",
-                c.name, expected_name,
-            )
-        });
-        assert_eq!(
-            built.link_register,
-            Some(expected_vn),
-            "{}: link_register must be the {:?} varnode",
-            c.name,
-            expected_name,
-        );
-    }
-}
-
-/// Stack-push ISAs (x86, x86_64) keep the return address on the stack.
-#[test]
-fn link_register_none_for_stack_push_presets() {
-    for c in link_reg_cases() {
-        if c.expected_lr_name.is_some() {
-            continue;
+fn every_preset_names_its_familys_link_register() {
+    for cc in CallingConvention::presets() {
+        for &preset in cc.arches {
+            let regs = preset.arch().probe_regs();
+            let built = cc
+                .cc
+                .build(&regs)
+                .unwrap_or_else(|e| panic!("{}/{preset:?}: {e:?}", cc.name));
+            let lr = match preset.family_name() {
+                "x86" => None,
+                "arm32" => Some("lr"),
+                "aarch64" => Some("x30"),
+                "mips" => Some("ra"),
+                "ppc" => Some("LR"),
+                other => panic!("no link-register row for family {other}"),
+            };
+            let want = lr.map(|name| regs.name_to_vn(name).expect(name));
+            assert_eq!(built.link_register, want, "{}/{preset:?}", cc.name);
         }
-        let regs = regs_for((c.arch)());
-        let built = (c.cc)()
-            .build(&regs)
-            .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
-        assert!(
-            built.link_register.is_none(),
-            "{}: link_register must be None on stack-push ISAs, got {:?}",
-            c.name,
-            built.link_register,
-        );
     }
 }
 
@@ -998,27 +869,11 @@ fn preserves_all_sets_both_flags_regs_keeps_memory() {
     );
 }
 
+/// Only `preserves_all` opts a convention out of clobbering memory.
 #[test]
-fn standard_presets_have_preserves_memory_false() {
-    // Standard presets keep the default so their Call nodes correctly clobber
-    // memory.  Only preserves_all / preserves_regs opt out.
-    let presets: &[(&str, CallingConvention)] = &[
-        ("x86_64_systemv", CallingConvention::x86_64_systemv()),
-        ("x86_cdecl", CallingConvention::x86_cdecl()),
-        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64()),
-        ("arm_aapcs", CallingConvention::arm_aapcs()),
-        ("arm_aapcs_soft", CallingConvention::arm_aapcs_soft()),
-        ("mips_o32", CallingConvention::mips_o32()),
-        ("mips_n64", CallingConvention::mips_n64()),
-        ("powerpc_sysv32", CallingConvention::powerpc_sysv32()),
-        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1()),
-        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2()),
-    ];
-    for (name, cc) in presets {
-        assert!(
-            !cc.preserves_memory,
-            "{name}: standard presets must have preserves_memory = false"
-        );
+fn no_preset_preserves_memory() {
+    for cc in CallingConvention::presets() {
+        assert!(!cc.cc.preserves_memory, "{}", cc.name);
     }
 }
 
