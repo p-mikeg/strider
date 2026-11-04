@@ -261,7 +261,8 @@ class Function:
         A root yields one match per distinct binding:
         `int_add(anything().capture(k), anything())` on `int_add(x, y)`
         returns both `k=x` and `k=y`. `.ordered()` on a binary op pins operand
-        slots.
+        slots. Each output `any_output()` binds is its own match; the `Match`
+        accessors read the bound node, so `m[c] ==` tells the outputs apart.
         """
         ...
     def find_unique(

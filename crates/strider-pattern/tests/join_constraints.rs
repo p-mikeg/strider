@@ -533,7 +533,7 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
         m: &Matcher<'_>,
         pats: &[&strider_pattern::Pattern],
         function: &strider_ir::Function,
-    ) -> Vec<Vec<Vec<(u32, u32)>>> {
+    ) -> Vec<Vec<Vec<(u32, u32, u32)>>> {
         let per: Vec<Vec<strider_pattern::Match>> =
             pats.iter().map(|p| m.find_all(p).unwrap()).collect();
         let mut rows: Vec<Vec<&strider_pattern::Match>> = vec![vec![]];
@@ -547,11 +547,11 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
                     let ok = row.iter().all(|prev| {
                         prev.capture_signature(function.graph())
                             .iter()
-                            .all(|(cap, node)| {
+                            .all(|(cap, node, _)| {
                                 cand_sig
                                     .iter()
-                                    .find(|(c, _)| c == cap)
-                                    .is_none_or(|(_, n)| n == node)
+                                    .find(|(c, _, _)| c == cap)
+                                    .is_none_or(|(_, n, _)| n == node)
                             })
                     });
                     if ok {
@@ -563,7 +563,7 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
             }
             rows = next;
         }
-        let mut out: Vec<Vec<Vec<(u32, u32)>>> = rows
+        let mut out: Vec<Vec<Vec<(u32, u32, u32)>>> = rows
             .iter()
             .map(|r| {
                 r.iter()
@@ -599,7 +599,7 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
 
     for (n, pats) in shapes.iter().enumerate() {
         let refs: Vec<&strider_pattern::Pattern> = pats.iter().collect();
-        let mut got: Vec<Vec<Vec<(u32, u32)>>> = m
+        let mut got: Vec<Vec<Vec<(u32, u32, u32)>>> = m
             .find_joined_constrained(&refs, &[])
             .unwrap()
             .iter()
