@@ -490,6 +490,10 @@ fn mips_syscall_carries_the_linux_footprint() {
         assert!(abi.implicit_reads.contains(&"a0"), "{preset:?}");
         assert!(abi.implicit_writes.contains(&"v0"), "{preset:?}");
         assert!(abi.implicit_writes.contains(&"a3"), "{preset:?}");
+        // The kernel's partial syscall exit does not restore these.
+        for r in ["at", "hi", "lo"] {
+            assert!(abi.implicit_writes.contains(&r), "{preset:?}/{r}");
+        }
         // Every name has to resolve on this preset's own register table.
         abi.build(&regs_for(preset))
             .unwrap_or_else(|e| panic!("{preset:?}: {e}"));
