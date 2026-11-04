@@ -4,8 +4,8 @@
 
 use strider_ir_test_utils::Tb;
 use strider_pattern::{
-    Capture, CaptureExt, MatchOnly, MatchPat, Matcher, Pattern, TemplatePat, anything,
-    capture_typed, float_is_nan, float_le, int_add, var,
+    Capture, CaptureExt, MatchOnly, MatchPat, Matcher, Pattern, TemplatePat, WithOutput, anything,
+    capture_typed, float_is_nan, float_le, int_add, region, var,
 };
 
 const LINKS: usize = 20_000;
@@ -90,6 +90,20 @@ fn a_build_side_chain_is_refused() {
             .to_string()
     });
     assert!(err.contains("stack"), "{err}");
+}
+
+/// Each output vertex is a frame of its own when the node matches.
+#[test]
+fn a_chain_of_output_vertices_is_refused() {
+    let err = on_thread(|| {
+        let c = Capture::new();
+        let mut p = region();
+        for _ in 0..LINKS {
+            p = p.output(0).capture(c);
+        }
+        refusal(&p.build())
+    });
+    assert!(err.contains("nodes"), "{err}");
 }
 
 /// A shared operand is walked once per slot that names it, so a chain of
