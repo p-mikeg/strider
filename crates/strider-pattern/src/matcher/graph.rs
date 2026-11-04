@@ -245,9 +245,9 @@ impl Pattern {
         out
     }
 
-    /// Runs after root and all inputs have matched; returning `false` rejects
-    /// the match. The type is that of the matched output, `None` where there
-    /// is none: a control, memory or `PhiToken` edge, or a zero-output node.
+    /// Runs after the whole match, seeing every capture; `false` rejects it.
+    /// The type is the matched output's, `None` for a control, memory or
+    /// `PhiToken` edge or a zero-output node.
     /// Composes with a guard already on the root, like
     /// [`MatcherBuilder::set_post_match`](crate::matcher::MatcherBuilder::set_post_match).
     ///
