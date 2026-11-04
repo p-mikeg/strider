@@ -37,14 +37,7 @@ pub(crate) struct Family {
     /// [`crate::call_other_abi::classify`] asks, in order: these exact rows
     /// (the first whose `only` admits the preset), the arch-independent rows,
     /// [`Self::call_other_prefixes`], then [`Self::call_other_fallback`].
-    /// Prefixes come after every exact row because an exact row is the
-    /// exception carved out of a stem (the PPC `vsx*` loads under `vsx`).
-    ///
-    /// Names scoped to the arches that emit them: a footprint of named
-    /// registers resolves on one arch's Sleigh table alone (the Linux syscall
-    /// ABIs, SMCCC, the x86 MSR / MONITOR-MWAIT / SWAPGS family), and a generic
-    /// spelling (`monitor`, `trap`, `vrev`, `swi`) must not reach an arch
-    /// meaning it otherwise.
+    /// An exact row is an exception carved out of a stem.
     pub(crate) call_other: &'static [Row],
     pub(crate) call_other_prefixes: &'static [Prefix],
     /// Classification by rule, for a family whose names no stem separates.
