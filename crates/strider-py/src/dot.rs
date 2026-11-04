@@ -10,16 +10,14 @@ pub const DEFAULT_CFG_STYLE: &str = "dark_cfg";
 
 type StyleCtor = fn() -> dot::DotStyle;
 
-/// Every style name a render accepts, and the theme it picks: the roster
-/// `strider.cfg.DOT_STYLES` publishes.
+/// Every style name a render accepts (`strider.cfg.DOT_STYLES`).
 pub(crate) const DOT_STYLES: [(&str, StyleCtor); 3] = [
     ("dark", dot::DotStyle::dark),
     ("dark_cfg", dot::DotStyle::dark_cfg),
     ("empty", dot::DotStyle::default),
 ];
 
-/// Map a style name onto a [`dot::DotStyle`].  An unknown name is an error,
-/// never a silent default.
+/// Map a style name onto a [`dot::DotStyle`]; an unknown name is an error.
 pub fn dot_style_for(name: &str) -> PyResult<dot::DotStyle> {
     if let Some((_, style)) = DOT_STYLES.iter().find(|(n, _)| *n == name) {
         return Ok(style());

@@ -66,8 +66,7 @@ impl PyMatch {
         })
     }
 
-    /// Resolve `cap` to a node and read it under a single borrow, skipping
-    /// the `PyNode` round trip's second resolution and discarded incref.
+    /// Resolve `cap` to a node and read it under a single borrow.
     pub(crate) fn read_bound<R>(
         &self,
         py: Python<'_>,
@@ -81,14 +80,10 @@ impl PyMatch {
         })
     }
 
-    /// `Capture('x'): BoundCapture(...)` entries for every bound capture, in
-    /// ascending capture-id order. The value mirrors `BoundCapture.__repr__`: a
-    /// hex constant when the node is an integer const, else `<node>`.
+    /// `Capture('x'): BoundCapture(...)` per bound capture, by capture id.
     fn bindings_repr(&self, py: Python<'_>) -> PyResult<String> {
         self.read(py, |function| {
-            // Distinct captures across sub-matches; `capture_signature` is sorted
-            // by id, so the first node seen per id wins and order is
-            // deterministic.
+            // First node seen per capture id wins.
             let mut seen = std::collections::BTreeMap::new();
             for m in &self.inner {
                 for (cap_id, node_id) in m.capture_signature(function.graph()) {
@@ -112,9 +107,8 @@ impl PyMatch {
     }
 }
 
-/// The dedup key of the sub-matches `inner`, read against `function`: per
-/// sub-match, its root unless `ignore_root`, then its `(capture-id, node-id)`
-/// signature behind the signature's length.
+/// Dedup key of `inner`: per sub-match, its root unless `ignore_root`, then
+/// its length-prefixed `(capture-id, node-id)` signature.
 pub(crate) fn dedup_key(
     inner: &[strider_pattern::Match],
     function: &strider_ir::Function,
@@ -132,9 +126,7 @@ pub(crate) fn dedup_key(
     key
 }
 
-/// Unwrap a capture read for the raising getters, raising a uniform error when
-/// the `_opt` counterpart would return `None` (unbound, or a node without the
-/// requested aspect).
+/// Raise where the `_opt` getter would return `None`.
 fn or_missing<T>(v: Option<T>, what: &str) -> PyResult<T> {
     v.ok_or_else(|| {
         into_strider_err(anyhow::anyhow!(
@@ -151,9 +143,7 @@ impl PyMatch {
         visit.call(&self.at.function)
     }
 
-    /// Node id where the top-level pattern matched. Stored beside the
-    /// bindings, not as one: a capture ON the top-level pattern binds this
-    /// same node.
+    /// Node id where the top-level pattern matched.
     #[getter]
     fn root(&self, py: Python<'_>) -> PyResult<u32> {
         self.read(py, |_| self.inner[0].root().as_u32())
@@ -167,10 +157,9 @@ impl PyMatch {
         })
     }
 
-    /// `m[c]` / `m["name"]`: capture `c` bound to THIS match, a `BoundCapture`
-    /// whose `has` says whether it bound and which converts and compares a
-    /// numeric capture (`int(m[c])`, `m[c] == 0x10`). The readers are this
-    /// match's methods.
+    /// `m[c]` / `m["name"]`: a `BoundCapture` whose `has` says whether `c`
+    /// bound, and which converts and compares a numeric capture
+    /// (`int(m[c])`, `m[c] == 0x10`).
     fn __getitem__(slf: Bound<'_, Self>, key: CaptureKey<'_>) -> PyResult<PyBoundCapture> {
         let py = slf.py();
         let cap = key.resolve()?;
@@ -194,8 +183,7 @@ impl PyMatch {
     }
 
     /// True when `key` is bound in this match. Raises once the function has
-    /// been compacted, like every other capture accessor, so `if c in m` and
-    /// `m.node(c)` agree.
+    /// been compacted.
     fn has(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
         self.read(py, |_| self.is_bound(cap))
@@ -231,11 +219,8 @@ impl PyMatch {
     }
 }
 
-/// Each row generates the raising getter (`or_missing` over its `_opt` twin,
-/// the error label is the Python name) and the `_opt` getter (delegates to the
-/// `PyNode` aspect accessor, `None` when the capture binds no node carrying it).
-/// `node_opt`, its raising `node`, and `asm_fingerprint` (empty vec, not `None`)
-/// stay hand-written above. Own `#[pymethods]` block (multiple-pymethods).
+/// Each row generates a raising getter and its `_opt` twin over the `PyNode`
+/// accessor `$acc`.
 macro_rules! match_getters {
     ($(
         #[doc = $rdoc:literal] $rpy:literal $rname:ident,
@@ -299,14 +284,14 @@ match_getters! {
     #[doc = "The raw float bits, or `None`."]
     "float_bits_opt" float_bits_opt : u64 = float_bits;
 
-    #[doc = "The varnode a captured node names: an `InitialVar`'s entry-read varnode, the register a `Call` returns in, or whatever varnode the sla gives a `CallOther`'s result (a `unique` temporary, a tracked register, or none). Raises for any other kind. A capture binds a NODE, so this answers for a multi-output call's FIRST value output, never for one clobber in particular."]
+    #[doc = "The varnode a captured node names: an `InitialVar`'s entry-read varnode, the register a `Call` returns in, or whatever varnode the sla gives a `CallOther`'s result (a `unique` temporary, a tracked register, or none). Raises for any other kind. For a multi-output call, the first value output."]
     "vn" vn,
     #[doc = "The varnode, or `None`."]
     "vn_opt" vn_opt : crate::sleigh::PyVn = vn;
 }
 
-/// Capture `cap` bound to a specific `PyMatch`: `m[c]`. It says whether the
-/// capture bound and converts a numeric one; the readers are the match's.
+/// Capture `cap` bound to a specific `Match`: `m[c]`. Says whether it bound
+/// and converts a numeric one.
 #[pyclass(name = "BoundCapture", module = "strider.pattern", frozen)]
 pub struct PyBoundCapture {
     match_: Py<PyMatch>,
@@ -344,8 +329,7 @@ impl PyBoundCapture {
 
 #[pymethods]
 impl PyBoundCapture {
-    /// Both handles are `Py<...>`, invisible to the GC without this, so a cycle
-    /// through a `BoundCapture` would leak the whole match graph.
+    /// Exposes both `Py` handles to the cyclic collector.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.match_)?;
         visit.call(&self.cap)
@@ -370,14 +354,11 @@ impl PyBoundCapture {
              whether it bound, int(m[c]) for its value",
         ))
     }
-    /// Equal to an int matching the captured constant at its width, in either
-    /// signed or unsigned spelling (so `-8` and `0xFFFFFFF8` both match a
-    /// 32-bit -8), or to another `BoundCapture` whose constant agrees in
-    /// either spelling. Two captures with no integer value (any binding but an
-    /// integer constant, so a float constant too) are
+    /// Equal to an int matching the captured constant in either signed or
+    /// unsigned spelling (`-8` and `0xFFFFFFF8` both match a 32-bit -8), or to
+    /// a `BoundCapture` whose constant agrees. Two non-integer captures are
     /// equal when they bound the same value of the same function; an unbound
-    /// one equals nothing.
-    /// Value-comparing, hence `BoundCapture` is unhashable.
+    /// one equals nothing. Unhashable.
     fn __richcmp__(
         &self,
         py: Python<'_>,
@@ -396,8 +377,7 @@ impl PyBoundCapture {
                 (u.is_some() && u == ou) || (s.is_some() && s == os)
             }
         } else {
-            // An integer wider than any `ValueType` equals no constant, so it
-            // answers unequal rather than raising out of `__eq__`.
+            // An integer wider than any `ValueType` is unequal, not an error.
             match crate::bigint::py_big_int(&other)?.and_then(crate::bigint::PyBigInt::in_range) {
                 Some(o) => {
                     u.is_some_and(|u| strider_ir::IBig::from(u) == o) || s.is_some_and(|s| s == o)

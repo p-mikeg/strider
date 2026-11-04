@@ -1,12 +1,9 @@
-//! The value-op constructor vocabulary, stated once and emitted twice: over
-//! `PyPat` for `strider.pattern` (matching) and over `PyTemplate` for
-//! `strider.template` (building). Both modules expose the same 53 names with
-//! the same arities, lowering through the same `strider_pattern` factory.
+//! The value-op constructor vocabulary, emitted over `PyPat` for
+//! `strider.pattern` and over `PyTemplate` for `strider.template`.
 
 /// One `#[pyfunction]` per row, over the `bin` / `un` / `ex` / `Kind` in
 /// scope. `$ty` is the module's wrapper, `$verb` the doc prefix, `$comm` the
-/// note a `binary_comm` row appends (empty where operand order is not a
-/// matching question).
+/// note a `binary_comm` row appends.
 macro_rules! value_op {
     ($ty:ident, $verb:literal, $comm:literal, binary $name:ident, $doc:literal) => {
         $crate::value_ops::value_op!(@bin $ty, $name, concat!($verb, ": ", $doc));
@@ -60,8 +57,7 @@ macro_rules! value_op {
     };
 }
 
-/// Rows in, functions plus their registrar out. Split from [`value_ops`] so
-/// the table is written once and walked twice.
+/// The functions for each row, plus their registrar.
 macro_rules! emit_value_ops {
     ($ty:ident, $verb:literal, $comm:literal, $([$kind:tt $name:ident $($rest:tt)*])*) => {
         $( $crate::value_ops::value_op!($ty, $verb, $comm, $kind $name $($rest)*); )*
