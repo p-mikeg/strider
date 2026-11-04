@@ -84,8 +84,6 @@ pub fn control_dominator_tree(function: &Function) -> DominatorTree<NodeId> {
 /// [`CtrlKey::Node`] keys answers node dominance identically to
 /// [`control_dominator_tree`].
 pub fn control_edge_dominator_tree(function: &Function) -> DominatorTree<CtrlKey> {
-    // The entry key must be `CtrlKey::Node(function.entry())`; a mismatch
-    // yields an empty tree that silently answers `false` to every query.
     let graph = function.graph();
     DominatorTree::compute(CtrlKey::Node(function.entry()), |k| split_succs(graph, k))
 }

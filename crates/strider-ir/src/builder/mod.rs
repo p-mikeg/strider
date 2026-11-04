@@ -205,8 +205,9 @@ fn address_step(kind: &NodeKind) -> Option<AddrStep> {
 /// The highest offset from the entry stack pointer among `values` that are
 /// computed from it through the arithmetic an address is built from (`Add`,
 /// `And`, `Or`, `Xor`, `Neg`, a width change, a `Phi`): `i128::MAX` when one
-/// has no constant offset, `None` when none is.  Any other operand (a
-/// product, a load, a call's result) leaves the offset unknown.  A value
+/// has no constant offset, `None` when none is.  Any other step (a product,
+/// a load, a call's result) is not followed and is not a stack address; only
+/// added to a stack operand does it make the offset unknown.  A value
 /// reloaded from memory is left out, since storing the address was already
 /// an escape.
 ///

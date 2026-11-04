@@ -149,8 +149,7 @@ claims! {
         /// through a constant-address `Store` when looking back from an SP-rooted
         /// `Load` and vice-versa, and return-target verification passes a
         /// constant-address store over the return slot.  Wrong only where a
-        /// constant address coincidentally equals `sp + K` at runtime.  No other
-        /// class pair reads it.  Default ON.
+        /// constant address coincidentally equals `sp + K` at runtime.  Default ON.
         pub stack_global_disjoint: bool = true,
         /// A `Call` on an incoming stack-argument slot's memory chain leaves the
         /// slot as it found it, so the argument is still detectable after the
