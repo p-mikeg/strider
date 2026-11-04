@@ -7,7 +7,7 @@ use crate::pcode_util::{Result, ensure_const_space, nth_input_or_err, require_ou
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Rejects unequal input and output sizes, which Sleigh never emits and
-    /// `write_vn` would silently zero-extend.
+    /// `write_vn` would silently truncate or zero-extend.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
         super::arithmetic::require_same_size(nth_input_or_err(insn, 0)?, out_vn, "unary op")?;
