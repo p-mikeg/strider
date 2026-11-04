@@ -7,7 +7,7 @@
 //! [`Inner::Shared`] has no pair to pin.
 
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{IntBinaryOp, IntUnaryOp};
+use strider_ir::{FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntUnaryOp};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
@@ -70,6 +70,8 @@ enum Inner {
     At(PatValueRef),
     /// A constant computed at rewrite time.
     Built(Box<ConstWith>),
+    /// Lowered as the first when matching, the second when building.
+    Sided(Box<(Expr, Expr)>),
 }
 
 /// A node with no operands and one value output.
@@ -120,6 +122,14 @@ impl Leaf {
             b.capture_output(out, c);
         }
         out
+    }
+
+    /// The bits of a bare `float_const(bits)`.
+    fn float_const_bits(&self) -> Option<u64> {
+        match (&self.kind, &self.out, self.width, &self.pred, self.capture) {
+            (KindSpec::Exact(NodeKind::FloatConst(bits)), None, None, None, None) => Some(*bits),
+            _ => None,
+        }
     }
 
     /// A `var()`: any node, bound to its capture.
@@ -220,7 +230,12 @@ impl Drop for Expr {
         // Deferred: dropping a deep tower in place recurses a frame per level.
         if matches!(
             self.0,
-            Inner::Op(_) | Inner::Node(_) | Inner::Deco(_) | Inner::Alt(..) | Inner::Shared(..)
+            Inner::Op(_)
+                | Inner::Node(_)
+                | Inner::Deco(_)
+                | Inner::Alt(..)
+                | Inner::Shared(..)
+                | Inner::Sided(_)
         ) {
             crate::node_builders::defer_drop(self.take());
         }
@@ -303,6 +318,10 @@ impl Expr {
         }
     }
 
+    pub(crate) fn sided(matching: Expr, building: Expr) -> Self {
+        Self(Inner::Sided(Box::new((matching, building))))
+    }
+
     pub(crate) fn alt(arms: Vec<Expr>, first: bool) -> Self {
         Self(Inner::Alt(arms, first))
     }
@@ -346,6 +365,7 @@ impl Expr {
             Inner::Shared(operands, body) => lower_shared(b, operands, body, slot),
             Inner::At(v) => v,
             Inner::Built(_) => b.refuse(BUILD_SIDE),
+            Inner::Sided(s) => s.0.lower(b, slot, ordered),
             Inner::Taken => unreachable!("an Expr lowers once"),
         };
         match slot {
@@ -411,6 +431,7 @@ impl Expr {
                 _ => b.refuse(MATCH_SIDE),
             },
             Inner::Built(c) => c.lower(b),
+            Inner::Sided(s) => s.1.lower_template(b),
             Inner::Node(_) | Inner::Alt(..) | Inner::Shared(..) | Inner::At(_) => {
                 b.refuse(MATCH_SIDE)
             }
@@ -558,10 +579,41 @@ impl Expr {
         Self::op(KindSpec::Exact(kind), operands, Some(ValueType::I1))
     }
 
-    /// `int_add(l, int_neg(r))`.
-    pub(crate) fn int_sub(l: Expr, r: Expr) -> Self {
-        let neg = Self::exact(NodeKind::IntUnaryOp(IntUnaryOp::Neg), [r]);
-        Self::exact(NodeKind::IntBinaryOp(IntBinaryOp::Add), [l, neg])
+    /// `int_add(l, int_neg(r))`; when matching a constant `r`, also `int_add(l, -r)`, the shape
+    /// `ConstantFold` leaves.
+    pub(crate) fn int_sub(l: Expr, mut r: Expr) -> Self {
+        let neg = |e: Expr| Self::exact(NodeKind::IntUnaryOp(IntUnaryOp::Neg), [e]);
+        let r = match r.take() {
+            Inner::Const(c) => match c.negated() {
+                Some(folded) => Self::sided(
+                    Self::alt(vec![neg(c.clone().into()), folded.into()], false),
+                    neg(c.into()),
+                ),
+                None => neg(c.into()),
+            },
+            other => neg(Self(other)),
+        };
+        Self::exact(NodeKind::IntBinaryOp(IntBinaryOp::Add), [l, r])
+    }
+
+    /// `float_add(l, float_neg(r))`; when matching a `float_const(bits)` `r`, also
+    /// `float_add(l, -r)`, `r`'s sign flipped at the matched constant's width.
+    pub(crate) fn float_sub(l: Expr, mut r: Expr) -> Self {
+        let neg = |e: Expr| Self::exact(NodeKind::FloatUnaryOp(FloatUnaryOp::Neg), [e]);
+        let r = match r.take() {
+            Inner::Leaf(leaf) => match leaf.float_const_bits() {
+                Some(bits) => {
+                    let folded = crate::typed::consts::negated_float_const(bits).into();
+                    Self::sided(
+                        Self::alt(vec![neg(leaf.into()), folded], false),
+                        neg(crate::float_const(bits).into_expr()),
+                    )
+                }
+                None => neg(leaf.into()),
+            },
+            other => neg(Self(other)),
+        };
+        Self::exact(NodeKind::FloatBinaryOp(FloatBinaryOp::Add), [l, r])
     }
 
     /// `int_xor(cmp, 1)`, the lifter's `!=` / `<=`; `.ordered()` pins `cmp`.
