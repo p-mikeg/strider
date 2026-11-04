@@ -1,82 +1,42 @@
-//! Whole-function frame-escape analysis: does any stack address reach a callee?
-//! When none does, every spill slot is private, so a `Load` may forward across
-//! a `Call`.
+//! Whole-function frame-escape analysis: does any stack address reach a
+//! callee?  When none does, every spill slot is private, so a `Load` may
+//! forward across a `Call`.
 //!
-//! `U` is the set of frame addresses: the values [`decompose()`] reduces to
-//! `sp + k`.
+//! `U` is the set of values [`decompose()`] reduces to `sp + k`.  The frame
+//! escapes iff some member of `U` is used other than as a `Load` / `Store`
+//! address, an input to an `Add` / `And` whose output is again in `U`, or a
+//! `Call`'s SP anchor.  An address reaches callee-readable memory only through
+//! such a use, so detection is at that boundary.  A stack-derived value held
+//! in a register the convention clobbers at a call (i386 `regparm`, a static
+//! chain, AArch64 X8) escapes too; the builder records it.
 //!
-//! The frame is contaminated iff some member of `U` is consumed at any position
-//! other than one that keeps it in the address world:
+//! `decompose` under-approximates `U` (`sp + (5 ^ 3)` before folding), which
+//! is sound: the `Add` producing the unrecognised value is itself an exposing
+//! use.  One leak poisons every call, since a leaked pointer can be stored to
+//! a global and reloaded by a later callee.  A stored entry SP (PowerPC back
+//! chain, ARM APCS frame record) is such a leak.
 //!
-//! - a node whose own output is in `U` (a constant-offset `Add` or alignment
-//!   `And` extending the SP chain),
-//! - the address operand of a `Load` / `Store`, or
-//! - the SP-anchor slot of a `Call` (input 3; every callee receives `sp` by the
-//!   ABI, so the anchor is not an argument).
+//! [`incoming_area_escapes`] asks whether the incoming-argument memory may be
+//! reached.  A use that hands the address over (call argument, stored value,
+//! return) counts unless it is the entry SP plus a constant below the area;
+//! every other exposing use counts whatever its offset.  A base below the
+//! area that is spilled, reloaded and offset into it is missed.
 //!
-//! Any other use exposes the address: a `Store` data operand (it enters memory,
-//! which is also how a stack argument is passed before `CallStackArgCollect`
-//! runs), a `Call` / `CallOther` argument, a `Return`, or an op whose result
-//! leaves `U` (pointer arithmetic). Detection is at that boundary, never at the
-//! callee: an address only reaches a callee's readable memory by first crossing
-//! one of these uses, so a pointer into already-written memory is caught at the
-//! store that wrote it.
-//!
-//! A register reaches the callee without any use: a `Call` carries only the
-//! argument registers its convention names, yet a callee may read one the
-//! convention clobbers (i386 `regparm` in EAX, clang's `fastcc` in ECX, the
-//! GNU C static chain, AArch64's indirect-result register X8).  The builder
-//! records a stack-derived value held in such a register at any call, and that
-//! record is an escape too.
-//!
-//! `decompose` under-approximates `U`: an unfolded offset such as `sp + (5 ^ 3)`
-//! reads as outside `U` until `ConstantFold` collapses it. That stays sound,
-//! because the `Add` consuming `sp` to produce the unrecognised result is itself
-//! an exposing use, so contamination is flagged one node earlier; the memo
-//! recomputes once folding converges.
-//!
-//! The verdict is one whole-function bit: a single leak poisons every call,
-//! since a leaked pointer can be stored to a global and reloaded by a later
-//! callee.
-//!
-//! A frame that stores its entry SP is exposed by that store: the PowerPC
-//! `stwu`/`stdu` back chain and the ARM APCS frame record (`mov ip, sp; push
-//! {.., ip, ..}`), so the whole-function verdict is `true` on both.  The
-//! APCS frame also counts for [`incoming_area_escapes`], since its offset 0
-//! lies inside ARM's register-argument homes, and it holds the entry SP in
-//! `ip`, a clobbered register, at its first call.  The entry SP the PowerPC
-//! back chain stores lies below every PowerPC area start, so it does not.
-//!
-//! [`incoming_area_escapes`] asks the narrower question of whether the
-//! incoming-argument memory may be reached.  It places an exposure only where
-//! the use hands over the address itself (a call argument, a stored value, a
-//! return) and counts it unless it is the entry SP plus a constant below the
-//! area, which names a frame object of its own; pointer arithmetic leaving the
-//! object to a callee is outside the C object model.  Every other exposing use
-//! (arithmetic leaving `U`, a `Phi`, a width change) counts whatever its
-//! input's offset, as above: its result is a pointer `decompose` cannot place.
-//! A stack address stored and reloaded is not followed, so a base below the
-//! area that is spilled and then offset into it is missed; GCC and LLVM
-//! rematerialise such a base rather than spill it.
-//!
-//! Sound modulo two claims the IR cannot check: a callee does not write the
-//! caller's frame outside the argument area except through a pointer it was
-//! handed in an argument, a clobbered register or memory, and no pointer is
-//! fabricated numerically equal to a private slot.
+//! Sound modulo two claims: a callee writes the caller's frame outside the
+//! argument area only through a pointer it was handed, and no pointer is
+//! fabricated equal to a private slot.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};
 
 use crate::mem_analysis::{MemKind, decompose};
 
-/// A value is a frame address iff it decomposes to a *stack* base; a heap base
-/// (an allocator's pointer) is not part of the frame `U`.
+/// Whether `v` is in `U`.
 fn is_frame_addr(function: &Function, v: ValueId) -> bool {
     decompose(function, v).is_some_and(|e| e.kind == MemKind::Stack)
 }
 
-/// Cached [`frame_address_escapes`]. The verdict is a pure function of the
-/// current graph; the optimizer clears the memo after every mutating pass.
+/// Memoised [`frame_address_escapes`].
 pub(crate) fn frame_address_escapes_cached(function: &Function) -> bool {
     if let Some(escapes) = function.frame_escape() {
         return escapes;
@@ -91,9 +51,7 @@ fn frame_address_escapes(function: &Function) -> bool {
 }
 
 /// Whether a callee may hold a pointer into the incoming arguments' memory,
-/// register homes included: a stack address that may point at or above the
-/// convention's incoming-argument start past the entry SP escapes.  See the
-/// module doc.
+/// register homes included.
 pub(crate) fn incoming_area_escapes(function: &Function) -> bool {
     let Some(area_start) = function.default_cc().incoming_args_start() else {
         return false;
@@ -116,14 +74,12 @@ pub(crate) fn incoming_area_escapes(function: &Function) -> bool {
 fn any_exposed(function: &Function, mut counts: impl FnMut(ValueId) -> bool) -> bool {
     for node in function.walk() {
         let kind = *function.node_kind(node);
-        // The structural SP anchor every callee has, not an argument.
         let sp_anchor_slot =
             matches!(kind, NodeKind::Call { .. }).then_some(NodeKind::CALL_SP_SLOT);
         for (idx, v) in function.node_inputs(node).into_iter().enumerate() {
             if sp_anchor_slot == Some(idx) {
                 continue;
             }
-            // Skip control / memory / phi-token edges.
             if function.value_type_opt(v).is_none() {
                 continue;
             }
@@ -151,13 +107,8 @@ fn hands_over(kind: NodeKind, idx: usize) -> bool {
     }
 }
 
-/// A member of `U` is benign here only as the address operand
-/// (`NodeKind::ACCESS_ADDR_SLOT`) of a `Load`/`Store`, or as an input to an
-/// `Add`/`And` whose own output is again in `U` (a chain extension).
-///
-/// The `Load`/`Store` test is by slot index, not value equality: a self-store
-/// `Store(V, V)` puts the same `ValueId` in both the address and data slots, so
-/// comparing against the address operand would mask the escaping data operand.
+/// Whether input `idx` keeps a member of `U` in `U`.  By slot, not value:
+/// `Store(V, V)` exposes `V` as its data.
 fn use_is_address_only(function: &Function, node: NodeId, kind: NodeKind, idx: usize) -> bool {
     match kind {
         NodeKind::Load(_) | NodeKind::Store(_) => idx == NodeKind::ACCESS_ADDR_SLOT,

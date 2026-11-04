@@ -24,29 +24,23 @@ pub(crate) struct Policy {
     pub(super) calls: Calls,
 }
 
-/// What a `Call` on the probed location's memory chain does to it.  A
-/// `preserves_memory` call steps through under every policy, a `CallOther`
-/// under none.
+/// What a `Call` on the probed location's chain does to it.  A
+/// `preserves_memory` call never clobbers, a `CallOther` always does.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Calls {
     /// Every call shadows it.
     Block,
     /// No call shadows it.
     Pass,
-    /// `LoadForward`'s relaxations: a listed allocator steps through a
-    /// private-frame slot outside its argument window and an allocation it
-    /// does not return; `escape_analysis` lets any call step through that
-    /// slot, and lets an `Anchor` store too; `callee_preserves_stack_args`
-    /// empties the window.
+    /// The claims' relaxations: a listed allocator passes a private-frame
+    /// slot outside its argument window and an allocation it does not return;
+    /// under `escape_analysis` any call and any `Anchor` store pass that
+    /// slot; `callee_preserves_stack_args` empties the window.
     Forward,
 }
 
 impl Policy {
-    /// No call relaxation: the jump-table walk's own steps, the row a
-    /// permanent rewire may rest on, since the walks that read a narrowed
-    /// edge honour none, the row a call's argument window is scanned under,
-    /// which a relaxation would re-enter, and `CallStackArgCollect`'s, whose
-    /// arguments a later reader takes as settled.
+    /// No call relaxation, so a permanent rewire may rest on it.
     pub(crate) fn strict(function: &Function) -> Self {
         Self::with_calls(function, Calls::Block)
     }
@@ -81,31 +75,18 @@ impl Policy {
     }
 }
 
-/// The SP-aware query surface, one per pass.  Takes the `&Function` and the
-/// [`Policy`] per call rather than binding them, so a query may be
-/// interleaved with `&mut` edits and one memo serves every policy.
+/// The SP-aware query memo, one per pass.  Takes the `&Function` and
+/// [`Policy`] per call, so queries interleave with `&mut` edits.
 ///
-/// Its index, arg windows and per-location answers are read off the graph on
-/// first use and kept for the query's life, so its owner decides how long
-/// they may outlive the graph state they were read from.  Edits that leave
-/// every memory def and the values in its address and SP slots in place keep
-/// all three valid: every verdict reads the memory classes, keyed by value and
-/// dropped by the pipeline only between passes, so a recompute reads the
-/// classes the memo did.  An edit that moves a store's address onto another
-/// value must [`Self::forget_answers`], since that value's class is read
-/// fresh.  The other two survive it: the moved value was a `Load`'s, which the
-/// index classes an `Anchor` and offers every location, and which places no
-/// window (`tests::stale_window_is_conservative` covers a window under a
-/// dropped class).  A call's SP moved off a `Load` needs nothing: a stack
-/// address reloaded from memory was stored, which escapes the frame, so no
-/// call steps through a stack probe whatever its window.
+/// Its index, argument windows and answers stay valid across edits that keep
+/// every memory def and the values in its address and SP slots.  Moving a
+/// store's address onto another value needs [`Self::forget_answers`]; the
+/// index and windows survive it, since the moved-from value was a `Load`'s,
+/// which the index treats as an `Anchor` and which places no window.
 #[derive(Default)]
 pub(crate) struct MemQuery {
-    /// Built on the first query, so a caller that asks none builds none.  A
-    /// function of the graph alone; the policy enters at
-    /// [`StoreIndex::candidate`].
+    /// Built on the first query; policy-free.
     index: OnceCell<MemIndex>,
-    /// One [`ArgPrefix`] per `Call`, scanned on first use.
     arg_prefixes: RefCell<FxHashMap<NodeId, Option<ArgPrefix>>>,
     answers: RefCell<FxHashMap<(Loc, Policy), Answers>>,
 }
@@ -127,8 +108,7 @@ impl MemQuery {
     }
 
     /// Drops the memoised answers, for an edit that moves a store's address
-    /// onto another value; the type doc says why the index and the windows
-    /// stand.
+    /// onto another value.
     pub(crate) fn forget_answers(&self) {
         self.answers.borrow_mut().clear();
     }
@@ -165,14 +145,11 @@ impl MemQuery {
         index
             .layout
             .nearest_clobber(function, start, &mut walker, answers)
-            // A start the layout does not cover reaches `InitialMemory` by no
-            // path, so nothing above it is proven and it bounds itself: at or
-            // nearer than any clobber in its own cone.
+            // Unreachable from `InitialMemory`: nothing above it is proven.
             .unwrap_or(start)
     }
 
-    /// Whether `[offset, hi)` meets `call`'s argument window
-    /// ([`ArgPrefix::covers`]), scanning the prefix on a miss.  An unplaced
+    /// Whether `[offset, hi)` meets `call`'s argument window.  An unplaced
     /// prefix covers everything.
     pub(super) fn arg_window_covers(
         &self,
@@ -191,14 +168,7 @@ impl MemQuery {
     }
 
     /// The nearest def of `load`'s location backward from its memory input
-    /// under `policy`, read as what it is to the load.  Read-only;
-    /// [`Self::reach_and_narrow`] also rewires.
-    ///
-    /// The verdict is the walk's own: the climb stops at the stores
-    /// [`alias_verdict`] calls anything but `Disjoint`, so re-asking it for
-    /// the def it stopped at is the same question answered twice, except at
-    /// a start its layout does not cover, which bounds itself and can be a
-    /// store of any space.
+    /// under `policy`, read as what it is to the load.
     pub(crate) fn reaching(
         &self,
         function: &Function,
@@ -220,12 +190,10 @@ impl MemQuery {
         }
     }
 
-    /// `load`'s memory edge moved onto its nearest clobber under
-    /// [`Policy::strict`], never a relaxed policy's: the walks that read the
-    /// edge afterwards (the jump-table walk, return-target verification with
-    /// its claim off) honour no call relaxation.  Then [`Self::reaching`] under
-    /// `policy` from the moved edge: every relaxation clobbers a subset of what
-    /// the strict policy does, so the defs it skipped are skipped here too.
+    /// Moves `load`'s memory edge onto its nearest clobber under
+    /// [`Policy::strict`], which later walks honour, then [`Self::reaching`]
+    /// under `policy`.  Every relaxation clobbers a subset of what the strict
+    /// policy does, so asking from the moved edge loses nothing.
     pub(crate) fn reach_and_narrow(
         &self,
         edit: &mut crate::EditFunction<'_>,
@@ -240,14 +208,9 @@ impl MemQuery {
         self.reaching(edit.function(), load, policy)
     }
 
-    /// The nearest def of the slot `[offset, offset + probe_size)` in `space`
-    /// relative to SP terminal `base` on the chain from `mem_start`, under
-    /// `policy`; a same-address store in another space is disjoint and
-    /// skipped.  [`Self::anchored_store`] reads it as a store at `base`.
-    ///
-    /// `probe_size` is the caller's call: pass the access width to catch a
-    /// partial tail-overlap as a clobber, or `1` to merely discover a store and
-    /// read its natural width back off [`ReachingSpStore::size`].
+    /// The nearest def of `[offset, offset + probe_size)` in `space` relative
+    /// to SP terminal `base`, on the chain from `mem_start`.  A `probe_size`
+    /// of `1` discovers a store whose width [`ReachingSpStore::size`] reads.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn nearest_sp_clobber(
         &self,
@@ -263,8 +226,7 @@ impl MemQuery {
         self.nearest(function, function.producer(mem_start), probe, policy, false)
     }
 
-    /// `clobber` read as a `Store` whose own SP offset shares `base`, the only
-    /// shape comparable to a probed location.
+    /// `clobber` as a `Store` whose address shares SP terminal `base`.
     pub(crate) fn anchored_store(
         &self,
         function: &Function,
@@ -286,13 +248,9 @@ impl MemQuery {
     }
 }
 
-/// Repoints a `Load`'s memory input onto `clobber`'s memory output, skipping
-/// the proven-disjoint defs in between.
-///
-/// Sound only for a `Load`: it is a pure consumer with no memory output, so
-/// moving its single incoming memory edge is invisible to every other node.
-/// Idempotent, and monotone across fixed-point iterations (verdicts only ever
-/// move MayAlias to Disjoint).  Returns whether the edge moved.
+/// Repoints a `Load`'s memory input onto `clobber`'s memory output.  Sound
+/// only for a `Load`, which has no memory output.  Returns whether the edge
+/// moved.
 pub(crate) fn narrow_load_to(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,
@@ -300,8 +258,7 @@ pub(crate) fn narrow_load_to(
 ) -> bool {
     let rewire = {
         let function = edit.function();
-        // Checked in release too: a `Store` also has a memory input at this
-        // slot, so falling through would rewire one.
+        // A `Store` has a memory input at this slot too.
         assert!(
             matches!(function.node_kind(load), NodeKind::Load(_)),
             "narrow_load_to on a non-Load"
@@ -332,8 +289,7 @@ fn sp_slot(
     Loc {
         class: AddrClass::StackRooted { base, offset },
         size,
-        // `offset` came from `decompose`, so it is already reduced at the
-        // base's width.
+        // `offset` is already reduced at this width.
         bits: addr_bit_width(function, base),
         space,
     }
@@ -341,18 +297,16 @@ fn sp_slot(
 
 /// The nearest def of a load's location, read as what it is to the load.
 pub(crate) enum ReachingDef {
-    /// A `Store` at the load's own address, whose value the load may be
-    /// forwarded.
+    /// A `Store` at the load's own address.
     Match(NodeId),
     /// `InitialMemory`: no def on the chain reaches the location.
     Clean(NodeId),
-    /// Any other store, a `Call`, a `MemPhi` or an opaque def: something
-    /// writes the location and the load cannot read what.
+    /// Anything else that may write the location.
     Blocked(NodeId),
 }
 
 impl ReachingDef {
-    /// The def itself, which is the memory edge a narrowing rewires onto.
+    /// The def itself.
     pub(crate) fn node(self) -> NodeId {
         match self {
             Self::Match(node) | Self::Clean(node) | Self::Blocked(node) => node,
@@ -364,8 +318,7 @@ impl ReachingDef {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReachingSpStore {
     node: NodeId,
-    /// Byte offset from `base`.  Equals the probed `offset` only when the
-    /// store is anchored at the probed location.
+    /// Byte offset from `base`.
     pub store_offset: i128,
 }
 
@@ -385,8 +338,7 @@ impl ReachingSpStore {
     }
 }
 
-/// Byte width of a `Store`'s DATA operand.  Panics on a non-value operand,
-/// which the IR signature already rules out.
+/// Byte width of a `Store`'s data operand.
 #[inline]
 pub(crate) fn store_value_byte_size(function: &Function, store_data: ValueId) -> i128 {
     function

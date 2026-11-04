@@ -34,8 +34,7 @@ pub(super) fn classify_addr(function: &Function, addr: ValueId) -> AddrClass {
 /// The verdict between `load` at `load_off` and `store` at `store_off`, two
 /// offsets from one base.
 fn offset_range_verdict(load: Loc, load_off: i128, store: Loc, store_off: i128) -> AliasVerdict {
-    // Two offsets at different widths are values mod different powers of two,
-    // so their difference names no distance at all.
+    // Offsets reduced at different widths name no distance.
     if load.bits != store.bits {
         return AliasVerdict::MayAlias;
     }
@@ -49,16 +48,13 @@ fn offset_range_verdict(load: Loc, load_off: i128, store: Loc, store_off: i128) 
     }
 }
 
-/// One access: an operand of the pairwise [`alias_verdict`], and the
-/// location a climb probes.
+/// One access: an operand of [`alias_verdict`] and a probed location.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Loc {
     pub(crate) class: AddrClass,
     pub(crate) size: i128,
-    /// Bit width of the address expression, the modulus its offset is
-    /// reduced at.
+    /// Bit width of the address, the modulus its offset is reduced at.
     pub(crate) bits: u32,
-    /// Distinct spaces never alias, even at the same numeric address.
     pub(crate) space: rsleigh::VnSpace,
 }
 
@@ -127,12 +123,9 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
                 AliasVerdict::MayAlias
             }
         }
-        // Distinct bases from a listed noalias allocator are taken as disjoint,
-        // and no such allocation as coinciding with the stack or a global.  The
-        // claim rests on `AssumptionOptions::noalias_allocators` being right,
-        // not on the IR.  Same base falls through to offsets;
-        // a heap base against an opaque `Anchor` stays may-alias (the `_` arm),
-        // since the opaque pointer could be this allocation laundered.
+        // Distinct noalias-allocator bases are disjoint, by the
+        // `noalias_allocators` claim.  Against an `Anchor` a heap base stays
+        // may-alias (the `_` arm).
         (
             HeapRooted {
                 base: lb,
@@ -149,15 +142,12 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
                 AliasVerdict::Disjoint
             }
         }
-        // An allocation of unknown identity is still an allocation: no
-        // allocation overlaps the stack or a global.
+        // No allocation overlaps the stack or a global.
         (HeapRooted { .. } | HeapOpaque, StackRooted { .. } | Constant { .. })
         | (StackRooted { .. } | Constant { .. }, HeapRooted { .. } | HeapOpaque) => {
             AliasVerdict::Disjoint
         }
-        // SOUNDNESS: an unknown identity may be ANY identity, including the
-        // very base it is paired with.  Only the region is proven, so nothing
-        // here is disjoint and no offset is comparable.
+        // An unknown allocation may be the very base it is paired with.
         (HeapOpaque, HeapRooted { .. } | HeapOpaque) | (HeapRooted { .. }, HeapOpaque) => {
             AliasVerdict::MayAlias
         }
@@ -177,7 +167,7 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
                 AliasVerdict::MayAlias
             }
         }
-        // Anchor against anything bails either way.
+        // Anything against an `Anchor`.
         _ => AliasVerdict::MayAlias,
     }
 }

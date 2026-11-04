@@ -4,24 +4,13 @@ use strider_ir::{IRBuilderExt, IRViewer, ReadOnlyMemory};
 use crate::Result;
 use crate::pipeline::OptCtx;
 
-/// Resolves `Load` nodes with constant addresses against a
-/// [`ReadOnlyMemory`] image, replacing them with the loaded constant value.
+/// Folds a RAM `Load` at a constant address to the integer the
+/// [`OptCtx`]'s [`ReadOnlyMemory`] holds there, decoded per
+/// `Function::endianness`.
 ///
-/// # Immutability contract
-///
-/// The fold never consults the load's memory-token chain, so the supplied
-/// rom MUST map only runtime-immutable memory (code, `.rodata`; never
-/// `.data` / `.got` / `.data.rel.ro` / stack).  A writable global that is
-/// stored then reloaded would otherwise fold to its stale file-initial
-/// value, discarding the store.  Only `Load(VnSpace::RAM)` is folded.
-///
-/// # Endianness
-///
-/// [`ReadOnlyMemory::read`] fills the
-/// buffer with RAW bytes and does not decode.  This pass decodes them per
-/// `Function::endianness`, then masks to the load's output type.
-///
-/// A `None` rom on the [`OptCtx`] folds nothing.
+/// The fold ignores the memory chain, so the rom must map only memory that
+/// is immutable at runtime (code, `.rodata`; never `.data`, `.got` or the
+/// stack).
 ///
 /// ```rust
 /// use strider_opt::{LoadReadOnly, OptCtx, OptimizerPipeline};
@@ -37,14 +26,12 @@ use crate::pipeline::OptCtx;
 /// let mut pipeline = OptimizerPipeline::new();
 /// pipeline.add(&LoadReadOnly);
 /// let rom = MyRom;
-/// let edit = OptCtx::new(Some(&rom));
-/// # let _ = (pipeline, edit);
+/// let ctx = OptCtx::new(Some(&rom));
+/// # let _ = (pipeline, ctx);
 /// ```
 pub struct LoadReadOnly;
 
-// Each Load folds independently against the rom, and the driver's RPO puts the
-// inner load of a `Load(Load(c))` before the outer one, so no consumer needs
-// re-enqueueing.
+// RPO folds the inner load of `Load(Load(c))` first, so nothing re-enqueues.
 impl crate::peephole::PeepholePass for LoadReadOnly {
     type Sweep = ();
 
@@ -84,8 +71,7 @@ fn try_fold_const_load_at(
         return Ok(());
     };
     let new_value = edit.build_int_const(masked, ty)?;
-    // The address cone justifies which byte run was read and is cascade-culled
-    // once the Load is replaced, so absorb its fingerprint first.
+    // The address is the fold's proof.
     edit.absorb_fingerprint(new_value, addr_value);
     edit.replace_value(data_value, new_value);
     Ok(())
