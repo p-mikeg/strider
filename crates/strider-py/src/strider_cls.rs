@@ -80,7 +80,9 @@ pub(crate) fn build_per_address_ccs(
 }
 
 /// Raises `StriderError`, not PyO3's `RuntimeError`, on a conflict with a
-/// call in flight. `analyze`, `build_cfg` and `add_elf` borrow exclusively.
+/// call in flight. `analyze`, `build_cfg` and `add_elf` borrow exclusively, so
+/// they exclude every other `Lifter` method; `ElfLifter`'s ELF reads do not
+/// come here.
 fn try_borrow_lifter<'py>(slf: &Bound<'py, PyLifter>) -> PyResult<pyo3::PyRef<'py, PyLifter>> {
     slf.try_borrow().map_err(|_| reentrant_lifter_err())
 }
@@ -94,8 +96,9 @@ fn try_borrow_lifter_mut<'py>(
 fn reentrant_lifter_err() -> PyErr {
     into_strider_err(anyhow::anyhow!(
         "this Lifter is already in use by another call (analyze, build_cfg and \
-         add_elf exclude every other call, from any thread or a `read()` \
-         callback); build a separate Lifter for concurrent work"
+         add_elf exclude every other Lifter method, from any thread or a \
+         `read()` callback; ElfLifter symbol and byte reads still work); build a \
+         separate Lifter for concurrent work"
     ))
 }
 
@@ -365,10 +368,9 @@ pub(crate) fn machine_addrs(
     out
 }
 
-/// Run `f`, then drain the pending-exception cell: an exception a Python
-/// callback stashed wins over `f`'s result (but see
-/// [`crate::errors::pending_over`]). Every entry point that can reach a
-/// callback goes through this, so a later call cannot inherit a stash.
+/// Run `f`, then drain the pending-exception cell, so a later call cannot
+/// inherit a stash. A stashed callback exception wins over `f`'s result (see
+/// [`crate::errors::pending_over`]).
 pub(crate) fn with_pending_control_flow<T>(f: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
     let out = f();
     // A surviving callback cause would chain onto an unrelated later error.
@@ -424,10 +426,8 @@ pub struct PyLifter {
     context_gen: std::cell::Cell<u64>,
 }
 
-/// Decoding writes flow context back into the engine, so re-decoding a passed
-/// address could answer in a mode a LATER instruction pinned. A passed address
-/// is answered from `answers` and the engine only moves forward, so an answer
-/// does not depend on call order.
+/// A forward-only sweep: a passed address is answered from `answers`, since
+/// re-decoding it could see a mode a later instruction pinned.
 struct SweepSleigh {
     context_gen: u64,
     entry: u64,
@@ -634,15 +634,8 @@ impl PyLifter {
         Self::build_cfg_at(slf, py, entry, opts, Some(elf))
     }
 
-    /// Lift, optimise and resolve the function at `entry`, returning an
-    /// `AnalyzeResult` (`cfg`, `function`, `unresolved`).
-    ///
-    /// Needs an address and a `cc`; raises `StriderError` otherwise and on
-    /// lift failure. Returns even when incomplete: check `Cfg.incomplete`
-    /// before trusting an absence.
-    ///
-    /// Releases the GIL unless `mem` or `rom` is a Python object. A daemon
-    /// thread inside this call at interpreter shutdown aborts the process.
+    /// Lift, optimise and resolve the function at address `entry`. Returns
+    /// even when incomplete: check `Cfg.incomplete`.
     #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
         slf: Py<Self>,
@@ -678,13 +671,8 @@ impl PyLifter {
         Self::analyze_at(slf, py, addr, Some(cc), opts, Some((elf, size)))
     }
 
-    /// The p-code (ops joined `"; "`) of the instruction at `addr`, decoding
-    /// linearly from `entry`; a later call from the same `entry` resumes.
-    ///
-    /// Raises `StriderError` unless `addr` is on the linear stream from
-    /// `entry`, or once this `Lifter` has pinned more decode modes than a
-    /// sweep can carry over. On an ISA-mode arch `entry`'s low bit selects the
-    /// mode and the sweep starts at `entry & ~1`.
+    /// The p-code (ops joined `"; "`, empty for none) of the instruction at
+    /// `addr`, decoding linearly from `entry`.
     fn pcode_at(
         slf: &Bound<'_, Self>,
         entry: &Bound<'_, PyAny>,
