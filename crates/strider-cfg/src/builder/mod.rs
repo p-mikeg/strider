@@ -935,10 +935,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         {
             return Err(e);
         }
+        let graph = &self.region_graph;
+        let index = &self.index;
+        let live = |site: &PcodeInsnAddr| index.containing(graph, *site).is_some();
+        let report = &mut self.report;
+        report.link_register_seated.retain(live);
+        report.tail_call_seated.retain(live);
+        report.flowing_isa_bits.retain(|site, _| live(site));
         // No resolver ran, so every dispatch left without an edge is
         // unresolved and every seated answer unverified.
-        let report = &mut self.report;
-        for region in self.region_graph.node_weights() {
+        for region in graph.node_weights() {
             match &region.terminator {
                 RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
                     report.incomplete.insert(*addr, Reason::UnresolvedBranch);
