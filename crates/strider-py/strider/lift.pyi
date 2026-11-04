@@ -339,7 +339,9 @@ class Lifter:
 
         A stand-alone sweep, so it works for an address outside any analysed
         CFG. `addr` must be reachable through the linear instruction stream
-        from `entry`; raises `StriderError` otherwise.
+        from `entry`; raises `StriderError` otherwise. On an ISA-mode arch
+        (ARM, MIPS) `entry`'s low bit selects the mode, as for `analyze`, and
+        the sweep starts at `entry & ~1`.
 
         The sweep decodes on a copy of the engine, which carries over the
         decode modes the analyses pinned. Past the engine's commit limit it

@@ -173,3 +173,17 @@ def test_fingerprint_pcode_rejects_a_node_from_another_image():
     assert foreign, "expected at least one fingerprinted node in the second image"
     with pytest.raises(strider.StriderError):
         cfg_a.fingerprint_pcode(foreign[0])
+
+
+def test_lifter_pcode_at_takes_the_entry_isa_bit_as_analyze_does():
+    """An odd ARM entry sweeps in Thumb, as `analyze` decodes it, on a
+    handle that has never analysed the function."""
+    elf = str(fixture_path("arm_thumb", "abi"))
+    entry = strider.lift.load_elf(elf).symbol("main").address
+    assert entry & 1
+    cfg, function, _unresolved = strider.lift.load_elf(elf).analyze(entry)
+    fresh = strider.lift.load_elf(elf)
+    addrs = sorted({a for n in function.node_ids() for a in function.node(n).asm_fingerprint()})
+    assert addrs and addrs[0] >= entry & ~1
+    for addr in addrs:
+        assert fresh.pcode_at(entry, addr) == cfg.pcode_at(addr)
