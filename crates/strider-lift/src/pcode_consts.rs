@@ -1,22 +1,11 @@
-//! Constant values of a machine instruction's p-code temporaries.
+//! Constant values of a machine instruction's p-code temporaries, used to
+//! resolve a register-space LOAD / STORE address (ARM `vld1.N {dX[i]}`). A
+//! loop-carried address (ARM `VLD2/3/4`) does not fold, and the lift takes the
+//! opaque path (`memory::opaque_register_store`).
 //!
-//! A sla may address a REGISTER through the LOAD / STORE opcodes when the
-//! register is chosen by an instruction field rather than named outright --
-//! ARM's `vld1.N {dX[i]}, [addr]` writes lane `i` of `dX` that way. The address
-//! is then a small expression over constants the decoder substituted.
-//!
-//! It does not always fold. ARM's multi-structure `VLD2/3/4` and `VST2/3/4`
-//! build the same shape but walk it with an INTRA-INSTRUCTION loop, so the
-//! pointer is loop-carried and the CFG splits the one machine instruction
-//! across regions. This resets at every region boundary, which puts the
-//! definition and the use on opposite sides. The lift takes an opaque path
-//! there; see `memory::opaque_register_store`.
-//!
-//! Both the def-site collection and the lift walk `region.insns` in the same
-//! order and feed every op through one of these, so the varnode they resolve
-//! for a given store is the same one, and they agree on which stores resolve
-//! at all. That agreement is load-bearing: a lift that writes a variable whose
-//! def site was never recorded gets no phi at a join.
+//! The def-site collection and the lift must feed the same ops through this in
+//! the same order so they resolve the same stores; otherwise a write gets no
+//! phi at a join.
 
 use rustc_hash::FxHashMap;
 
@@ -26,23 +15,19 @@ use strider_ir::IntBinaryOp;
 use strider_ir::UBig;
 use strider_ir::node::ValueType;
 
-/// Keyed by the varnode's full identity: two temporaries can share an offset
-/// at different widths.
+/// `(offset, size)`: temporaries can share an offset at different widths.
 type TempKey = (u64, u32);
 
 #[derive(Default)]
 pub(crate) struct PcodeConsts {
-    /// Cleared when the machine instruction changes, so a temporary cannot be
-    /// read across one. Sleigh reuses unique offsets freely between them.
+    /// Values are cleared when the machine instruction changes.
     at: Option<MachineInsnAddr>,
     vals: FxHashMap<TempKey, u128>,
 }
 
 impl PcodeConsts {
-    /// Start of a region. `collect_def_sites` builds a fresh one per region,
-    /// so the lift must clear rather than carry: a region can begin at a pcode
-    /// index INSIDE a machine instruction, and a carried temporary would let
-    /// the lift fold an address the def collection could not.
+    /// Start of a region. Must match `collect_def_sites`, which starts fresh
+    /// per region even mid-instruction.
     pub(crate) fn reset(&mut self) {
         self.at = None;
         self.vals.clear();
@@ -60,13 +45,9 @@ impl PcodeConsts {
         if out.addr_space != rsleigh::VnSpace::UNIQUE {
             return;
         }
-        // Folded BEFORE the invalidation below, which would otherwise drop an
-        // input this op reads at the offset it writes (`t = t + 1`).
+        // Fold before invalidating, for `t = t + 1`.
         let folded = self.folded(insn);
-        // Drop every entry this write OVERLAPS, not just the one at the same
-        // (offset, size). Sleigh reuses a unique offset at different widths,
-        // and a stale wider value read back after a narrower write would fold
-        // to the wrong number, which here means naming the wrong register.
+        // Drop every overlapped entry, not only the same (offset, size).
         self.vals.retain(|&(addr_off, size), _| {
             let entry = rsleigh::Vn {
                 addr_space: rsleigh::VnSpace::UNIQUE,
@@ -79,8 +60,6 @@ impl PcodeConsts {
             self.vals
                 .insert((out.addr_off, out.size), mask_to(v, out.size));
         }
-        // An op this does not model leaves the temporary UNKNOWN rather than
-        // stale, so a later read fails closed.
     }
 
     /// `None` when the value is not derivable from constants alone.
@@ -107,14 +86,10 @@ impl PcodeConsts {
             Opcode::IntOr => (IntBinaryOp::Or, a()?, b()?),
             Opcode::IntAnd => (IntBinaryOp::And, a()?, b()?),
             Opcode::IntXor => (IntBinaryOp::Xor, a()?, b()?),
-            // Deliberately narrow: an unmodelled op is not an error here, only
-            // an unknown, and the caller that needs a register address fails
-            // closed on it.
+            // Unmodelled: unknown, and the caller fails closed.
             _ => return None,
         };
-        // `int_from_bytes` answers an integer type or nothing, so the only
-        // refusal left is the width: this table carries values as `u128`, and
-        // the `IntSub` arm above negates in that same ring.
+        // Values are `u128`, and `IntSub` negates in that ring.
         let ty = ValueType::int_from_bytes(insn.output.as_ref()?.size).ok()?;
         if ty.bit_width() > 128 {
             return None;
@@ -129,28 +104,11 @@ fn mask_to(v: u128, size_bytes: u32) -> u128 {
 }
 
 impl<R: rsleigh::MemReader> super::Lifter<R> {
-    /// The register a STORE writes or a LOAD reads, when it addresses the
-    /// REGISTER space and its address resolves. `None` for an ordinary memory
-    /// access, for any other opcode, and for a register access this cannot
-    /// name, where the lift takes its opaque path rather than naming the wrong
-    /// register.
-    ///
-    /// The width comes off the opcode: a STORE's is the value it stores, a
-    /// LOAD's its output, which is what the value is read into.
-    ///
-    /// The folded address is returned as the exact slice it names, gated on
-    /// some DECLARED register enclosing it. The gate is what keeps the tracked
-    /// set a nesting family. A computed offset need not land on a declared
-    /// boundary: one that straddles two registers, or lands past the end of
-    /// the register file, names no register at all. Seeding such a slot puts a
-    /// varnode that only PARTIALLY overlaps a real register into the tracked
-    /// set, where `dedup_overlapping_largest` keeps both and models them as
-    /// non-aliasing: a write to one is invisible to a read of the other.
-    ///
-    /// The slice itself is returned, not its container, because the width is
-    /// the access width. The declared register enclosing it is what the
-    /// tracked set is seeded with, and `write_vn` reaches it from the slice
-    /// through the container map.
+    /// The register slice a register-space STORE writes or LOAD reads, at the
+    /// access width, when its address folds into some declared register.
+    /// `None` otherwise, including for ordinary memory. The declared-register
+    /// gate keeps the tracked set a nesting family: a slot straddling two
+    /// registers would be modelled as aliasing neither.
     pub(crate) fn register_slot_of(
         &self,
         insn: &rsleigh::Insn,
@@ -173,17 +131,14 @@ impl<R: rsleigh::MemReader> super::Lifter<R> {
         vn_container::smallest_enclosing(&self.tables().declared_reg_vns, &slot).map(|_| slot)
     }
 
-    /// Whether `insn` addresses the REGISTER space at all, independent of
-    /// whether the address resolves. What separates "this is an ordinary
-    /// memory access" from "this is a register access this cannot name".
+    /// Whether `insn` addresses the REGISTER space, resolved or not.
     pub(crate) fn is_register_space_access(&self, insn: &rsleigh::Insn) -> bool {
         self.decode_space_id(insn)
             .is_ok_and(|space| space == rsleigh::VnSpace::REGISTER)
     }
 }
 
-/// The tracked varnodes an UNRESOLVABLE register-space write may reach: the
-/// whole register file, the address being unknown.
+/// The tracked varnodes an unresolved register-space write may reach.
 pub(crate) fn opaque_clobber_set(
     all_vns: &[rsleigh::Vn],
 ) -> impl Iterator<Item = rsleigh::Vn> + '_ {

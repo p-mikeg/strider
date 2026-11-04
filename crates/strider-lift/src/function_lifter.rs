@@ -11,45 +11,35 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) sites: super::LiftSites,
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// The options `cfg` was built with: its `local_entries` answer a ppc64
-    /// local entry through `per_address_ccs`, and its `call_other_overrides`
-    /// classify user-op names before the built-in tables.
+    /// The options `cfg` was built with.
     pub(crate) cfg_opts: &'a strider_cfg::CfgOptions<'a>,
-    /// O(1) varnode-to-largest-container map, built over the tracked set;
-    /// queried with the raw varnodes and every CC register.  Varnodes absent
-    /// from it fall through to the scan in `container_of`.
+    /// Varnode to largest tracked container, for the raw varnodes and every CC
+    /// register; other varnodes fall back to a scan.
     pub(crate) container_map: vn_container::ContainerMap,
-    /// Constant values of the current machine instruction's temporaries, fed
-    /// every op in `region.insns` order. `collect_def_sites` runs an identical
-    /// one over the same sequence, so a register store resolves to the same
-    /// varnode on both sides.
+    /// Constant temporaries of the current instruction. `collect_def_sites`
+    /// runs an identical one, so a register store resolves alike on both sides.
     pub(crate) pcode_consts: super::pcode_consts::PcodeConsts,
-    /// The FIRST value committed to `ISAModeSwitch` at a machine address (ARM's
-    /// `setISAMode` reads it, MIPS's `JXWritePC` writes it) and that address:
-    /// the mode the instruction decodes its branch target(s) in. First, not
-    /// last, because the ARM sla writes it twice for the call-shaped
-    /// `ldr pc,addrmode2` and the second write is a constant 0 after the call;
-    /// see `vn_io::write_vn`. The region's terminating `IndirectBranch` takes it as
-    /// its mode input iff they share that address.
+    /// The first value written to `ISAModeSwitch` at a machine address, and
+    /// that address: the mode its branch targets decode in. First, because ARM
+    /// `ldr pc,addrmode2` writes a constant 0 after the call. The region's
+    /// `IndirectBranch` takes it iff they share the address.
     pub(crate) pending_isa_mode: Option<(strider_ir::node::ValueId, u64)>,
     /// Each `Region` node's last machine address: the branch leaving it.
     pub(crate) region_last_addrs: rustc_hash::FxHashMap<strider_ir::node::NodeId, u64>,
-    /// `ret_and_clobber_vns` under the function-default CC.  The tracked set
-    /// and the container map are both frozen for the lift, so every call site
-    /// without a `per_address_ccs` override yields this same split.
+    /// `ret_and_clobber_vns` under the default CC, shared by every call site
+    /// without an override.
     pub(super) default_ret_clobber_vns: (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>),
     /// [`strider_target::BuiltCallingConvention::float_arg_prefix`] under the
-    /// function-default CC, cached for the same reason: it scans the tracked
-    /// set per float register.
+    /// default CC.
     pub(super) default_float_arg_vns: Vec<rsleigh::Vn>,
-    /// What [`Self::collect_def_sites`] mirrored, for the write-path check in
-    /// [`Self::write_variable`]. Empty until `build_ir` fills it.
+    /// What [`Self::collect_def_sites`] mirrored, checked by
+    /// [`Self::write_variable`].
     #[cfg(debug_assertions)]
     pub(super) def_sites: rustc_hash::FxHashMap<
         strider_ir::node::InitialVnId,
         rustc_hash::FxHashSet<strider_cfg::RegionId>,
     >,
-    /// The region [`Self::translate_regions`] is lifting, for the same check.
+    /// The region [`Self::translate_regions`] is lifting.
     #[cfg(debug_assertions)]
     pub(super) current_cfg_region: Option<strider_cfg::RegionId>,
 }
@@ -71,12 +61,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             lifter.arch().byte_order(),
         )?;
         builder.set_internal_registers(&lifter.tables().internal_register_vns);
-        // `FunctionBuilder::new` seeds the CC registers and `Function::new`
-        // drops enclosed sub-registers, so the function's `all_vns()` is the
-        // canonical tracked set.  Resolving a varnode INTO that set is the
-        // machine-register concern owned here: query every raw varnode plus
-        // every CC register, so an ABI register narrower than its tracked
-        // container (ABI says `eax`, the function tracks `rax`) resolves.
+        // Query every CC register too, so an ABI register narrower than its
+        // tracked container (`eax` in `rax`) resolves.
         let f = builder.function();
         let cc = f.default_cc();
         let queries = tracked
@@ -89,8 +75,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .chain([&cc.stack_ptr])
             .copied();
         let container_map = vn_container::ContainerMap::build(f.all_vns(), queries);
-        // Since `tracked` holds the stack vn, after dedup it must
-        // resolve to a tracked container: itself, or a larger tracked vn.
         debug_assert!(
             {
                 let sp_container = vn_container::largest_container_in(f.all_vns(), &cc.stack_ptr);
@@ -123,8 +107,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         })
     }
 
-    /// Every IR node born inside `f` picks up `addr` in its fingerprint
-    /// side-table.  The address is cleared even on the error path.
+    /// Fingerprints every node `f` creates with `addr`; cleared on error too.
     pub(crate) fn with_lift_addr<T>(
         &mut self,
         addr: Option<u64>,
@@ -155,8 +138,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .get(self.per_address_ccs, target)
     }
 
-    /// The entry region's start: a region's first instruction sits at it, and
-    /// a zero-pcode-op entry region has none.
+    /// The entry region's start address.
     pub(crate) fn entry_machine_addr(&self) -> u64 {
         self.cfg.region_graph()[self.cfg.entry()]
             .start_addr

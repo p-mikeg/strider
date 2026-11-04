@@ -15,8 +15,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(vn, int_val)
     }
 
-    /// Shared envelope for two-input float ops.  The operand casts insert the
-    /// `IntBitsToFloat` bitcast the strict builders require.
+    /// Two-input float op over operands bitcast to the output's float type.
     fn lift_float_binary(
         &mut self,
         insn: &rsleigh::Insn,
@@ -86,9 +85,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         Ok((lhs, rhs))
     }
 
-    /// `Xor(FloatEqual(lhs, rhs), IntConst(1)):I1`, shared by `FloatNan` and
-    /// `FloatNotEqual`.  Sound under IEEE 754: `Equal` is false when either
-    /// operand is NaN, so the negation is true, matching `NotEqual`/`is_nan`.
+    /// `Xor(FloatEqual(lhs, rhs), IntConst(1)):I1`: true on a NaN operand.
     fn build_float_eq_negated(&mut self, lhs: ValueId, rhs: ValueId) -> Result<ValueId> {
         let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let eq = self
@@ -100,18 +97,14 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
-        // `is_nan(x)` is `x != x` under IEEE 754, built directly in the
-        // lowered `Xor(FloatEqual, 1)` form.
+        // `is_nan(x)` is `x != x`.
         let result = self.build_float_eq_negated(value, value)?;
         self.write_vn(out_vn, result)
     }
 
-    /// Lowers `FloatSub(a, b)` to `FloatAdd(a, Neg(b))`.  Exact under IEEE 754:
-    /// `a - b` equals `a + (-b)` for finite values, and negation flips the sign
-    /// bit of infinities and NaNs without changing NaN-ness.  Not bit-exact
-    /// for a NaN `b`: hardware passes `b` through with its sign (x86 and ARM
-    /// `1.0 - qNaN` is `+qNaN`), and the lowering yields `-qNaN`.  IEEE 754
-    /// leaves an arithmetic NaN's sign unspecified.
+    /// Lowers `FloatSub(a, b)` to `FloatAdd(a, Neg(b))`. Exact except a NaN
+    /// `b`'s sign, which flips (`1.0 - qNaN` gives `-qNaN`, hardware `+qNaN`);
+    /// IEEE 754 leaves it unspecified.
     pub(super) fn handle_float_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         self.lift_float_binary(insn, |b, l, r, t| {
             let neg_r = b.build_float_unary_op(r, FloatUnaryOp::Neg, t)?;
@@ -128,10 +121,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, result)
     }
 
-    /// Lowers to `Or(FloatLess(a, b), FloatEqual(a, b))`, NOT to the swapped
-    /// negated form the integer path uses: `Not(Less(b, a))` returns TRUE on a
-    /// NaN operand, where IEEE 754 requires false.  Both `Less` and `Equal`
-    /// return false on NaN, so their `Or` is correctly false.
+    /// Lowers to `Or(FloatLess(a, b), FloatEqual(a, b))`, false on NaN; the
+    /// integer path's `Not(Less(b, a))` would be true.
     pub(super) fn handle_float_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
@@ -153,7 +144,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let raw_value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
         let float_ty = out_vn.float_type()?;
-        // The input is int-typed (every read is), so this coerces its width.
+        // Reads are int-typed; this coerces the width.
         let in_size = nth_input_or_err(insn, 0)?.int_type()?;
         let int_value = self.builder.convert_to_int_if_needed(raw_value, in_size)?;
         let float_result = self.builder.build_int_to_float(int_value, float_ty)?;
@@ -164,8 +155,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let raw_value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
         let out_float_ty = out_vn.float_type()?;
-        // Register reads are int-typed, so cast via the input's natural float
-        // width (4 bytes to F32, 8 to F64) before the strict builder.
+        // Reads are int-typed; bitcast at the input's own float width.
         let in_float_ty = nth_input_or_err(insn, 0)?.float_type()?;
         let float_value = self
             .builder
