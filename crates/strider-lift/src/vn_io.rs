@@ -1,7 +1,5 @@
-//! The sole owner of register aliasing: overlapping sub-registers (x86-64
-//! `al`/`ah`/`ax`/`eax`/`rax`, x87 ST slices, aarch64 s/d/q SIMD views) are
-//! always read and written through the largest containing tracked register,
-//! with shift/mask operations inserted for the slice.
+//! Register aliasing: a sub-register (`al` in `rax`, aarch64 `s0` in `z0`) is
+//! read and written through its largest tracked container with shift/mask.
 
 use anyhow::anyhow;
 use strider_ir::node::ValueId;
@@ -20,8 +18,7 @@ struct SubRegContext {
 }
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// Width comes from `space`'s address size; `what` names the space in the
-    /// lookup-failure error.
+    /// An address constant at `space`'s address width.
     pub(crate) fn build_addr_const(
         &mut self,
         space: rsleigh::VnSpace,
@@ -48,16 +45,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.read_vn(vn)
     }
 
-    /// UNIQUE goes through the same aliasing path as REGISTER: Sleigh
-    /// sometimes writes a wide unique and reads a narrow slice of it (MIPS
-    /// MULT writes a 64-bit unique, then Copy reads 32 bits of it).
+    /// UNIQUE aliases like REGISTER: MIPS `mult` writes a 64-bit unique and
+    /// reads 32 bits of it.
     pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr_off, vn.int_type()?),
             rsleigh::VnSpace::REGISTER if self.lifter.is_volatile(vn) => self.read_volatile(vn),
-            // The two arms spell `vn_container::is_aliasable_space` out: a
-            // function cannot be a pattern, and a guard reads worse here.
+            // `vn_container::is_aliasable_space`.
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
@@ -67,11 +62,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// A read of a register that changes with nothing writing it: a fresh
-    /// value each time, from a `CallOther` on the control chain, so no two
-    /// reads merge. Ghidra's decompiler lifts it the same way, as its builtin
-    /// `read_volatile` user-op. A write stays a plain register write: no read
-    /// observes it.
+    /// A volatile register read: a fresh `read_volatile` `CallOther` each time,
+    /// so no two reads merge (as Ghidra's decompiler does). Writes stay plain.
     fn read_volatile(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let (node, outputs) =
             self.builder
@@ -85,18 +77,13 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 
     pub(crate) fn write_vn(&mut self, vn: &rsleigh::Vn, val: ValueId) -> Result<()> {
-        // Stash an ISA-mode commit for `pending_isa_mode`. Full `Vn` equality,
-        // not just space+offset: a differently-sized varnode sharing the offset
-        // is a different register.
+        // Stash an ISA-mode commit (full `Vn` equality: size matters).
         if self.lifter.tables().isa_mode_switch_vn == Some(*vn)
             && let Some(addr) = self.builder.lift_addr()
         {
-            // FIRST write per machine address wins. MIPS writes ISAModeSwitch
-            // a second time AFTER its `BranchIndirect`, a delay-slot artefact
-            // the branch never reads. ARM's call-shaped `ldr pc,addrmode2`
-            // commits the loaded target's low bit, calls, then commits a
-            // constant 0, all at one address
-            // (`ARMinstructions.sinc:2788`-`:2791`).
+            // First write per machine address wins: MIPS rewrites it after
+            // the branch (delay slot), and ARM `ldr pc,addrmode2` commits a
+            // constant 0 after the call.
             if !matches!(self.pending_isa_mode, Some((_, prev)) if prev == addr) {
                 self.pending_isa_mode = Some((val, addr));
             }
@@ -143,10 +130,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         reg: &rsleigh::Vn,
         ctx: &SubRegContext,
     ) -> Result<ValueId> {
-        // The truncate is required even at shift 0: without it the caller gets
-        // the full container width, and width-sensitive downstream ops break
-        // (bitcasting an I64 read to F32 is ill-defined, so IntBitsToFloat
-        // plus the optimizer drop the chain).
+        // Truncate even at shift 0: the caller needs `reg`'s width.
         let reg_ty: ValueType = reg.int_type()?;
         let shifted = self.builder.build_shift_by_const(
             container_val,
@@ -157,48 +141,25 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.builder.truncate_if_needed(shifted, reg_ty)
     }
 
-    /// Writes `val` into `reg`: read container, position `val` into reg's bit
-    /// slot, clear that slot in the container, OR the two, write back.
-    ///
-    /// Masks are computed in *container* coordinates: reg's mask is built at
-    /// `shift_bits` so it lands at reg's real position, and the preserve mask is
-    /// its complement within the container.  Skipping that positioning inverts
-    /// the mask on an upper-half write (AArch64 `FCVT D0,S0` zeroing the upper
-    /// 64 bits of V0) and silently zeros the container's lower half.
+    /// Writes `val` into `reg`'s slot of its container, preserving the other
+    /// bits. Sleigh emits any zeroing of the rest (AArch64 `fmov s0`, VEX
+    /// `vmovss`) as separate writes.
     pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ValueId) -> Result<()> {
         let ctx = self.enter_sub_register(reg, "write_reg_vn")?;
-        // Register SSA slots hold integers at the register's natural width, so
-        // a 1-bit `I1` flag result is zero-extended up.  A float is rejected
-        // outright: every float producer bitcasts before it reaches here.
-        // Keeping `I1` out of register slots is what makes cross-region `Phi`s
-        // over a register type-homogeneous.  The flag-to-`If` flow survives:
-        // `build_branch_condition` tests `!= 0` at the slot's own width.
+        // Slots hold integers at the register's width (an `I1` is
+        // zero-extended), so a register's `Phi`s are type-homogeneous.
         let reg_ty: ValueType = reg.int_type()?;
         let val = self.builder.convert_to_int_if_needed(val, reg_ty)?;
         let Some(ctx) = ctx else {
             return self.write_variable(reg, val);
         };
 
-        // This write PRESERVES the bits outside `reg`, and that is correct
-        // even on ISAs that zero the rest of the vector register on a
-        // scalar-FP write (AArch64 `fmov s0`, x86 VEX `vmovss`) rather than
-        // preserving it (legacy SSE `movss`).  Sleigh models the difference
-        // itself, emitting the zeroing as separate explicit pcode ops:
-        //   AArch64 `fmov s0,w0` ->  s0 = Copy(w0), then four zero-writes
-        //                              tiling the rest of the 32-byte `z0`
-        //   x86 VEX  `vmovss`    ->  XMM0_Da = ...; ZMM0 = IntZext(XMM0)
-        // Those arrive here as ordinary sub-register writes.
         let merged = self.build_masked_insert(val, reg, &ctx)?;
         self.write_variable(&ctx.container_reg, merged)
     }
 
-    /// Shared read/write prelude: the largest tracked varnode containing
-    /// `reg` (`al` -> `rax`), or `None` when `reg` is its own container.
-    /// `op` prefixes the shift-bound error so it names the originating call
-    /// site.
-    ///
-    /// A container byte width with no `ValueType::int_from_bytes` mapping
-    /// fails here at `int_type`, before any shift or mask is built on it.
+    /// `reg`'s largest tracked container (`al` -> `rax`), or `None` when `reg`
+    /// is its own. `op` names the caller in errors.
     fn enter_sub_register(
         &self,
         reg: &rsleigh::Vn,
@@ -208,17 +169,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             vn_container::is_aliasable_space(reg.addr_space),
             "{op}: {reg:?} has no container"
         );
-        // `container_of` returns `reg` unchanged when nothing tracked contains
-        // it: a full-width access.
         let container_reg = self.container_map.container_of(reg);
         if container_reg == *reg {
             return Ok(None);
         }
         let container_ty: ValueType = container_reg.int_type()?;
-        // Both guards are unreachable through `container_of` ->
-        // `largest_container_in`, which guarantees containment; together they
-        // turn a malformed Sleigh spec into a clean lift failure rather than
-        // corrupt IR, in release and debug alike.
+        // Both guards are unreachable for a well-formed spec.
         let Some(shift_bits) = self
             .lifter
             .arch()
@@ -229,8 +185,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 "{op}: sub-register {reg:?} is not contained in {container_reg:?}"
             ));
         };
-        // A shift >= container bits saturates to zero under the IR's shift
-        // semantics, so the slice would read back as nothing.
         if shift_bits >= (container_reg.size as u64) * 8 {
             return Err(anyhow!(
                 "{op}: shift {shift_bits} >= container bit width {} \
@@ -248,8 +202,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }))
     }
 
-    /// Positions `val` at its bit slot in the container and merges it with the
-    /// preserved container bits.
+    /// `(container & !slot) | (zext(val) << shift)`.
     fn build_masked_insert(
         &mut self,
         val: ValueId,
@@ -280,9 +233,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             ty,
         )?;
 
-        // `shifted_value` needs no mask of its own: coercing to `reg`'s width
-        // zeroed every bit above it, and the shift then landed it in exactly
-        // the window `container_mask` clears.
+        // `val` is already at `reg`'s width, so it fits the cleared slot.
         self.builder
             .build_int_binary_operation(preserved, shifted_value, IntBinaryOp::Or, ty)
     }

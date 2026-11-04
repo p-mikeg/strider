@@ -1,12 +1,9 @@
-//! Every CC register is resolved to its largest tracked container before
-//! membership or exclusion, so a narrower ABI register (`eax`) matches the
-//! tracked container (`rax`).
+//! Per-call CC register sets, resolved to tracked containers (`eax` to `rax`).
 
 use super::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// The `Call` output split for one call site: the cached default-CC scan,
-    /// or a fresh one under a `per_address_ccs` override.
+    /// The `Call` return and clobber varnodes for one call site.
     pub(crate) fn call_ret_and_clobber_vns(
         &self,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
@@ -19,10 +16,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// The float argument varnodes for one call site: the cached default-CC
-    /// list, or a fresh one under a `per_address_ccs` override. The integer
-    /// list never names them, so without them a callee's float argument cone
-    /// has no consumer.
+    /// The float argument varnodes for one call site.
     pub(crate) fn call_float_arg_vns(
         &self,
         override_cc: Option<&strider_target::BuiltCallingConvention>,

@@ -37,10 +37,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             )
         })?;
 
-        // `None` is the NoOp class: no IR node, control and memory unchanged,
-        // and the pcode-explicit output dropped.  Otherwise the ABI carries the
-        // footprint, so one path serves side-effecting and terminating ops
-        // alike.
+        // `None` is the NoOp class: no node, and the pcode output is dropped.
         let Some(abi) = class.built(self.lifter.sleigh_regs())? else {
             anyhow::ensure!(
                 !terminate,
@@ -77,12 +74,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.write_vn(out, value)
     }
 
-    /// `mode = mxcsrRoundingControl(live)` and its kin
-    /// ([`strider_target::call_other_abi::is_rounding_mode_control`]): 0,
-    /// round to nearest even, under
+    /// `mode = mxcsrRoundingControl(live)` and its kin: 0 (nearest even) under
     /// [`strider_ir::AssumptionOptions::fp_rounding_mode_is_nearest`], else
-    /// `live`, or for an op with no input the register it is
-    /// ([`strider_target::call_other_abi::rounding_mode_register`]).
+    /// `live`, or for an op with no input its
+    /// [`strider_target::call_other_abi::rounding_mode_register`].
     fn lift_rounding_mode_control(&mut self, insn: &rsleigh::Insn, name: &str) -> Result<()> {
         let Some(out) = insn.output.as_ref() else {
             anyhow::bail!("a rounding-mode op has an output");
@@ -113,9 +108,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.write_vn(out, value)
     }
 
-    /// Whether the CFG sealed `region` `NoReturn` at the op at `addr`. Called
-    /// only for a `CallOther`: every other `NoReturn` seal ends on a `Call` or
-    /// `CallIndirect`.
+    /// Whether the CFG sealed `region` `NoReturn` at the `CallOther` at `addr`.
     pub(super) fn ends_no_return_region(
         &self,
         region: strider_cfg::RegionId,
@@ -144,9 +137,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let mut args: Vec<strider_ir::node::ValueId> =
             Vec::with_capacity(abi.implicit_reads.len() + explicit_args.len());
         for vn in &abi.implicit_reads {
-            // An ABI footprint names a register the function's tracked set may
-            // not carry: the set is built from the decoded instructions and the
-            // calling convention, so a register neither touches is absent.
+            // The tracked set may lack a footprint register.
             args.push(self.read_vn(vn).with_context(|| {
                 let reg = self
                     .lifter
@@ -158,17 +149,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
         args.extend_from_slice(explicit_args);
 
-        // Output vns are the 0-or-1 result then the clobbers. A clobber is
-        // canonicalized to its largest tracked container (the builder validates
-        // that) and deduplicated: sub-registers of one container collapse to a
-        // single slot, and the result wins ties over a clobber.
-        //
-        // The result keeps the pcode output's OWN width only where
-        // [`strider_target::SleighArch::callother_output_is_exact_in`] says
-        // so, which carries the rule; elsewhere the result slot is the
-        // container and the write clobbers it whole, which is opaque rather
-        // than wrong. Decided per container, since one arch can hold register
-        // files that differ.
+        // Outputs: the 0-or-1 result, then the clobbers as deduplicated
+        // containers (the result wins ties). The result keeps its own width
+        // only where `callother_output_is_exact_in` holds for its container;
+        // elsewhere it clobbers the whole container, opaque but sound.
         let result_vn = match output.map(|vn| {
             let container = self.container_map.container_of(&vn);
             if self.lifter.arch().callother_output_is_exact_in(&container) {
@@ -177,10 +161,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 container
             }
         }) {
-            // An intrinsic that writes a memory operand (x86 `sgdt [mem]`) has
-            // its output in ram, which no output slot can carry. A memory
-            // clobber already advances the chain over the write, so drop the
-            // slot rather than fail the function.
+            // A ram output (x86 `sgdt [mem]`) has no slot; the memory clobber
+            // already covers the write.
             Some(vn) if abi.clobbers_memory && !vn_container::is_aliasable_space(vn.addr_space) => {
                 None
             }
@@ -210,15 +192,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             .set_call_other_name(user_op_id, name);
         let (ret_vals, clobbers) = outputs.split_at(n_ret);
 
-        // An implicit clobber defines its whole container, so it is written
-        // whole.  The result goes through the masked-insert path, which is the
-        // full-container write when the slot IS the container.  Result last, so
-        // an aliased clobber cannot re-clobber it.
-        //
-        // Skipped for a terminating op: `build_call_other` already closed the
-        // region, so the write would land in a terminated region and no
-        // successor could read the binding anyway.  The node's output slots
-        // still exist and dangle, which matches `no_return` semantics.
+        // Clobbers are written whole, then the result (masked insert), so an
+        // aliased clobber cannot overwrite it. A terminating op has no
+        // successor to read them, so its outputs dangle.
         if !terminate {
             for (vn, v) in core::iter::zip(&output_vns[n_ret..], clobbers) {
                 self.write_variable(vn, *v)?;
@@ -256,7 +232,7 @@ mod tests {
         arch.probe_regs()
     }
 
-    /// Helper: lifts `code` at 0x1000 under the x86-64 SysV convention.
+    /// Lifts `code` at 0x1000 under the x86-64 SysV convention.
     fn lift_x86_64(
         code: Vec<u8>,
         opts: &strider_cfg::CfgOptions,
