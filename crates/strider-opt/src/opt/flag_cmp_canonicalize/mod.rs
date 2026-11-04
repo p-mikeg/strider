@@ -42,7 +42,8 @@ use crate::peephole::PeepholePass;
 pub struct FlagCmpCanonicalize;
 
 thread_local! {
-    /// Built once per thread; held outside the pass to keep it `Send`.
+    /// Built once per thread; held outside the pass so it stays
+    /// `Sync`, as `Optimizer` requires.
     static RULES: RuleTable = RuleTable::new(build_rules());
 }
 
@@ -179,7 +180,8 @@ fn build_rules() -> Vec<Rule> {
     ));
     // The `cmn a, N` sibling, a compare against `-N`:
     //   Equal(ZeroExtend(Sless(Add(a, N), 0)), ZeroExtend(Scarry(a, N))) -> Xor(Sless(a, -N), 1)
-    // Guarded to `N != INT_MIN`.
+    // Guarded to `N != INT_MIN`, whose negation `2^(W-1)` no `W`-bit signed
+    // value holds.
     rules.push(Rule::rewrite(
         int_eq(
             int_zero_extend(int_slt(int_add(var(a), int_const(n)), int_const(0u128))),
