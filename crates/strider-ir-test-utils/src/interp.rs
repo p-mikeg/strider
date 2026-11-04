@@ -1,20 +1,16 @@
 //! A reference interpreter for running a raw and an optimised graph of one
-//! function against each other. It is a consistency oracle only: a
-//! misconception it shares with a pass is invisible. Its integer operations are
-//! written apart from `strider_ir::eval` (only the width helpers are shared),
-//! so it does not share the constant folder's code.
+//! function against each other; a consistency oracle only. Its integer ops are
+//! written apart from `strider_ir::eval`, sharing only the width helpers.
 //!
-//! Runs integer ops at the declared width, phis, RAM and REGISTER-space memory,
-//! and `If` / `Switch` / `Region` control including loops. Floats, `CallOther`,
-//! `IndirectBranch` and other spaces are [`Unsupported`].
+//! Runs integer ops, phis, RAM and REGISTER-space memory, and `If` / `Switch` /
+//! `Region` control. Floats, `CallOther`, `IndirectBranch` and other spaces are
+//! [`Unsupported`].
 //!
-//! Call `k` of a run (from 1) is an opaque callee: each register it clobbers
-//! becomes `hash(seed, k, target, varnode)`, and unless its convention
-//! preserves memory every non-ROM byte reads `hash(seed, k, address)`, so a
-//! load forwarded across a call shows up as a divergence.
-//!
-//! The REGISTER space is a separate byte array: not ROM-backed, noise when
-//! unwritten, clobbered with memory, and absent from `writes`.
+//! Call `k` of a run (from 1) is opaque: each register it clobbers becomes
+//! `hash(seed, k, target, varnode)`, and unless its convention preserves memory
+//! every non-ROM byte reads `hash(seed, k, address)`. The REGISTER space is a
+//! separate byte array: unbacked, noise when unwritten, clobbered with memory,
+//! and absent from `writes`.
 
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
