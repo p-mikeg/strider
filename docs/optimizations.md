@@ -1,9 +1,8 @@
 # Optimizations
 
-Strider optimizes IR for regularity, not speed: clutter folds away and
-equivalent code is rewritten into one shape, so one pattern matches every
-variant. `analyze` runs the default set. When a pattern does not match, a pass
-has usually reshaped what you were looking for.
+Strider optimizes IR for regularity, not speed: equivalent code is rewritten
+into one shape, so one pattern matches every variant. `analyze` runs the
+default set. When a pattern does not match, a pass has usually reshaped it.
 
 ## How the passes run
 
@@ -34,19 +33,18 @@ Also:
 - a sign extend of a widening zero extend is that zero extend.
 
 **LoadReadOnly.** A load from a fixed address in read-only memory becomes the
-constant stored there. `load_elf` derives the image (the file minus writable
-mappings), so an RWX segment is never folded; for a raw blob pass `rom=` (see
-the [Python guide](python-guide.md)). An image whose only `PT_LOAD` is RWX
-folds nothing, silently. Check `prog.rom()`, whose repr counts its regions, and
-pass your own `rom=` covering the constant data.
+constant stored there. `load_elf` derives the read-only image (the file minus
+writable mappings), so an RWX segment is never folded; an image whose only
+`PT_LOAD` is RWX folds nothing, silently. Check `prog.rom()`, whose repr counts
+its regions, and pass your own `rom=` (see the [Python guide](python-guide.md)),
+as for a raw blob.
 
 **KnownBits.** Tracks known-0/known-1 bits; a fully known result becomes a
 constant. A mask keeping every bit its operand may set is dropped:
 `zext32(x8) & 0xff` is `zext32(x8)`.
 
-**FlagCmpCanonicalize.** Rewrites flag-bit trees (carry, zero, sign, overflow),
-including those left after a negated branch is normalized, back into a plain
-comparison like `a < b`. Signed `a < b` is `sign != overflow`.
+**FlagCmpCanonicalize.** Rewrites flag-bit trees (carry, zero, sign,
+overflow) back into a plain comparison: `sign != overflow` is signed `a < b`.
 
 **IfCondInversion.** An `if` on a logical NOT drops the NOT and swaps the arms,
 so you only match the positive form.
@@ -76,9 +74,9 @@ after a write folds to the value written.
 Each examined load's memory edge is also moved past definitions that cannot
 overwrite it, using `stack_global_disjoint` and `noalias_allocators`' heap
 identity, but never through a call a claim makes transparent
-(`escape_analysis`, a listed allocator): the jump-table walk and return-target
-verification read that edge without those claims. Claims accumulate on a
-function and are never withdrawn; to drop one, analyse again without it.
+(`escape_analysis`, a listed allocator), because the jump-table walk and
+return-target verification read that edge without those claims. Claims are
+never withdrawn from a function; to drop one, analyse again without it.
 
 With `AssumptionOptions(escape_analysis=True)` it forwards across a call when no
 stack address escapes the frame anywhere in the function (as a call argument,
@@ -97,8 +95,7 @@ spill at the stack top forwards too; alone it does nothing.
 In default pipeline order:
 
 **CallStackArgCollect.** Attaches the stores into each call's outgoing argument
-window to the call node as ordinary arguments. A push is indistinguishable
-from an incidental write there, so it errs wide: a spill just above the
+window to the call as ordinary arguments. It errs wide: a spill just above the
 arguments can come along.
 
 **FunctionArgDetect.** Records which value carries each incoming *stack-passed*
@@ -114,17 +111,15 @@ own base). Stack-access and exact-slot queries read these. Rust's
 
 ## Indirect-branch resolution
 
-Jump tables, computed jumps and returns are resolved by a classifier `analyze`
-runs after the pipeline every round, whatever the pipeline, unless
-`resolve_indirect_branches` is off (`strider.opt` has no pass for it). It
-classifies each unresolved branch on the optimized IR, feeds new targets back
-and re-lifts until the edge set stops changing. It reads IR optimized under
-the function's claims, so a wrong claim can seat a wrong edge (under
-`escape_analysis` and `callee_preserves_stack_args`, a target spilled to the
-stack forwards across a call that overwrote it). What stays unresolved comes
-back in `unresolved`, one of the seven reasons in
-[python-api.md](python-api.md#12-the-cfg-stridercfg) that `cfg.incomplete`
-lists.
+After the pipeline, every round, `analyze` classifies each unresolved jump
+table, computed jump and return on the optimized IR, feeds new targets back and
+re-lifts until the edge set stops changing. This runs whatever the pipeline
+(`strider.opt` has no pass for it) unless `resolve_indirect_branches` is off.
+It reads IR optimized under the function's claims, so a wrong claim can seat a
+wrong edge (under `escape_analysis` and `callee_preserves_stack_args`, a target
+spilled to the stack forwards across a call that overwrote it). What stays
+unresolved is listed in `cfg.incomplete`
+([reasons](python-api.md#12-the-cfg-stridercfg)).
 
 An indirect CALL is neither resolved nor reported; its target is the `Call`
 node's input value. A return is reported when its folded target is not
@@ -137,8 +132,7 @@ committed mode for arms found later.
 
 `CfgOptions(known_targets={dispatch_addr: [target, ...]})` seeds answers the
 loop grows from; a site holding only your seed is listed as
-`"unverified_seed"`. `LifterOptions(resolve_indirect_branches=False)` turns the
-classifier off.
+`"unverified_seed"`.
 
 ### Dispatch shapes that need an opt-in
 
@@ -156,12 +150,11 @@ classifier off.
 
 Reported as `"unresolved_branch"`; the rest of the function lifts:
 
-- AArch64 big-endian stack-array dispatch whose table base is built with `bfi`:
-  Sleigh masks the SP-derived value, which stack decomposition cannot see
-  through, and one 16-byte `str q0` writes two entries as one 128-bit constant.
+- AArch64 big-endian stack-array dispatch whose table base is built with
+  `bfi`: stack decomposition cannot see through the masked SP value, and one
+  16-byte `str q0` writes two entries as one 128-bit constant.
 - An index with a constant offset that can go below zero, such as
-  `(x & 7) - 2`: enumerating `x` would name slots before the table that only
-  the guards exclude.
+  `(x & 7) - 2`.
 
 ## Using a different pipeline
 
