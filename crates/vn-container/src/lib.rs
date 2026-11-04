@@ -37,7 +37,9 @@ pub fn vn_overlaps(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 /// non-aliasing. Sound because none arise: declared register files nest
 /// exactly, `strider-lift`'s `register_slot_of` drops a computed slot
 /// [`smallest_enclosing`] cannot seat, and every UNIQUE varnode lies in one
-/// 256-byte-aligned block (SleighCompile's temp stride).
+/// 256-byte-aligned block (SleighCompile's temp stride, which it rejects a
+/// wider temp against). SleighCompile checks only declared temp sizes, so an
+/// operand-sized temp is bounded only by the widest register.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {
