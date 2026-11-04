@@ -19,10 +19,8 @@ x = Capture()
 before = len(function.find_all(int_mul(var(x), int_const(4))))
 print(f"before rewrite: {before} `x * 4` site(s), {len(function.find_all(load()))} loads")
 
-# `replace` takes a strider.template Template. Share a Capture so both
-# sides agree.
-# The pipeline runs before the graph is handed over, so pick an idiom it
-# leaves standing: `x + 0` is already folded by the time analyze() returns.
+# `replace` is a strider.template Template sharing the find side's Capture.
+# analyze() has already optimized, so pick an idiom the pipeline leaves alone.
 n = function.rewrite(
     find=int_mul(var(x), int_const(4)),
     replace=tpl.int_shl(tpl.var(x), tpl.int_const(2)),
@@ -30,8 +28,7 @@ n = function.rewrite(
 print(f"`x * 4 -> x << 2` strength reduction: {n} site(s) rewritten")
 assert n == before > 0
 
-# Re-optimize after any structural change; no pipeline arg re-runs the full
-# default pipeline.
+# Re-optimize after a structural change (default pipeline).
 function.optimize()
 
 print(f"after rewrite + reoptimize: {len(function.find_all(int_mul(var(x), int_const(4))))} `x * 4`, "
