@@ -1,14 +1,9 @@
 //! Every context var a preset's sla can `globalset` is covered by one of the
 //! three per-preset lists, or is a justified exception.
 //!
-//! Those lists are the whole defence against a value one function commits
-//! changing how a later one decodes on a reused engine, and nothing checked
-//! them against the sla they describe. Both bugs this mechanism has had were a
-//! var in the wrong place: ARM `TEEMode` treated as `noflow` when the sla
-//! declares it flowing (erased to the pspec default, destroying a ThumbEE
-//! region), and then `TEEMode` dropped altogether (an earlier build's mode
-//! believed). The decoder reads a re-derived var's flow class off the sla, so
-//! the first cannot recur; this checks the partition.
+//! Those lists keep a value one function commits from changing how a later
+//! one decodes on a reused engine. The decoder reads each re-derived var's
+//! flow class off the sla; this checks the partition.
 //!
 //! Over-approximates on purpose: it scans every `.sinc` / `.slaspec` under the
 //! preset's language directory rather than following `@include`, so it can
