@@ -178,11 +178,9 @@ impl FunctionDotDumper<'_> {
 
         let (label, tail_idx, color) = edge_style(&kind, idx);
 
-        // Every repeating input is `<slot name><ordinal>`, the ordinal from
-        // the signature's own head length. Two kinds read better otherwise:
-        // a `Return`'s tail slots are the convention's return registers in ABI
-        // order, and a control predecessor is named by its ordinal among the
-        // `Region`'s arms, which is what pairs it with a `Phi` input.
+        // A repeating input is `<slot name><ordinal>`, except a `Return`'s
+        // tail (named by return register) and a `Region`'s arms (by ordinal,
+        // pairing each with its `Phi` input).
         let owned_label: Option<String> = match tail_idx {
             Some(_) if matches!(kind, NodeKind::Return) => self.return_ret_name(idx),
             Some(n) if matches!(kind, NodeKind::Region | NodeKind::Phi | NodeKind::MemPhi) => {
