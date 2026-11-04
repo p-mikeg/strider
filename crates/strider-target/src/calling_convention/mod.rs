@@ -13,8 +13,7 @@ pub fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsle
         .ok_or_else(|| anyhow!("unknown sleigh register name {name:?}"))
 }
 
-/// The registers `reg_names` names in `sleigh_regs`, in order; stops at the
-/// first unknown name.
+/// The registers `reg_names` names in `sleigh_regs`, in order.
 ///
 /// # Errors
 ///
@@ -29,85 +28,42 @@ pub fn regs_to_vns(
         .collect()
 }
 
-/// A calling convention carrying each register as `R` and each register list
-/// as `L`.
-///
-/// The two instantiations are [`CallingConvention`], which names registers as
-/// static Sleigh strings, and [`BuiltCallingConvention`], the same convention
-/// with every one of those names resolved to a varnode.
-/// [`CallingConvention::build`] is that substitution and nothing else, so a
-/// field means the same thing on both.
-///
-/// `Copy` only when `R` and `L` are, which keeps [`CallingConvention`] usable
-/// in a `const` preset while the `Vec`-carrying [`BuiltCallingConvention`]
-/// stays move-or-clone.
+/// A calling convention with registers as names ([`CallingConvention`]) or
+/// varnodes ([`BuiltCallingConvention`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Cc<R, L> {
-    /// In register-positional order, which is not source-argument order: ARM
-    /// AAPCS, MIPS O32 and 32-bit SysV PowerPC all start a 64-bit integer
-    /// argument at an even position of this list, skipping an odd one (PPC32
-    /// pairs r5:r6, leaving r4), so from the first 64-bit argument onward
-    /// position *n* names a register the caller may never have written.
+    /// In register order, which is not source-argument order: AAPCS, MIPS O32
+    /// and PPC32 start a 64-bit argument at an even position, skipping one.
     pub arg_passing_regs: L,
-    /// Float / vector argument registers, in positional order, from a register
-    /// file `arg_passing_regs` never names (`XMM0..7` on x86-64 SysV, `q0..7`
-    /// on AAPCS64, `d0..7` on AAPCS-VFP, `$f12`/`$f14` on MIPS O32, `f1..13`
-    /// then `v2..13` on PowerPC64 ELF and `f1..8` then `v2..13` on 32-bit SysV
-    /// PowerPC).  Where the float and vector banks are physically distinct, as
-    /// on PowerPC, the vector window is appended so the float positions stay
-    /// put, and the `*_linux_kernel` flavours drop it.  Empty where floats are
-    /// stack-passed (i386 cdecl).  Legitimately overlaps `ret_val_regs_float`:
-    /// `XMM0` / `d0` / `f1` are both.
-    ///
-    /// Adding an entry RENUMBERS the `Call`'s flat argument list: every
-    /// collected stack argument moves up one slot, so a public `call().arg(n)`
-    /// query reads a different operand.  `FunctionBuilder::new` also tracks
-    /// each entry on EVERY function, whether or not the function names it.
+    /// Float / vector argument registers, in positional order; a separate
+    /// vector bank is appended after the floats. An entry renumbers every
+    /// `Call`'s stack arguments and is tracked on every function.
     pub arg_passing_regs_float: L,
-    /// Excludes the stack pointer.  The float half matters as much as the
-    /// integer one: without the entries covering it, a post-call read of a
-    /// register the callee really preserved resolves to a `Call` output
-    /// instead of to the incoming value.
+    /// Excludes the stack pointer.
     pub callee_saved_regs: L,
     /// In positional order.
     pub ret_val_regs: L,
-    /// Float return registers, in positional order (`q0` on aarch64, `XMM0` on
-    /// x86_64, `d0` on ARM AAPCS hard-float (VFP), the `f0_1` pair on MIPS
-    /// O32).
+    /// Float return registers, in positional order.
     pub ret_val_regs_float: L,
     /// The stack pointer.  Shares no byte with the five register lists above.
     pub stack_ptr: R,
     /// `None` when the convention passes no arguments on the stack.
     pub stack_args: Option<StackArgs>,
-    /// Net byte change the callee's `ret` inflicts on the caller's SP: the
-    /// pointer size (4 on x86, 8 on x86_64) on stack-push ISAs where `ret`
-    /// pops the return address, 0 on link-register ISAs where the call never
-    /// touches SP.
+    /// Bytes the callee's return adds to the caller's SP: the pushed return
+    /// address on x86, 0 with a link register.
     pub ret_stack_pop: i64,
-    /// Register holding the return address across a call; `None` on
-    /// stack-push ISAs (x86, x86_64), where it lives on the stack.
+    /// Register holding the return address; `None` where it is pushed.
     pub link_register: Option<R>,
-    /// `true` if calls under this convention preserve memory. `false` for
-    /// every standard ABI; set by [`Self::preserves_all`] for transparent
-    /// zero-side-effect hooks (Linux-kernel `__fentry__` / `mcount`).
+    /// Calls preserve memory ([`Self::preserves_all`]).
     pub preserves_memory: bool,
-    /// `true` if a call clobbers NO register (every register callee-saved), as
-    /// for `__fentry__` / `mcount`.  Set by [`Self::preserves_all`] /
-    /// [`Self::preserves_regs`]; false for every real ABI.
+    /// Calls clobber no register ([`Self::preserves_regs`]).
     pub preserves_all_registers: bool,
-    /// The register the ABI guarantees holds the function's own entry address
-    /// on entry to it: PPC64 ELFv2 `r12` (2.2.2.1) and MIPS abicalls `t9`,
-    /// which the prologue turns into the TOC / GOT pointer. The lifter binds it
-    /// to the entry address. `None` where the ABI promises nothing, ELFv1
-    /// included: there the analogue is the descriptor's TOC word, which is not
-    /// a register contract.
+    /// The register holding the function's own address on entry (ELFv2 `r12`,
+    /// MIPS abicalls `t9`), which the lifter binds to the entry address.
     pub entry_address: Option<R>,
     /// The register arguments have stack homes just below the stack
-    /// arguments, one `stack_args` slot each in register order, so a
-    /// by-value argument the ABI splits between registers and the stack, and
-    /// a variadic tail, is one object across both: ARM AAPCS and MIPS N64,
-    /// whose callee pushes the registers there, and MIPS O32 and PowerPC64
-    /// ELF, whose caller reserves the space.
+    /// arguments, one `stack_args` slot each in register order, so an argument
+    /// split between registers and stack is one object.
     pub reg_args_adjoin_stack_args: bool,
 }
 
@@ -117,8 +73,7 @@ pub type CallingConvention = Cc<&'static str, &'static [&'static str]>;
 /// A [`CallingConvention`] with its register names resolved to varnodes.
 pub type BuiltCallingConvention = Cc<rsleigh::Vn, Vec<rsleigh::Vn>>;
 
-/// The trivial convention for synthetic / mock graphs that have no real
-/// target ABI: everything empty, plus a synthetic `stack_ptr`.
+/// For synthetic graphs: everything empty, plus a synthetic `stack_ptr`.
 impl Default for BuiltCallingConvention {
     fn default() -> Self {
         Self {
@@ -144,10 +99,8 @@ impl Default for BuiltCallingConvention {
 }
 
 impl<R, L: Default> Cc<R, L> {
-    /// Returns a variant of this convention that clobbers nothing: every
-    /// register callee-saved and memory unchanged, with no arguments or
-    /// return value. Models a transparent hook (`__fentry__` / `mcount`)
-    /// invoked under `self`'s stack/link-register geometry.
+    /// This convention's stack geometry for a call that clobbers nothing and
+    /// passes nothing (`__fentry__` / `mcount`).
     pub fn preserves_all(self) -> Self {
         Self {
             arg_passing_regs: L::default(),
@@ -161,13 +114,8 @@ impl<R, L: Default> Cc<R, L> {
         }
     }
 
-    /// Like [`Self::preserves_all`] but leaves memory clobberable: registers
-    /// are all preserved, memory is not.
-    ///
-    /// Keeps `arg_passing_regs` and `stack_args`, unlike `preserves_all`: the
-    /// callee may write memory, so the escape-based load-forwarding gate has
-    /// to see a frame address handed to it. Dropping the argument registers
-    /// would hide that escape and forward a spill across the call.
+    /// Every register preserved, memory not. Keeps the arguments, so a frame
+    /// address passed to the callee is still seen to escape.
     pub fn preserves_regs(self) -> Self {
         Self {
             ret_val_regs: L::default(),
@@ -182,21 +130,15 @@ impl<R, L: Default> Cc<R, L> {
 /// Far outside any real architecture's register file.
 pub(crate) const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
-/// First entry of `a` sharing a byte with any entry of `b`.  Overlap rather
-/// than equality: AArch64's `q8` CONTAINS `d8`, both overlaid on `z8` at
-/// `offset=0x5000` (`AARCH64instructions.sinc:638`/`:674` little-endian,
-/// `:820`/`:856` big-endian), so a rule saying "disjoint" has to see the
-/// containment.  They share a START only on LE; the big-endian banks put
-/// `q8` at `z8`+16 and `d8` at `z8`+24.
+/// First entry of `a` sharing a byte with any entry of `b` (AArch64 `q8`
+/// contains `d8`).
 fn first_overlapping<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
     a.iter()
         .find(|vn| b.iter().any(|other| vn_container::vn_overlaps(vn, other)))
 }
 
-/// First entry of `list` appearing twice.  EXACT equality, unlike the
-/// cross-list [`first_overlapping`]: ARM's `ret_val_regs_float` is `d0..d3`,
-/// four registers inside two `q` containers, which an overlap rule would
-/// reject.
+/// First entry of `list` appearing twice, by equality: ARM's `d0..d3` share
+/// two `q` containers.
 fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
     list.iter()
         .enumerate()
@@ -207,10 +149,8 @@ fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
 impl BuiltCallingConvention {
     /// True when `callee_saved_regs` covers every byte of `vn`.
     ///
-    /// Byte coverage rather than membership, because `vn` is a tracked
-    /// container that may be wider than the registers the ABI names: ARM's
-    /// `q4` is `d8`|`d9` and AAPCS 5.1.2.1 preserves both, while AArch64's
-    /// `q8` holds `d8` plus 64 bits AAPCS64 6.1.2 lets a callee trash.
+    /// Coverage, not membership: ARM `q4` is the preserved `d8`|`d9`, while
+    /// AArch64 `q8` holds `d8` plus 64 clobbered bits.
     fn preserves_all_bytes_of(&self, vn: &rsleigh::Vn) -> bool {
         let end = vn_container::vn_end(vn);
         let mut covered_to = u128::from(vn.addr_off);
@@ -230,19 +170,10 @@ impl BuiltCallingConvention {
         true
     }
 
-    /// Splits this convention's clobbered registers over `tracked_vns` into
-    /// the ret-val group and the non-ret caller-clobbered group.  These are
-    /// exactly the two output groups a `Call` emits past `[Control, Memory]`.
-    ///
-    /// A register is *clobbered* iff `preserves_all_registers` is unset, it is
-    /// not the stack pointer, and `callee_saved_regs` leaves at least one of
-    /// its bytes free.  `ret_vals`
-    /// holds the tracked clobbered containers of `ret_val_regs` then
-    /// `ret_val_regs_float` in ABI order; `clobbers` holds every other
-    /// clobbered REGISTER entry in `tracked_vns` order.
-    ///
-    /// REGISTER only: a p-code CALL writes no Sleigh temporary, so a tracked
-    /// UNIQUE varnode is not a clobber.
+    /// A `Call`'s two output groups over `tracked_vns`: the clobbered return
+    /// containers in ABI order, then every other clobbered REGISTER varnode
+    /// in `tracked_vns` order. Clobbered means not the stack pointer and not
+    /// wholly callee-saved, unless `preserves_all_registers`.
     pub fn ret_and_clobber_vns(
         &self,
         tracked_vns: &[rsleigh::Vn],
@@ -259,9 +190,7 @@ impl BuiltCallingConvention {
             .chain(self.ret_val_regs_float.iter())
             .map(&container_of)
             .collect();
-        // Aliased ABI return registers share a container (ARM `d0` and `d1`
-        // both live inside `q0`), and a `Call` output varnode must be unique,
-        // so the group is deduplicated.
+        // ARM `d0` and `d1` share `q0`; outputs must be unique.
         let mut ret_vals: Vec<rsleigh::Vn> = Vec::new();
         for c in ret_containers.iter().copied() {
             if tracked_vns.contains(&c) && is_clobbered(&c) && !ret_vals.contains(&c) {
@@ -280,18 +209,9 @@ impl BuiltCallingConvention {
         (ret_vals, clobbers)
     }
 
-    /// The varnode carrying each float argument, by ABI POSITION: slot `j` is
-    /// the j-th float argument register's tracked container, or `None` when
-    /// the function names nothing containing it and it therefore has no SSA
-    /// slot to read.  An untracked register leaves a gap rather than shifting
-    /// the registers after it down one index.
-    ///
-    /// A container SHARED by several float argument registers yields the
-    /// registers themselves instead, one slice each: AAPCS-VFP `d0` and `d1`
-    /// both sit in `q0`, and returning `q0` twice would make one argument out
-    /// of two.  A container holding a single argument stays whole, which is
-    /// what carries an o32 MIPS `double` passed in the `$f12`/`$f13` pair the
-    /// ABI names by its low half.
+    /// Slot `j` is the j-th float argument register's tracked container, or
+    /// `None` if untracked. A container shared by several argument registers
+    /// (AAPCS-VFP `d0`, `d1` in `q0`) yields the registers themselves.
     pub fn float_arg_slots(
         &self,
         tracked_vns: &[rsleigh::Vn],
@@ -315,12 +235,7 @@ impl BuiltCallingConvention {
             .collect()
     }
 
-    /// The float arguments a call passes: [`Self::float_arg_slots`] up to the
-    /// first `None`, so index `j` stays ABI position `j`, which is what the
-    /// callee side records.
-    ///
-    /// Every convention a lift sees has its float argument registers tracked,
-    /// so a `None` means one the function was not lifted against.
+    /// [`Self::float_arg_slots`] up to the first `None`.
     pub fn float_arg_prefix(
         &self,
         tracked_vns: &[rsleigh::Vn],
@@ -349,12 +264,8 @@ impl BuiltCallingConvention {
         )
     }
 
-    /// Checks the canonical ABI invariants.  Advisory: every field is `pub`
-    /// and [`Default`] builds one directly, so a convention reaching the
-    /// lifter has not necessarily been through here.
-    ///
-    /// Disjointness is over BYTES, not varnode identity, so a container and
-    /// the register it holds count as the same storage.
+    /// Checks the ABI invariants; advisory, since every field is `pub`.
+    /// Disjointness is over bytes.
     ///
     /// - `callee_saved_regs` is disjoint from `arg_passing_regs`,
     ///   `arg_passing_regs_float`, `ret_val_regs`, and `ret_val_regs_float`
@@ -362,8 +273,7 @@ impl BuiltCallingConvention {
     /// - `arg_passing_regs` and `arg_passing_regs_float` are disjoint
     /// - `stack_ptr` shares no byte with any of the five register lists
     /// - no duplicates within any single list
-    /// - a `Some` `link_register` is also in `callee_saved_regs` (the
-    ///   deliberate link-register tradeoff)
+    /// - a `Some` `link_register` is also in `callee_saved_regs`
     /// - `ret_stack_pop >= 0`
     /// - a `Some` `stack_args` has `increment > 0` and `base_offset >= 0`
     /// - `preserves_all_registers` is not combined with a populated
@@ -373,8 +283,6 @@ impl BuiltCallingConvention {
     ///
     /// Returns the first violation found, naming the offending varnodes.
     pub fn validate(&self) -> Result<()> {
-        // `is_clobbered` short-circuits on this flag, so it silently wins over
-        // a populated return list and the `Call` emits no ret-val output.
         if self.preserves_all_registers
             && !(self.ret_val_regs.is_empty() && self.ret_val_regs_float.is_empty())
         {
@@ -397,8 +305,6 @@ impl BuiltCallingConvention {
                 ));
             }
         }
-        // The callee writes ret-val regs to deliver results, so they cannot
-        // also be required-preserved.
         for vn in self
             .ret_val_regs
             .iter()
@@ -416,9 +322,6 @@ impl BuiltCallingConvention {
                 ));
             }
         }
-        // Integer and float returns are physically distinct register files on
-        // every supported arch.  An argument register may legitimately also be
-        // a return register: x86_64 SysV RDX is 3rd arg and 2nd int return.
         if let Some(vn) = first_overlapping(&self.ret_val_regs, &self.ret_val_regs_float) {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: varnode {vn:?} in ret_val_regs shares \
@@ -426,9 +329,6 @@ impl BuiltCallingConvention {
                  registers are physically distinct)",
             ));
         }
-        // Float ABI position `j` lands at `arg_passing_regs.len() + j`, which
-        // only holds while the two lists name different registers: one register
-        // in both would emit the same value as two different arguments.
         if let Some(vn) = first_overlapping(&self.arg_passing_regs, &self.arg_passing_regs_float) {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: varnode {vn:?} in arg_passing_regs \
@@ -466,8 +366,6 @@ impl BuiltCallingConvention {
                  that makes InitialVar(lr) propagate through call sites",
             ));
         }
-        // A negative pop would mean the callee's `ret` grew the stack, which
-        // no real ABI does.
         if self.ret_stack_pop < 0 {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: ret_stack_pop must be >= 0, got {}",
@@ -481,9 +379,7 @@ impl BuiltCallingConvention {
                     sa.increment,
                 ));
             }
-            // `slot_of` subtracts `base_offset` overflow-free for any
-            // `offset >= base_offset`, even a garbage decoded one, only while
-            // it is non-negative.
+            // `slot_of` relies on it.
             if sa.base_offset < 0 {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: stack-arg base_offset must be >= 0, got {}",
@@ -494,10 +390,8 @@ impl BuiltCallingConvention {
         Ok(())
     }
 
-    /// Rejects a convention whose stack geometry is not that of an arch with
-    /// `addr_size`-byte addresses. A convention resolves by register name, and
-    /// one arch's names resolve on another: x86 `ESP` is a 4-byte view of
-    /// x86-64 `RSP`, ppc32 `r1` the whole 8-byte `r1` on ppc64.
+    /// Rejects stack geometry not of an arch with `addr_size`-byte addresses;
+    /// one arch's register names can resolve on another's table.
     ///
     /// # Errors
     ///
@@ -533,52 +427,32 @@ impl BuiltCallingConvention {
     }
 }
 
-/// Stack-arg layout: an unbounded series where the N-th stack argument sits
-/// at `base_offset + N * increment` bytes from the call-time SP.
+/// The N-th stack argument is at `base_offset + N * increment` from the
+/// call-time SP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StackArgs {
-    /// Byte offset from call-time SP of the first stack-passed argument.
     pub base_offset: i128,
-    /// Byte stride between slots (the ABI word size); always `> 0`.
+    /// Always `> 0`.
     pub increment: i128,
 }
 
 impl StackArgs {
-    /// Byte offset from call-time SP of the `n`-th stack argument.
-    ///
-    /// Saturates rather than overflowing on a runaway index.
+    /// Saturating.
     #[must_use]
     pub fn offset_of(&self, n: usize) -> i128 {
         self.base_offset
             .saturating_add((n as i128).saturating_mul(self.increment))
     }
 
-    /// Byte offset of the `n`-th stack argument measured from `sp_offset`,
-    /// the call's SP in the probing coordinate system.  The one stepper the
-    /// outgoing-argument window and `CallStackArgCollect` share, so the two
-    /// prefixes cannot drift.
-    ///
-    /// Saturating like [`Self::offset_of`]: stopping short of a slot the ABI
-    /// declares would narrow the window, and a window narrower than the
-    /// region the callee owns is the unsound direction.  A caller stepping an
-    /// unbounded series therefore stops on its own when the offset stops
-    /// advancing.
+    /// [`Self::offset_of`] from `sp_offset`. Saturating, so a caller stepping
+    /// the series stops when the offset stops advancing.
     #[must_use]
     pub fn slot_offset(&self, sp_offset: i128, n: usize) -> i128 {
         sp_offset.saturating_add(self.offset_of(n))
     }
 
-    /// The slot containing the *start byte* of an access at `offset`:
-    /// `floor((offset - base_offset) / increment)`, or `None` below
-    /// `base_offset`.
-    ///
-    /// The access size is not bounded at all: an argument wider than a slot
-    /// (a 32-bit-ABI `double`, an x86-64 `long double`) is attributed to the
-    /// slot its first byte lands in, as is a sub-field read landing mid-slot.
-    ///
-    /// The result is a byte-position slot index, NOT an argument ordinal: a
-    /// wider-than-slot argument spans several slots but advances the ordinal
-    /// by one.  An index past `usize::MAX` clamps there rather than wrapping.
+    /// The slot holding the start byte of an access at `offset`, or `None`
+    /// below `base_offset`. A slot index, not an argument ordinal.
     #[must_use]
     pub fn slot_of(&self, offset: i128) -> Option<usize> {
         debug_assert!(
@@ -591,11 +465,7 @@ impl StackArgs {
         Some(clamp_to_usize((offset - self.base_offset) / self.increment))
     }
 
-    /// Consecutive slots a `size`-byte argument occupies:
-    /// `ceil(max(size, 1) / increment)`, always `>= 1`.
-    ///
-    /// Saturating, so a garbage decoded `size` from arbitrary lifted
-    /// arithmetic degrades to a large-but-finite span instead of wrapping.
+    /// Slots a `size`-byte argument occupies, saturating and `>= 1`.
     #[must_use]
     pub fn slots_spanned(&self, size: i128) -> usize {
         debug_assert!(
@@ -603,16 +473,12 @@ impl StackArgs {
             "StackArgs::slots_spanned requires increment > 0"
         );
         let size = size.max(1);
-        // ceil(size / increment), saturating so a pathological `size` cannot
-        // overflow the add.
         let numerator = size.saturating_add(self.increment - 1);
         clamp_to_usize(numerator / self.increment)
     }
 }
 
-/// Saturating i128 -> usize.  A slot index or span past `usize::MAX` would
-/// otherwise wrap, and a wrapped 0 breaks the `>= 1` span every loop-advancing
-/// caller relies on.
+/// Saturating i128 -> usize.
 fn clamp_to_usize(n: i128) -> usize {
     usize::try_from(n).unwrap_or(usize::MAX)
 }
@@ -625,9 +491,8 @@ pub struct CcPreset {
     pub cc: CallingConvention,
     /// Every arch preset whose binaries this convention is for.
     pub arches: &'static [ArchPreset],
-    /// The Ghidra prototypes it is held to by the oracle test: (cspec path
-    /// under the vendored processors tree, prototype name or None for the
-    /// default, the arches that cspec is Ghidra's for).
+    /// The Ghidra prototypes the oracle test holds it to: (cspec path,
+    /// prototype name or the default, the arches the cspec is for).
     pub ghidra: &'static [(&'static str, Option<&'static str>, &'static [ArchPreset])],
 }
 
@@ -643,11 +508,9 @@ impl CallingConvention {
     ///
     /// # Errors
     ///
-    /// Short-circuits on the first name (the stack pointer included) that
-    /// does not resolve, then on the first
+    /// The first name that does not resolve, or the first
     /// [`BuiltCallingConvention::validate`] violation.
     pub fn build(self, sleigh_regs: &rsleigh::SleighRegs) -> Result<BuiltCallingConvention> {
-        // Field order here is the short-circuit order the doc promises.
         let one = |name| vn_for_name(sleigh_regs, name);
         let list = |names| regs_to_vns(sleigh_regs, names);
         let built = BuiltCallingConvention {

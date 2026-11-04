@@ -19,9 +19,6 @@ pub struct ArchNames {
 }
 
 impl ArchNames {
-    /// The tables `sleigh` was built from; every engine of one arch reads the
-    /// same.
-    ///
     /// # Errors
     ///
     /// The register table cannot be read, a space name is not UTF-8, or the
@@ -57,8 +54,7 @@ impl ArchNames {
         self.default_code_space
     }
 
-    /// Bytes per `ram` address: the width a calling convention's stack
-    /// geometry has to match.
+    /// Bytes per `ram` address.
     #[must_use]
     pub fn ram_addr_size(&self) -> u32 {
         self.ram_addr_size
