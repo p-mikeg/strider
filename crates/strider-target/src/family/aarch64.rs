@@ -82,6 +82,12 @@ const CALL_OTHER: &[Row] = &[
         only: None,
         class: PURE,
     },
+    // `SIMD_PIECE(reg, lane)` reads one lane of a listed operand.
+    Row {
+        names: &["SIMD_PIECE"],
+        only: None,
+        class: PURE,
+    },
     // SVE LDR / STR take the base register as a value, so their access has no
     // p-code. Other `SVE_ld*` / `SVE_st*` / `SVE_prf*` ops share the shape and
     // stay unclassified, failing the lift.

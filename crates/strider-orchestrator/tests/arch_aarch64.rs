@@ -6,6 +6,9 @@
 #[macro_use]
 mod common;
 
+#[path = "arch_aarch64/aarch64_acquire_release_and_pair_widths.rs"]
+mod aarch64_acquire_release_and_pair_widths;
+
 #[path = "arch_aarch64/aarch64_float_to_int_rounding.rs"]
 mod aarch64_float_to_int_rounding;
 
