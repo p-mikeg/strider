@@ -23,10 +23,10 @@ IR from a `Cfg`.
 ## Region ownership
 
 A target an existing region owns splits it at the target's instruction or
-p-code boundary. Incoming edges move to the first half, which keeps the start;
-the second keeps the region id and its outgoing edges. So the first decode
-fixes the ISA mode of those bytes, and a later edge in another mode is
-reported, not decoded twice.
+p-code boundary, rather than decoding those bytes again. Incoming edges move to
+the first half, which keeps the start; the second keeps the region id and its
+outgoing edges. So the first decode fixes the ISA mode of those bytes, and a
+later edge in another mode is reported, not decoded twice.
 
 The one exception is overlapping code: sequential decoding can step over a
 region start inside an instruction it decodes, leaving those bytes with two
