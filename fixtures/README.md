@@ -33,9 +33,8 @@ to resolve. After an intended change, re-bless and review the diff:
 
 ## Toolchains
 
-Every arch needs its own cross compiler. A missing one fails the build;
-`make ALLOW_MISSING_CC=1` downgrades that to a skip, which is how you build the
-single arch you have a toolchain for.
+Each arch needs its cross compiler; a missing one fails the build unless
+`make ALLOW_MISSING_CC=1` skips it.
 
 | Arch | Needs |
 |---|---|
@@ -63,8 +62,6 @@ sudo apt install clang lld gcc-i686-linux-gnu \
   gcc-powerpc-linux-gnu gcc-powerpc64le-linux-gnu
 ```
 
-Not `gcc-multilib`: it conflicts with the aarch64, arm and powerpc64le cross
-compilers, so the one line above fails to resolve with it in place.
-`gcc-i686-linux-gnu` is what the `x86` arches want anyway. On a
-host without that package they fall back to host `gcc -m32`, which
-`gcc-multilib` supplies, so install it alone there.
+Not `gcc-multilib`, which conflicts with the aarch64, arm and powerpc64le
+cross compilers. Only on a host without `gcc-i686-linux-gnu` do the `x86`
+arches fall back to `gcc -m32`; install `gcc-multilib` alone there.

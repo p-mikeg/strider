@@ -1,14 +1,12 @@
 # Third-party components
 
-Strider itself is MIT (see [LICENSE](LICENSE)). The components below are
-redistributed with it: the GHIDRA Sleigh decoder and its Rust bindings are
-compiled into the Python extension module, sixty-four third-party Rust crates
-are linked into it statically, and two JavaScript bundles are inlined into every
-`.html` graph as well as compiled in.
+Strider is MIT (see [LICENSE](LICENSE)). Redistributed with it: the GHIDRA
+Sleigh decoder and its Rust bindings, compiled into the Python extension
+module; sixty-four third-party Rust crates, linked statically; and two
+JavaScript bundles, compiled in and inlined into every `.html` graph.
 
-Full licence texts that are too long to inline live under
-[`licenses/`](licenses); the wheel and the sdist carry this file and that
-directory.
+Long licence texts are under [`licenses/`](licenses); the wheel and sdist carry
+this file and that directory.
 
 - [GHIDRA Sleigh](#ghidra-sleigh) -- Apache-2.0
 - [rsleigh](#rsleigh-410) -- MIT
@@ -18,8 +16,7 @@ directory.
 - [@viz-js/viz](#viz-jsviz-350-standalone) -- MIT, embedding Graphviz (EPL-1.0)
   and Expat (MIT)
 
-The extension module also links `libstdc++` and `libz` from the system rather
-than vendoring either, so neither is redistributed here.
+`libstdc++` and `libz` are linked from the system, not redistributed.
 
 ## GHIDRA Sleigh
 
@@ -37,8 +34,8 @@ than vendoring either, so neither is redistributed here.
   in the module with `include_bytes!`. The sdist additionally carries the C++
   and `.slaspec` sources.
 
-Modified, as Apache-2.0 section 4(b) requires stating: rsleigh patches both
-`src/` and `processors/`. Every change is a numbered patch under
+Modified (stated per Apache-2.0 section 4(b)): rsleigh patches `src/` and
+`processors/`, each change a numbered patch under
 `externals/rsleigh/sleigh/patches/`, described in
 `externals/rsleigh/sleigh/FORK.md`. Neither ships in the wheel; both are in the
 sdist and the repository.
@@ -60,23 +57,23 @@ sdist and the repository.
 
 ## Rust crates
 
-Sixty-four third-party crates are in `strider-py`'s normal dependency closure
-and are linked statically into the extension module. Their names, versions, SPDX
-expressions and licence texts are in
-[`licenses/rust-crates.md`](licenses/rust-crates.md), which also carries the
-command that regenerates it. Nothing in that set is copyleft; the licences are
+Sixty-four third-party crates in `strider-py`'s normal dependency closure are
+linked statically. Names, versions, SPDX expressions, licence texts and the
+regenerating command are in
+[`licenses/rust-crates.md`](licenses/rust-crates.md). None is copyleft; the
+licences are
 MIT, Apache-2.0 (three crates with the LLVM exception), Unicode-3.0, Zlib, 0BSD
 and Unlicense.
 
-Strider's own crates are `publish = false`, so only the wheel and the sdist
-redistribute any of this.
+Strider's crates are `publish = false`; only the wheel and sdist
+redistribute these.
 
 ## JavaScript bundles
 
-Both are vendored under `crates/dot/assets/vendored/` and compiled into the
-`dot` crate, and so into the extension module. Every `.html` graph
-`dot::GraphDot::as_html_from_dot` emits inlines both verbatim, and the Python
-explorer serves the viz.js bundle as `/viz.js`.
+Vendored under `crates/dot/assets/vendored/` and compiled into the `dot`
+crate, hence the extension module. `dot::GraphDot::as_html_from_dot` inlines
+both verbatim in every `.html` graph; the Python explorer serves viz.js as
+`/viz.js`.
 
 ### svg-pan-zoom 3.6.1
 
@@ -87,8 +84,8 @@ explorer serves the viz.js bundle as `/viz.js`.
   the same licence, each change's copyright held by its author.
 - Used for: pan / zoom over the rendered SVG in the graph viewer.
 
-The upstream minified distribution ships no licence banner; the one at the head
-of the vendored copy reproduces `LICENSE` from the upstream repository.
+The upstream minified file has no licence banner; the vendored copy's banner
+reproduces upstream's `LICENSE`.
 
 ### @viz-js/viz 3.5.0 (standalone)
 
