@@ -1,6 +1,3 @@
-//! Register aliasing: a sub-register (`al` in `rax`, aarch64 `s0` in `z0`) is
-//! read and written through its largest tracked container with shift/mask.
-
 use anyhow::anyhow;
 use strider_ir::node::ValueId;
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, ValueType, VnTypeExt};
