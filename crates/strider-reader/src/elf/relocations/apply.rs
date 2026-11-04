@@ -57,8 +57,9 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
     // A mips64el implicit-addend entry, whose kind and size `object` may
     // have read off its symbol index.
     let Some(generic) = r.generic else {
-        let holder = ctx.holder_or_hole(site, site_addr, UNKNOWN_FIELD_BYTES, r.type_word());
-        ctx.unmodelled(holder, site_addr, UNKNOWN_FIELD_BYTES, r.type_word());
+        let width = unknown_field_bytes(obj.architecture(), r);
+        let holder = ctx.holder_or_hole(site, site_addr, width, r.type_word());
+        ctx.unmodelled(holder, site_addr, width, r.type_word());
         return;
     };
     // `size` is in bits; 0 marks an arch-specific encoding, not modelled.
@@ -82,7 +83,7 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
         let width = if plain {
             (size_bits / 8) as usize
         } else {
-            UNKNOWN_FIELD_BYTES
+            unknown_field_bytes(obj.architecture(), r)
         };
         let holder = ctx.holder_or_hole(site, site_addr, width, r.type_word());
         ctx.unmodelled(holder, site_addr, width, r.type_word());
@@ -145,9 +146,14 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
     }
 }
 
-/// Field width assumed for a relocation whose type gives none: an instruction
-/// word, or the 32-bit displacement of an x86 one.
-pub(super) const UNKNOWN_FIELD_BYTES: usize = 4;
+/// Field width of a relocation `object` does not size: 8 for a MIPS64
+/// composite with `R_MIPS_64`, else an instruction word or x86 displacement.
+pub(super) fn unknown_field_bytes(arch: A, r: &RelocInfo) -> usize {
+    match arch {
+        A::Mips64 if [r.r_type, r.r_type2, r.r_type3].contains(&object::elf::R_MIPS_64) => 8,
+        _ => 4,
+    }
+}
 
 /// `value` checked against a plain data `field`. ELF32 arithmetic wraps at
 /// 32 bits: a word always fits, a narrower field is checked sign-extended.
