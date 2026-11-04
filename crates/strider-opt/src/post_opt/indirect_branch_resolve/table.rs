@@ -306,7 +306,7 @@ impl SiteClassifier<'_> {
                 let served = u64::try_from(c)
                     .ok()
                     .zip(self.eval.rom())
-                    .is_some_and(|(c, rom)| rom.read(c, &mut [0u8]).is_ok());
+                    .is_some_and(|(c, rom)| rom.try_read(c, &mut [0u8]));
                 if served {
                     return false;
                 }
