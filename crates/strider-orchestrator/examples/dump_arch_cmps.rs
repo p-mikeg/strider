@@ -1,8 +1,6 @@
-//! Dumps p-code lifts for `cmp`-then-conditional-branch sequences, one arch
-//! per flag model Strider supports plus flagless MIPS for contrast.  Used to
-//! design the `FlagCmpCanonicalize` pass's per-arch rule set: on a flag arch
-//! `cmp`+cond emits a fixed boolean tree of named flag varnodes that can then
-//! be matched and rewritten.
+//! Dumps the p-code of `cmp`-then-conditional-branch sequences, one arch per
+//! flag model plus flagless MIPS: the reference for `FlagCmpCanonicalize`'s
+//! rules.
 //!
 //! Run: `cargo run -p strider-orchestrator --example dump_arch_cmps`
 
@@ -197,8 +195,8 @@ fn arm_thumb_samples() -> (SleighArch, Vec<Sample>) {
     (SleighArch::arm_thumb(), samples)
 }
 
-/// MIPS (32-bit, BE) has no flag register. Show what the `slt`-then-`bnez`
-/// idiom and the direct register-comparison branches lift to.
+/// MIPS (32-bit, BE), flagless: the `slt`-then-`bnez` idiom and the direct
+/// register-comparison branches.
 fn mips_samples() -> (SleighArch, Vec<Sample>) {
     let mut samples = Vec::new();
     // slt $4, $5, $6: set $4 to 1 if $5 < $6 signed (R-type, op=0, funct=0x2A)
@@ -214,9 +212,7 @@ fn mips_samples() -> (SleighArch, Vec<Sample>) {
         label: "sltu $4, $5, $6".into(),
         bytes: sltu.to_be_bytes().to_vec(),
     });
-    // MIPS branches have delay slots; Sleigh requires the next insn to be
-    // decodable.  Append `nop` (= 0x00000000) bytes after each branch so the
-    // delay-slot fetch succeeds.
+    // Each branch's delay slot must decode: append a `nop` (0x00000000).
     let nop = 0u32.to_be_bytes().to_vec();
     let mut push_branch = |label: &str, enc: u32| {
         let mut b = enc.to_be_bytes().to_vec();
@@ -233,7 +229,7 @@ fn mips_samples() -> (SleighArch, Vec<Sample>) {
     (SleighArch::mipsbe32(), samples)
 }
 
-/// PPC (32-bit, BE).  cmp + bc-form conditional branches.
+/// PPC (32-bit, BE) `cmpw` + bc-form conditional branches.
 fn ppc_samples() -> (SleighArch, Vec<Sample>) {
     let mut samples = Vec::new();
     // cmpw cr0, r3, r4: primary=31, BF=0, L=0, RA=3, RB=4, secondary=0.

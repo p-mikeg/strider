@@ -188,22 +188,10 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
     (fg, target, lr)
 }
 
-/// Build a `Graph` modelling the soundness-critical
-/// `push 0xK; pop pc` tail-call shape.  Same SP slot manipulation
-/// as `build_pop_pc_via_stack_load_forward_scenario`, but the
-/// stored value is an IntConst rather than `InitialVar(lr)`.
-///
-/// Distinguishing this case from a real pop-pc is the soundness gate: a naive
-/// "Load(InitialVar(sp)+K) means return" classifier marks this as
-/// LinkRegister, sending the analyser down the wrong edge set.  The
-/// IR-level resolver avoids that
-/// trap because LoadForward folds the load to the **stored constant** K,
-/// not to InitialVar(lr); the IntConst arm then classifies it as
-/// Single(K).
-///
-/// Also returns the `lr` VN we added to the tracked-vars set so
-/// callers can pass it to `classify_target` and verify the
-/// LinkRegister arm doesn't false-positive.
+/// The `push 0xK; pop pc` tail call: as
+/// `build_pop_pc_via_stack_load_forward_scenario`, but storing an `IntConst`
+/// rather than `InitialVar(lr)`, so it must classify `Single(K)`, not
+/// `LinkRegister`. Also returns the tracked `lr` VN.
 pub(crate) fn build_push_target_pop_pc_scenario(
     k: u64,
 ) -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
@@ -349,17 +337,9 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     (fg, target)
 }
 
-/// Build a placeholder `IndirectBranch(load)` whose load is jump-table-shaped
-/// with the index bounded by a *predecessor* `If(idx < bound)`: the
-/// dispatch region is on the true branch.  The stable optimiser subset runs
-/// without PhiCollapse, so the trivial-phi rule leaves the entry
-/// merge-region's structure intact.
-///
-/// Topology:
-///   entry  ──[if idx < bound: true]── dispatch (loads + Returns)
-///         └──[false]─────────────────── exit (early Return)
-///
-/// The dispatch's placeholder IndirectBranch is the target we return.
+/// A jump-table-shaped `IndirectBranch(load)` whose index a predecessor
+/// `If(idx < bound)` bounds: the dispatch is on the true branch, an early
+/// `Return` on the false one. Returns the placeholder.
 pub(crate) fn build_jump_table_predecessor_if_scenario(
     base: u64,
     stride: u64,
@@ -486,10 +466,7 @@ pub(crate) fn build_jump_table_unbounded_scenario(
     (fg, target)
 }
 
-/// Build a placeholder `IndirectBranch(load)` whose load is NOT jump-table
-/// shaped; used to verify the classifier's Load arm falls through
-/// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
-/// a simple global read).
+/// An `IndirectBranch(load)` whose load is not jump-table shaped.
 pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::node::ValueId) {
     use strider_ir::node::ValueType;
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
@@ -519,33 +496,12 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::nod
     (fg, target)
 }
 
-/// Build a placeholder `IndirectBranch(load)` whose load is a
-/// **stack-array dispatch**: at function entry, `N` constants are
-/// stored at contiguous SP-relative offsets (`sp + base_offset +
-/// i*stride` for `i in 0..N`), and the dispatch loads from
-/// `sp + base_offset + (idx & MASK) * stride` where `MASK` is the
-/// power-of-two-minus-one bound that lets `KnownBits` derive the
-/// per-arm `bound = MASK + 1`.
+/// A stack-array dispatch: the `N` `targets` (a power of 2, so `KnownBits`
+/// bounds `idx & (N - 1)` at `N`) stored at `sp + base_offset + i * stride`,
+/// and an `IndirectBranch` loading `sp + base_offset + (arg & (N - 1)) *
+/// stride`. Returns the function, the load and the SP varnode.
 ///
-/// `N` must be `> 0` and `< MAX_TABLE_ENTRIES` (currently 4096), and
-/// must be a power of 2 so the `idx & (N - 1)` mask lets the range
-/// analysis derive bound = `N` via KnownBits.  Returns
-/// the graph, the target (load output), and the SP varnode the
-/// caller passes to `classify_target`.
-///
-/// The fixture mirrors the existing `build_two_target_array`
-/// fixture in `crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs`,
-/// generalised to N targets.  The stack pointer is a fake 8-byte
-/// register at offset `0x40`; the index argument is a fake 8-byte
-/// register at offset `0x38` (matches sysv argument register
-/// width); the dispatch is `Load[(sp + base_offset) + ((arg & N-1)
-/// * stride)]`.
-///
-/// Pipeline run: `ConstantFold + KnownBits + PhiCollapse + RegionCollapse`.
-/// The pipeline runs without `LoadForward`, which would forward the Load to
-/// the matching IntConst directly, eliminating the Load and turning the target
-/// into an IntConst: the Single-target arm rather than the stack-array one
-/// under test.
+/// The pipeline omits `LoadForward`, which would fold the load to a constant.
 pub(crate) fn build_stack_array_dispatch_scenario(
     targets: &[u64],
     base_offset: i64,
@@ -672,22 +628,11 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     (fg, target, sp)
 }
 
-/// Build a function whose only indirect branch resolves to
-/// `InitialVar(lr_vn)` after the optimiser runs.  Returns the
-/// link-register VN as the third tuple element so the caller can
-/// pass it to `classify_target`.
+/// An AArch64 `mov x0, x30; br x0`, whose target optimises to
+/// `InitialVar(lr)`. Returns the function, the target and the `lr` VN.
 ///
-/// AArch64 rather than 32-bit ARM because Sleigh's ARM (LE/BE-32)
-/// lifter wraps every register-indirect dispatch in a
-/// thumb-interworking AND-mask (`reg & 0xfffffffe`), which leaves
-/// the optimised IR's producer as `IntBinaryOp(And)` instead of
-/// `InitialVar(lr_vn)`, matching no classifier arm.
-/// AArch64 has no thumb interworking, so `mov x0, x30; br x0`
-/// lifts cleanly to `Copy + BranchIndirect` and the optimiser folds
-/// `r0 = x30 = InitialVar(lr_vn)` directly.
-///
-/// The cfg builder defers the `br x0` via `UnresolvedIndirectBranch`, so the
-/// IR-level indirect-branch resolver sees the cleaned-up shape.
+/// AArch64 because ARM masks every register-indirect target with
+/// `& 0xfffffffe`, leaving an `And`.
 pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
     //   mov x0, x30  ->  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
