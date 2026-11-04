@@ -109,6 +109,11 @@ impl MemQuery {
         })
     }
 
+    /// Whether `def` is a memory def some path from `InitialMemory` reaches.
+    pub(crate) fn reaches(&self, function: &Function, def: NodeId) -> bool {
+        self.index(function).layout.position(def).is_some()
+    }
+
     /// Drops the memoised answers, for an edit that moves a store's address
     /// onto another value.
     pub(crate) fn forget_answers(&self) {

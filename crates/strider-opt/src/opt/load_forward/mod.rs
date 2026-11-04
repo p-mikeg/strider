@@ -62,6 +62,10 @@ fn try_forward_load(
     // Each round lifts the edge onto a strict dominator.
     while !matches!(reaching, ReachingDef::Match(_)) {
         let mem = edit.load_mem(load);
+        // Outside the reach no arm is known to dominate its merge.
+        if !query.reaches(edit.function(), edit.producer(mem)) {
+            break;
+        }
         let earlier = settle(&mut sweep.settled, edit.function(), mem);
         if earlier == mem {
             break;
