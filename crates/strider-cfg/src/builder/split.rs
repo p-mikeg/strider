@@ -40,21 +40,10 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         if split_index == 0 {
             return Ok(region_id);
         }
-        // Only the smaller half moves into a fresh allocation; the larger one
-        // keeps the buffer. That bounds the ALLOCATION, not the time: `drain`
-        // shifts the surviving tail down, so a low-index split costs O(len)
-        // and the long half keeps the buffer to be shifted again.
-        //
-        // Repeated lowest-first splits of one region are therefore O(n^2);
-        // measured 9.6s against 0.21s highest-first at n=16000, every
-        // instruction a branch target. Both factors are needed:
-        // `process_branch_indirect` sorts arms `Reverse`
-        // so the LIFO explores lowest first, which is what lets `explore`
-        // recognise a higher over-read arm as interior to an existing region
-        // instead of decoding inside an instruction. The fix is a logical head
-        // offset (or a slice range into one shared buffer) so a front split
-        // advances an index rather than shifting; `Region::insns` is a public
-        // field, so that is an API change and waits for one.
+        // The smaller half moves to a fresh allocation. `drain` still shifts
+        // the tail, so repeated lowest-first splits of one region are O(n^2):
+        // `process_branch_indirect` enqueues arms highest first, so the LIFO
+        // explores them lowest first.
         let insns = &mut second_region.insns;
         let first_region_insns: Vec<_> = if split_index <= insns.len() / 2 {
             insns.drain(..split_index).collect()
