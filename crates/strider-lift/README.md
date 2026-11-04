@@ -24,7 +24,7 @@ register outside it fails the function. It holds:
 - the convention's registers (above all the stack pointer), plus the argument
   registers of the `per_address_ccs` overrides this CFG's direct calls select,
 - each `CallOther`'s ABI footprint (x86-64 `syscall` reads `R10`, writes `R11`),
-- every register a register-space LOAD or STORE may reach by computed address.
+- every register a register-space LOAD or STORE may reach by computed address,
 - each rounding-mode op's register, unless `fp_rounding_mode_is_nearest`.
 
 `Function::new` folds the set into largest containers and sorts it.
@@ -97,5 +97,6 @@ A control cycle with no exit roots no terminator, so one
 
 Decompiler-internal opcodes (`Insert`, `Extract`, `PtrAdd`, `PtrSub`,
 `MultiEqual`, `SegmentOp`, `Indirect`) are named errors; the opcode match is
-exhaustive. An unmapped width, a `Subpiece` offset past its input, mismatched
-signed-shift widths or an unknown ABI register name fails the function's lift.
+exhaustive. An unmapped width, a `Subpiece` offset at or past its input's
+width, mismatched signed-shift widths or an unknown ABI register name fails the
+function's lift.
