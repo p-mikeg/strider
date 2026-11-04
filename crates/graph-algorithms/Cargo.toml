@@ -24,8 +24,7 @@ itertools.workspace = true
 # Oracles only: `simple_fast`, `toposort`.
 petgraph.workspace = true
 proptest.workspace = true
-# `tests/` is an integration test, so `cfg(test)` does not reach the library:
-# this is how it gets `oracle`.
+# Gives `tests/` the feature `cfg(test)` cannot reach.
 graph-algorithms = { path = ".", features = ["test-util"] }
 
 [lints]

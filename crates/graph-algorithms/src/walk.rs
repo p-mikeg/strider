@@ -15,9 +15,8 @@ pub enum WalkPhase {
 pub trait GraphRef {
     type NodeId: EntityRef;
 
-    /// Calls `f` once per successor of `node`, in the order the walks push
-    /// them. Implement it with a `for` loop: `for_each` over an adapter chain
-    /// runs slower here.
+    /// Calls `f` once per successor of `node`, in push order. A `for` loop
+    /// runs faster here than `for_each` over an adapter chain.
     fn successors(&self, node: Self::NodeId, f: impl FnMut(Self::NodeId));
 }
 
@@ -48,10 +47,8 @@ impl<N: EntityRef, I: IntoIterator<Item = N>, F: Fn(N) -> I> GraphRef for FnSucc
     }
 }
 
-/// Yields each node reachable from the roots exactly once. A DFS preorder,
-/// which is NOT a topological order: successors are explored LIFO, so at a
-/// join the node is emitted from the successor explored first and precedes the
-/// earlier sibling that also reaches it.
+/// Yields each node reachable from the roots once, in DFS preorder, which is
+/// not a topological order: successors are explored LIFO.
 pub struct PreOrder<G: GraphRef> {
     graph: G,
     visited: DenseEntitySet<G::NodeId>,
@@ -59,9 +56,7 @@ pub struct PreOrder<G: GraphRef> {
 }
 
 impl<G: GraphRef> PreOrder<G> {
-    /// Roots pop last-first, so a root no later root repeats or reaches is
-    /// visited after every later root. [`PostOrder::new`] seeds its stack the
-    /// same way.
+    /// Roots pop last-first.
     pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
         Self {
             graph,
@@ -95,8 +90,7 @@ impl<G: GraphRef> Iterator for PreOrder<G> {
         visited.insert(node);
 
         graph.successors(node, |succ| {
-            // Keeps the stack small, but does not replace the pop-time check:
-            // a node unvisited now may be visited by the time it is popped.
+            // Not a substitute for the pop-time check.
             if !visited.contains(succ) {
                 stack.push(succ);
             }
@@ -116,9 +110,7 @@ pub struct PostOrder<G: GraphRef> {
 }
 
 impl<G: GraphRef> PostOrder<G> {
-    /// Roots go on the stack in source order and pop last-first, so a root no
-    /// later root repeats or reaches precedes every later root in any derived
-    /// RPO.
+    /// Roots pop last-first, so in a derived RPO an earlier root comes first.
     pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
         Self {
             graph,
@@ -130,9 +122,7 @@ impl<G: GraphRef> PostOrder<G> {
         }
     }
 
-    /// Both the pre- and post-visit event of each node, where the iterator
-    /// yields only the post-visits. The pre/post pair brackets the node's
-    /// subtree, which is what bounds the current DFS path.
+    /// The next pre- or post-visit event; the iterator yields post-visits only.
     pub fn next_event(&mut self) -> Option<(WalkPhase, G::NodeId)> {
         let Self {
             graph,
@@ -147,9 +137,7 @@ impl<G: GraphRef> PostOrder<G> {
                         visited.insert(node);
                         stack.push((WalkPhase::Post, node));
                         graph.successors(node, |succ| {
-                            // Keeps the stack small, but does not replace the
-                            // pop-time check: a node unvisited now may be
-                            // visited by the time it is popped.
+                            // Not a substitute for the pop-time check.
                             if !visited.contains(succ) {
                                 stack.push((WalkPhase::Pre, succ));
                             }
