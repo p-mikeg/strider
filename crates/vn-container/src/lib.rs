@@ -31,8 +31,9 @@ pub fn vn_overlaps(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 
 /// Drops each REGISTER / UNIQUE varnode a strictly larger same-space varnode
 /// encloses (`edi` when `rdi` is present); other spaces pass through.
-/// Survivors keep input order. Partial overlaps both survive, as non-aliasing;
-/// callers must not produce them.
+/// Survivors keep input order. Partial overlaps would both survive, as
+/// non-aliasing; none arise: register files nest, `register_slot_of` drops an
+/// unseatable slot, and UNIQUE temps sit in 256-byte-aligned blocks.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {
