@@ -167,7 +167,7 @@ def test_load_output_slot_zero_is_the_loaded_value():
 def test_any_output_matches_some_output():
     fn = _load_store_fn()
     assert len(fn.find_all(p.load().any_output().of_width(64))) == 1
-    assert fn.find_all(p.load().any_output().of_width(7)) == []
+    assert fn.find_all(p.load().any_output().of_width(32)) == []
 
 
 def test_output_reaches_every_builder_that_has_outputs():

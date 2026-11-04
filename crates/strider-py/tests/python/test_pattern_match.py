@@ -314,8 +314,8 @@ def test_of_width_and_bool_output_constrain_find_count():
     assert len(bools) <= total
     assert len(wide) <= total
     assert len(bools) + len(wide) <= total
-    # No IR node is 7 bits wide.
-    assert g.find_all(anything().of_width(7)) == []
+    # No IR node is 24 bits wide.
+    assert g.find_all(anything().of_width(24)) == []
 
 
 def test_of_width_nested_under_op():
@@ -328,7 +328,7 @@ def test_of_width_nested_under_op():
     base, off = Capture(), Capture()
     loose = g.find_all(int_add(var(base), var(off)))
     assert isinstance(loose, list)
-    tight = g.find_all(int_add(var(base).of_width(7), var(off)))
+    tight = g.find_all(int_add(var(base).of_width(24), var(off)))
     assert tight == []
 
 
