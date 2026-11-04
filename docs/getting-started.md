@@ -24,10 +24,13 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    `CfgOptions(call_other_abis=...)` overrides an entry, and
    `CallOtherAbi.custom(sleigh, ...)` names the registers one reads and writes.
    A callee's convention comes from the ELF header unless
-   `LifterOptions(per_address_ccs=...)` names one for its address.
+   `LifterOptions(per_address_ccs=...)` names one for its address; for raw
+   bytes, `SleighArch.preset(name)` and `CallingConvention.preset(name)` /
+   `custom(...)` describe the target.
 3. Build a **CFG**: which regions (straight runs of instructions) jump to
-   which. Each address decodes once, in the ISA mode carried by the edge that
-   reached it, so ARM and Thumb code in one binary both decode. Literal pools
+   which. Each address decodes once, in the ISA mode of the edge that reached
+   it, so ARM and Thumb code in one binary both decode; an edge arriving in
+   the other mode is reported as `isa_mode_conflict`. Literal pools
    marked by `$d` mapping symbols are not decoded;
    `CfgOptions(data_ranges=...)` names ranges the symbols miss.
 4. Build the **IR**, a graph with one node per computed value and one edge per
@@ -55,10 +58,12 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    `analyze` returns even when incomplete, so check `cfg.incomplete` before
    trusting an absence ("no store to X").
 7. **Query** it, or **rewrite** it. `field`, `code_ptr`, `first_of` and
-   `PhiPat.input_from` cover common shapes, `find_unique_value` reads the one
-   constant a capture binds, and `JoinPredicate` relates matches by your own
-   rule. [python-api.md](python-api.md#4-patterns) is the reference and
-   [python-guide.md](python-guide.md) the walkthrough.
+   `PhiPat.input_from` cover common shapes, `heap_only()` / `non_stack()`
+   sort loads and stores by base, `function_arg_float(i)` reads a float
+   argument, `find_unique_value` reads the one constant a capture binds, and
+   `JoinPredicate` relates matches by your own rule. `strider.template` builds
+   a rewrite's replacement. [python-api.md](python-api.md#4-patterns) is the
+   reference and [python-guide.md](python-guide.md) the walkthrough.
 
 ## Where the API lives
 

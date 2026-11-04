@@ -69,9 +69,23 @@ strider.explore.shutdown(port)
   withdrawing one.
 - **Floats.** Float conversions round and saturate as each ISA does, under
   the modelled rounding mode.
+- **Targets.** `SleighArch.preset(name)` over `ARCH_PRESETS`,
+  `SleighArch.calling_conventions()` / `reg` / `reg_name`, and
+  `CallingConvention.custom(..., reg_args_adjoin_stack_args=,
+  entry_address=)`; new presets `arm_aapcs_soft` and the PowerPC
+  `*_linux_kernel` conventions.
 - **Queries.** `first_of`, `one_of` in any slot, `field`, `code_ptr`,
   `find_unique_value`, `JoinPredicate`, constants of any width, and the
   `hit.uint(c)` / `hit.sint(c)` readers.
+- **Memory and arguments.** `load()` / `store()` filter by base with
+  `heap_only()` / `non_stack()` (heap bases come from `noalias_allocators`);
+  `function_arg(i)` also reaches stack-passed arguments, and
+  `function_arg_float(i)` / `any_function_arg()` float and any-class ones.
+- **Typed matching.** `any_int` / `any_bool` / `any_float`, the `any_*_binary`
+  / `_cmp` / `_unary` families, `of_type` / `of_width`, and the op-name tuples
+  (`INT_BINARY_OPS`, ...).
+- **Rewrites.** `strider.template` builds every `int_*` op plus `int_ne`,
+  `int_le`, `int_sle`, `float_ne` and `capture_typed`.
 - **Tooling.** `function.to_text()`, `strider.explore.visualize(...,
   background=True)`, `StriderError.backtrace`, and handles that work on any
   thread.
@@ -157,8 +171,10 @@ utility crates (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
 ## Rust API
 
 The crates work without the bindings:
-`strider_orchestrator::Strider::new(...)` builds a handle and `.analyze(...)`
-runs the whole pipeline.
+`strider_orchestrator::Strider::new(...)` builds a handle and
+`.analyze(entry, cc, &AnalyzeOptions, pipeline)` runs the whole pipeline.
+`strider_cfg::DecodeEngine` builds a CFG alone, and `strider_opt` has the
+passes, `rewrite_rule` and the branch classifiers (`classify_sites`).
 [`orchestrator_demo.rs`](crates/strider-orchestrator/examples/orchestrator_demo.rs)
 drives the stages by hand (`Lifter::new`, `build_cfg`, `build_ir`,
 `pipeline.run`) over the committed fixtures and dumps each one (`cargo run -p
