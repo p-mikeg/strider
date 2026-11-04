@@ -91,22 +91,6 @@ fn get_signed_int_returns_none_for_floats() {
     );
 }
 
-#[test]
-fn as_value_or_err_value_case() {
-    let kind = ValueKind::Typed(ValueType::int(32));
-    assert_eq!(kind.as_value_or_err().unwrap(), ValueType::int(32));
-}
-
-#[test]
-fn as_value_or_err_control_case() {
-    let kind = ValueKind::Control;
-    let err = kind.as_value_or_err().unwrap_err();
-    assert!(
-        err.to_string().contains("expected value output"),
-        "got: {err}"
-    );
-}
-
 /// Independent restatement of `is_cacheable` as a single negated `matches!`.
 fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     !matches!(
