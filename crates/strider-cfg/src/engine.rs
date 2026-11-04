@@ -6,13 +6,11 @@ use rustc_hash::FxHashMap;
 use crate::builder::{Builder, FlowContext, FlowVars, hold_var};
 use crate::{Cfg, CfgOptions, MachineInsnAddr, Result};
 
-/// A Sleigh engine and the decode context it carries across functions, so
-/// each [`Self::build_cfg`] decodes as a fresh engine would.
+/// A Sleigh engine and the decode context it carries across functions.
 ///
-/// `Sleigh` keeps every `globalset` per address, past the build that made it.
-/// The engine pins each entry back to the context its ISA mode last produced,
-/// and every build re-derives the committed vars from its own decode and
-/// resets the `noflow` vars that change one.
+/// `Sleigh` keeps every `globalset` past the build that made it, so each
+/// entry is pinned back to its ISA mode's context and each build re-derives
+/// its own commits: every [`Self::build_cfg`] decodes as a fresh engine would.
 ///
 /// ```no_run
 /// use rsleigh::mem_readers::BufMemReader;
@@ -75,22 +73,15 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         entry: MachineInsnAddr,
         opts: &'a CfgOptions<'a>,
     ) -> Result<Builder<'a, R>> {
-        // A prior function's `globalset` holds forward until the next change
-        // point and leaks into this cold entry on a reused engine: pin the
-        // entry back to the pspec defaults captured on the fresh engine.
         let entry_mode = self.arch.entry_mode_context(entry.addr);
         let decode_addr = if entry_mode.is_some() {
             entry.addr & !1
         } else {
             entry.addr
         };
-        // The pin target is the context this mode last produced, not the bare
-        // defaults: several sla vars view the ISA-mode bit (ARM `TMode`, `T`,
-        // `LowBitCodeMode`, `ISA_MODE`), so defaults-then-mode-bit ends on a
-        // context the defaults do not describe, and re-pinning the defaults
-        // rewrites every view of the bit on every call.  A `set_context_at` is
-        // logged for `Sleigh::clone` to replay and the log is bounded, so
-        // re-analysing one entry must cost no commit.
+        // Pinned to the context this mode last produced, not the defaults:
+        // several vars alias the mode bit, and re-pinning defaults would
+        // commit on every call to a bounded replay log.
         let mode_key = entry_mode.map(|(_, value)| value);
         let tables = self.tables;
         // A cold mode pins the pspec defaults.
@@ -99,13 +90,10 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             .entry(mode_key)
             .or_insert_with(|| FlowContext::from(&tables.entry_defaults[..]));
         FlowVars::of(tables).pin_at(&mut self.sleigh, decode_addr, want)?;
-        // The pin's diff can write an alias of the mode bit last, flipping it
-        // back.
+        // The pin can write an alias of the mode bit last, flipping it.
         if let Some((var, value)) = entry_mode {
             hold_var(&mut self.sleigh, decode_addr, var, value)?;
         }
-        // The function's now-committed ISA mode, the base context the builder
-        // decodes a strider-resolved target in.
         let function_mode = self.flow_vars().snapshot(&self.sleigh, decode_addr);
         self.entry_contexts.insert(mode_key, function_mode.clone());
         Ok(Builder::new(self, decode_addr, function_mode, opts))

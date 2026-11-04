@@ -11,8 +11,7 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
-/// Whether `seal_at_call_not_returning` may end a region here.  Not the only
-/// `NoReturn` emitter: see [`RegionTerminator::NoReturn`].
+/// Whether `seal_at_call_not_returning` may end a region here.
 pub(super) fn is_call(insn: &RegionInstruction) -> bool {
     matches!(
         insn.insn.opcode,
@@ -35,31 +34,22 @@ pub(crate) enum InsnOutcome {
 
 /// Builds one [`Region`], decoding pcode instructions one at a time.
 pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
-    /// `'b` is the borrow of the Builder, scoped to one `build()` call; `'a`
-    /// is the longer Sleigh borrow the Builder itself holds.
     builder: &'b mut Builder<'a, R>,
     start_addr: PcodeInsnAddr,
     insns: Vec<RegionInstruction>,
-    /// Bytes consumed by the zero-pcode-op instruction at `start_addr`, set
-    /// once decoding leaves it. Read only when the region seals with no
-    /// instruction, where nothing else records its span.
+    /// Span of a region that seals with no instruction: the zero-p-code-op
+    /// instruction at `start_addr`.
     empty_span_len: u32,
     /// `None` only for the function entry region.
     parent_edge: Option<NodeIndex>,
-    /// The ISA mode this region decodes in, when the arch has one.
-    ///
-    /// Pinning it once at the region's first address is not enough: Sleigh's
-    /// context paint stops at any address a previous write already split, so a
-    /// change point INSIDE this region leaves everything past it decoding in
-    /// the other region's mode. Re-imposed per instruction, and only written
-    /// when a read-back shows it actually drifted, so a region with no barrier
-    /// in it costs reads and no parse-cache flush.
+    /// The ISA mode this region decodes in, when the arch has one. Re-imposed
+    /// per instruction: a change point inside the region stops the entry
+    /// pin's paint.
     isa_mode: Option<u32>,
-    /// The machine instruction this region decoded last, whose commits the
-    /// next sequential decode reads.
+    /// The machine instruction this region decoded last.
     last_lift: Option<u64>,
-    /// `inst_next` of `last_lift`, whose flow context [`Self::rederive_flow`]
-    /// already made this build's own: the one address the next decode may be at.
+    /// `inst_next` of `last_lift`, already re-derived by
+    /// [`Self::rederive_flow`]: the only address the next decode may be at.
     expected_next: Option<u64>,
 }
 
@@ -91,13 +81,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(())
     }
 
-    /// Pcode encodes branch targets two ways: CONST-space is a signed offset
-    /// on the pcode index within the *same* machine instruction, and default
-    /// code space is an absolute virtual address (pcode index implicitly 0).
-    ///
-    /// `lift_res.insns.len()` bounds the CONST-space index; the fall-through
-    /// idiom (`target == pcode_count`) then reads `machine_insn_len` through
-    /// [`next_pcode_addr`].
+    /// A CONST-space target is a signed p-code index offset within the same
+    /// machine instruction; a default-code-space target is an absolute
+    /// address. Anything else, or an index out of range, is an error.
     fn decode_branch_target(
         &self,
         branch_target_var: rsleigh::Vn,
@@ -107,18 +93,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let default_code_space = self.builder.engine.sleigh.default_code_space();
 
         match branch_target_var.addr_space {
-            // An out-of-range index must NOT slip through: the build loop
-            // would silently skip it, advance past the end of this machine
-            // instruction's pcode sequence, and emit a wrong CFG with no
-            // diagnostic.
             rsleigh::VnSpace::CONST => {
-                // Sign-extend from the varnode's declared byte width first.
-                // Cast straight from u64 and a 32-bit-encoded -4 (0xFFFFFFFC)
-                // reads as 4_294_967_292, and the bounds check below wrongly
-                // rejects a valid target.
-                // Any width 1..=8, not just the powers of two: a sla is free
-                // to declare a 3-byte CONST, and rejecting one failed the whole
-                // function's lift.
+                // Sign-extended from the declared width, any of 1..=8 bytes.
                 let raw = branch_target_var.addr_off;
                 let bits = branch_target_var.size.saturating_mul(8);
                 if bits == 0 || bits > 64 {
@@ -127,19 +103,14 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         branch_target_var.size
                     );
                 }
-                // Shift the sign bit up to bit 63, then arithmetic-shift back
-                // down.
                 let shift = 64 - bits;
                 let off = (raw << shift).cast_signed() >> shift;
                 let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or_else(
                     || anyhow!("invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"),
                 )?;
                 let pcode_count = lift_res.insns.len() as u64;
-                // Sleigh idiom: branching to exactly `pcode_count` (one past
-                // the last pcode insn) means "leave this pcode block, fall
-                // through to the next machine instruction".  MIPS `teq` / `tne`
-                // / `tge` / `tgeu` / `tlt` / `tltu` emit it to skip their
-                // `trap`.  Anything strictly beyond is rejected.
+                // `pcode_count` itself is the fall-through to the next
+                // instruction (MIPS `teq` & co skip their `trap` so).
                 if target == pcode_count {
                     return next_pcode_addr(
                         PcodeInsnAddr {
@@ -159,10 +130,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     insn_index: target,
                 })
             }
-            // Sleigh emits an absolute target as the full 64-bit `off`
-            // regardless of the varnode's declared `size`, so `size` is
-            // deliberately ignored: unlike the CONST arm's signed pcode-index
-            // offset, these are unsigned addresses needing no sign extension.
+            // The full `off`, whatever the declared `size`.
             space if space == default_code_space => {
                 Ok(PcodeInsnAddr::at_machine_start(branch_target_var.addr_off))
             }
@@ -182,7 +150,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Appends `insn` to the current region, then dispatches on the opcode.
-    /// Any opcode without an arm is a non-terminator: decoding continues.
     fn process_new_insn(
         &mut self,
         insn: &rsleigh::Insn,
@@ -204,10 +171,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             rsleigh::Opcode::BranchIndirect => self.process_branch_indirect(insn, addr),
             rsleigh::Opcode::CallOther => self.process_call_other(insn),
             rsleigh::Opcode::Call => self.process_call(insn, addr, lift_res),
-            // The target is a register, so no no-return mark applies and
-            // `process_call`'s lookup would read a register offset as an
-            // address. The return address still decides whether any
-            // in-function code follows.
+            // No target address to look up; only the return address matters.
             rsleigh::Opcode::CallIndirect => {
                 self.end_at_call_returning_past_end(next_pcode_addr(addr, lift_res)?)
             }
@@ -215,17 +179,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// A `call` normally falls through to its return address, so it is not a
-    /// terminator.  Two cases end the region as `NoReturn`, which the IR
-    /// lifter lowers to `Call + Unreachable`:
-    ///
-    /// 1. The target is in [`crate::CfgOptions::no_return_targets`]
-    ///    (`exit`/`abort`), which ends the region wherever the return address
-    ///    lands.
-    /// 2. The return address is outside the function's bound, so no
-    ///    in-function code follows: an unmarked no-return callee (FreeBSD
-    ///    `exit1`), or the function ends at the call. The return address is
-    ///    reported as [`crate::Reason::PastFunctionEnd`].
+    /// Ends the region `NoReturn` when the target is in
+    /// [`crate::CfgOptions::no_return_targets`], or when the return address is
+    /// out of the bound (reported as [`crate::Reason::PastFunctionEnd`]).
     fn process_call(
         &mut self,
         insn: &rsleigh::Insn,
@@ -265,8 +221,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Ends the region `NoReturn` at a call whose return address `ret` is
-    /// out of range, reporting `ret` as [`crate::Reason::PastFunctionEnd`]:
-    /// a callee that returns would fall out of the function.
+    /// out of range, reporting `ret` as [`crate::Reason::PastFunctionEnd`].
     fn end_at_call_returning_past_end(&mut self, ret: PcodeInsnAddr) -> Result<InsnOutcome> {
         if !self.is_branch_tail_call(ret) {
             return Ok(InsnOutcome::Continue);
@@ -288,7 +243,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let target_var = branch_target_operand(insn, addr)?;
         let target = self.decode_branch_target(target_var, addr, lift_res)?;
         if self.is_branch_tail_call(target) {
-            // A direct `b <oob>` stays in the current ISA mode; no switch.
             self.finish_current_region(RegionTerminator::TailCall {
                 target: target.machine().into(),
             })?;
@@ -299,9 +253,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(InsnOutcome::RegionClosed)
     }
 
-    /// The conditional ALWAYS survives.  An out-of-bounds successor is wired
-    /// to a synthetic empty stub (`Builder::edge_to_stub`) rather than
-    /// deleted.
+    /// An out-of-bounds successor edges to a stub (`Builder::edge_to_stub`),
+    /// never decoded; the conditional survives.
     fn process_cond_branch(
         &mut self,
         insn: &rsleigh::Insn,
@@ -312,31 +265,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
-        // Classify before lifting: an OOB successor is never decoded.
         let true_oob = self.is_branch_tail_call(target_addr);
         let false_oob = self.is_branch_tail_call(next_insn_addr);
 
-        // Edges are unweighted; `region_if` recovers polarity by matching each
-        // successor region against `true_target`.  A stub owns exactly its
-        // start address, which IS the OOB target, so that matching covers
-        // stubs unchanged.
         let region = self.finish_current_region(RegionTerminator::CondBranch {
             true_target: target_addr,
         })?;
-        // An OOB successor is wired straight to its (shared, possibly
-        // pre-existing) stub and never enqueued, so no TARGET outside the
-        // function bound is decoded.  Sequential decoding still crosses it by
-        // up to one instruction: an instruction starting in range is decoded
-        // whole, and its trailing bytes join the region's span.  Nothing looks
-        // those bytes up.  An address at or above the bound classifies as a
-        // tail call and is never explored.  When both arms hit the same OOB
-        // address this adds two parallel edges to one stub, mirroring the
-        // in-range degenerate case: `region_if` reads the second edge as the
-        // fall-through side.
+        // Both arms at one OOB address give two parallel edges to one stub.
         for (oob, successor) in [(true_oob, target_addr), (false_oob, next_insn_addr)] {
             if oob {
-                // Either arm at this instruction's own end is a fall-through
-                // out of the function, reported as one.
                 self.report_skip_past_end(successor, addr, lift_res);
                 self.builder.edge_to_stub(region, successor)?;
             } else {
@@ -346,25 +283,20 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(InsnOutcome::RegionClosed)
     }
 
-    /// Resolves the user-op id from the CONST input at position 0 and
-    /// terminates the region when the op does not return.  A caller override
-    /// for the name answers that alone; with none, the target ABI table
-    /// answers, plus the PowerPC traps whose TO mask covers every relation.  An
-    /// unexpected input shape falls through to `Continue` rather than erroring.
+    /// Ends the region `NoReturn` when the user op does not return: per the
+    /// caller's override for its name, else the target's ABI table or a
+    /// PowerPC trap whose TO mask covers every relation.
     fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<InsnOutcome> {
         let name = crate::user_op_of(insn, &self.builder.engine.tables.user_op_names)
             .map(|(_, name)| name);
         let overridden = name.and_then(|n| self.builder.options.call_other_overrides.get(n));
         let terminates = match overridden {
-            // A caller override states what this binary's build of the op does,
-            // which includes the trap masks the built-in rule below reads.
             Some(lookup) => lookup.is_no_return(),
             None => {
                 let preset = self.builder.engine.arch.preset();
                 let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
-                // A PowerPC trap firing on every relation ends the region: the
-                // table classes the family conservatively because a narrower TO
-                // mask is a conditional check whose fall-through is live.
+                // A narrower TO mask is a conditional check with a live
+                // fall-through.
                 let to_mask = insn
                     .inputs
                     .get(1)
@@ -377,47 +309,31 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             }
         };
         if terminates {
-            // The CallOther is already in `self.insns` from the
-            // `process_new_insn` prologue push, so the region carries it.
-            // A trailing BranchIndirect is never decoded.
             self.finish_current_region(RegionTerminator::NoReturn)?;
             return Ok(InsnOutcome::RegionClosed);
         }
         Ok(InsnOutcome::Continue)
     }
 
-    /// Seats a terminator from [`crate::CfgOptions::seated`] at this site: `LinkRegister`
-    /// as `Return`, an out-of-range `Single` as `TailCall`, anything else as a
-    /// `Switch`, but only when EVERY arm seats.  One out-of-range or
-    /// off-boundary arm defers the whole site via `UnresolvedIndirectBranch`,
-    /// as does a site with no entry.
+    /// Seats a terminator from [`crate::CfgOptions::seated`] at this site:
+    /// `LinkRegister` as `Return`, an out-of-range `Single` as `TailCall`,
+    /// anything else as a `Switch`. No answer, or one out-of-range or
+    /// off-boundary arm, defers the whole site as `UnresolvedIndirectBranch`.
     fn process_branch_indirect(
         &mut self,
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
     ) -> Result<InsnOutcome> {
         let target_vn = branch_target_operand(insn, addr)?;
-        // Sampled here, before any other region can repaint this address, and
-        // for every site: a placeholder's caller needs the same bit a seated
-        // target would have decoded in.
+        // Before another region can repaint this address; deferred sites too.
         let flowing_isa = self.builder.sample_flowing_isa_bit(addr);
         let arms = match self.builder.options.seated(addr) {
-            // Unclassified so far: defer to the orchestrator's rebuild loop,
-            // which runs the resolver against the optimised IR.  `target_vn`
-            // and `addr` are stamped onto the terminator so the lifter can emit
-            // a placeholder `Return(target_value)` anchoring the value for that
-            // resolver to inspect.  No outgoing edge.  `Withdrawn` holds
-            // nothing trustworthy, so it is deferred exactly the same way.
             None | Some(crate::ResolvedTargets::Withdrawn) => {
                 self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
                 return Ok(InsnOutcome::RegionClosed);
             }
             Some(crate::ResolvedTargets::LinkRegister) => {
-                // Seating a `Return` consumes the site: no placeholder, no
-                // `Switch` anchor, so nothing downstream can notice that the
-                // seated answer just deleted whatever else the site had.
-                // Record it whichever source that answer came from; during the
-                // resolve loop this map holds the classifier's derivations too.
+                // The seat leaves no anchor, so it is recorded.
                 self.builder.report.link_register_seated.push(addr);
                 self.finish_current_region(RegionTerminator::Return)?;
                 return Ok(InsnOutcome::RegionClosed);
@@ -425,37 +341,16 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             Some(&crate::ResolvedTargets::Single(t))
                 if self.is_branch_tail_call(PcodeInsnAddr::at_machine_start(t.addr)) =>
             {
-                // A `TailCall` consumes the site exactly as `LinkRegister` does
-                // (no placeholder, no `Switch` anchor), so a dispatch that
-                // really had more arms leaves no trace. Record it, or the loss
-                // goes unreported.
+                // The seat leaves no anchor, so it is recorded.
                 self.builder.report.tail_call_seated.push(addr);
                 self.finish_current_region(RegionTerminator::TailCall { target: t })?;
                 return Ok(InsnOutcome::RegionClosed);
             }
-            // An in-function single target is a degenerate table.  A one-arm
-            // `Switch` keeps the dispatch selector on the terminator, so a
-            // later round can re-derive and WIDEN the site once the CFG has
-            // grown; a plain branch edge erases the selector and latches the
-            // first answer forever.  A switch whose loop back-edge runs through
-            // its own arms resolves to one arm that way: before any arm exists
-            // the header has a single predecessor, so the index is the entry
-            // constant and the table load folds to one literal.  A tail call
-            // leaves the function, so it closes no loop through the dispatch.
+            // An in-function `Single` is a one-arm `Switch`, which keeps the
+            // selector so a later round can widen it.
             Some(seated) => seated.arms(),
         };
-        // An out-of-range arm has no per-target tail-call escape; one interior
-        // to a region but off every instruction boundary can neither be split
-        // out nor found by `switch_arm_regions` at lift time.  Deferring beats
-        // failing the whole function over one over-approximated table entry: a
-        // bad arm is evidence the whole bound is wrong, and seating the rest
-        // decodes whatever else it over-approximated into, which fails the
-        // function outright where deferring leaves it lifting with the site
-        // unresolved.
-        //
-        // The off-boundary arm is reported the way
-        // `Builder::seat_non_boundary_target` reports the one discovered after
-        // seating, so the loss is reported either way.
+        // A bad arm means the table bound is wrong, so the whole site defers.
         let mut deferred = false;
         for target in arms {
             let a = PcodeInsnAddr::at_machine_start(target.addr);
@@ -478,19 +373,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             targets: arms.to_vec(),
             addr,
         })?;
-        // Each target decodes in the ISA mode the branch committed
-        // (`isa_bit`): an interworking `bx`/`jr`-dispatch table can carry
-        // per-target Thumb/ARM (or MIPS16) modes, while a plain jump table
-        // commits none and inherits the mode flowing into the branch.
-        //
-        // Enqueued HIGHEST first so the LIFO work queue explores lowest
-        // first. Arms of one switch have no regions yet when the site is
-        // sealed, so the interior-address guard above cannot separate
-        // them; decoding the lower arm first gives `explore` a region to
-        // recognise a higher over-read arm as interior to, which drops it
-        // instead of decoding a second region inside that instruction.
-        // Read at the branch site, which is still the last address
-        // decoded, exactly where `sample_flowing_isa_bit` sampled.
+        // Enqueued highest first so the LIFO explores lowest first: a higher
+        // over-read arm then lands inside an existing region and is dropped.
         let flowing = self.flowing_commits()?;
         for target in arms.iter().rev() {
             self.builder.enqueue_resolved(
@@ -529,15 +413,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(())
     }
 
-    /// Falling through into an already-explored region seals the current one
-    /// as `Unconditional` and edges to it.
-    ///
-    /// A stretch of machine instructions lifting to zero pcode ops (AArch64
-    /// `nop` / `paciasp` / `bti`, x86 `nop` / `pause`, alignment padding)
-    /// leaves `self.insns` empty when the fall-through fires, and the empty
-    /// region owning `self.start_addr` is still materialised: that address can
-    /// itself be a branch or switch TARGET, and a target resolves to the region
-    /// that *owns* it.
+    /// Seals onto the region already starting at `addr`, if any; else
+    /// processes `insn`.
     fn process_insn(
         &mut self,
         insn: &rsleigh::Insn,
@@ -545,9 +422,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
         if let Some(existing) = self.builder.index.get(addr) {
-            // A pcode index inside the current machine instruction already
-            // starting a region is exactly where two ISA decodes of one address
-            // produce different pcode sequences.
             self.seal_onto(addr, existing)?;
             return Ok(InsnOutcome::RegionClosed);
         }
@@ -555,23 +429,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Decodes machine instructions one at a time until the region closes.
-    ///
-    /// Decoding MUST stay sequential within a region: `Sleigh::lift_one`
-    /// takes `&mut self` and carries context-register state (ARM/Thumb mode
-    /// and IT-block state, MIPS16 mode, ppc `linkreg`) that a decoded instruction
-    /// can itself commit at a later address, so lifting out of order yields
-    /// wrong instructions.
-    ///
-    /// A region can start mid-machine-instruction when a relative
-    /// `CondBranch` jumps into the middle of a pcode sequence, so
-    /// `cur_addr.insn_index` may be > 0 on the first iteration.  Calling
-    /// `.enumerate()` BEFORE `.skip()` keeps `i` an absolute pcode index and
-    /// avoids offset arithmetic.
+    /// Sequential by necessity: an instruction can commit context (ARM IT
+    /// state, Thumb mode) at a later address. The first instruction may start
+    /// mid-p-code (`start_addr.insn_index > 0`).
     pub(super) fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
-            // So a CONST-space branch target, on this machine address, is
-            // never a tail call.
             debug_assert!(
                 !self.is_branch_tail_call(cur_addr),
                 "decoding {cur_addr:?} outside the function bound"
@@ -579,9 +442,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             let lift_res = match self.lift_code(cur_addr.machine()) {
                 Ok(lift_res) => lift_res,
                 Err(e) if cur_addr.machine_addr != self.start_addr.machine_addr => {
-                    // Off a seeded arm, falling into data or unmapped bytes
-                    // drops the arm, as running past the end does, unless a
-                    // call before them seals it.
+                    // Off a seeded arm, falling into bytes that are not code
+                    // drops the arm unless a call before them seals it.
                     let off_arm = self.builder.descent.is_some();
                     let here = decode_failure(&e).filter(|f| f.addr() == cur_addr.machine());
                     let (marked_data, reason) = match here {
@@ -620,44 +482,20 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 }
                 Err(e) => return Err(e),
             };
-            // `skip` needs a usize.  `insn_index` is either 0 or a value
-            // `decode_branch_target` already bounded by `lift_res.insns.len()`,
-            // itself a usize, so this cannot truncate.
+            // Bounded by `lift_res.insns.len()`, a usize.
             #[allow(clippy::cast_possible_truncation)]
             let start_pcode_idx = cur_addr.insn_index as usize;
-            // A zero-pcode-op machine instruction (x86 `nop`/`pause`/`endbr64`,
-            // AArch64 `nop`/`paciasp`/`bti`, ...) contributes no pcode from here.
             let is_zero_op = lift_res.insns.len() <= start_pcode_idx;
 
-            // Machine-instruction-boundary handling (skipped on the region's own
-            // first instruction, where `insn_index` may be mid-pcode after a
-            // CondBranch-into-pcode).
             if cur_addr.machine_addr != self.start_addr.machine_addr {
-                // Only a zero-pcode-op instruction at `start_addr` can be
-                // behind us: both seals below produce an empty region, whose
-                // span is those bytes.
                 self.note_empty_span_to(cur_addr);
-                // Falling through, real or nop alike, into an address that
-                // already starts a region: seal here and edge to it rather than
-                // decoding those bytes a second time.
-                //
-                // An EXACT-key lookup, so it only fires on a start this decode
-                // lands on.  A start interior to one of the instructions decoded
-                // here is stepped over, and those bytes become a second region
-                // overlapping the first; region ownership is then not a
-                // partition, which `RegionIndex::containing` resolves by
-                // walking down past the greatest start.
+                // Exact key: a start inside an instruction is stepped over
+                // (see `note_stepped_over_region_starts`).
                 if let Some(existing) = self.builder.index.get(cur_addr) {
                     return self.seal_onto(cur_addr, existing);
                 }
-                // Total segmentation, one region per zero-pcode-op instruction:
-                // seal on reaching a nop, and on leaving a lone-nop region.
-                // Every nop is then its OWN empty region start and every
-                // non-empty region a hole-free run of real instructions with
-                // `start_addr == insns[0].addr`, so a branch or switch target
-                // either starts a non-empty region or is an empty nop region's
-                // start.  The empty regions collapse in the IR (RegionCollapse +
-                // PhiCollapse), so this costs only build time.
+                // Every zero-p-code-op instruction is its own empty region, so
+                // a non-empty region starts at `insns[0].addr`.
                 if self.insns.is_empty() || is_zero_op {
                     let region = self.finish_current_region(RegionTerminator::Unconditional)?;
                     self.enqueue(region, cur_addr)?;
@@ -681,19 +519,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Records every existing region start STRICTLY inside the machine
-    /// instruction at `cur_addr`, which this decode is about to claim for its
-    /// own region.
-    ///
-    /// [`Self::build`]'s fall-through seal is an exact-key lookup, so it only
-    /// fires on a start the decode lands on; a start off every boundary of an
-    /// instruction decoded here is stepped over, and those bytes end up owned
-    /// by two regions with two different instruction streams. That is the same
-    /// loss [`Builder::seat_non_boundary_target`] reports, reached from the
-    /// other side, so it is reported under the same reason.
-    ///
-    /// A [`Builder::edge_to_stub`] stub owns no bytes (nothing outside the
-    /// function bound is decoded), so its start is no overlap.
+    /// Reports as `InteriorTarget` every region start strictly inside the
+    /// instruction at `cur_addr`: those bytes get two owners. A
+    /// [`Builder::edge_to_stub`] stub owns no bytes and is skipped.
     fn note_stepped_over_region_starts(
         &mut self,
         cur_addr: PcodeInsnAddr,
@@ -720,9 +548,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Seals the region onto a [`Builder::edge_to_stub`] stub at `cur_addr`,
-    /// where the fall-through found nothing to decode, and reports that
-    /// address as `reason`: every stub seal names the address it could not go
-    /// on from.
+    /// where the fall-through found nothing to decode, reporting it as
+    /// `reason`.
     fn seal_and_report(&mut self, cur_addr: PcodeInsnAddr, reason: crate::Reason) -> Result<()> {
         self.note_empty_span_to(cur_addr);
         let region = self.finish_current_region(RegionTerminator::Unconditional)?;
@@ -731,10 +558,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(())
     }
 
-    /// Records the bytes behind `cur_addr` as this region's span, for a seal
-    /// that will produce an EMPTY region: only a zero-pcode-op instruction at
-    /// `start_addr` can be behind it, and the region then carries no insn to
-    /// derive its extent from. A no-op once anything has been decoded.
+    /// Records the bytes behind `cur_addr` as an empty region's span; a no-op
+    /// once anything has been decoded.
     fn note_empty_span_to(&mut self, cur_addr: PcodeInsnAddr) {
         if self.insns.is_empty() {
             self.empty_span_len =
@@ -743,15 +568,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Ends the region at its last `Call` / `CallIndirect` as `NoReturn` when
-    /// the fall-through reached `cur_addr`, which holds no instruction; the
-    /// instructions after the call (a PowerPC TOC restore) are dropped with it.
-    /// Returns whether the region held a call; `cur_addr` is reported as
-    /// `reason`.
-    ///
-    /// Code after a call that does not decode is what a no-return callee the
-    /// build was not told about leaves behind: a literal pool, a traceback
-    /// table, a deliberately invalid word.
+    /// Ends the region `NoReturn` at its last call, dropping what follows,
+    /// when the fall-through reached `cur_addr`, which holds no code (left by
+    /// an unmarked no-return callee). Reports `cur_addr` as `reason`; returns
+    /// whether the region held a call.
     fn seal_at_call_not_returning(
         &mut self,
         cur_addr: PcodeInsnAddr,
@@ -766,22 +586,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(true)
     }
 
-    /// Sequential decoding running off the recorded function extent: the
-    /// region leaves through a [`Builder::edge_to_stub`] stub at `cur_addr`, the
-    /// tail call a branch out of range gets, reported as
-    /// [`crate::Reason::PastFunctionEnd`]. Returns whether it sealed.
-    ///
-    /// Not gated on `insns.is_empty()`: a run of zero-pcode-op instructions
-    /// (x86 `nop`, AArch64 `paciasp` / `autiasp`, AArch64 `bti`) advances
-    /// `cur_addr` without ever appending to `self.insns`, so such a gate would
-    /// let that prefix walk past the bound and absorb the next function's
-    /// first real instruction.
-    ///
-    /// Only a [`crate::FunctionBound::Size`] end gets here. An open bound puts
-    /// only addresses below the entry out of range, no region it decodes
-    /// starts there, and a fall-through only moves up. Off a seeded arm it is
-    /// a [`DecodeFailure::PastEnd`] `Err`, which drops the arm: a real arm stays inside the
-    /// function.
+    /// Seals onto a [`Builder::edge_to_stub`] stub at `cur_addr` when the
+    /// fall-through ran past a [`crate::FunctionBound::Size`] end, reporting
+    /// [`crate::Reason::PastFunctionEnd`]; returns whether it sealed. Off a
+    /// seeded arm it is a [`DecodeFailure::PastEnd`] `Err`, dropping the arm.
     fn seal_past_function_end(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
         if !self.is_branch_tail_call(cur_addr) {
             return Ok(false);

@@ -1,29 +1,14 @@
-//! Flowing decode context, GHIDRA-style: each flowing var is a per-address
-//! fact.
+//! Flowing decode context: as in GHIDRA's `ContextDatabase`, each flowing
+//! context var holds a value committed per address.
 //!
-//! A sla marks some context variables as *flowing*: the ISA mode (ARM
-//! `TMode`) plus per-instruction decode internals (condition eval, IT-block
-//! state, register-list iteration, x86 operand/address size) Sleigh flows
-//! along straight-line code. Only some are ever `globalset`, and a committed
-//! value is a per-address fact this build must re-derive rather than read.
-//! `SleighArch::flow_commit_vars` names those vars and
-//! `RegionBuilder::rederive_flow` re-derives them, erasing each to what its
-//! sla flow class says. A pin cannot stand in for that on a FLOWING var: a
-//! forward paint stops at the next change point of that var, which is where
-//! an earlier build's commit sits. x86 declares dozens flowing but commits
-//! none, so snapshotting and pinning there only read; PowerPC's `linkreg` IS
-//! committed to a differing value by `mtlr`, but every constructor it selects
-//! emits the same p-code as its `linkreg=0` twin, so a stale value cannot
-//! change the lift.
+//! A committed value (a `globalset` var, `SleighArch::flow_commit_vars`) is
+//! re-derived by `RegionBuilder::rederive_flow`, not read: a pin cannot stand
+//! in for that, since its forward paint stops at the next change point, which
+//! is where an earlier build's commit sits.
 //!
-//! Like GHIDRA's `ContextDatabase`, the context is a value committed per
-//! address. Pin a cold entry back to the pspec defaults (undo a prior
-//! function's leak on a reused engine), then before decoding a region pin every
-//! var to the value that flowed to it (its *captured* context), so a region
-//! Sleigh never straight-line-flowed to (a strider-resolved indirect target, a
-//! backward edge) still decodes in it. An interworking resolved branch bakes
-//! its own ISA-mode bit into the captured context it hands the target (see
-//! [`FlowVars::set_var`]).
+//! A cold entry is pinned to the pspec defaults, and each region to the
+//! context that flowed to it, so a target Sleigh never flowed to (a resolved
+//! indirect target, a backward edge) still decodes in it.
 
 /// The context vars the sla marks as flowing
 /// ([`strider_target::DecodeTables::flow_vars`]).
@@ -57,11 +42,8 @@ impl FlowVars {
         }
     }
 
-    /// The value of every flow var resolved at `addr`.
-    ///
-    /// Every name is one the sla declared flowing (via [`Self::of`]), so
-    /// `get_context_at` cannot miss it (Sleigh throws only on an unregistered
-    /// name); a read failure is a broken rsleigh invariant, not a runtime case.
+    /// The value of every flow var at `addr`. Panics on a read failure: every
+    /// name is sla-declared, and Sleigh throws only on an unregistered one.
     pub fn snapshot<R: rsleigh::MemReader>(
         &self,
         sleigh: &rsleigh::Sleigh<R>,
@@ -89,21 +71,11 @@ impl FlowVars {
             .and_then(|i| ctx.0.get(i).copied())
     }
 
-    /// Commit `want` at `addr`, overwriting whatever flowed or forward-held
-    /// there.
+    /// Commits `want` at `addr`, painting forward to the next change point.
     ///
-    /// Only the vars where `addr`'s current context disagrees are written.  A
-    /// `set_context_at` flushes Sleigh's whole parse cache, so an all-agreeing
-    /// context must cost none.
-    ///
-    /// Writes are FLOWING, so anything painted here holds until the next explicit
-    /// change point. ARM's IT-block vars (`itmode` `(5,5)`, `cond_mask`
-    /// `(10,13)`, `cond_shft` `(9,13)`, ...) flow in their own right; `condit`,
-    /// the `(5,13)` field spanning them, is declared `noflow` and is never in
-    /// the set. An `IT` does `globalset(inst_next, condit)`, committing all nine
-    /// bits at once, so several of the overlapping views do enter one diff. That
-    /// is safe: `want` for this group is always a whole snapshot, so the
-    /// overlapping views write the same value to every bit they share.
+    /// Writes only the disagreeing vars: a `set_context_at` flushes Sleigh's
+    /// whole parse cache. Overlapping views (ARM's IT-block vars) may enter
+    /// one diff; `want` is a whole snapshot, so they agree on shared bits.
     pub fn pin_at<R: rsleigh::MemReader>(
         &self,
         sleigh: &mut rsleigh::Sleigh<R>,
@@ -117,10 +89,8 @@ impl FlowVars {
         Ok(())
     }
 
-    /// Sets the flow var named `var` in `ctx` to `value`, which carries a live
-    /// committed value onto an edge Sleigh never flowed along. A no-op when
-    /// `var` is not a flow var of this sla, or `ctx` is not one of our
-    /// contexts.
+    /// Sets the flow var `var` in `ctx` to `value`; a no-op when `var` is not
+    /// a flow var or `ctx` is not one of these vars' contexts.
     pub fn set_var(&self, ctx: &mut FlowContext, var: &str, value: u32) {
         if let Some(i) = self.vars.iter().position(|name| name == var)
             && let Some(slot) = ctx.0.get_mut(i)
@@ -158,8 +128,7 @@ pub(crate) fn hold_var<R: rsleigh::MemReader>(
     Ok(true)
 }
 
-/// The value of each flow var at a program point, positionally aligned with the
-/// [`FlowVars`] that produced it.
+/// The value of each flow var at a program point, in [`FlowVars`] order.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub(crate) struct FlowContext(Vec<u32>);
 
