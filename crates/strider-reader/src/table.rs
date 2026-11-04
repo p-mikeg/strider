@@ -110,10 +110,8 @@ impl MemRegionsLookupTable {
         let want = buf.len();
         let got = self.read(addr, buf).ok_or_else(|| self.unmapped(addr))?;
         if got != want {
-            // A region can reach the top of the address space.
-            let stop = addr.checked_add(got as u64).ok_or_else(|| {
-                anyhow::anyhow!("read at {addr:#x} of {got} bytes overflows the address space")
-            })?;
+            // A region's exclusive end fits a `u64` (`MemRegion::new`).
+            let stop = addr + got as u64;
             if let Some(r_type) = self.unmodelled_relocation_at(stop) {
                 anyhow::bail!(
                     "read at {addr:#x} runs into {stop:#x}, a relocation of type {r_type} \
