@@ -151,13 +151,14 @@ impl PyFunction {
     #[allow(clippy::too_many_arguments)]
     fn neighborhood_dot(
         &self,
-        center: u32,
+        center: crate::bigint::Unsigned<u32>,
         depth: usize,
         hub_cap: usize,
         max_nodes: usize,
         count_producers: bool,
         pretty: bool,
     ) -> PyResult<String> {
+        let center = center.0;
         let arch = pretty.then(|| self.cfg.get().arch);
         let function = self.read()?;
         let nid = function
@@ -373,9 +374,13 @@ impl PyFunction {
 
     /// Every node reachable from `node_id` (data inputs, control outputs), in
     /// pre-order.
-    fn walk(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<Vec<crate::node::PyNode>> {
+    fn walk(
+        slf: Py<Self>,
+        py: Python<'_>,
+        node_id: crate::bigint::Unsigned<u32>,
+    ) -> PyResult<Vec<crate::node::PyNode>> {
         Self::nodes(slf, py, |function| {
-            let nid = crate::node::node_id(function, node_id)?;
+            let nid = crate::node::node_id(function, node_id.0)?;
             Ok(function.walk_from(nid).collect())
         })
     }

@@ -2669,8 +2669,8 @@ impl Builder for PyFunctionArgPat {
 #[pymethods]
 impl PyFunctionArgPat {
     /// Constrain the match to argument at ABI position `i`.
-    fn index(slf: PyRef<'_, Self>, i: u32) -> PyRef<'_, Self> {
-        slf.index.set(Some(i));
+    fn index(slf: PyRef<'_, Self>, i: crate::bigint::Unsigned<u32>) -> PyRef<'_, Self> {
+        slf.index.set(Some(i.0));
         slf
     }
     /// Constrain to an argument arriving in register `vn` or one containing it.
