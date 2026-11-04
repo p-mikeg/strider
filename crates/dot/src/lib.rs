@@ -380,11 +380,27 @@ impl<G: GraphDotDumper> GraphDot<G> {
         } else {
             "dot"
         };
-        Ok(HTML_DOT_TEMPLATE
-            .replace("__VIZ_STANDALONE_JS__", VIZ_STANDALONE_JS)
-            .replace("__SVG_PAN_ZOOM_JS__", SVG_PAN_ZOOM_JS)
-            .replace("__DEFAULT_ENGINE__", engine)
-            .replace("__DOT_JSON__", &json_quote(&dot_src)))
+        let dot_json = json_quote(&dot_src);
+        // In template order; each occurs once.
+        let subs = [
+            ("__VIZ_STANDALONE_JS__", VIZ_STANDALONE_JS),
+            ("__SVG_PAN_ZOOM_JS__", SVG_PAN_ZOOM_JS),
+            ("__DOT_JSON__", &dot_json),
+            ("__DEFAULT_ENGINE__", engine),
+        ];
+        let len = HTML_DOT_TEMPLATE.len() + subs.iter().map(|(_, v)| v.len()).sum::<usize>();
+        let mut page = String::with_capacity(len);
+        let mut rest = HTML_DOT_TEMPLATE;
+        for (placeholder, value) in subs {
+            let (head, tail) = rest
+                .split_once(placeholder)
+                .expect("template holds each placeholder once, in this order");
+            page.push_str(head);
+            page.push_str(value);
+            rest = tail;
+        }
+        page.push_str(rest);
+        Ok(page)
     }
 
     /// # Errors
