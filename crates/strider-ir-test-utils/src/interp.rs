@@ -2,7 +2,7 @@
 //! function against each other. It is a consistency oracle only: a
 //! misconception it shares with a pass is invisible. Its integer operations are
 //! written apart from `strider_ir::eval` (only the width helpers are shared),
-//! so it does not share the constant folder's.
+//! so it does not share the constant folder's code.
 //!
 //! Runs integer ops at the declared width, phis, RAM and REGISTER-space memory,
 //! and `If` / `Switch` / `Region` control including loops. Floats, `CallOther`,
