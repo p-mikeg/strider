@@ -1,6 +1,6 @@
 use core::iter;
 
-pub use entity_utils::set::DenseEntitySet;
+use entity_utils::DenseEntitySet;
 
 use crate::IRViewer;
 use crate::function::Function;
