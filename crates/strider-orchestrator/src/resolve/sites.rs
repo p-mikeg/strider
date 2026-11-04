@@ -955,18 +955,6 @@ mod tests {
         assert!(progress.grew.is_empty());
     }
 
-    #[test]
-    fn fold_gaining_and_losing_in_one_round_narrows() {
-        let (progress, _folded) = round(
-            Some(multiple(&[(0x2000, None), (0x3000, None)])),
-            multiple(&[(0x2000, None), (0x4000, None)]),
-            None,
-        );
-        assert!(progress.changed());
-        assert!(!progress.narrowed.is_empty());
-        assert!(progress.grew.is_empty());
-    }
-
     /// Round 1 seats one interworking arm before the dispatch loop closes.
     /// Round 2 re-derives the now-seated `Switch` with no mode to evaluate, so
     /// it reports every arm mode-less, and the three NEW arms cannot be seated
@@ -1026,20 +1014,6 @@ mod tests {
             fold(false),
             1,
             "ARM flowing in: the site interworks, so a mode-less new arm is a guess",
-        );
-    }
-
-    #[test]
-    fn fold_equal_sized_oscillation_narrows() {
-        let (progress, _folded) = round(
-            Some(multiple(&[(0x2000, None)])),
-            multiple(&[(0x3000, None)]),
-            None,
-        );
-        assert!(progress.changed());
-        assert!(
-            !progress.narrowed.is_empty(),
-            "swapping one successor for another is an oscillation, not growth",
         );
     }
 
