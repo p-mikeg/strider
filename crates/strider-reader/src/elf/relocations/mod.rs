@@ -21,8 +21,10 @@ use crate::{MemRegion, Patch, RegionIndex, Result};
 
 /// Attaches one address-sorted relocation patch list to every region,
 /// replacing any it carries. Walks the tables the loader reads (a
-/// `PT_DYNAMIC`'s, else the section headers'), with image base 0; a value it
-/// cannot compute becomes a hole ([`Ctx::unmodelled`]).
+/// `PT_DYNAMIC`'s, else the section headers'), with image base 0. Holed: an
+/// unlisted kind, a symbol with no address or weak undefined, a value its field
+/// cannot hold (a veneer branch too), an IFUNC's value, `R_*_COPY` bytes, the
+/// MIPS implicit GOT and the ARM / PPC32 lazy-binding words.
 ///
 /// `layout` must be `obj`'s, `owners` the sections the regions came from.
 /// Returns the referenced GOT slots (ET_REL only) as regions.
@@ -201,7 +203,9 @@ impl<'a> Ctx<'a, '_> {
     }
 
     /// Whether the field lies in an executable mapping, where an IFUNC's `S`
-    /// is its own address (so a `call` names it), not the resolver's result.
+    /// is its own address (so a `call` names it), not the resolver's result;
+    /// an address taken or a data word there gets it too, though it differs
+    /// at run time.
     fn in_code(&self, addr: u64, width: usize) -> bool {
         self.executable.touches(addr, width)
     }
