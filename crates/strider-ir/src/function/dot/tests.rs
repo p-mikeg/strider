@@ -107,7 +107,7 @@ fn render_int_const_wide_shows_value_not_debug() {
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    // Limbs are little-endian; the high limb keeps this genuinely Wide.
+    // Limbs are little-endian; the high limb puts this past `u128`.
     let id = f.intern_int_const(
         UBig::from_words(&[0x1234, 0xabcd, 0, 0x8000_0000_0000_0000]),
         ValueType::int(256),
