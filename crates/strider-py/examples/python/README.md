@@ -1,26 +1,16 @@
 # `strider-py` examples
 
-Seventeen runnable scripts, indexed below. Most run against the fixture ELFs
-in `fixtures/out/x86/`; 02, 08, 10, 11, 12, 15 and 17 supply bytes from Python
-and need no ELF.
+Most run against the committed fixture ELFs in `fixtures/out/x86/`; 02, 08,
+10, 11, 12, 15 and 17 supply bytes from Python.
 
 ## Prerequisites
 
-Everything runs from the workspace root. `maturin develop` MUST run from
-there: from `crates/strider-py` it exits 0 but builds the wrong package and
-leaves a stale `.so`, so the examples then run against old bindings.
-
-The fixture ELFs are committed, so only the Python setup is needed:
+Run everything from the workspace root; from `crates/strider-py`,
+`maturin develop` succeeds but leaves stale bindings.
 
 ```bash
 uv sync --group dev
 uv run maturin develop
-```
-
-Then run any example; `uv run` uses the environment `maturin develop`
-installed into:
-
-```bash
 uv run python crates/strider-py/examples/python/01_quickstart.py
 ```
 
@@ -49,24 +39,12 @@ uv run python crates/strider-py/examples/python/01_quickstart.py
 ### The `BufferReader` group (10, 11, 12, 15, 17)
 
 `strider.reader.BufferReader(base_addr, data)` serves `data` at `base_addr`
-and works as both the `mem` and `rom` argument to `strider.lift.lifter`. Reads
-stay on the Rust side, so use it when you already hold the bytes (shellcode, a
-firmware dump, a carved slice); subclass `MemReader` / `ReadOnlyMemory`
-(examples 02, 07, 08) only for lazily-produced bytes.
+as both the `mem` and `rom` of `strider.lift.lifter`, with reads on the Rust
+side. Subclass `MemReader` / `ReadOnlyMemory` (02, 07, 08) only for
+lazily-produced bytes.
 
-Two settings the raw-bytes examples use:
-- **Padding past the instruction stream**: the disassembler prefetches beyond
-  the last instruction. A `BufferReader` answers those addresses with a short
-  read, so its trailing 16 or 64 zero bytes (15 pads each routine to a `0x20`
-  boundary with NOPs instead) change nothing. A `MemReader` that returns `None`
-  rather than short-reading needs them, and needs more than a handful: 02's
-  three-byte stream still fails to lift with eight trailing NOPs and succeeds
-  with sixteen, so 02 and 08 carry 64.
-- **`allow_code_before_start_addr=True`** (every raw-bytes example but 02):
-  without it an unconditional branch below the entry is a tail call rather than
-  an edge to follow. It is insurance for a carve whose entry is not its lowest address.
-
-The fixtures are small (a few dozen instructions per function) to keep output
-readable. For a full end-to-end run see
-`crates/strider-orchestrator/examples/orchestrator_demo.rs`;
-`crates/strider-py/tests/python/` has the stress coverage.
+- **Padding**: the disassembler prefetches past the last instruction. A
+  `BufferReader` short-reads there, so its padding is harmless; a `MemReader`
+  returning `None` needs real padding (02 and 08 carry 64 bytes).
+- **`allow_code_before_start_addr=True`** (all but 02): otherwise an
+  unconditional branch below the entry is a tail call, not an edge.
