@@ -15,7 +15,7 @@ cfg
   0x401168 22 ops return -> []
   0x40117a 21 ops return -> []
   0x401181 21 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v5]
 arg 1 [%v22]
 arg 2 [%v40]
@@ -75,7 +75,7 @@ return %v19, %v1, %v63, %v25, %v26, %v27, %v28
 == f @0x401190
 cfg
   0x401190 15 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -105,7 +105,7 @@ cfg
   0x4011f2 2 ops goto -> [0x4011f5]
   0x4011f5 38 ops cbranch 0x4011ba -> [0x4011ba, 0x401201]
   0x401201 19 ops return -> []
-tracked [EAX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x17c00:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x6ad00:4, u:0x6af00:4, u:0x8c200:4]
+tracked [EAX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x17c00:1, u:0x41500:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x6ae00:4, u:0x6b000:4, u:0x8c300:4]
 %v0:ctrl = entry
 %v1:i32 = iconst[0x0]
 %v2:mem = initial_memory
