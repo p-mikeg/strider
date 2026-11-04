@@ -498,34 +498,28 @@ fn build_float_rules() -> Vec<Rule> {
     );
 
     vec![
-        {
-            Rule::rewrite(
-                any_float_binary(float_const(l), float_const(r)).capture(op),
-                float_const_with!([op: float_binary_op, l: float_bits, r: float_bits, ty] =>
-                    eval_float_binary(op, l, r, ty)
-                        .ok_or_else(strider_pattern::skip)?
-                ),
-            )
-        },
-        {
-            Rule::rewrite(
-                any_float_unary(float_const(v)).capture(op),
-                float_const_with!([op: float_unary_op, v: float_bits, ty] =>
-                    eval_float_unary(op, v, ty)
-                        .ok_or_else(strider_pattern::skip)?
-                ),
-            )
-        },
+        Rule::rewrite(
+            any_float_binary(float_const(l), float_const(r)).capture(op),
+            float_const_with!([op: float_binary_op, l: float_bits, r: float_bits, ty] =>
+                eval_float_binary(op, l, r, ty)
+                    .ok_or_else(strider_pattern::skip)?
+            ),
+        ),
+        Rule::rewrite(
+            any_float_unary(float_const(v)).capture(op),
+            float_const_with!([op: float_unary_op, v: float_bits, ty] =>
+                eval_float_unary(op, v, ty)
+                    .ok_or_else(strider_pattern::skip)?
+            ),
+        ),
         // `in_ty` is the float operand type, not the I1 output.
-        {
-            Rule::rewrite(
-                any_float_cmp(float_const(l), float_const(r)).capture(op),
-                bool_const_with!([op: float_cmp_op, l: float_bits, r: float_bits, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    eval_float_cmp(op, l, r, input_ty)
-                        .ok_or_else(strider_pattern::skip)?
-                }),
-            )
-        },
+        Rule::rewrite(
+            any_float_cmp(float_const(l), float_const(r)).capture(op),
+            bool_const_with!([op: float_cmp_op, l: float_bits, r: float_bits, in_ty] => {
+                let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
+                eval_float_cmp(op, l, r, input_ty)
+                    .ok_or_else(strider_pattern::skip)?
+            }),
+        ),
     ]
 }
