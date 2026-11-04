@@ -1,6 +1,5 @@
-//! An impl declares which `NodeKind`s it cares about and how to attempt one
-//! rewrite at a root; [`run_peephole`] owns the worklist, kind-filtered
-//! seeding, and consumer re-enqueue.
+//! Worklist-driven peephole passes: an impl names its root kinds and one
+//! rewrite attempt; [`run_peephole`] drives the worklist.
 
 use entity_utils::Worklist;
 use strider_ir::IRViewer;
@@ -8,8 +7,8 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;
 
-/// The producer node of each input of `node`, in input-slot order. Every
-/// input: a `Load` yields its memory producer, a `Phi` its `Region`.
+/// The producer of each input of `node`, in slot order, control and memory
+/// inputs included.
 pub(crate) fn input_producers_iter<V: IRViewer>(
     edit: &V,
     node: NodeId,
@@ -27,9 +26,9 @@ pub(crate) trait PeepholePass {
 
     fn matches_kind(&self, kind: &NodeKind) -> bool;
 
-    /// `root` always matches [`Self::matches_kind`] and is live. Returns the
-    /// value the root was redirected to, whose producer is re-examined for
-    /// cascading folds; `None` when there is nothing to revisit.
+    /// `root` matches [`Self::matches_kind`] and is live. Returns the value
+    /// the root was redirected to, whose producer is re-examined; `None` when
+    /// there is nothing to revisit.
     ///
     /// # Errors
     /// Propagates the first error from the underlying rewrite.
@@ -50,8 +49,7 @@ pub(crate) trait PeepholePass {
     }
 }
 
-/// Drives a [`PeepholePass`] over the reachable graph to a local fixpoint,
-/// off what each rewrite reports rather than by scanning new NodeIds. `true`
+/// Drives a [`PeepholePass`] over the live graph to a local fixpoint. `true`
 /// when some rewrite moved a use or killed a node.
 ///
 /// # Errors
@@ -62,24 +60,17 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     opt_ctx: &crate::pipeline::OptCtx<'_>,
 ) -> Result<bool> {
     let mut sweep = P::Sweep::default();
-    // Seeds iterate operands first (reverse-postorder), what a
-    // value-propagation pass wants. Confluence is not assumed; the dequeue
-    // budget below turns a non-confluent rule pair into an error rather than
-    // a hang.
+    // Operands first (reverse postorder).
     let seed: Vec<NodeId> = edit
         .live_reverse_postorder_filter(|k| pass.matches_kind(k))
         .collect();
-    // Fresh nodes get fresh `NodeId`s, which the worklist's dedup cannot
-    // collapse, so a non-confluent rule pair spins forever; the budget turns
-    // that into an error instead of a hang.
+    // Fresh `NodeId`s defeat the worklist's dedup, so a non-confluent rule
+    // pair would spin forever; the budget makes it an error.
     let dequeue_budget = seed.len().saturating_mul(64).saturating_add(1024);
     let mut dequeued = 0usize;
     let mut work: Worklist<NodeId> = seed.into_iter().collect();
     let mut overall = false;
-    // Snapshotted before `try_rewrite` runs: a rewrite rewires uses to its
-    // replacement, leaving `value_uses(old_out)` empty afterwards.
-    // Kind-filtered here, so `try_rewrite` only ever sees a node matching
-    // `matches_kind`.
+    // Snapshotted before `try_rewrite`, which empties `value_uses(old_out)`.
     let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
     while let Some(root) = work.dequeue() {
         dequeued += 1;
@@ -107,9 +98,8 @@ pub(crate) fn run_peephole<P: PeepholePass>(
         let new_value = pass.try_rewrite(&mut sweep, edit, opt_ctx, root)?;
         if edit.generation() != generation {
             overall = true;
-            // A fresh node (a folded constant, a merged AND-mask) the same pass
-            // can rewrite again; unqueued, whether that fires in this sweep
-            // would depend on seed order.
+            // Unqueued, whether the fresh node fires this sweep would depend
+            // on seed order.
             if let Some(n) = new_value.map(|v| edit.producer(v))
                 && pass.matches_kind(edit.node_kind(n))
             {
@@ -146,16 +136,15 @@ mod tests {
 
     use crate::Result;
 
-    /// Records every `try_rewrite` invocation and on match rewires the
-    /// root's single value output to a fresh `IntConst(REPLACEMENT_K)`.
+    /// Records every `try_rewrite` and on match rewires the root's value to
+    /// a fresh `IntConst(REPLACEMENT_K)`.
     struct ScriptedPass<const P: bool> {
         match_kind: fn(&NodeKind) -> bool,
         do_rewrite: bool,
         return_error: bool,
         visit_log: RefCell<Vec<u32>>,
-        /// The first successful rewrite builds a fresh kind-matching node
-        /// instead of folding to an `IntConst`. Consumed on first use so it
-        /// cannot cascade forever.
+        /// The first rewrite builds a fresh kind-matching node instead of an
+        /// `IntConst`. Consumed on first use.
         create_matching_once: RefCell<bool>,
         /// Never consume `create_matching_once`, so every rewrite mints
         /// another matching node: a stand-in for a non-confluent rule pair.
@@ -215,9 +204,7 @@ mod tests {
                 if !self.cascade_forever {
                     *self.create_matching_once.borrow_mut() = false;
                 }
-                // Distinct cacheable key (the root's first input used twice,
-                // or beside a constant no earlier visit built) so the dedup
-                // cache can't collapse this onto an existing node.
+                // A key the dedup cache cannot collapse onto an existing node.
                 let first = edit.node_inputs(root)[0];
                 let second = if self.cascade_forever {
                     let visits = self.visit_log.borrow().len() as u64;
@@ -306,8 +293,7 @@ mod tests {
 
     #[test]
     fn run_peephole_with_propagate_false_skips_reenqueue() {
-        // `Add(Add(1,2), 3)`: the outer consumes the inner. With
-        // propagate=false each Add is visited once, at seed time.
+        // Without propagation each Add is visited once, at seed time.
         let mut fg = nested_adds();
         let pass = ScriptedPass::<false>::new(match_add, true);
         let _ = sweep(&pass, &mut fg).unwrap();
@@ -332,9 +318,8 @@ mod tests {
 
     #[test]
     fn run_peephole_revisits_newly_created_matching_node() {
-        // The seeded `Add` is rewritten into a brand-new `Add`, which the
-        // driver must enqueue and visit in the same sweep; otherwise whether
-        // it folds would depend on seed order.
+        // The seeded `Add` is rewritten into a fresh `Add`, visited in the
+        // same sweep.
         use cranelift_entity::EntityRef;
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
@@ -391,9 +376,8 @@ mod tests {
         );
     }
 
-    /// A rule that mints a fresh matching node on every fire never reaches a
-    /// fixpoint. The worklist dedups by `NodeId`, which a fresh id defeats, so
-    /// without a bound the driver spins and grows the arena forever.
+    /// A rule that mints a fresh matching node on every fire errors rather
+    /// than spinning.
     #[test]
     fn run_peephole_bails_out_instead_of_spinning_forever() {
         let mut fg = add_two_consts();
@@ -405,8 +389,6 @@ mod tests {
         let err = sweep(&pass, &mut fg).expect_err("a non-confluent pass must error, not hang");
         let msg = format!("{err:#}");
         assert!(msg.contains("did not converge"), "unexpected error: {msg}");
-        // The bound is on DEQUEUES, which on a propagating pass outnumber the
-        // rewrites by a large factor.
         assert!(
             msg.contains("dequeues"),
             "the bound must name its unit: {msg}"

@@ -126,11 +126,9 @@ fn clean_does_not_merge_when_output_type_differs() {
     assert_eq!(truncs(&fg), 2, "both truncs survive");
 }
 
-/// Three passes document a pipeline-order precondition in their module docs
-/// (`FlagCmpCanonicalize` after `ConstantFold` and before `IfCondInversion`,
-/// `LoadForward` after `PhiCollapse`), which only the ORDER here enforces.
-/// A reorder still converges, on a less canonical shape, so nothing but
-/// `golden` would catch it, and only indirectly.
+/// Pins the order the passes' preconditions need (`FlagCmpCanonicalize` after
+/// `ConstantFold` and before `IfCondInversion`, `LoadForward` after
+/// `PhiCollapse`): a reorder still converges, on a less canonical shape.
 #[test]
 fn default_pipeline_runs_its_passes_in_the_documented_order() {
     let p = strider_opt::default_pipeline();

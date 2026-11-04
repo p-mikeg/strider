@@ -1,25 +1,15 @@
 //! Differential fuzzer: random IR, run on the reference interpreter
-//! (`strider_ir_test_utils::interp`) before and after optimisation.
+//! (`strider_ir_test_utils::interp`) before and after optimisation. A
+//! consistency oracle: a misconception the interpreter shares with a pass is
+//! invisible here.
 //!
-//! A CONSISTENCY oracle, not an independent one: the interpreter runs on both
-//! sides, so a misconception it shares with a pass is invisible here. What it
-//! catches is a pass changing the meaning of a graph.
+//! The generators emit integer arithmetic, compares, shifts, casts,
+//! popcount/lzcount, phis and `If` / `Return` / `Unreachable` control only: no
+//! memory, call, `Switch` or float node. The DAG generator draws every width
+//! of [`TYPES`]; the CFG generator draws `I8`, `I32` and `I256`.
 //!
-//! Both generators emit integer arithmetic, compares, shifts,
-//! extend/truncate, popcount/lzcount, phis and `If` / `Return` /
-//! `Unreachable` control, and nothing else: no `Load`, `Store`, `Call`,
-//! `CallOther`, `Switch` or float node, so `LoadForward`, the memory and
-//! SP-alias analyses and every float fold are outside what this checks.
-//!
-//! The DAG generator draws every width of [`TYPES`], `I256` and `I512`
-//! included, so folding past the `u128` carrier is checked here. The CFG
-//! generator stays at `I8` / `I32`, because the index-range oracles below
-//! read its runtime values in the carrier.
-//!
-//! Four environment variables scale a run past the committed default:
-//! `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS` nodes per DAG,
-//! and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone instead of the whole
-//! pipeline.
+//! Environment: `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS`
+//! nodes per DAG, and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone.
 
 use crate::post_opt::indirect_branch_resolve::index_range;
 use rustc_hash::FxHashMap;
@@ -44,8 +34,7 @@ pub(crate) const TYPES: &[(u32, ValueType)] = &[
     (64, ValueType::int(512)),
 ];
 
-/// The `u128` carrier mask, for the index-range oracles below, whose values
-/// are `I32` and `I64` throughout.
+/// The `u128` carrier mask of `ty`, at most 128 bits wide.
 fn mask(ty: ValueType) -> u128 {
     ty.int_mask_u128()
         .expect("an index-range oracle draws integers of at most 128 bits")
@@ -760,9 +749,7 @@ pub(crate) fn check_seed(
     for _ in 0..ntrials {
         vectors.push((0..8).map(|_| rng.next_u64()).collect());
     }
-    // Each entry register is drawn at ITS OWN width: a seed drawn at the
-    // carrier and masked down leaves every wide register's high limbs zero,
-    // which is the arithmetic this checks.
+    // Drawn at each register's own width, so wide high limbs are nonzero.
     let entry = |t: usize, e: EntryVar| input_value(&mut Rng(vectors[t][e.index] | 1), e.ty);
     let returned = |f: &strider_ir::Function, t: usize| match run_cfg(f, &|e| entry(t, e)) {
         Ok(Outcome::Return { values, .. }) => Ok(values),
@@ -831,16 +818,14 @@ fn the_pipeline_preserves_dag_semantics() {
         compared += check_seed(seed, steps, &run)?;
         Ok(())
     });
-    // A floor on the yield: a generator change or an early `?` that stops
-    // producing comparable return values fails here rather than reading green.
+    // A floor on the yield, so a generator that stops producing fails.
     assert!(
         compared >= n as usize * 450,
         "only {compared} value comparisons over {n} seeds"
     );
 }
 
-/// The DAG fuzzer is blind to wide arithmetic unless the generator emits it,
-/// and a green run proves nothing about a width no seed reaches.
+/// The DAG generator emits wide arithmetic, and not mostly.
 #[test]
 fn the_dag_generator_emits_wide_values() {
     let (mut seeds, mut wide_rets, mut rets, mut wide_ops) = (0usize, 0usize, 0usize, 0usize);
@@ -864,9 +849,7 @@ fn the_dag_generator_emits_wide_values() {
             .count();
     }
     eprintln!("seeds {seeds} wide_rets {wide_rets} of {rets} wide_ops {wide_ops}");
-    // Measured at the committed seed count: 185 of 300 seeds, 866 of 6598
-    // returned values and 1737 wide operations. The floors sit near half of
-    // that, and the ceiling keeps the narrow paths a majority.
+    // Floors near half the measured yield at the committed seed count.
     assert!(
         seeds * 2 >= DEFAULT_FUZZ_SEEDS as usize && wide_ops >= 800,
         "seeds {seeds} wide_rets {wide_rets} wide_ops {wide_ops}"
@@ -905,9 +888,8 @@ fn the_op_rosters_keep_their_seeded_order() {
 
 // CFG-level differential fuzzer.
 
-/// The reference runs' environment. The budget is high enough that `Diverge`
-/// means a loop, not a long finite run, so the CFG comparison can assert on
-/// it.
+/// The reference runs' environment, with a budget high enough that
+/// `Diverge` means a loop.
 fn reference_env(entry: &dyn Fn(EntryVar) -> UBig) -> interp::Env<'_> {
     interp::Env {
         entry,
@@ -973,8 +955,7 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
     let mut rs = RegisterSet::new();
     let mut vns = Vec::new();
     for i in 0..nvars {
-        // A width past the `u128` carrier, so the range oracles below read
-        // `index_range` where no `u128` is the value's bound.
+        // Includes a width past the `u128` carrier.
         let (sz, _) = [
             (1, ValueType::int(8)),
             (4, ValueType::int(32)),
@@ -1011,11 +992,8 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 IntBinaryOp::And,
                 IntBinaryOp::Mul,
                 IntBinaryOp::Or,
-                // A shift by a constant is what `index_range` reads as a
-                // scaled hop; without one `ScaleOp` and `const_scale` were
-                // unreachable from this generator, and the range oracle below
-                // never exercised them.  The count deliberately reaches the
-                // output width and past it.
+                // A constant shift is what `index_range` reads as a scaled
+                // hop.
                 IntBinaryOp::ShiftLeft,
                 IntBinaryOp::ShiftRight,
                 IntBinaryOp::SShiftRight,
@@ -1032,8 +1010,7 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
             let nv = if rng.chance(20) {
                 b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?
             } else if rng.chance(15) && ty == ValueType::int(32) {
-                // A truncate / extend round trip: the cast ladder walks,
-                // and the only shape here that changes width.
+                // A truncate / extend round trip, for the cast ladder.
                 let narrow =
                     b.build_single_output_pure(NodeKind::Truncate, [vj], ValueType::int(8));
                 let ext = if rng.chance(50) {
@@ -1154,17 +1131,8 @@ fn the_pipeline_preserves_cfg_semantics() {
                         ));
                     }
                 }
-                // Folding a non-terminating loop into a `Return` is a
-                // miscompile, and the one `DeadBranchElimination`'s
-                // exit-free-cycle guard and `LoadForward`'s back-edge
-                // handling exist to prevent.  `Unreachable` is not an
-                // honest second answer: no pass here CONSTRUCTS one.
-                // `Diverge` also covers budget exhaustion, so a long
-                // but terminating run can reach a real sink once
-                // folded. The same truncation already produced `Ret`,
-                // which this arm already rejected, so accepting
-                // `Unreachable` closed nothing and hid a rerouted
-                // sink.
+                // Folding a non-terminating loop into a sink is a
+                // miscompile; no pass here constructs an `Unreachable`.
                 Outcome::Diverge(_) => {
                     if !matches!(got, Outcome::Diverge(_)) {
                         return Err(format!(
@@ -1180,8 +1148,7 @@ fn the_pipeline_preserves_cfg_semantics() {
         compared += cmp;
         Ok(())
     });
-    // Floors on the yield. `build_random_cfg` bails for most seeds, so a
-    // change that drops it to none must not read as a pass.
+    // Floors on the yield; `build_random_cfg` bails for most seeds.
     assert!(
         built >= n as usize / 5,
         "only {built} of {n} seeds built a CFG"
@@ -1194,9 +1161,8 @@ fn the_pipeline_preserves_cfg_semantics() {
 
 // Targeted proofs.
 
-/// `op(C1, C2)` at I256 with both constants past the u128 carrier. The fold
-/// runs at the declared width, so the result carries all four limbs, none of
-/// them lost to a 128-bit carrier.
+/// `op(C1, C2)` at I256 with both constants past the u128 carrier folds at
+/// the declared width, all four limbs kept.
 #[test]
 fn a_wide_constant_folds_across_every_limb() {
     fn le_limbs(f: &strider_ir::Function, v: ValueId) -> Vec<u64> {
@@ -1416,12 +1382,9 @@ fn fuzz_seeds() -> (u64, std::ops::Range<u64>) {
     (n, start..start + n)
 }
 
-/// Runs `check` on each of `seeds`, stopping at the third failure, a panic
-/// counting as one with its message, and panics with every failure.
-///
-/// Called BEFORE a caller asserts its yield floors: three real failures drive
-/// the counters far below them, so asserting a floor first would report a
-/// miscompile as a yield message and discard its BEFORE/AFTER dumps.
+/// Runs `check` on each of `seeds`, stopping at the third failure (a panic
+/// counts), and panics with every failure. Runs before a caller's yield
+/// floors, so a miscompile reports its dumps rather than a low yield.
 fn sweep(seeds: std::ops::Range<u64>, mut check: impl FnMut(u64) -> Result<(), String>) {
     let mut failures = Vec::new();
     for seed in seeds {
@@ -1480,10 +1443,7 @@ fn a_range_contains_every_runtime_value() {
                 }
                 let iv = ranges.range_of(v, at);
                 checks += 1;
-                // A width past the carrier is refused with `top(u128::MAX)`,
-                // which is the only sound answer and nothing to compare a
-                // value against. Pinned here: a NARROWER answer there would be
-                // a claim the analysis cannot hold.
+                // A width past the carrier must answer `top(u128::MAX)`.
                 let Some(m) = f.value_type_opt(v).unwrap().int_mask_u128() else {
                     wide += 1;
                     assert!(
@@ -1492,8 +1452,6 @@ fn a_range_contains_every_runtime_value() {
                     );
                     return;
                 };
-                // The type is inside the carrier, so the value must be: an
-                // unmasked value here is an interpreter defect, not a wide one.
                 let val = u128::try_from(val).expect("a value inside the carrier");
                 if !iv.is_top(m) {
                     nontop += 1;
@@ -1512,26 +1470,16 @@ fn a_range_contains_every_runtime_value() {
         }
         Ok(())
     });
-    // Printed so the floors below can be re-baselined without editing this.
     eprintln!("checks {checks} nontop {nontop} wide {wide}");
-    // `Interval::top` satisfies the soundness check for every value, so a
-    // `range_of` that answered `top` everywhere passed while proving nothing.
-    // Measured at the committed seed count: checks ~4.18M, nontop ~2.45M,
-    // wide ~1.18M, so each ratio floor sits at half the measured margin.
-    //
-    // Population statistics, asserted only over the full seed range: a single
-    // CFG can legitimately check nothing, or have every range come out `top`
-    // (seed 5 does), and a narrowed `FUZZ_N` is how a real failure is
-    // bisected. Failing that run on an unrelated floor would read as a
-    // product defect.
+    // A `range_of` answering `top` everywhere passes the soundness check, so
+    // floors (half the measured margin) hold it to narrower answers. Asserted
+    // over the full seed range only: one CFG can legitimately check nothing.
     if n >= DEFAULT_FUZZ_SEEDS {
         assert!(checks > 0, "the range oracle compared nothing");
         assert!(
             nontop * 4 >= checks,
             "only {nontop} of {checks} ranges were narrower than top"
         );
-        // Without a width past the `u128` carrier the oracle never reads
-        // `index_range` where the old carrier had no bound to offer.
         assert!(
             wide * 8 >= checks,
             "only {wide} of {checks} ranges were past 128 bits"
@@ -1656,9 +1604,7 @@ fn a_phi_of_constants_holds_only_its_constants() {
         }
         Ok(())
     });
-    // Measured: 106 functions, 154 phis, 32022 observations at a point with
-    // a constant ruled out.  A floor over the full seed range only, as in
-    // `a_range_contains_every_runtime_value`.
+    // A floor over the full seed range only.
     eprintln!("functions {functions} phis {phis} checks {checks} ruled {ruled}");
     if n >= DEFAULT_FUZZ_SEEDS {
         assert!(
