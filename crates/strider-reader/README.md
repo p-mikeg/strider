@@ -58,4 +58,5 @@ so decoding or folding across it fails naming the type; the rule is
 `Ctx::unmodelled` in `src/elf/relocations/mod.rs`.
 
 On an image whose only PT_LOAD is RWX (the MIPS `vmlinux` shape) the ROM view
-is empty; supply your own `ReadOnlyMemory` over its constant data.
+is empty (under `got_is_rom`, its `.got` / `.data.rel.ro` aside); supply your
+own `ReadOnlyMemory` over its constant data.
