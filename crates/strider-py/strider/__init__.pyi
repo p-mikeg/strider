@@ -2,16 +2,13 @@
 
 The public API is the domain submodules `strider.ir`, `strider.lift`,
 `strider.cfg`, `strider.sleigh`, `strider.reader`, `strider.opt`,
-`strider.pattern` and `strider.template`, plus the single top-level
-`StriderError`. Import classes from their home submodule
-(`from strider.ir import Function`, `from strider.lift import Lifter`).
+`strider.pattern` and `strider.template`, plus `StriderError`. Import classes
+from their submodule (`from strider.ir import Function`).
 """
 
 from __future__ import annotations
 
-# Outside `__all__` but part of the surface: `explore.shutdown(port)` is the
-# supported way to stop an explorer `explore.visualize` started on another
-# thread.
+# Public, though outside `__all__`.
 from . import explore as explore
 from . import cfg as cfg
 from . import ir as ir
