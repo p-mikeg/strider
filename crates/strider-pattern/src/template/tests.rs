@@ -252,8 +252,8 @@ fn a_count_built_from_a_shift_takes_the_outer_shifts_width() {
     assert_eq!(shift_count(&fx, shl), (T::int(32), 2));
 }
 
-/// A count that does not fit the shift's width saturates, as p-code tests
-/// the whole count: masked, `2^32 + 3` would shift an `I32` by 3.
+/// A count that does not fit the shift's width becomes `mask | width`, as p-code
+/// tests the whole count: masked alone, `2^32 + 3` would shift an `I32` by 3.
 #[test]
 fn a_fresh_shift_count_too_wide_for_the_shift_saturates() {
     let a = Capture::new();
@@ -276,9 +276,8 @@ fn sign_test_over(width: u16) -> Function {
     .unwrap()
 }
 
-/// A count the shift's width holds is kept as written, the width itself
-/// and past it included; one it does not hold saturates, `2^w` and a
-/// non-power-of-two width included, under every shift.
+/// A count the shift's width holds is kept as written, even at or past the
+/// width; one it does not hold becomes `mask | width`, under every shift.
 /// Mutation: saturate every count at or past the width.
 #[test]
 fn a_fresh_shift_count_saturates_only_where_the_width_cannot_hold_it() {
