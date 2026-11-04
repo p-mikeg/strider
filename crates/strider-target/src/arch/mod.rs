@@ -10,10 +10,8 @@ pub use names::ArchNames;
 
 use crate::family::{self, DecodeFacts, Family};
 
-/// Emits `ArchPreset`, its [`ArchPreset::ALL`] roster and every per-preset
-/// fact from one row list, so no roster can omit a preset and no per-preset
-/// answer can drift from the variant it belongs to. Each row's doc lands on
-/// the variant and on its constructor alike.
+/// Emits `ArchPreset`, [`ArchPreset::ALL`] and every per-preset fact from one
+/// row list; each row's doc lands on the variant and its constructor.
 macro_rules! arch_presets {
     ($(
         $(#[$doc:meta])*
@@ -51,10 +49,8 @@ macro_rules! arch_presets {
                 self.family().name
             }
 
-            /// The Ghidra language definitions file this preset is a row of,
-            /// under the vendored processors tree, e.g.
-            /// `"x86/data/languages/x86.ldefs"`. Its first component is the
-            /// processor directory.
+            /// The Ghidra `.ldefs` file this preset is a row of, e.g.
+            /// `"x86/data/languages/x86.ldefs"`.
             #[must_use]
             pub const fn ghidra_ldefs(self) -> &'static str {
                 self.family().ghidra_ldefs
@@ -73,9 +69,6 @@ macro_rules! arch_presets {
             }
 
             /// The arch this preset names, inverse of [`SleighArch::preset`].
-            ///
-            /// Only the roster-sweeping tests need the inverse; a caller
-            /// holding a preset names the constructor directly.
             #[cfg(any(test, feature = "test-util"))]
             #[must_use]
             pub fn arch(self) -> SleighArch {
@@ -87,8 +80,6 @@ macro_rules! arch_presets {
             $(
                 $(#[$doc])*
                 pub fn $ctor() -> SleighArch {
-                    // A `static`, not the `const` itself: a const's bytes are
-                    // emitted again wherever this constructor is inlined.
                     static SLA: rsleigh::sla_spec::SlaSpec = rsleigh::sla_spec::$sla;
                     static PSPEC: rsleigh::pspec::PSpec = rsleigh::pspec::$pspec;
                     SleighArch {
@@ -111,24 +102,12 @@ arch_presets! {
     /// Legacy **BE32** ARM 32-bit: big-endian instructions AND data,
     /// pre-ARMv6.
     ///
-    /// Modern ARMv6+ big-endian Linux is **BE8** (little-endian
-    /// instructions, big-endian data, flagged `EF_ARM_BE8`), not BE32.
-    /// This spec byte-reverses every instruction word and fails almost
-    /// every decode on such a binary; use [`SleighArch::arm_be_kernel`].
-    ///
-    /// The sla still decodes NEON, which no BE32 core has (ARMv7 removed
-    /// BE32), and disagrees with itself on lane order there: a lane load
-    /// or store (`vld1.32 {d0[0]}`) addresses lane 0 at the D register's
-    /// high word, a core-register `vmov` (`vmov.32 r0, d0[0]`) at its low
-    /// word.  NEON lane values under this preset are not meaningful.
+    /// ARMv6+ big-endian Linux is BE8: use [`SleighArch::arm_be_kernel`].
+    /// NEON lane values under this preset are not meaningful: the sla
+    /// disagrees with itself on lane order.
     ArmBe => "arm_be", arm_be, ARM32, SLA_SPEC_ARM8_BE, PSPEC_ARMT, Big, Big, "ARM:BE:32:v8";
     /// **BE8** ARM 32-bit (GHIDRA's `ARM:LEBE:32`): little-endian
-    /// instructions, big-endian data, i.e. modern ARMv6+ big-endian.
-    /// Every ARMv6+ big-endian Linux target, kernel and userland, is this.
-    ///
-    /// `SLA_SPEC_ARM8_BE8` is `SLA_SPEC_ARM8_LE` with the transfers
-    /// whose bytes depend on the data order, the `vld1` / `vst1`
-    /// multiple-element forms, made one per element.
+    /// instructions, big-endian data; every ARMv6+ big-endian Linux target.
     ArmBeKernel => "arm_be_kernel", arm_be_kernel, ARM32, SLA_SPEC_ARM8_BE8, PSPEC_ARMT, Big, Little, "ARM:LEBE:32:v8LEInstruction";
     /// ARM 32-bit `-mthumb`: Cortex-M pspec defaults over the full-ARM-state
     /// sla, so ARM state stays reachable (`arm-linux-gnueabihf-gcc -mthumb`).
@@ -146,14 +125,10 @@ arch_presets! {
     /// `powerpc-linux-gnu-gcc -mlittle-endian`.
     Ppc32Le => "ppc32le", ppc32le, PPC, SLA_SPEC_PPC_32_LE, PSPEC_PPC_32, Little, Little, "PowerPC:LE:32:default";
     /// `powerpc64-linux-gnu-gcc`, ELFv1 ABI with function descriptors.
-    /// Needs the Power ISA + Altivec sla spec: the stripped `PPC_64_BE`
-    /// spec rejects Power7+ scalar ops (`popcntw`, `popcntd`, `cntlzd`,
-    /// `cnttzd`) and Altivec vector ops with `Unable to resolve
-    /// constructor`.
+    /// Uses the Power ISA + Altivec sla.
     Ppc64Be => "ppc64be", ppc64be, PPC, SLA_SPEC_PPC_64_ISA_ALTIVEC_BE, PSPEC_PPC_64, Big, Big, "PowerPC:BE:64:A2ALT";
-    /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI: no function descriptors and
-    /// no dot-prefixed symbols.  Power ISA + Altivec sla spec, see
-    /// [`SleighArch::ppc64be`].
+    /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI. Uses the Power ISA + Altivec
+    /// sla.
     Ppc64Le => "ppc64le", ppc64le, PPC, SLA_SPEC_PPC_64_ISA_ALTIVEC_LE, PSPEC_PPC_64, Little, Little, "PowerPC:LE:64:A2ALT";
 }
 
@@ -167,8 +142,7 @@ pub struct SleighArch {
 }
 
 impl SleighArch {
-    /// A Sleigh over `reader` from this preset's sla and pspec: the one place
-    /// a Sleigh is built for an arch.
+    /// A Sleigh over `reader` from this preset's sla and pspec.
     ///
     /// # Errors
     ///
@@ -188,16 +162,10 @@ impl SleighArch {
         self.endianness
     }
 
-    /// The byte order of the Sleigh REGISTER space, which the sla fixes at
-    /// compile time via `ENDIAN` and which is NOT always the data order.
-    ///
-    /// `arm_be_kernel` is BE8: a little-endian sla (little-endian instruction
-    /// encoding) with big-endian data, mirroring GHIDRA's `ARM:LEBE:32`. Its
-    /// register block therefore took the `@if ENDIAN == "little"` branch of
-    /// `ARM.sinc`, where `d0` is the LOW half of `q0`; the big-endian branch
-    /// reverses the name lists instead. Sub-register slicing and REGISTER-space
-    /// loads and stores must follow this, while every other load and store
-    /// follows [`Self::endianness`].
+    /// The byte order of the Sleigh REGISTER space (the sla's `ENDIAN`), which
+    /// sub-register slicing and REGISTER-space accesses follow. Not always the
+    /// data order: `arm_be_kernel` is a little-endian sla with big-endian
+    /// data.
     pub fn register_endianness(&self) -> Endianness {
         self.preset.register_endianness()
     }
@@ -218,63 +186,25 @@ impl SleighArch {
         &self.preset.family().facts
     }
 
-    /// The context variable holding the address-low-bit ISA mode, or `None` on
-    /// arches with no such mode (they decode from the pspec default).
-    ///
-    /// `arm_thumb` is included: it is `-mthumb` over the full-ARM-state
-    /// `SLA_SPEC_ARM8_LE`, so ARM-state code (gcc's `call_weak_fn`, veneers)
-    /// still appears at even addresses and a resolved `bx` still interworks.
+    /// The context variable holding the address-low-bit ISA mode, or `None`.
+    /// `arm_thumb` has one: ARM-state code still appears in a `-mthumb` image.
     #[must_use]
     pub fn isa_mode_var(&self) -> Option<&'static str> {
         self.facts().isa_mode_var
     }
 
-    /// The context vars whose value AT AN ADDRESS a constructor commits, and
-    /// which therefore have to be re-derived from this build's own decode
-    /// rather than read out of the engine.
+    /// Context vars a constructor commits at an address, which a CFG build
+    /// erases and re-derives by re-lifting the committing instruction.
     ///
-    /// What the erase re-derives FROM depends on whether the sla declares the
-    /// var FLOWING, which [`crate::DecodeTables::flow_commit`] records.
+    /// A `noflow` var ([`crate::DecodeTables::flow_commit`]) covers one
+    /// address, so it erases to the pspec default. A flowing one paints
+    /// forward to persist, so it erases to the predecessor's value. Both
+    /// must be listed: a forward pin stops at the var's next change point,
+    /// exactly where a stale commit sits.
     ///
-    /// A `noflow` commit covers one address
-    /// (`ParserContext::applyCommits` gives it `setContextRegion(a, a+1)`), so
-    /// its value at `inst_next` is a fact of one instruction's decode and the
-    /// pspec default is the right erase target. A FLOWING commit is
-    /// `setContextChangePoint`: it paints forward because it is MEANT to
-    /// persist, so erasing it to the default would destroy it at every
-    /// `inst_next` and re-establish it only where the committing instruction
-    /// happens to be the predecessor -- which decoded the second ThumbEE
-    /// instruction after an ARM `enterx` as plain Thumb. A flowing var is
-    /// therefore erased to the value in force at the PREDECESSOR, reproducing
-    /// the flow, and the re-lift then re-applies any commit of its own.
-    ///
-    /// Both classes must be listed. The CFG build trusts a snapshot of every
-    /// flowing var at a recorded `inst_next`, and a pin cannot clean one up: a
-    /// forward paint stops at the next CHANGE POINT of that var, which is
-    /// exactly where an earlier build's commit sits. Leaving ARM `TEEMode`
-    /// out let a stale ThumbEE mode survive into a later `build_cfg` and drop
-    /// a `Store`.
-    ///
-    /// Named directly, not via the flow-var views: ARM's `condit` is a
-    /// `noflow` field spanning bits 5..13, so one name clears the whole
-    /// IT-block state, where the six overlapping flowing views that tile those
-    /// bits would each need separate care.
-    ///
-    /// ARM `LRset` is `noflow` and committed at `inst_next` too, but belongs to
-    /// [`Self::transient_decode_vars`], which erases it to the default WITHOUT
-    /// a re-lift because a `mov lr, pc` state must not survive a region
-    /// boundary at all.
-    ///
-    /// Only ARM among the presets here. x86 and AArch64 contain no `globalset`
-    /// at all; MIPS commits `ISA_MODE` only at a `jalx` call target, an
-    /// ISA-mode var the CFG build holds per region instead (a callee below the
-    /// caller paints the caller's bytes), and its `PAIR_INSTRUCTION_FLAG` / `ext_delay`
-    /// are `noflow` and go to [`Self::transient_decode_vars`]; PowerPC's
-    /// `linkreg` IS committed to a differing value by `mtlr`
-    /// (`ppc_embedded.sinc:155`) and is flowing, but every constructor it
-    /// selects emits p-code identical to its `linkreg=0` twin, so a stale
-    /// value cannot change the lift, which
-    /// `a_stale_linkreg_cannot_change_a_powerpc_lift` pins.
+    /// Only ARM (`condit`, `TEEMode`) needs any. PowerPC `linkreg` is
+    /// committed but cannot change the lift
+    /// (`a_stale_linkreg_cannot_change_a_powerpc_lift`).
     #[must_use]
     pub fn flow_commit_vars(&self) -> &'static [&'static str] {
         self.facts().flow_commit_vars
@@ -287,28 +217,10 @@ impl SleighArch {
         self.facts().has_delay_slots
     }
 
-    /// Context vars the sla declares `noflow` that still change which
-    /// constructor matches, so a value committed by one function is a decode
-    /// change for the next on a reused engine and a cold entry must clear them.
-    ///
-    /// Erased to the pspec default with NO re-lift, which is what separates
-    /// these from [`Self::flow_commit_vars`]: a `mov lr, pc` state must not
-    /// survive a region boundary at all, where a committed IT state has to be
-    /// re-derived rather than cleared.
-    ///
-    /// The decoder's flowing-context snapshots and pins cannot see these: they
-    /// cover the sla's FLOWING set, which excludes these by definition. ARM's
-    /// `LRset` picks `call [pc]` over `goto [pc]` for `bx`
-    /// (`ARMinstructions.sinc`), and `REToverride` / `CALLoverride` reclassify
-    /// a return and a call the same way. MIPS's `PAIR_INSTRUCTION_FLAG`
-    /// (`mips.sinc:412`) selects the `lwl`/`swl`/`ldl`/`sdl` constructor that
-    /// does the whole unaligned access against the one that does half, and
-    /// `ext_delay` (`mips.sinc:450`) is subtracted from the PC-relative address
-    /// MIPS16e `OFF_M16PC` computes (`mips16.sinc:164`). `LRset`,
-    /// `PAIR_INSTRUCTION_FLAG` and `ext_delay` are committed by `globalset`, so
-    /// a commit outlives the function that made it. `REToverride` /
-    /// `CALLoverride` are only ever read; clearing them costs nothing and keeps
-    /// the list one rule.
+    /// `noflow` context vars that change which constructor matches, erased to
+    /// the pspec default with no re-lift at every region start (unlike
+    /// [`Self::flow_commit_vars`]): ARM `LRset` / `REToverride` /
+    /// `CALLoverride`, MIPS `PAIR_INSTRUCTION_FLAG` / `ext_delay`.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
         self.facts().transient_decode_vars
@@ -318,56 +230,25 @@ impl SleighArch {
     /// `container` may be lifted as a write of that slice alone, leaving the
     /// enclosing register's other bytes as they were.
     ///
-    /// It may only where the machine leaves them alone and the sla says so by
-    /// writing the slice alone: x86 8- and 16-bit GPR destinations and legacy
-    /// SSE into a VEX-widened register (a 32-bit destination zero-extends, and
-    /// the sla emits that zext itself).
-    ///
-    /// The x87 `ST` registers, the only 10-byte register on either x86 preset,
-    /// are not among them: their `MM` slices are a differently-typed view, and
-    /// an MMX write redefines the sign and exponent a slice write would
-    /// preserve. `ST0`/`ST1` are float return registers, so those bits would be
-    /// returned.
-    ///
-    /// Elsewhere the slice write would read bytes the machine redefines.
-    /// AArch64 zeroes them and the fork's sla emits the zext, so a slice write
-    /// is sound there, but it reads the incoming register first and that read
-    /// becomes a phantom argument carrier. ARM32, MIPS and PowerPC keep the
-    /// whole-container clobber too, which is opaque rather than wrong.
+    /// True on x86 except for the 10-byte x87 `ST` registers, whose MMX
+    /// write redefines the sign and exponent. Elsewhere the whole container
+    /// is clobbered.
     #[must_use]
     pub fn callother_output_is_exact_in(&self, container: &rsleigh::Vn) -> bool {
         self.facts().callother_output_exact && container.size != 10
     }
 
     /// Registers the sla declares for its own semantics rather than as
-    /// processor state: scratch a constructor writes and reads within one
-    /// instruction, or storage the decompiler fakes.  No callee can read them.
-    ///
-    /// ARM `mult_addr` / `mult_dat8` / `mult_dat16` walk a `push` / `pop` /
-    /// `ldm` / `stm` over its list (`ARM.sinc:13-16`), so `mult_addr` holds a
-    /// stack address after every `push`, and `tmpNG`.. hold flags mid-compute
-    /// (`:11`).  AArch64 `tmp_ldWn`.. carry a loaded or stored value
-    /// (`AARCH64instructions.sinc:419-422`), `VecMemAddr` / `VectorSelem` /
-    /// `VecRegAddr` an address a vector load or store steps (`:68-71`),
-    /// `glob_mask32` / `glob_mask64` a computed mask (`:64-65`), `TMPZ1`.. SIMD
-    /// intermediates (`:543`), `tmpCY`.. flags (`:62`).  x86 `xmmTmp1` /
-    /// `xmmTmp2` (`ia.sinc:140`).  MIPS `tsp` steps the stack over a microMIPS
-    /// `lwm` / `swm` list (`mips.sinc:368`, `mipsmicro.sinc:430`).  PowerPC
-    /// `r2Save` is fake storage for the TOC (`ppc_common.sinc:72`), and
-    /// `RESERVE_ADDRESS` the load-reservation address `lwarx` records
-    /// (`:53`), which only a later `stwcx` on the same thread consults.
+    /// processor state (per-instruction scratch, fake storage such as
+    /// PowerPC `r2Save`), which no callee can read.
     #[must_use]
     pub fn internal_registers(&self) -> &'static [&'static str] {
         self.facts().internal_registers
     }
 
-    /// REGISTER-space byte ranges, `[start, end)`, whose value changes between
-    /// two reads with nothing writing it: a free-running counter such as
-    /// AArch64 `cntvct_el0`, the PowerPC timebase or MIPS CP0 `Count`.
-    ///
-    /// The pspec's `<volatile>` ranges and `volatile` registers, which make
-    /// every AArch64 system register volatile, plus the family's own
-    /// additions, less the family's exclusions (AArch64 `sp_el0`).
+    /// REGISTER-space byte ranges whose value changes with nothing writing
+    /// it: the pspec's volatile ranges and registers plus the family's
+    /// additions, less its exclusions.
     ///
     /// # Errors
     ///
@@ -408,11 +289,8 @@ impl SleighArch {
         Ok(ranges)
     }
 
-    /// The ISA-mode context a cold entry at `entry_addr` decodes in, as
-    /// `(context_var, value)`: the address low bit set means the alternate ISA
-    /// (ARM Thumb, MIPS16e), clear means the base one. The instruction itself
-    /// is at `entry_addr & !1`. Which alternate ISA a MIPS preset means is
-    /// fixed by its pspec, see [`Self::isa_mode_var`].
+    /// The `(context_var, value)` a cold entry at `entry_addr` decodes in:
+    /// the address low bit selects the alternate ISA (Thumb, MIPS16e).
     pub fn entry_mode_context(&self, entry_addr: u64) -> Option<(&'static str, u32)> {
         self.isa_mode_var()
             .map(|var| (var, u32::from(entry_addr & 1 == 1)))

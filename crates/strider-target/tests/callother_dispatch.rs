@@ -8,7 +8,7 @@ fn expect_call(c: Option<CallOtherClass>) -> CallOtherAbi {
     }
 }
 
-/// `software_interrupt` is declared only by ARM (`ARM.sinc:146`), and the
+/// `software_interrupt` is declared only by ARM (`ARM.sinc`), and the
 /// four ARM32 presets are the only ones an ARM sla decodes for, so the name
 /// reaching any other preset would be a caller's typo, not an op.
 #[test]
