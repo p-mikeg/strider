@@ -419,7 +419,8 @@ class MemAccessPat(Protocol):
         """Constrain the address operand (`inputs[1]`)."""
         ...
     def bit_width(self: _S, n: int) -> _S:
-        """Filter by accessed-value width in bits."""
+        """Filter by accessed-value width in bits. A width no value type has
+        raises `StriderError`."""
         ...
     def space(self: _S, s: VnSpace) -> _S:
         """Restrict the match to a specific memory space."""
