@@ -88,7 +88,7 @@ impl Function {
         self.memos.borrow().memory_offsets[value]
     }
 
-    /// `(base, byte offset from base)`.  `None` when unknown or provably not
+    /// `(base, byte offset from base)`. `None` when unknown or provably not
     /// memory-rooted (neither stack- nor heap-rooted).
     #[inline]
     #[cfg(any(test, feature = "test-util"))]

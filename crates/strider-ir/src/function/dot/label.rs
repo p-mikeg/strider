@@ -39,7 +39,7 @@ impl FunctionDotDumper<'_> {
     }
 
     /// Appends a `base sp +/- K` line to a Store/Load label when the node has a
-    /// Stack-class `memory_offsets` entry.  The base may be the entry SP
+    /// Stack-class `memory_offsets` entry. The base may be the entry SP
     /// or a masked SP.
     fn with_sp_offset(&self, node: NodeId, label: String) -> String {
         match self.function.stack_offset(node) {
@@ -182,7 +182,7 @@ impl FunctionDotDumper<'_> {
     }
 
     /// Return inputs are `[ctrl, mem, ret_val_regs[0], ...]`, so slot `i + 2` is
-    /// `ret_val_regs[i]`.  `None` when the slot is out of range of the stored
+    /// `ret_val_regs[i]`. `None` when the slot is out of range of the stored
     /// convention.
     pub(super) fn return_ret_name(&self, input_slot: usize) -> Option<String> {
         let i = input_slot.checked_sub(2)?;
