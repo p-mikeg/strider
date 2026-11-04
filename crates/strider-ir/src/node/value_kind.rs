@@ -1,5 +1,3 @@
-use anyhow::anyhow;
-
 use super::value_type::ValueType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,11 +36,6 @@ impl ValueKind {
             Self::Typed(v) => Some(v),
             Self::Control | Self::PhiToken | Self::Memory => None,
         }
-    }
-
-    pub fn as_value_or_err(self) -> crate::Result<ValueType> {
-        self.as_value()
-            .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
     }
 
     #[inline]
