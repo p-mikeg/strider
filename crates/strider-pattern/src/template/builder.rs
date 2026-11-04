@@ -1,5 +1,3 @@
-//! Construction verbs for a [`Template`].
-
 use strider_ir::node::{NodeKind, ValueType};
 
 use crate::build_graph::BuildGraph;

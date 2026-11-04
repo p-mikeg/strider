@@ -592,7 +592,7 @@ enum AnchorKind {
     None,
 }
 
-/// The one constraint a sibling-output vertex carries.
+/// The constraint a sibling-output vertex carries.
 #[derive(Clone, Copy)]
 pub enum OutputAspect {
     Capture(Capture),

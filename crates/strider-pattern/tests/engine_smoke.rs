@@ -89,11 +89,8 @@ fn force_ordered_disables_commutative_swap() {
 
 #[test]
 fn cast_walk_through_matches_under_extend() {
-    // IR is `Add(ZeroExtend(var:I32):I64, const:I64)`; the operand is a var read
-    // rather than a const because a const would fold instead of producing an
-    // `Extend`. Pinning the `anything` leaf to the var's I32 width makes the cast
-    // load-bearing: without walk-through the matcher sees the I64 ZeroExtend
-    // output, with EXTEND walk-through it unwraps to the I32 inner value.
+    // `Add(ZeroExtend(var:I32):I64, const:I64)`, a var since a const would fold. The leaf is
+    // pinned to I32, so only an EXTEND walk-through reaches it.
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::reg_vn;
 

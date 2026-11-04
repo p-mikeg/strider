@@ -1,5 +1,3 @@
-//! [`anyhow::Result`], plus the [`RewriteSkip`] sentinel by which a rewrite rule declines.
-
 pub type Result<T> = anyhow::Result<T>;
 
 /// Returned from a rewrite RHS closure to decline the rewrite; see [`is_skip`].
