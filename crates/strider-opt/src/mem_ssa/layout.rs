@@ -201,13 +201,6 @@ impl MemLayout {
         !self.pos.tangled.contains(&true)
     }
 
-    /// `None` on an irreducible memory graph; superseded by
-    /// [`Self::is_reducible`].
-    #[cfg(test)]
-    pub(crate) fn positions(&self) -> Option<&Positions> {
-        self.is_reducible().then_some(&self.pos)
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.node.len()
     }
