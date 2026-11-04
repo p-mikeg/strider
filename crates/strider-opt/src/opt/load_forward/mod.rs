@@ -14,7 +14,7 @@ use strider_ir::{Function, IRBuilderExt, IRViewer, UBig};
 
 use crate::Result;
 use crate::const_eval::LoadSlice;
-use crate::mem_analysis::{MemQuery, Policy, ReachingDef, narrow_load_to};
+use crate::mem_analysis::{Loc, MemQuery, Policy, ReachingDef, narrow_load_to};
 
 pub struct LoadForward;
 
@@ -24,6 +24,8 @@ pub(crate) struct Sweep {
     query: MemQuery,
     /// A memory value to the earliest one it equals.
     settled: FxHashMap<ValueId, ValueId>,
+    /// A load's memory edge and location to where the settle loop leaves it.
+    ends: FxHashMap<(ValueId, Loc), ValueId>,
 }
 
 // Not `PROPAGATE`: a forward reaches a consumer only through an address
@@ -48,6 +50,12 @@ impl crate::peephole::PeepholePass for LoadForward {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Rounds of [`try_forward_load`]'s settle loop.
+    pub(crate) static SETTLE_ROUNDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// Narrows `load`'s memory edge, then forwards an exact-match store's value.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
@@ -58,20 +66,36 @@ fn try_forward_load(
 
     let query = &sweep.query;
     let policy = Policy::forward(edit.function());
+    let loc = Loc::read_by(edit.function(), load);
     let mut reaching = query.reach_and_narrow(edit, load, policy);
+    let mut path = Vec::new();
     // Each round lifts the edge onto a strict dominator.
     while !matches!(reaching, ReachingDef::Match(_)) {
+        #[cfg(test)]
+        SETTLE_ROUNDS.with(|c| c.set(c.get() + 1));
         let mem = edit.load_mem(load);
         // Outside the reach no arm is known to dominate its merge.
         if !query.reaches(edit.function(), edit.producer(mem)) {
             break;
         }
+        if let Some(&end) = sweep.ends.get(&(mem, loc)) {
+            if end != mem {
+                narrow_load_to(edit, load, edit.producer(end));
+                reaching = query.reach_and_narrow(edit, load, policy);
+            }
+            break;
+        }
+        path.push(mem);
         let earlier = settle(&mut sweep.settled, edit.function(), mem);
         if earlier == mem {
             break;
         }
         narrow_load_to(edit, load, edit.producer(earlier));
         reaching = query.reach_and_narrow(edit, load, policy);
+    }
+    let end = edit.load_mem(load);
+    for mem in path {
+        sweep.ends.insert((mem, loc), end);
     }
 
     let ReachingDef::Match(clobber_node) = reaching else {
@@ -106,6 +130,7 @@ fn try_forward_load(
         })
     {
         query.forget_answers();
+        sweep.ends.clear();
     }
     // The store and the load's address are the forward's proof.
     let forwarded_node = edit.producer(forwarded);
