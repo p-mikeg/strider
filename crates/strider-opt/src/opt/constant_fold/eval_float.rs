@@ -11,9 +11,8 @@ macro_rules! eval_binary {
             FloatBinaryOp::Mul => l * r,
             FloatBinaryOp::Div => l / r,
         };
-        // IEEE 754 does not fix a NaN's quiet bit, payload or sign, so folding
-        // one would bake in this host's encoding instead of the target's.
-        // Non-NaN results are bit-portable under default rounding.
+        // A NaN's encoding is host-specific; non-NaN results are portable
+        // under default rounding.
         if result.is_nan() {
             None
         } else {
@@ -65,9 +64,7 @@ pub(crate) fn eval_float_binary(
     match ty {
         ValueType::Float(32) => eval_binary!(f32, op, bits_l as u32, bits_r as u32),
         ValueType::Float(64) => eval_binary!(f64, op, bits_l, bits_r),
-        // Only f32 / f64 have host arithmetic, so F16 / F80 / F128 never fold;
-        // the rule skips and the node survives for pattern queries, which care
-        // about graph shape rather than values.
+        // Only f32 / f64 have host arithmetic.
         ValueType::Int(_) | ValueType::Float(_) => None,
     }
 }
