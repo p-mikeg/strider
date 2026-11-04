@@ -32,15 +32,13 @@ lft = strider.lift.lifter(x86, mem)
 cdecl = sleigh.CallingConvention.x86_cdecl()
 
 
-# ---------------------------------------------------------------- discovery
-
 # Every user-op name this architecture can emit, indexed by user-op id.
 names = lft.user_op_names()
 print(f"x86 user-ops: {len(names)}, including 'swi' ({'swi' in names})")
 
-# What strider already believes about one. `int 0x80` lifts to `swi`, which
-# carries every x86 software interrupt, so the table can say only that memory
-# is clobbered: which registers a vector reads is the OS's convention.
+# `int 0x80` lifts to `swi`, which carries every x86 software interrupt, so the
+# table says only that memory is clobbered; the registers a vector reads are
+# the OS's convention.
 swi = lft.call_other_abi("swi")
 assert swi is not None
 print(
@@ -48,8 +46,7 @@ print(
     f"clobbers_memory={swi.clobbers_memory}"
 )
 
-# A footprint fixed by the architecture is in the table already: x86-64 has
-# one syscall convention, so `syscall` carries it.
+# x86-64 has one syscall convention, so the table carries it.
 x86_64 = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)
 syscall = x86_64.call_other_abi("syscall")
 assert syscall is not None
@@ -61,8 +58,6 @@ print(
 # `None` is no answer at all, and fails the lift of any function containing it.
 print(f"x86 sysenter: {lft.call_other_abi('sysenter')}")
 
-
-# ------------------------------------------------- CallOtherAbi.custom
 
 # Raw CallOther inputs are [ctrl, mem, implicit reads..., p-code operands...],
 # and `CallOtherPat.arg` indexes them unshifted.
@@ -122,8 +117,6 @@ assert setup_constants(default) == 0
 assert operands(overridden) == [4, 1, 0x2000, 12, 0x80]
 assert setup_constants(overridden) == 4
 
-
-# --------------------------------------------- CallingConvention.custom
 
 # EBX and ECX carry the arguments, EAX the result, and `ret` pops the 4-byte
 # return address x86's `call` pushed. An unknown register name, or a link
