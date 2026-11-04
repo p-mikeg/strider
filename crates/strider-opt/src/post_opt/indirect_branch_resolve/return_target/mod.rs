@@ -1,9 +1,7 @@
-//! Whether a return instruction jumps back to the address the function was
-//! entered with.
+//! Whether a return jumps back to the address the function was entered with.
 //!
-//! Here: the claim types and the fixpoint over them.  [`claims`] holds the
-//! rule per claim, [`feasible`] which phi arm control can have taken, and
-//! [`stack`] the stack-memory engine the rules probe.
+//! [`claims`] holds the rule per claim, [`feasible`] which phi arm control can
+//! have taken, and [`stack`] the stack-memory probes.
 
 mod claims;
 mod feasible;
@@ -13,27 +11,20 @@ use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, ValueId};
 use strider_ir::{CtrlKey, DominatorTree, Function};
 
-/// Answers, for the address each Sleigh `RETURN` op of one function jumps to,
-/// whether it is the one the function was entered with: the entry link
-/// register, or on a stack-push ISA the entry-SP slot a `call` pushed it into.
+/// Verifies that a function's return sites jump to the address it was entered
+/// with: the entry link register, or on a stack-push ISA the entry-SP slot a
+/// `call` pushed it into.  Saved return addresses and saved stack pointers are
+/// followed back through the stores that saved them.
 ///
-/// Read off the optimised IR, so a return address saved to the stack and
-/// restored is followed back to the store that saved it, and a stack pointer
-/// saved in a realigned frame back to the store that saved it. `false` when
-/// that cannot be shown, and the site is then an indirect branch.
-///
-/// A RAM store the address spine does not place on the entry stack, and any
-/// callee or user-op, rest on one claim,
-/// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions::return_slots_survive_untracked_writes):
-/// code that breaks it smashes its own stack. Without it, such a store's
-/// address is located the way a load's is, and a store no location is reached
-/// for is taken to clobber the slot, unless a claim the function holds puts it
-/// off the stack: a constant address under `stack_global_disjoint`, or a
-/// listed allocator's memory.
+/// A RAM store not placed on the entry stack, and any callee or user-op, leave
+/// the slot intact under
+/// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions::return_slots_survive_untracked_writes).
+/// Without it, such a store is located the way a load is and clobbers the slot
+/// unless a held claim puts it off the stack (`stack_global_disjoint`, a listed
+/// allocator).
 pub struct ReturnTargets<'f> {
     function: &'f Function,
-    /// Every claim a query has decided. Return sites mostly share their
-    /// claims, and each is explored once.
+    /// Every claim a query has decided, shared across sites.
     settled: FxHashMap<Claim, bool>,
     doms: Option<DominatorTree<CtrlKey>>,
     feasible: FxHashMap<(CtrlKey, NodeId), Option<usize>>,
@@ -87,8 +78,7 @@ enum StoreEffect {
 }
 
 impl<'f> ReturnTargets<'f> {
-    /// The verifier for `function`'s return sites under its claims, with no
-    /// claim decided yet; each query reuses the claims earlier ones settled.
+    /// The verifier for `function`'s return sites under its claims.
     #[must_use]
     pub fn new(function: &'f Function) -> Self {
         Self {
@@ -105,9 +95,9 @@ impl<'f> ReturnTargets<'f> {
     /// Whether `target`, the address `ret` jumps to, is the address the
     /// function was entered with.
     ///
-    /// A claim holds unless one it rests on fails outright, so a cycle of
-    /// claims (a loop rewriting a slot with its own value, a phi of itself)
-    /// brings in no value of its own. Linear in the claims reached.
+    /// A claim holds unless one it rests on fails, so a cycle of claims (a
+    /// loop rewriting a slot with its own value) holds.  Linear in the claims
+    /// reached.
     pub fn returns_to_caller(&mut self, ret: NodeId, target: ValueId) -> bool {
         let root = Claim::Holds {
             path: Some(CtrlKey::Node(ret)),
@@ -121,11 +111,9 @@ impl<'f> ReturnTargets<'f> {
         let mut dependents: Vec<Vec<usize>> = vec![Vec::new()];
         let mut failed: Vec<usize> = Vec::new();
         let mut premises = Vec::new();
-        // The one offset from the entry SP a value is claimed at, per path.
-        // Per query: an offset a failed probe wrote would otherwise refuse the
-        // right one at the next site. Still first-wins WITHIN the query, so of
-        // two contradictory claims on one key the later one fails whichever it
-        // is, and `settled` carries that `false` to every later query.
+        // The offset from the entry SP each value is claimed at, per path;
+        // first wins. Per query, so a failed probe's offset does not refuse
+        // the right one at the next site.
         let mut claimed: FxHashMap<(Path, ValueId), i128> = FxHashMap::default();
         let mut next = 0;
         while let Some(&claim) = claims.get(next) {

@@ -1,13 +1,9 @@
-//! Read-only abstract evaluation of a jump-table dispatch cone: the concrete
-//! branch target for a concrete index, computed in producers-before-consumers
-//! order.
+//! Abstract evaluation of a jump-table dispatch cone: the concrete target for
+//! a concrete index.
 //!
-//! An abstract value is either a concrete number or SP-relative, because the SP
-//! is symbolic and a stack address cannot be a pure number.  Four foldings do
-//! the work: ConstFold arithmetic, a constant-address ROM read, an SP-relative
-//! load resolved against the store reaching it, and a `Phi` whose arms agree.
-//! Any unresolved value, a non-const dispatch result, or a cycle yields
-//! `None`.
+//! A value is a constant or SP-relative.  Four foldings: constant arithmetic, a
+//! constant-address ROM read, an SP-relative load of the store reaching it, and
+//! a `Phi` whose arms agree.  Anything else, or a cycle, yields `None`.
 
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -36,8 +32,7 @@ pub(crate) struct Evaluator<'a> {
     /// Each folded value, and whether its fold read the pinned index.
     map: FxHashMap<ValueId, (Abs, bool)>,
     pinned: Option<ValueId>,
-    /// Answers every reaching-store probe, held so they share one memory index
-    /// and one set of options.
+    /// Answers every reaching-store probe.
     mem_index: MemQuery,
 }
 
@@ -51,19 +46,13 @@ impl<'a> Evaluator<'a> {
             rom,
             map: FxHashMap::default(),
             pinned: None,
-            // The probe climbs the memory dominator tree, which answers at or
-            // nearer than the path walk it replaced.
             mem_index: MemQuery::default(),
         }
     }
 
-    /// Opens an index: pins `idx_value` and drops every value whose fold read
-    /// the previous index, or every value when the pinned value changes.
-    ///
-    /// The rest is kept: a fold that read no pinned value is a function of
-    /// the graph alone, so the table base, a GOT chain or an SP base folds
-    /// once per site.  The boundary is the INDEX, not the root: a branch's
-    /// target and ISA-mode cones overlap almost entirely, so they share it.
+    /// Pins `idx_value` to `idx`, dropping every fold that read the previous
+    /// pin, or every fold when the pinned value changes.  A pin-free fold is a
+    /// function of the graph alone, so it is kept across indices and roots.
     pub(crate) fn begin_index(&mut self, idx_value: ValueId, idx: u128) {
         if self.pinned == Some(idx_value) {
             self.map.retain(|_, (_, reads_pin)| !*reads_pin);
@@ -75,19 +64,14 @@ impl<'a> Evaluator<'a> {
             .insert(idx_value, (Abs::Const(UBig::from(idx)), true));
     }
 
-    /// Evaluates `dispatch` over `order` against the open index.
-    ///
-    /// Bailing on the first non-folding node is exact, not just an
-    /// optimization: every fold here needs every operand constant, so the
-    /// first failure already forces `None` at `dispatch`.
+    /// Evaluates `dispatch` over `order` against the open index.  Bailing on
+    /// the first non-folding node is exact: every fold needs every operand.
     pub(crate) fn eval_root(&mut self, order: &[ValueId], dispatch: ValueId) -> Option<u64> {
         for &val in order {
             if self.map.contains_key(&val) {
                 continue;
             }
             let a = self.eval_node(val)?;
-            // Every read is of an input, so a fold none of whose inputs read
-            // the pin did not either.
             let f = self.function;
             let reads_pin = f
                 .node_inputs(f.producer(val))
@@ -103,11 +87,8 @@ impl<'a> Evaluator<'a> {
     }
 
     /// The SP layer: the entry SP, an `Add` of a constant to an SP-relative
-    /// value, an alignment mask of one, and a RAM load at one. Anything else,
-    /// and any value reading no SP-relative input, folds as a constant.
-    ///
-    /// The spine is identified STRUCTURALLY from already-evaluated inputs,
-    /// not by re-running `decompose` per node per fold.
+    /// value, an alignment mask of one, and a RAM load at one.  A value reading
+    /// no SP-relative input folds as a constant.
     fn eval_node(&mut self, value: ValueId) -> Option<Abs> {
         let f = self.function;
         if f.is_entry_sp(value) {
@@ -150,9 +131,6 @@ impl<'a> Evaluator<'a> {
                     offset: 0,
                 })
             }
-            // The memory index answers over RAM stores.  The space travels with
-            // the call: `reshape` slices in it, so reading it back off the node
-            // could fold a wrong target.
             NodeKind::Load(space @ rsleigh::VnSpace::RAM) if f.load_addr(node) == sp => {
                 let load_ty = f.value_type_opt(value)?;
                 let size = load_ty.byte_size() as i128;
@@ -166,8 +144,7 @@ impl<'a> Evaluator<'a> {
                     space,
                 );
                 let hit = self.mem_index.anchored_store(f, clobber, base)?;
-                // The store must be anchored exactly at the probed offset, and
-                // jump targets are constants on the converged graph.
+                // The store must sit exactly at the probed offset.
                 let data = (hit.store_offset == offset).then(|| hit.data(f))?;
                 let raw = f.int_const(data)?.clone();
                 Some(Abs::Const(self.reshape(
@@ -227,8 +204,8 @@ pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<
     .collect()
 }
 
-/// Feeding this backward relation to a post-order walk yields producers before
-/// consumers. `stop` is a leaf, so its own producers are never followed.
+/// Value-input edges, whose post-order is producers before consumers; `stop`
+/// is a leaf.
 struct ValueInputSuccs<'a> {
     function: &'a strider_ir::Function,
     stop: Option<ValueId>,
@@ -247,10 +224,8 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccs<'_> {
     }
 }
 
-/// Backward reachability from `root` over value edges, never descending through
-/// `stop`'s own inputs (it is pinned to a constant at eval time).  The order is
-/// built once per root and replayed for every enumerated index, so leaving
-/// `stop`'s cone out keeps the index computation off the per-index cost.
+/// The cone of `root` in producers-before-consumers order, not descending
+/// through `stop`, the pinned index.
 pub(crate) fn cone_order_pruned(
     function: &strider_ir::Function,
     root: ValueId,

@@ -166,20 +166,10 @@ impl ReturnTargets<'_> {
 
     /// What `store` does to the `size` bytes at `at`.
     ///
-    /// An address the spine names is compared exactly. One it does not is an
-    /// untracked write, and `return_slots_survive_untracked_writes` is what
-    /// lets it pass. With that claim cleared and `prove` given, the address is
-    /// located through [`Self::guess`] instead and the claim that the guess
-    /// holds pushed onto `out`, so an unlocatable write answers `Clobbers`,
-    /// except one a held claim puts off the stack: a listed allocator's
-    /// memory, or a constant under `stack_global_disjoint`.
-    ///
-    /// The guess stays out of the optimistic answer because it is not a
-    /// placement: a merged SP value guesses from one phi arm, which no claim
-    /// then proves, and a prologue's own `push lr` would read as a write that
-    /// cannot be shown to land anywhere. Without `prove` this is itself part of
-    /// a guess (`stored_value`), where a spine-less address passes and whatever
-    /// offset the walk reaches is proven by a claim of its own.
+    /// A spine-less address passes under `return_slots_survive_untracked_writes`
+    /// or without `prove`.  Otherwise it is located through [`Self::guess`],
+    /// with the proving claim pushed onto `prove`, and an unlocatable one
+    /// clobbers unless a held claim puts it off the stack.
     pub(super) fn store_effect(
         &mut self,
         store: NodeId,
@@ -212,8 +202,6 @@ impl ReturnTargets<'_> {
                 if claims.stack_global_disjoint && function.int_const_u128(addr).is_some() {
                     return StoreEffect::Passes;
                 }
-                // The guess is what a claim turns into a proof, and the answer
-                // rests on it either way round.
                 match self.guess_located(None, addr, out) {
                     Some(written) => written,
                     None => return StoreEffect::Clobbers,
