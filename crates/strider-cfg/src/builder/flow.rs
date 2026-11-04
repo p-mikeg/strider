@@ -1,14 +1,13 @@
 //! Flowing decode context: as in GHIDRA's `ContextDatabase`, each flowing
-//! context var holds a value committed per address.
+//! var holds a value committed per address.
 //!
-//! A committed value (a `globalset` var, `SleighArch::flow_commit_vars`) is
-//! re-derived by `RegionBuilder::rederive_flow`, not read: a pin cannot stand
-//! in for that, since its forward paint stops at the next change point, which
-//! is where an earlier build's commit sits.
+//! A committed (`globalset`) var is re-derived by
+//! `RegionBuilder::rederive_flow`, not pinned: a pin's forward paint stops at
+//! the next change point, where an earlier build's commit sits.
 //!
-//! A cold entry is pinned to the pspec defaults, and each region to the
-//! context that flowed to it, so a target Sleigh never flowed to (a resolved
-//! indirect target, a backward edge) still decodes in it.
+//! A cold entry is pinned to the pspec defaults and each region to the
+//! context that flowed to it, so a resolved target or a backward edge decodes
+//! in it.
 
 /// The context vars the sla marks as flowing
 /// ([`strider_target::DecodeTables::flow_vars`]).
@@ -72,10 +71,8 @@ impl FlowVars {
     }
 
     /// Commits `want` at `addr`, painting forward to the next change point.
-    ///
     /// Writes only the disagreeing vars: a `set_context_at` flushes Sleigh's
-    /// whole parse cache. Overlapping views (ARM's IT-block vars) may enter
-    /// one diff; `want` is a whole snapshot, so they agree on shared bits.
+    /// whole parse cache.
     pub fn pin_at<R: rsleigh::MemReader>(
         &self,
         sleigh: &mut rsleigh::Sleigh<R>,
@@ -280,13 +277,10 @@ mod tests {
         );
     }
 
-    /// The real ARM sla declares four flow vars at the same bit `(0,0)`:
-    /// `TMode`, `T`, `LowBitCodeMode`, `ISA_MODE`. A resolved interworking target
-    /// that switches a Thumb function to ARM sets only `TMode` to 0 in the
-    /// carried context; the three aliases stay at the Thumb value, and
-    /// `pin_at`'s diff writes them last, clobbering the intended mode. Pinned
-    /// here is that the carried context survives `pin_at` still naming ARM,
-    /// which is what the repair re-imposes from.
+    /// ARM declares four flow vars at bit `(0,0)` (`TMode`, `T`,
+    /// `LowBitCodeMode`, `ISA_MODE`). A Thumb-to-ARM target sets only `TMode`
+    /// in the carried context, and `pin_at` may write the aliases after it;
+    /// the carried context must still name ARM for the repair.
     #[test]
     fn a_carried_context_survives_pin_at_still_naming_the_arm_mode() {
         use rsleigh::mem_readers::BufMemReader;
@@ -321,12 +315,9 @@ mod tests {
             .set_context_at(0x2000, "TMode", 0)
             .expect("arm-default target");
         flow.pin_at(&mut sleigh, 0x2000, &carried).expect("pin_at");
-        // `pin_at`'s diff writes the bit-(0,0) aliases, which can land after
-        // `TMode` and flip it. `pin_at` does not repair that;
-        // `RegionBuilder::hold_isa_mode` does, unconditionally, on the
-        // `lift_one` that `explore` always follows this call with. The
-        // end-to-end guarantee is pinned by
-        // `strider-orchestrator/tests/isa_mode_resolved_branch.rs`.
+        // `RegionBuilder::hold_isa_mode` repairs a flipped mode on the next
+        // `lift_one`; end to end in
+        // `strider-orchestrator/tests/isa_mode/isa_mode_resolved_branch.rs`.
         assert_eq!(
             flow.value_of(&carried, "TMode"),
             Some(0),

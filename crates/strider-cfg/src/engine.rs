@@ -1,6 +1,3 @@
-//! The Sleigh engine and the decode context it carries from one function to
-//! the next.
-
 use rustc_hash::FxHashMap;
 
 use crate::builder::{Builder, FlowContext, FlowVars, hold_var};

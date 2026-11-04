@@ -1,7 +1,6 @@
 use petgraph::stable_graph::StableDiGraph;
 
-/// Newtype over `u64` so machine addresses cannot be mixed with plain
-/// integers.
+/// A machine address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MachineInsnAddr {
     pub addr: u64,
@@ -13,9 +12,8 @@ impl From<u64> for MachineInsnAddr {
     }
 }
 
-/// One pcode op: a machine address and an index into its lift.
-///
-/// The derived `Ord` (machine address first) follows field order.
+/// One pcode op: a machine address and an index into its lift. Orders by
+/// machine address first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PcodeInsnAddr {
     pub machine_addr: MachineInsnAddr,
@@ -77,22 +75,15 @@ pub enum RegionTerminator {
     NoReturn,
     /// A branch leaving the function: a jump to an out-of-range target, or an
     /// empty stub at `start_addr == target` for an edge leaving the decoded
-    /// bytes (out of bound, unmapped, not code), hung off a successor edge.
-    /// Unreported: a branch into a cold partition missing from
-    /// [`crate::CfgOptions::fragment_ranges`] is modelled as a call to an
-    /// ABI-conforming callee.
+    /// bytes. A branch into a cold partition missing from
+    /// [`crate::CfgOptions::fragment_ranges`] lands here unreported.
     TailCall {
         /// The callee, with the ISA mode the branch committed (`None`: its own
         /// entry mode).
         target: crate::ResolvedTarget,
     },
     /// A seated jump table. Every target is an instruction start inside the
-    /// function bound or a fragment. An arm out of the bound, or off every
-    /// instruction boundary of a region decoded before the seal, defers the
-    /// whole site as `UnresolvedIndirectBranch`; an off-boundary arm found
-    /// after the seal is dropped. Both off-boundary cases are reported as
-    /// [`crate::Reason::InteriorTarget`]; an out-of-bound arm only through the
-    /// deferred site's `UnresolvedBranch`.
+    /// function bound or a fragment.
     Switch {
         /// The `BranchIndirect`'s `inputs[0]`.
         target_vn: rsleigh::Vn,
@@ -101,9 +92,9 @@ pub enum RegionTerminator {
         /// The dispatch instruction's address.
         addr: crate::PcodeInsnAddr,
     },
-    /// `BranchIndirect` whose target is not yet known.  No outgoing edge.
+    /// A `BranchIndirect` whose target is not yet known.
     UnresolvedIndirectBranch {
-        /// The offending `BranchIndirect`'s `inputs[0]`.
+        /// The `BranchIndirect`'s `inputs[0]`.
         target_vn: rsleigh::Vn,
         /// Address of the deferred `BranchIndirect`.
         addr: PcodeInsnAddr,
@@ -111,8 +102,6 @@ pub enum RegionTerminator {
 }
 
 impl RegionTerminator {
-    /// The deferral a dispatch at `addr` on `target_vn` seals as: no outgoing
-    /// edge, and the resolver re-derives the site.
     pub(crate) fn defer(target_vn: rsleigh::Vn, addr: PcodeInsnAddr) -> Self {
         Self::UnresolvedIndirectBranch { target_vn, addr }
     }
@@ -171,8 +160,7 @@ impl Region {
             .ok()
     }
 
-    /// The ascending order [`Self::insn_index_at`] bisects over. O(len): for
-    /// debug checks per mutation.
+    /// The ascending order [`Self::insn_index_at`] bisects over. O(len).
     pub(crate) fn insns_are_ascending(&self) -> bool {
         self.insns.windows(2).all(|w| w[0].addr <= w[1].addr)
     }

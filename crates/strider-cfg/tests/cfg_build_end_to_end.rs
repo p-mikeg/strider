@@ -1149,19 +1149,10 @@ fn re_imposing_a_context_over_an_it_block_builds() {
     round(0x1004);
 }
 
-/// Thumb-2 coprocessor encodings that once wrote past the parse state.
-/// `allocateOperand` was unbounded, so it ran `state[alloc++]` off the end of
-/// `state` and wrote through the next node's `resolve` vector, taking the
-/// process down.  The bound it carries now turns an overrun into a
-/// `SleighError`, so the property is that the lift COMPLETES: p-code out and a
-/// decode error are both acceptable, a crash is not.
-///
-/// These bytes do not descend further than legal code, though the crash they
-/// caused made it look that way.  Measured, `0xdeec3b8a` peaks at 98
-/// `ConstructState`s and breadcrumb depth 30, against 104 and 35 for
-/// `vpush {s0-s31}`, the 32-register architectural maximum.  Both simply
-/// exceeded the 75 states `ParserContext::initialize` used to hand out, which
-/// is why sizing the parse state for legal ARM code lets these decode too.
+/// Thumb-2 coprocessor encodings needing more parse states than a small
+/// `ParserContext` holds (`0xdeec3b8a` peaks at 98 `ConstructState`s; legal
+/// `vpush {s0-s31}` needs 104). The lift must complete: p-code or a decode
+/// error, never a crash.
 #[test]
 fn thumb_coproc_bytes_that_once_overran_the_parse_state_do_not_crash() {
     let arch = SleighArch::arm_thumb();

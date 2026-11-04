@@ -1,5 +1,3 @@
-//! What a CFG, or an analysis over several, cannot vouch for.
-
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -42,10 +40,10 @@ reasons! {
     /// seat, a caller's `Return` seat or seeded p-code `RETURN`, and an arm
     /// whose mode only its siblings' seed proved.
     UnverifiedSeed => "unverified_seed",
-    /// Reached in two ISA modes, so the losing edge's path decodes in the
-    /// winner's. Per p-code index. Other committed vars are not compared. A
-    /// direct edge beats a seeded arm (the `Switch` loses every arm there);
-    /// otherwise work-queue order decides, so neither decode is trusted.
+    /// Reached in two ISA modes, per p-code index; the losing edge's path
+    /// decodes in the winner's. A direct edge beats a seeded arm (the
+    /// `Switch` loses every arm there); otherwise work-queue order decides.
+    /// Other committed vars are not compared.
     IsaModeConflict => "isa_mode_conflict",
     /// Inside a region but off every boundary (a MIPS delay slot too), or a
     /// region start a later decode stepped over. A direct branch keeps an

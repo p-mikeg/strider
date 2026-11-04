@@ -11,7 +11,6 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
-/// Whether `seal_at_call_not_returning` may end a region here.
 pub(super) fn is_call(insn: &RegionInstruction) -> bool {
     matches!(
         insn.insn.opcode,
@@ -43,8 +42,8 @@ pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
     /// `None` only for the function entry region.
     parent_edge: Option<NodeIndex>,
     /// The ISA mode this region decodes in, when the arch has one. Re-imposed
-    /// per instruction: a change point inside the region stops the entry
-    /// pin's paint.
+    /// per instruction, since a change point inside the region ends the
+    /// entry pin.
     isa_mode: Option<u32>,
     /// The machine instruction this region decoded last.
     last_lift: Option<u64>,
@@ -162,7 +161,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         )
     }
 
-    /// Appends `insn` to the current region, then dispatches on the opcode.
     fn process_new_insn(
         &mut self,
         insn: &rsleigh::Insn,
@@ -355,7 +353,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 return Ok(InsnOutcome::RegionClosed);
             }
             Some(crate::ResolvedTargets::LinkRegister) => {
-                // The seat leaves no anchor, so it is recorded.
                 self.builder.report.link_register_seated.push(addr);
                 self.finish_current_region(RegionTerminator::Return)?;
                 return Ok(InsnOutcome::RegionClosed);
@@ -363,7 +360,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             Some(&crate::ResolvedTargets::Single(t))
                 if self.is_branch_tail_call(PcodeInsnAddr::at_machine_start(t.addr)) =>
             {
-                // The seat leaves no anchor, so it is recorded.
                 self.builder.report.tail_call_seated.push(addr);
                 self.finish_current_region(RegionTerminator::TailCall { target: t })?;
                 return Ok(InsnOutcome::RegionClosed);
@@ -450,10 +446,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         self.process_new_insn(insn, addr, lift_res)
     }
 
-    /// Decodes machine instructions one at a time until the region closes.
-    /// Sequential by necessity: an instruction can commit context (ARM IT
-    /// state, Thumb mode) at a later address. The first instruction may start
-    /// mid-p-code (`start_addr.insn_index > 0`).
+    /// Decodes instructions in order until the region closes: an instruction
+    /// can commit context (ARM IT state, Thumb mode) at a later address. The
+    /// first may start mid-p-code (`start_addr.insn_index > 0`).
     pub(super) fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
@@ -481,10 +476,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     if self.seal_at_call_not_returning(cur_addr, reason)? {
                         return Ok(());
                     }
-                    // A zero-pcode-op run loses no code. Whether a call falls
-                    // into it, and so whether `e` fails the function, is
-                    // settled in `Builder::finish`, once every predecessor
-                    // exists.
+                    // A zero-pcode-op run loses no code. `Builder::finish`
+                    // settles whether a call falls into it and so whether `e`
+                    // fails the function.
                     if self.insns.is_empty()
                         && (!off_arm
                             || !self.builder.calls_falling_into(self.parent_edge).is_empty())

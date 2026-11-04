@@ -42,13 +42,8 @@ fn build_with(eng: &mut Engine, addr: u64, size: u64, base: &CfgOptions) -> Cfg 
     eng.build_cfg((addr | 1).into(), &opts).expect("build")
 }
 
-/// [`build`] with `site` seated as a jump table over `arms`.
-///
-/// Seated through `known_targets`, which is the seat `Strider::analyze` fills
-/// through `derived_targets` for the answers its own resolver produced:
-/// `CfgOptions::seated` reads one table then the other and
-/// `RegionBuilder::process_branch_indirect` seats either as the same `Switch`,
-/// so one `Builder::enqueue_resolved` arm is every arm.
+/// [`build`] with `site` seated as a jump table over `arms`, through
+/// `known_targets` (seated as `derived_targets` would be).
 fn build_resolved(eng: &mut Engine, addr: u64, size: u64, site: u64, arms: &[u64]) -> Cfg {
     let known = rustc_hash::FxHashMap::from_iter([(
         strider_cfg::PcodeInsnAddr::at_machine_start(site),
@@ -127,9 +122,8 @@ fn an_earlier_builds_commit_does_not_change_this_builds_decode() {
     );
 }
 
-/// The converse: this build's OWN commit must survive. A zero-p-code-op
-/// instruction never reaches the per-op loop, so recording `inst_next` there
-/// missed `enterx`, and the fallback then overwrote its `TEEMode` commit.
+/// The converse: this build's own commit survives, also at the `inst_next`
+/// of a zero-p-code-op instruction.
 ///
 /// `enterx` (0xf3bf 0x8f1f) commits `TEEMode=1` at 0x1004, under which
 /// 0xc201 is the zero-op ThumbEE `hb #1` rather than a `stmia` with a STORE.
@@ -198,10 +192,8 @@ fn an_edge_into_an_it_block_is_reported_not_silently_decided() {
 /// `enqueue` cannot snapshot such an address, so it rebuilds the context from
 /// the function mode and the parent's ISA-mode bit.
 ///
-/// `TEEMode` is FLOWING, so the live ThumbEE paint has to come with it. Left
-/// out, it degraded to the entry default AND `pin_at` wrote that default over
-/// the live paint, decoding 0xc201 at the target as a plain-Thumb
-/// `stmia r2!,{r0}` and inventing a `Store`, with nothing reported incomplete.
+/// `TEEMode` is FLOWING, so the live ThumbEE paint comes with it; the entry
+/// default would decode 0xc201 as a plain-Thumb `stmia r2!,{r0}`.
 ///
 /// `enterx` commits `TEEMode=1` at 0x1004, so the `b.n` region decodes in
 /// ThumbEE; 0x1008 is no `inst_next` (0x1004 and 0x1006 are), so it takes the
@@ -304,11 +296,8 @@ fn a_forward_branch_does_not_carry_the_it_state() {
     );
 }
 
-/// A strider-resolved arm: `Builder::enqueue_resolved` builds its context from
-/// the function mode, where only the ISA-mode bit was re-based off the branch
-/// site. `TEEMode` is FLOWING, so it degraded to the entry default and
-/// `pin_at` wrote that default over the live ThumbEE paint at the arm, exactly
-/// as a direct edge's fallback did.
+/// A resolved arm carries the flowing `TEEMode` live at the dispatch, not the
+/// function mode's default.
 ///
 /// `enterx` commits `TEEMode=1` at 0x1004, so the `bx r0` dispatch decodes in
 /// ThumbEE; its arm 0x1008 holds 0xc201, the zero-op ThumbEE `hb #1` rather

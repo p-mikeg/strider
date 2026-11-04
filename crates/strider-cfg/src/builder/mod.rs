@@ -26,10 +26,10 @@ pub(super) struct WorkItem {
     /// The region edging into this one, or `None` for the entry.
     pub(super) parent: Option<NodeIndex>,
     pub(super) addr: PcodeInsnAddr,
-    /// The context this target decodes in, pinned before decode.
+    /// The context this target decodes in.
     pub(super) carried: FlowContext,
-    /// The seeded arm this target descends from. A failure to decode under an
-    /// arm drops the arm instead of failing the build.
+    /// The seeded arm this target descends from; a decode failure under it
+    /// drops the arm instead of failing the build.
     pub(super) seeded_by: Option<ArmSeed>,
 }
 
@@ -61,14 +61,12 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) index: RegionIndex,
     /// LIFO for depth-first exploration, direct edges only.
     pub(super) work_queue: Vec<WorkItem>,
-    /// LIFO for seeded arms, drained only once no direct edge is left; see
-    /// [`Self::next_work_item`].
+    /// LIFO for seeded arms, drained only once no direct edge is left.
     pub(super) seeded_queue: Vec<WorkItem>,
     /// This function's ISA mode, the base context of a resolved target.
     pub(super) function_mode: FlowContext,
-    /// `inst_next` of every instruction this build decoded, kept or not.
-    /// `RegionBuilder` re-derives the context there, so the engine's value at
-    /// such an address comes from this build's own bytes, never a stale one.
+    /// `inst_next` of every instruction this build decoded, kept or not: the
+    /// addresses where the engine's context comes from this build's bytes.
     pub(super) committed_next: rustc_hash::FxHashSet<u64>,
     /// The seeded arm the region under construction descends from.
     pub(super) descent: Option<ArmSeed>,
@@ -80,13 +78,12 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// instruction at `head`. [`Self::finish`] reports each as
     /// [`Reason::InteriorTarget`] unless it is a benign prefix re-entry.
     pub(super) interior_candidates: Vec<(u64, PcodeInsnAddr)>,
-    /// `(Switch region, arm)` for each arm [`Self::drop_refused_switch_arms`]
-    /// strips: undecodable, or owned in the other ISA mode. Keyed on the site:
-    /// the same address from another site decodes in another context.
+    /// `(Switch region, arm)`: arms to strip, undecodable or owned in the other
+    /// ISA mode. Keyed on the site, since another site decodes the same
+    /// address in another context.
     pub(super) refused_arms: Vec<(NodeIndex, PcodeInsnAddr)>,
-    /// Empty regions of zero-pcode-op instructions sealed onto a stub at bytes
-    /// that are not code, each with the decode error [`Self::finish`] returns
-    /// when no call falls into it; `finish` ends every call that does.
+    /// Empty zero-pcode-op regions sealed onto a stub at non-code bytes, each
+    /// with the error [`Self::finish`] returns when no call falls into it.
     pub(super) nops_into_no_code: Vec<(NodeIndex, Option<anyhow::Error>)>,
 }
 
@@ -118,10 +115,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     /// Reports `addr` as [`Reason::IsaModeConflict`] when `want` differs from
-    /// the mode `existing` decoded in, and returns whether it did. The first
-    /// decode keeps the bytes, so the losing edge's mode would otherwise be
-    /// dropped silently. Every edge-wiring seal must call this, as
-    /// [`Self::explore`] does.
+    /// the mode `existing` decoded in, and returns whether it did. Every
+    /// edge-wiring seal must call this, or the losing mode drops silently.
     pub(super) fn note_isa_mode_clash(
         &mut self,
         addr: PcodeInsnAddr,
@@ -218,12 +213,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         ctx
     }
 
-    /// The next target to explore, every direct edge before any seeded arm.
-    ///
-    /// The first decode owns the bytes, so this hands bytes reached in two ISA
-    /// modes to the direct edge's proved mode over an arm's claimed one. Code
-    /// decoded off an arm is no more certain than the arm: there a clash is
-    /// only reported.
+    /// The next target to explore, every direct edge before any seeded arm,
+    /// so a direct edge's mode wins an ISA-mode clash with an arm.
     fn next_work_item(&mut self) -> Option<WorkItem> {
         #[cfg(test)]
         if let Some(i) = shuffled_index(self.work_queue.len()) {
@@ -279,9 +270,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     /// Records and returns the ISA-mode bit flowing into the indirect branch
-    /// at `site`, `None` on an arch with no ISA-mode var. Sampled at the seal,
-    /// while the owning region's mode is held there: a later read sees
-    /// whichever region painted the address last.
+    /// at `site`, `None` on an arch with no ISA-mode var. Call at the seal: a
+    /// later read sees whichever region painted the address last.
     pub(super) fn sample_flowing_isa_bit(&mut self, site: PcodeInsnAddr) -> Option<bool> {
         let var = self.engine.arch.isa_mode_var()?;
         if let Some(&bit) = self.report.flowing_isa_bits.get(&site) {
@@ -301,8 +291,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     /// Edges `from` to the empty `TailCall` stub at `addr`, created on first
-    /// use: the successor of an edge leaving the decoded bytes (out of bound,
-    /// unmapped, or not code). A stub is never enqueued, so never decoded.
+    /// use, for an edge leaving the decoded bytes. A stub is never decoded.
     pub(super) fn edge_to_stub(&mut self, from: NodeIndex, addr: PcodeInsnAddr) -> Result<()> {
         let stub = match self.index.get(addr) {
             Some(existing) => existing,
@@ -320,7 +309,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         Ok(())
     }
 
-    /// The region owning `addr`; see [`RegionIndex::containing`].
     pub(super) fn find_region_containing_addr(
         &self,
         addr: PcodeInsnAddr,
@@ -335,15 +323,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             .is_some_and(|(_, region)| region.start_addr != addr && !region.contains_insn_at(addr))
     }
 
-    /// Seats an edge for a target interior to `owner` but off every instruction
-    /// boundary of it, which no split can express.
-    ///
-    /// A `Switch` drops the arm (an over-approximated entry). Any other
-    /// terminator edges to the region holding the first op of the instruction
-    /// containing the target, which `Cfg::region_if` matches by containment;
-    /// its stream starts at or before that instruction, so the edge is
-    /// reported [`Reason::InteriorTarget`] unless it is a benign prefix
-    /// re-entry.
+    /// Seats an edge for a target inside `owner` but off every instruction
+    /// boundary. A `Switch` drops the arm. Any other terminator edges to the
+    /// region holding the first op of the containing instruction, reported
+    /// [`Reason::InteriorTarget`] unless it is a benign prefix re-entry.
     fn seat_non_boundary_target(
         &mut self,
         parent: NodeIndex,
@@ -383,14 +366,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         Ok(())
     }
 
-    /// Whether `addr` lands one instruction-prefix into `owner`'s stream and
-    /// re-enters the same instruction: decoding from `addr` ends at the byte
-    /// the containing instruction does and carries the same p-code once the
-    /// atomic-prefix markers (`LOCK` / `UNLOCK`) are set aside.
-    ///
-    /// The containing instruction must be `owner`'s first (glibc's
-    /// `je 0f; lock; 0:`): an owner starting earlier runs instructions the
-    /// taken path does not.
+    /// Whether `addr` skips a prefix of `owner`'s first instruction (glibc's
+    /// `je 0f; lock; 0:`): decoding from `addr` ends where that instruction
+    /// does and carries the same p-code less the `LOCK` / `UNLOCK` markers.
     fn is_benign_prefix_reentry(&mut self, owner: NodeIndex, addr: PcodeInsnAddr) -> bool {
         if !self.may_reenter_prefix() {
             return false;
@@ -441,9 +419,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         full.filter(core).eq(tail.filter(core))
     }
 
-    /// Whether `op` is a `LOCK` / `UNLOCK` marker an x86 `lock` prefix
-    /// brackets its instruction with: they wrap the same core op an
-    /// unprefixed decode emits bare.
+    /// Whether `op` is a `LOCK` / `UNLOCK` marker of an x86 `lock` prefix.
     fn is_atomic_marker(&self, op: &rsleigh::Insn) -> bool {
         op.opcode == rsleigh::Opcode::CallOther
             && crate::user_op_of(op, &self.engine.tables.user_op_names)
@@ -492,10 +468,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         built
     }
 
-    /// Refuses every `Switch` arm reaching one of `regions` (each decoded off
-    /// an arm and missing an undecodable successor) without passing through
-    /// another `Switch`: an arm reaching the bytes only back through a dispatch
-    /// says nothing about its own bound.
+    /// Refuses every `Switch` arm reaching one of `regions` without passing
+    /// through another `Switch`.
     fn refuse_arms_reaching(&mut self, regions: impl Iterator<Item = NodeIndex>) {
         let mut stack: Vec<NodeIndex> = regions.collect();
         // A dispatch is discovered, bounding the walk, but does not reach.
@@ -555,8 +529,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             .push(crate::UndecodableTarget { site, target: arm });
     }
 
-    /// Strips each [`Self::refused_arms`] arm from its own site only: the
-    /// lifter rejects an arm with no successor starting at it.
+    /// Strips each [`Self::refused_arms`] arm from its own site only.
     fn drop_refused_switch_arms(&mut self) {
         for (parent, target) in std::mem::take(&mut self.refused_arms) {
             self.drop_switch_arm(parent, target);
@@ -638,9 +611,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         self.finish(lost_successor)
     }
 
-    /// Decodes the entry and everything it reaches. Returns the regions
-    /// decoded off an arm whose successor would not decode, each with that
-    /// failure.
+    /// Decodes the entry and everything it reaches. Returns each region
+    /// decoded off an arm whose successor would not decode, with the failure.
     fn drain(&mut self) -> Result<Vec<(NodeIndex, anyhow::Error)>> {
         let entry = PcodeInsnAddr::at_machine_start(self.start_addr);
         let mode = self.isa_mode_of(&self.function_mode);
@@ -808,8 +780,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
 #[cfg(test)]
 thread_local! {
-    /// A nonzero seed makes [`Builder::next_work_item`] pop direct edges in
-    /// a pseudo-random order.
+    /// A set seed makes [`Builder::next_work_item`] pop direct edges in a
+    /// pseudo-random order.
     pub(super) static SHUFFLE_SEED: std::cell::Cell<Option<u64>> =
         const { std::cell::Cell::new(None) };
 }

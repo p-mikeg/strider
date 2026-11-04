@@ -4,12 +4,11 @@ Decodes one function's bytes into a control-flow graph of straight-line p-code
 regions through GHIDRA's Sleigh (`rsleigh`). IR-free: `strider-lift` builds the
 IR from a `Cfg`.
 
-## What's here
+## API
 
-- `DecodeEngine::new(arch, reader)?.build_cfg(entry, &opts)` -> `Cfg`. The
-  engine owns the arch's Sleigh and its decode context, so every build decodes
-  as on a fresh engine. On an arch with an ISA mode the entry's low bit selects
-  it (Thumb, MIPS16e).
+- `DecodeEngine::new(arch, reader)?.build_cfg(entry, &opts)` -> `Cfg`. Every
+  build decodes as on a fresh engine. On an arch with an ISA mode the entry's
+  low bit selects it (Thumb, MIPS16e).
 - `Region`: maximal straight-line p-code entered only at `start_addr`, ending
   at its `RegionTerminator`. It can end mid-instruction; `contains_addr` owns
   bytes down to the p-code index.
@@ -23,23 +22,22 @@ IR from a `Cfg`.
 
 ## Region ownership
 
-A target an existing region owns splits it at the target's instruction or
-p-code boundary, rather than decoding those bytes again. Incoming edges move to
+A target inside an existing region splits it at the target's instruction or
+p-code boundary instead of decoding those bytes again. Incoming edges move to
 the first half, which keeps the start; the second keeps the region id and its
-outgoing edges. So the first decode fixes the ISA mode of those bytes, and a
-later edge in another mode is reported, not decoded twice.
+outgoing edges. The first decode fixes the ISA mode of those bytes; a later
+edge in another mode is reported, not decoded twice.
 
-The one exception is overlapping code: sequential decoding can step over a
-region start inside an instruction it decodes, leaving those bytes with two
-owners. The stepped-over start is reported as `InteriorTarget`.
+Overlapping code is the exception: sequential decoding can step over a region
+start inside an instruction, leaving those bytes two owners. The stepped-over
+start is reported as `InteriorTarget`.
 
-Decoding within a region is sequential: `Sleigh::lift_one` carries context
-(ARM/Thumb and IT state, MIPS16, ppc `linkreg`) that an instruction can commit
-at a later address. That context flows as in GHIDRA's `ContextDatabase`: a
-committed value holds until the next change point. Each queued edge captures
-the context reaching its target and the builder restores it before decoding
-there, so a seated indirect target or a backward edge decodes in the mode that
-reaches it.
+A region decodes sequentially: `Sleigh::lift_one` carries context (ARM/Thumb
+and IT state, MIPS16, ppc `linkreg`) an instruction can commit at a later
+address. As in GHIDRA's `ContextDatabase`, a committed value holds until the
+next change point. Each queued edge captures the context reaching its target
+and the builder restores it there, so a seated indirect target or a backward
+edge decodes in the mode that reaches it.
 
 ## Terminators
 
@@ -69,8 +67,8 @@ an ISA-mode clash with an arm.
 resolves nothing, so every deferred site is `UnresolvedBranch` and every seat
 `UnverifiedSeed`. Target reasons:
 
-- `UnmappedTarget`: a direct branch or fall-through to bytes the reader lacks.
-  It leaves through a `TailCall` stub. An unmapped seeded arm is dropped; an
+- `UnmappedTarget`: a direct branch or fall-through to bytes the reader lacks,
+  left through a `TailCall` stub. An unmapped seeded arm is dropped; an
   unmapped entry fails the build.
 - `UndecodableTarget`: a direct branch to bytes Sleigh rejects or
   `data_ranges` marks, or a fall-through into them past a call, directly or
@@ -79,13 +77,14 @@ resolves nothing, so every deferred site is `UnresolvedBranch` and every seat
   fall-through into a data range is reported; any other into bytes Sleigh
   rejects fails the build. The entry decodes even inside a data range.
 - `PastFunctionEnd`: a fall-through, not-taken path or conditional
-  instruction's skip of itself past a `FunctionBound::Size` end, at the first
-  address after the last decoded instruction. It leaves through a stub; a call
-  returning there ends `NoReturn`. Off a seeded arm the arm is dropped.
+  instruction's skip of itself past a `FunctionBound::Size` or fragment end,
+  at the first address after the last decoded instruction. It leaves through
+  a stub; a call returning there ends `NoReturn`. Off a seeded arm the arm is
+  dropped.
 - `IsaModeConflict`: two edges reached an address in different ISA modes; the
   loser decodes in the winner's. Other committed vars are not compared.
 - `InteriorTarget`: an off-boundary target, and a stepped-over region start.
 
-Beside it: `undecodable_seeded_targets`, each arm dropped because it or code
-it leads to (up to the next dispatch) would not decode, with its site; and
-`link_register_seated` / `tail_call_seated`, live sites a seat consumed.
+Beside it: `undecodable_seeded_targets` (each arm dropped because it, or code
+it leads to before the next dispatch, would not decode, with its site) and
+`link_register_seated` / `tail_call_seated` (live sites a seat consumed).

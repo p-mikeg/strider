@@ -1,6 +1,5 @@
-//! Hostile or malformed bytes must leave the process standing, answering with
-//! a `Cfg` or a clean error. These inputs each used to take the process down
-//! or panic out of a public entry point.
+//! Malformed bytes answer with a `Cfg` or a clean error, never a crash or a
+//! panic out of a public entry point.
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, DecodeEngine};
@@ -12,8 +11,8 @@ fn hex(s: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// Builds and reports whether it succeeded: returning at all is half of every
-/// assertion here, a crash or a panic being what these inputs used to produce.
+/// Builds and reports whether it succeeded; returning at all is half of every
+/// assertion here.
 fn build_succeeds(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> bool {
     let reader = BufMemReader::new(bytes, start);
     DecodeEngine::new(*arch, reader)
@@ -32,10 +31,9 @@ fn build_is_an_error(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOp
 
 #[test]
 fn a_malformed_instruction_in_a_mips_delay_slot_is_an_error() {
-    // `bne` whose delay slot holds a COP1 word with a reserved format field.
-    // Building the delay slot throws, and the handler that renders the message
-    // used to disassemble through a walker owned by an unwound stack frame,
-    // writing tens of kilobytes past it.
+    // `bne` whose delay slot holds a COP1 word with a reserved format field:
+    // building the delay slot throws, and rendering that error must not touch
+    // the unwound frame's walker.
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(0x100),
         ..CfgOptions::default()
@@ -71,11 +69,8 @@ fn an_unparsed_aarch64_operand_is_an_error() {
     );
 }
 
-/// The lane operand of a by-element dot product used to reach the pcodeop
-/// itself, and its subtable exports nothing, so on a reused `ParserContext` it
-/// carried whatever register the previous instruction left in the slot. The
-/// constructors now read the lane with `SIMD_PIECE`, so the operand is the one
-/// the encoding names whatever ran before it.
+/// A by-element dot product's lane operand (read with `SIMD_PIECE`) names its
+/// encoding's register, whatever a reused `ParserContext` held before.
 #[test]
 fn a_by_element_dot_product_reads_the_register_its_encoding_names() {
     let arch = SleighArch::aarch64();
