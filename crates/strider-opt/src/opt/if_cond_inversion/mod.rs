@@ -1,7 +1,4 @@
 //! Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`.
-//!
-//! Convergence: each application removes one `Xor`-with-1 from the cond, and a
-//! doubly-inverted cond collapses first via `ConstantFold`'s `!!x -> x`.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -12,8 +9,7 @@ use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 pub struct IfCondInversion;
 
 thread_local! {
-    /// Built once per thread, and held here rather than in the pass so the
-    /// pass stays `Send`; see `ConstantFold`.
+    /// Built once per thread; held outside the pass to keep it `Send`.
     static PATTERN: (Pattern, Capture) = {
         let capture = Capture::new();
         (bool_not(var(capture)).into_pattern(), capture)
@@ -36,7 +32,6 @@ impl crate::peephole::PeepholePass for IfCondInversion {
     ) -> Result<Option<ValueId>> {
         if let Some(inner_value) = bool_not_operand(edit.function(), edit.function().if_cond(root))
         {
-            // `invert` builds no fresh node, so nothing is revisited.
             invert(edit, root, inner_value)?;
         }
         Ok(None)
@@ -45,7 +40,6 @@ impl crate::peephole::PeepholePass for IfCondInversion {
 
 /// `x` when `value` is the canonical 1-bit logical NOT `Xor(x, IntConst(1)):I1`.
 pub(crate) fn bool_not_operand(function: &strider_ir::Function, value: ValueId) -> Option<ValueId> {
-    // `match_at` tries the pattern at exactly this node, no graph walk.
     PATTERN.with(|(pat, cap)| {
         Matcher::new(function)
             .match_at(function.producer(value), pat)
@@ -54,8 +48,8 @@ pub(crate) fn bool_not_operand(function: &strider_ir::Function, value: ValueId) 
     })
 }
 
-/// Resolves every consuming edge to a stable `UseId` up front, so a later
-/// `update_input` can't invalidate a half-consumed use-list iterator.
+/// Every consuming edge of `value` as a stable `UseId`, collected before any
+/// `update_input` rewrites the use-list.
 fn input_use_ids(
     edit: &crate::EditFunction<'_>,
     value: strider_ir::node::ValueId,
@@ -70,17 +64,12 @@ fn invert(
     if_node: NodeId,
     inner: strider_ir::node::ValueId,
 ) -> Result<()> {
-    // Redirect the cond input from the `Xor(X, 1)` output to `X`.
-    //
-    // `redirect_input` absorbs the Xor's asm history into `inner` only when
-    // this redirect leaves the Xor dead.  If the Xor keeps other live uses it
-    // still computes its own value, so absorbing would be false attribution.
+    // `redirect_input` absorbs the Xor's fingerprint only when this leaves it
+    // dead; a still-live Xor computes its own value.
     let cond_use_id = edit.node_input_id_at(if_node, NodeKind::IF_COND_SLOT)?;
     edit.redirect_input(cond_use_id, inner);
 
-    // Swap consumers between output[0] (true) and output[1] (false).  Both
-    // use-lists must be collected before any redirect: `update_input` rewrites
-    // them in place.
+    // Swap the true and false consumers; both use-lists are collected first.
     let [true_value, false_value] = edit.node_outputs_exact::<2>(if_node)?;
     let true_use_ids = input_use_ids(edit, true_value)?;
     let false_use_ids = input_use_ids(edit, false_value)?;

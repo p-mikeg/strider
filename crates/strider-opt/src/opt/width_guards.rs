@@ -5,14 +5,9 @@ use strider_ir::node::ValueType;
 use strider_pattern::{Bindings, Capture};
 
 /// The bit width every capture in `caps` carries, or `None` when one is
-/// unbound, untyped or of another width.
-///
-/// Moving a constant across an operator is an identity only when the whole
-/// shape evaluates at one width: reassociating `Add(Add(x:I8, C1:I8):I8,
-/// C2:I16):I16` into one `I16` add loses the inner add's 8-bit wraparound.
-/// `validate` rejects such a node, but a rewrite can mint one mid-pipeline.
-/// Under an `Equal` root, which is `I1`, a caller asks only `.is_some()`: the
-/// width to agree on is the compared value's.
+/// unbound, untyped or of another width. Moving a constant across an operator
+/// is an identity only at one width; a rewrite can mint a mixed-width node
+/// mid-pipeline.
 pub(crate) fn same_width(f: &Function, b: &Bindings, caps: &[Capture]) -> Option<usize> {
     let (&first, rest) = caps.split_first()?;
     let width = b.get_type(first, f)?.bit_width();
@@ -26,11 +21,8 @@ pub(crate) fn at_root_width(f: &Function, b: &Bindings, ty: ValueType, caps: &[C
     same_width(f, b, caps) == Some(ty.bit_width())
 }
 
-/// Whether `cap` binds a shift count `1 << count` can be built from at `ty`:
-/// an integer `ty` whose width the count names a bit of.
-///
-/// A count is an ordinary constant, so an `I64` shift can name 200. A float
-/// `ty` has no shift at all.
+/// Whether `cap` binds a shift count below integer `ty`'s width, so
+/// `1 << count` can be built at `ty`.
 pub(crate) fn shift_count_in_range(
     f: &Function,
     b: &Bindings,
