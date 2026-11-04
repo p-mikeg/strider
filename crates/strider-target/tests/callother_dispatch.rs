@@ -793,3 +793,28 @@ fn vcmpequb_dot_decodes_to_a_cr6_write() {
         assert_eq!(abi.implicit_writes, &["cr6"], "{preset:?}");
     }
 }
+
+/// `mtc0` passes its CP0 destination as an operand (`setCopReg(0, RD0, rt,
+/// sel)`) while `mfc0` reads the register directly, so the op writes the whole
+/// CP0 file: all eight selects of all 32 registers.
+#[test]
+fn mips_set_cop_reg_writes_every_cp0_register() {
+    for preset in [
+        ArchPreset::MipsBe32,
+        ArchPreset::MipsLe32,
+        ArchPreset::MipsBe64,
+        ArchPreset::MipsLe64,
+    ] {
+        let abi = expect_call(classify(preset, "setCopReg"));
+        assert!(abi.clobbers_memory, "{preset:?}");
+        let built = abi.build(&regs_for(preset)).expect("every name resolves");
+        let mut offs: Vec<u64> = built.implicit_writes.iter().map(|vn| vn.addr_off).collect();
+        offs.sort_unstable();
+        offs.dedup();
+        let size = u64::from(built.implicit_writes[0].size);
+        let want: Vec<u64> = (0..8u64)
+            .flat_map(|sel| (0..32u64).map(move |r| 0x2000 + sel * 0x100 + r * size))
+            .collect();
+        assert_eq!(offs, want, "{preset:?}");
+    }
+}
