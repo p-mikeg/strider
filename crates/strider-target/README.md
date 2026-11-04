@@ -3,7 +3,7 @@
 Target-description data: architecture presets, calling conventions, and the
 CallOther ABI table.
 
-## What's here
+## API
 
 - `SleighArch`: an architecture (SLA spec, PSPEC, endianness), with a constructor
   per supported target (`x86_64()`, `aarch64()`, `arm_thumb()`, `mipsle32()`, ...).
@@ -14,8 +14,6 @@ CallOther ABI table.
 - `DecodeTables`: what an arch's sla says about decoding and lifting (user-op
   names, flowing and committed context vars with their pspec defaults, the
   declared, volatile and internal registers; `SleighArch::decode_tables()`).
-  Both are read off one Sleigh over an empty image, once per preset used per
-  process.
 - `CallingConvention`: register names for arguments, results and preserved
   state, with a preset per userland ABI plus `x86_linux_kernel` and the three
   PowerPC `*_linux_kernel` flavours (no vector registers); other kernels use
@@ -123,5 +121,3 @@ architecture and user-op name, gives that footprint:
 unclassified name is a lift error. `classify_with(overrides, preset, name)` lets
 a caller answer first (`CfgOptions(call_other_abis=...)` from Python), with a
 `CallOtherClass` or an already-resolved `BuiltCallOtherAbi`.
-
-Depends only on `rsleigh`, `anyhow`, `rustc-hash` and `vn-container`.
