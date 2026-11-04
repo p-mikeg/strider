@@ -73,8 +73,8 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// The seeded arm the region under construction descends from.
     pub(super) descent: Option<ArmSeed>,
     pub(super) report: crate::BuildReport,
-    /// The address each [`Self::seat_non_boundary_target`] edge points INTO;
-    /// only the split half keeping those bytes may keep the edge.
+    /// The first op of the instruction each [`Self::seat_non_boundary_target`]
+    /// edge points into; only the split half keeping it may keep the edge.
     pub(super) non_boundary_seats: rustc_hash::FxHashMap<EdgeIndex, PcodeInsnAddr>,
     /// `(Switch region, arm)` for each arm [`Self::drop_refused_switch_arms`]
     /// strips: undecodable, or owned in the other ISA mode. Keyed on the site:
@@ -330,8 +330,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// boundary of it, which no split can express.
     ///
     /// A `Switch` drops the arm (an over-approximated entry). Any other
-    /// terminator edges to the owner, which `Cfg::region_if` matches by
-    /// containment; its stream starts earlier than the target, so the edge is
+    /// terminator edges to the region holding the first op of the instruction
+    /// containing the target, which `Cfg::region_if` matches by containment;
+    /// its stream starts at or before that instruction, so the edge is
     /// reported [`Reason::InteriorTarget`] unless it is a benign prefix
     /// re-entry.
     fn seat_non_boundary_target(
@@ -340,11 +341,24 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         owner: NodeIndex,
         addr: PcodeInsnAddr,
     ) -> Result<()> {
-        let region = &mut self.region_graph[parent];
-        if !matches!(region.terminator, RegionTerminator::Switch { .. }) {
+        if !matches!(
+            self.region_graph[parent].terminator,
+            RegionTerminator::Switch { .. }
+        ) {
+            // An instruction with internal p-code branches spans several
+            // regions, and `owner` may be a later slice of it.
+            let head = self.region_graph[owner]
+                .insns
+                .iter()
+                .rev()
+                .find(|i| i.addr.machine() <= addr.machine())
+                .map_or(addr, |i| PcodeInsnAddr::at_machine_start(i.addr.machine()));
+            let owner = self
+                .find_region_containing_addr(head)
+                .map_or(owner, |(id, _)| id);
             let benign = self.is_benign_prefix_reentry(owner, addr);
             let edge = self.region_graph.add_edge(parent, owner, ());
-            self.non_boundary_seats.insert(edge, addr);
+            self.non_boundary_seats.insert(edge, head);
             if !benign {
                 self.report.incomplete.insert(addr, Reason::InteriorTarget);
             }
@@ -352,7 +366,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
         // One arm per seating: an address named in both ISA modes has one
         // work item per arm.
-        let dropped = region.terminator.drop_switch_arms_at(addr.machine(), true);
+        let dropped = self.region_graph[parent]
+            .terminator
+            .drop_switch_arms_at(addr.machine(), true);
         debug_assert!(
             dropped,
             "seated interior target {addr:?} names no arm of the Switch that routed it",
@@ -369,11 +385,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// The containing instruction must be `owner`'s first (glibc's
     /// `je 0f; lock; 0:`): an owner starting earlier runs instructions the
     /// taken path does not.
-    ///
-    /// Skipped on an arch with an ISA-mode var or committed flow vars, so the
-    /// throwaway decode leaks no mode and no context [`Self::enqueue`] reads.
     fn is_benign_prefix_reentry(&mut self, owner: NodeIndex, addr: PcodeInsnAddr) -> bool {
-        if self.engine.arch.isa_mode_var().is_some() || !self.engine.tables.flow_commit.is_empty() {
+        if !self.may_reenter_prefix() {
             return false;
         }
         let region = &self.region_graph[owner];
@@ -394,20 +407,42 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if region.start_addr != PcodeInsnAddr::at_machine_start(start) {
             return false;
         }
-        let full = region
-            .insns
-            .iter()
-            .filter(|i| i.addr.machine() == start)
-            .map(|i| &i.insn);
         let Ok(tail) = self.engine.sleigh.lift_one(target) else {
             return false;
         };
         // Not saturating: a tail ending at the top must not match `full_end`.
-        if (tail.machine_insn_len as u64).checked_add(target) != Some(full_end) {
-            return false;
-        }
+        (tail.machine_insn_len as u64).checked_add(target) == Some(full_end)
+            && self.same_core_ops(self.decoded_ops_at(start).into_iter(), tail.insns.iter())
+    }
+
+    /// Skipped on an arch with an ISA-mode var or committed flow vars, so a
+    /// throwaway decode leaks no mode and no context [`Self::enqueue`] reads.
+    pub(super) fn may_reenter_prefix(&self) -> bool {
+        self.engine.arch.isa_mode_var().is_none() && self.engine.tables.flow_commit.is_empty()
+    }
+
+    /// The decoded p-code of the instruction at `machine`, across every region
+    /// it spans.
+    pub(super) fn decoded_ops_at(&self, machine: u64) -> Vec<&rsleigh::Insn> {
+        let range = PcodeInsnAddr::at_machine_start(machine)
+            ..PcodeInsnAddr::at_machine_start(machine.saturating_add(1));
+        self.index
+            .starts_in(range)
+            .flat_map(|(_, id)| self.region_graph[id].insns.iter())
+            .filter(|i| i.addr.machine() == machine)
+            .map(|i| &i.insn)
+            .collect()
+    }
+
+    /// Whether `full` and `tail` carry the same p-code once the atomic-prefix
+    /// markers are set aside.
+    pub(super) fn same_core_ops<'i>(
+        &self,
+        full: impl Iterator<Item = &'i rsleigh::Insn>,
+        tail: impl Iterator<Item = &'i rsleigh::Insn>,
+    ) -> bool {
         let core = |op: &&rsleigh::Insn| !self.is_atomic_marker(op);
-        full.filter(core).eq(tail.insns.iter().filter(core))
+        full.filter(core).eq(tail.filter(core))
     }
 
     /// Whether `op` is a `LOCK` / `UNLOCK` marker an x86 `lock` prefix
