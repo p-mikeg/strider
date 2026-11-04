@@ -213,9 +213,9 @@ impl SleighArch {
         self.facts().has_delay_slots
     }
 
-    /// `noflow` context vars that change which constructor matches, erased to
-    /// the pspec default with no re-lift at every region start (unlike
-    /// [`Self::flow_commit_vars`]): ARM `LRset` / `REToverride` /
+    /// `noflow` context vars that change which constructor matches, reset to
+    /// the pspec default before each decode, re-lifting the predecessor so its
+    /// own commit lands: ARM `LRset` / `REToverride` /
     /// `CALLoverride`, MIPS `PAIR_INSTRUCTION_FLAG` / `ext_delay`.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
