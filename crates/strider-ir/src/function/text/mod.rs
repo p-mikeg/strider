@@ -20,9 +20,9 @@ impl Function {
     /// [`UnionDag::for_each`](entity_utils::UnionDag::for_each)).
     ///
     /// Control nodes print in reverse postorder, each after its unprinted data inputs; a phi
-    /// prints right after its `Region`. The order reads no arena id, hash order or use-list, so
-    /// equal graphs print equal text however they were built, and [`Self::compact`] leaves it
-    /// unchanged.
+    /// prints right after its `Region`. The order reads no arena id, hash order or use-list
+    /// (save a control output's single use), so equal graphs print equal text however they
+    /// were built, and [`Self::compact`] leaves it unchanged.
     pub fn to_text(&self, fingerprints: bool) -> String {
         self.to_text_with(fingerprints, &vn_str)
     }
