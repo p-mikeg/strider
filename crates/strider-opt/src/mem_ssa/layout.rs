@@ -648,7 +648,15 @@ impl Discovered {
         for (v, &id) in node.iter().enumerate() {
             let (s, inputs): (Shape, SmallVec<[ValueId; 2]>) = match function.node_kind(id) {
                 NodeKind::InitialMemory => (Shape::Initial, SmallVec::new()),
-                NodeKind::MemPhi => (Shape::Phi, function.phi_data_inputs(id).collect()),
+                // An arm fed from outside the reach is on an edge no path
+                // takes.
+                NodeKind::MemPhi => (
+                    Shape::Phi,
+                    function
+                        .phi_data_inputs(id)
+                        .filter(|&arm| index[function.producer(arm)] != NONE)
+                        .collect(),
+                ),
                 _ => (
                     Shape::Def,
                     function.memory_input_of(id).into_iter().collect(),
