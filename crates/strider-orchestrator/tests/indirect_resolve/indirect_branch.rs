@@ -1,19 +1,9 @@
-//! `fixtures/cases/indirect_branch.c::indirect_branch_resolved` lowers the
-//! indirect goto to a load from a local stack array of label addresses on
-//! every supported toolchain/optimisation level we target (gcc/clang
-//! collapse direct constant computed-gotos into straight-line `mov; ret`,
-//! so the surviving lowering is always: write label addresses to the local
-//! stack array, load the per-iteration target from the array, branch
-//! through the loaded value).
+//! `fixtures/cases/indirect_branch.c::indirect_branch_resolved` resolves to
+//! both labels, through a stack copy of its label array or a data-section
+//! table.
 //!
-//! Resolving this requires cross-region stack-load forwarding (`LoadForward`
-//! across the function's region graph), routed through the IR-level
-//! resolver's unified table-dispatch arm
-//! (`indirect_branch_resolve::table::classify_dispatch_value`, SP-rooted
-//! base). Cfg-time the builder defers every `BranchIndirect` via
-//! `UnresolvedIndirectBranch`; the IR-level resolver has cross-region
-//! visibility plus `LoadForward` results and resolves the dispatch to
-//! `ResolvedTargets::Multiple`.
+//! Every roster arch has a test but arm_be8, which does not resolve; it and
+//! the ignored aarch64be are pinned unresolved by the golden `GAPS`.
 
 use crate::common::*;
 use strider_ir::{IRViewer, IRWalker};
@@ -137,6 +127,10 @@ fn resolves_to_both_labels(
 #[test]
 fn indirect_branch_resolved_x86() {
     assert_indirect_goto_resolves_to_both_labels(Arch::X86);
+}
+#[test]
+fn indirect_branch_resolved_x86_kernel() {
+    assert_indirect_goto_resolves_to_both_labels(Arch::X86Kernel);
 }
 #[test]
 fn indirect_branch_resolved_x64() {
