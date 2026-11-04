@@ -46,7 +46,7 @@ Python, from the workspace root (never from `crates/strider-py`):
 
 ```bash
 uv sync --group dev
-uv run maturin develop --features test-hooks   # without it, 2 tests skip
+uv run maturin develop --features test-hooks   # without it, 2 more tests skip
 uv run pytest
 uv run pyright     # strider/, its tests and examples; gate is 0 errors
 ```
