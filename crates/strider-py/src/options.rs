@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::bigint::Addr;
 use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
@@ -28,7 +29,10 @@ impl<'py> FromPyObject<'py> for KnownTarget {
                 ))),
             };
         }
-        Ok(KnownTarget::Targets(ob.extract::<Vec<u64>>()?))
+        let targets: Vec<Addr> = ob.extract()?;
+        Ok(KnownTarget::Targets(
+            targets.into_iter().map(|a| a.0).collect(),
+        ))
     }
 }
 
@@ -66,7 +70,7 @@ pub struct AddrSetArg(pub rustc_hash::FxHashSet<u64>);
 impl<'py> FromPyObject<'py> for AddrSetArg {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
         ob.iter()?
-            .map(|item| item?.extract::<u64>())
+            .map(|item| Ok(item?.extract::<Addr>()?.0))
             .collect::<PyResult<_>>()
             .map(Self)
     }
@@ -214,26 +218,34 @@ impl PyCfgOptions {
     fn new(
         function_max_size: Option<u64>,
         allow_code_before_start_addr: bool,
-        known_targets: MapArg<HashMap<u64, KnownTarget>>,
+        known_targets: MapArg<HashMap<Addr, KnownTarget>>,
         call_other_abis: MapArg<HashMap<String, CallOtherAbiArg>>,
-        data_ranges: Vec<(u64, u64)>,
-        fragment_ranges: Vec<(u64, u64)>,
+        data_ranges: Vec<(Addr, Addr)>,
+        fragment_ranges: Vec<(Addr, Addr)>,
         no_return_targets: AddrSetArg,
     ) -> PyResult<Self> {
         let bound = function_bound(function_max_size, allow_code_before_start_addr)?;
-        let seated = crate::strider_cls::seat_known_targets(&known_targets.0);
+        let known_targets: HashMap<u64, KnownTarget> =
+            known_targets.0.into_iter().map(|(a, t)| (a.0, t)).collect();
+        let ranges = |r: Vec<(Addr, Addr)>| -> Vec<(u64, u64)> {
+            r.into_iter().map(|(s, e)| (s.0, e.0)).collect()
+        };
+        let seated = crate::strider_cls::seat_known_targets(&known_targets);
         Ok(Self {
             bound,
-            known_targets: known_targets.0,
+            known_targets,
             call_other_abis: call_other_abis
                 .0
                 .into_iter()
                 .map(|(name, abi)| (name, abi.0))
                 .collect(),
-            data_ranges: strider_cfg::DataRanges::try_new("data_ranges", data_ranges)
+            data_ranges: strider_cfg::DataRanges::try_new("data_ranges", ranges(data_ranges))
                 .map_err(pyo3::exceptions::PyValueError::new_err)?,
-            fragment_ranges: strider_cfg::DataRanges::try_new("fragment_ranges", fragment_ranges)
-                .map_err(pyo3::exceptions::PyValueError::new_err)?,
+            fragment_ranges: strider_cfg::DataRanges::try_new(
+                "fragment_ranges",
+                ranges(fragment_ranges),
+            )
+            .map_err(pyo3::exceptions::PyValueError::new_err)?,
             no_return_targets: no_return_targets.0,
             seated,
             ..Self::default()
@@ -372,19 +384,23 @@ impl PyField<bool> for bool {
 }
 
 /// Sorted, so a `repr` reads back.
-impl PyField<Vec<u64>> for rustc_hash::FxHashSet<u64> {
-    fn to_py(&self) -> Vec<u64> {
+impl PyField<Vec<Addr>> for rustc_hash::FxHashSet<u64> {
+    fn to_py(&self) -> Vec<Addr> {
         let mut v: Vec<u64> = self.iter().copied().collect();
         v.sort_unstable();
-        v
+        v.into_iter().map(crate::bigint::Unsigned).collect()
     }
 
-    fn from_py(value: Vec<u64>) -> Self {
-        value.into_iter().collect()
+    fn from_py(value: Vec<Addr>) -> Self {
+        value.into_iter().map(|a| a.0).collect()
     }
 
     fn py_repr(&self) -> String {
-        format!("{:?}", PyField::<Vec<u64>>::to_py(self))
+        let v: Vec<u64> = PyField::<Vec<Addr>>::to_py(self)
+            .iter()
+            .map(|a| a.0)
+            .collect();
+        format!("{v:?}")
     }
 }
 
@@ -471,7 +487,7 @@ assumption_fields! {
     /// pointer out). Each allocation is disjoint from every other, the stack
     /// and every constant address, so an arena allocator does not qualify.
     /// Deallocation is not modelled. Reads back sorted, deduplicated.
-    noalias_allocators: Vec<u64>,
+    noalias_allocators: Vec<Addr>,
 
     /// When no stack address escapes to a callee, forward a spill load across
     /// a call and, under `stack_global_disjoint`, past an opaque store. The
@@ -599,7 +615,7 @@ impl PyLifterOptions {
         cfg: Option<Py<PyCfgOptions>>,
         assumptions: Option<Py<PyAssumptionOptions>>,
         compact: bool,
-        per_address_ccs: Option<MapArg<HashMap<u64, PyCallingConvention>>>,
+        per_address_ccs: Option<MapArg<HashMap<Addr, PyCallingConvention>>>,
         resolve_indirect_branches: bool,
         pipeline: Option<Py<PyOptimizerPipeline>>,
     ) -> PyResult<Self> {
@@ -617,7 +633,7 @@ impl PyLifterOptions {
             assumptions,
             compact,
             per_address_ccs: per_address_ccs.map(|t| PerAddressCcs {
-                py: t.0,
+                py: t.0.into_iter().map(|(a, cc)| (a.0, cc)).collect(),
                 built: Mutex::default(),
             }),
             resolve_indirect_branches,

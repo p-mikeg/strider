@@ -1582,11 +1582,11 @@ macro_rules! builder_slot_methods {
             /// cond]`.
             fn input<'py>(
                 slf: PyRef<'py, Self>,
-                idx: usize,
+                idx: crate::bigint::Unsigned<usize>,
                 p: Py<PyAny>,
             ) -> PyResult<PyRef<'py, Self>> {
-                crate::pattern::check_operand_index(idx)?;
-                slf.common.borrow_mut().inputs.push((idx, p));
+                crate::pattern::check_operand_index(idx.0)?;
+                slf.common.borrow_mut().inputs.push((idx.0, p));
                 Ok(slf)
             }
         }
@@ -1597,10 +1597,10 @@ macro_rules! builder_slot_methods {
             /// Bind or constrain raw output `slot` (a `Call` is `[ctrl, mem,
             /// result, ...clobbers]`, a `Load` `[value]`) through the returned
             /// `.capture(c)` / `.of_width(w)` / `.of_type(ty)`.
-            fn output(slf: Bound<'_, Self>, slot: usize) -> PyOutputSlot {
+            fn output(slf: Bound<'_, Self>, slot: crate::bigint::Unsigned<usize>) -> PyOutputSlot {
                 PyOutputSlot {
                     parent: slf.into_any().unbind(),
-                    slot: Some(slot),
+                    slot: Some(slot.0),
                 }
             }
 
@@ -1766,11 +1766,11 @@ macro_rules! node_builder {
             #[doc = $doc]
             fn $m<'py>(
                 slf: PyRef<'py, Self>,
-                idx: $idx,
+                idx: crate::bigint::Unsigned<$idx>,
                 p: Py<PyAny>,
             ) -> PyResult<PyRef<'py, Self>> {
-                check_operand_index(idx)?;
-                slf.inner.borrow_mut().$name.push((idx, p));
+                check_operand_index(idx.0)?;
+                slf.inner.borrow_mut().$name.push((idx.0, p));
                 Ok(slf)
             }
         ] $($rest)*);
@@ -2709,15 +2709,15 @@ builder_common_methods!(PyFunctionArgPat);
 
 /// Start a `FunctionArg` pattern builder at integer-class index `i`.
 #[pyfunction]
-pub fn function_arg(i: u32) -> PyFunctionArgPat {
-    PyFunctionArgPat::new(sp::FunctionArgClass::Integer, Some(i), None)
+pub fn function_arg(i: crate::bigint::Unsigned<u32>) -> PyFunctionArgPat {
+    PyFunctionArgPat::new(sp::FunctionArgClass::Integer, Some(i.0), None)
 }
 
 /// Start a `FunctionArg` pattern builder at float-class index `i`, counting
 /// only float parameters.
 #[pyfunction]
-pub fn function_arg_float(i: u32) -> PyFunctionArgPat {
-    PyFunctionArgPat::new(sp::FunctionArgClass::Float, Some(i), None)
+pub fn function_arg_float(i: crate::bigint::Unsigned<u32>) -> PyFunctionArgPat {
+    PyFunctionArgPat::new(sp::FunctionArgClass::Float, Some(i.0), None)
 }
 
 /// Start a `FunctionArg` pattern builder matching any index of either class.
