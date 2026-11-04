@@ -6,9 +6,8 @@ use super::sections::RegionSource;
 /// An [`rsleigh::MemReader`] over an ELF's fetch image and a
 /// [`crate::ReadOnlyMemory`] over its ROM ([`OwnedElf::image`]).
 ///
-/// Its regions window the [`OwnedElf`]'s mapping: a read past the end of a
-/// file truncated under it is a SIGBUS (`STRIDER_NO_MMAP=1` reads the file
-/// instead).
+/// Its regions window the [`OwnedElf`]'s mapping, so a file truncated under it
+/// SIGBUSes a read past the new end.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     fetch: MemRegionsLookupTable,
@@ -67,8 +66,7 @@ mod tests {
     use crate::ReadOnlyMemory;
     use crate::elf::ElfSectionLayout;
 
-    /// A single RWX mapping, the firmware / `ld -N` shape: fetchable, but
-    /// not ROM.
+    /// A single RWX mapping, the firmware / `ld -N` shape.
     fn rwx_elf() -> Vec<u8> {
         text_elf(true)
     }
