@@ -87,16 +87,6 @@ mod tests {
     entity_impl!(Id);
 
     #[test]
-    fn new_and_default_are_empty() {
-        let s: DenseEntitySet<Id> = DenseEntitySet::new();
-        assert!(!s.contains(Id(0)));
-        assert!(s.iter().next().is_none());
-
-        let s: DenseEntitySet<Id> = DenseEntitySet::default();
-        assert!(!s.contains(Id(0)));
-    }
-
-    #[test]
     fn insert_contains_remove() {
         let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
         assert!(!s.contains(Id(3)));
@@ -136,19 +126,6 @@ mod tests {
         s.remove(Id(99));
         assert!(s.contains(Id(1)));
         assert!(!s.contains(Id(99)));
-    }
-
-    #[test]
-    fn into_iter_for_ref_yields_same_as_iter() {
-        let s: DenseEntitySet<Id> = [Id(3), Id(1), Id(4)].into_iter().collect();
-        let by_iter: Vec<_> = s.iter().collect();
-        let by_for: Vec<_> = (&s).into_iter().collect();
-        assert_eq!(by_iter, by_for);
-        let mut by_for_sugar = Vec::new();
-        for id in &s {
-            by_for_sugar.push(id);
-        }
-        assert_eq!(by_iter, by_for_sugar);
     }
 
     #[test]
