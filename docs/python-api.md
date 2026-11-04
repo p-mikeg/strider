@@ -164,16 +164,12 @@ positive one:
   runtime.
 - `assume_incoming_args_survive_calls` (on): a callee leaves the incoming
   stack-argument slots alone, so an argument read after a call is found.
-  Wrong when:
-  - the function hands a callee a pointer into those slots or into the
-    register-argument homes just below them (`h(&a); return a;`): detected,
-    and there every call keeps the slots unknown;
-  - a callee reads a pointer from a register its convention preserves: not
-    detected;
-  - the code stores its entry stack pointer (an ARM `-mapcs-frame` record):
-    no argument read after a call is found.
-  A `CallingConvention.custom` whose ABI homes register arguments next to the
-  stack ones (ARM, MIPS, PPC64, riscv, Win64) must pass
+  Wrong when the function passes a callee a pointer into those slots or the
+  register-argument homes below them (detected; the slots then stay unknown),
+  when a callee reaches them through a pointer in a preserved register (not
+  detected), or when the code stores its entry SP (APCS frames: nothing is
+  found). A `CallingConvention.custom` whose ABI homes register arguments
+  next to the stack ones (ARM, MIPS, PPC64, riscv, Win64) must pass
   `reg_args_adjoin_stack_args=True`.
 - `return_slots_survive_untracked_writes` (on): a store strider cannot place
   on the entry stack, a callee or a user-op leaves the saved return address
@@ -252,7 +248,7 @@ after the interrupt. For userland code (a libc `_start`) pass
 `call_other_abis={"halt": CallOtherAbi.no_return()}`.
 
 `lft.user_op_names()` lists the user-op names the architecture can emit;
-`lft.call_other_abi(name, cfg_opts=None)` reads the classification in force.
+`lft.call_other_abi(name, opts=None)` reads the classification in force.
 `None` means strider has no answer, which fails the lift of a function using
 it. `crates/strider-py/examples/python/17_custom_abis.py` walks through this.
 
