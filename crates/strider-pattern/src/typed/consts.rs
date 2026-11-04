@@ -60,6 +60,7 @@ fn const_template(v: IBig, ty: TemplateTy) -> ConstWith {
 }
 
 /// A constant valid on both sides.
+#[derive(Clone)]
 pub(crate) enum Const {
     /// `v` wrapped into the matched node's output width; a negative is its two's complement there.
     Int(IBig),
@@ -105,6 +106,36 @@ impl Const {
             }),
         };
         built.lower(b)
+    }
+
+    /// `-self`, where it is a constant of this kind.
+    pub(crate) fn negated(&self) -> Option<Self> {
+        match self {
+            Const::Int(v) => Some(Const::Int(-v.clone())),
+            // `-1` is `1` at `I1`.
+            Const::Bool(v) => Some(Const::Bool(*v)),
+            Const::AllOnes => Some(Const::Int(IBig::from(1))),
+            Const::AnyWidth(_) => None,
+        }
+    }
+}
+
+/// A `FloatConst` of a width up to 64 bits holding `bits` with its sign bit flipped.
+pub(crate) fn negated_float_const(bits: u64) -> Leaf {
+    Leaf {
+        pred: Some(Box::new(move |m, node| {
+            let f = m.function();
+            let NodeKind::FloatConst(stored) = *f.node_kind(node) else {
+                return false;
+            };
+            let width = f
+                .node_outputs(node)
+                .first()
+                .and_then(|&o| f.value_kind(o).as_value())
+                .map_or(0, |ty| ty.bit_width());
+            (1..=64).contains(&width) && stored == bits ^ (1 << (width - 1))
+        })),
+        ..Leaf::new(KindSpec::variant_of(&NodeKind::FloatConst(0)))
     }
 }
 

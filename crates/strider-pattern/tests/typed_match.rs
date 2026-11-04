@@ -132,6 +132,21 @@ fn sub_lowers_to_add_neg() {
     );
 }
 
+/// `x - 7` after `ConstantFold`: `Add(x, -7)`.
+#[test]
+fn sub_of_a_constant_matches_the_folded_add() {
+    let v = reg_vn(0, 8);
+    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
+        let k = b.build_int_const(-7i64 as u64, T::int(64))?;
+        b.build_int_binary_operation(base, k, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap()
+    .0;
+    let sub = |k: u128| int_sub(var(Capture::new()), int_const(k)).into_pattern();
+    assert_eq!(count(|| sub(7), &fx), 1);
+    assert_eq!(count(|| sub(6), &fx), 0);
+}
+
 #[test]
 fn int_unary_family() {
     let v = reg_vn(0, 8);
