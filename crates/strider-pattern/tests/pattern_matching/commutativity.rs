@@ -6,64 +6,90 @@ use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
 
-/// The two-operand graph over `$op` matches the pattern written either way
-/// round. A macro, not a table: `int_add` and friends are distinct free
-/// functions, not values.
-macro_rules! commutes {
-    ($ctor:ident, $l:literal, $r:literal, $op:expr) => {{
-        let function = shapes::int_bin($l, $r, $op);
-        a::matches_both_orders(
-            &function,
-            $ctor(int_const($l as u128), int_const($r as u128)).into_pattern(),
-            $ctor(int_const($r as u128), int_const($l as u128)).into_pattern(),
+/// Every binary op matches its pattern written either way round iff
+/// `NodeKind::is_commutative`, and `.ordered()` pins the written order.
+#[test]
+fn every_binary_op_commutes_iff_is_commutative() {
+    #[track_caller]
+    fn check(
+        function: &strider_ir::Function,
+        kind: &NodeKind,
+        pat: impl Fn(bool, bool) -> Pattern,
+    ) {
+        let count = |p: Pattern| Matcher::new(function).find_all(&p).unwrap().len();
+        let swapped = usize::from(kind.is_commutative());
+        assert_eq!(count(pat(false, false)), 1, "{kind:?}");
+        assert_eq!(count(pat(true, false)), swapped, "{kind:?}");
+        assert_eq!(count(pat(false, true)), 1, "{kind:?}");
+        assert_eq!(count(pat(true, true)), 0, "{kind:?}");
+    }
+    fn pin<P: MatchPat + 'static>(p: P, ordered: bool) -> Pattern {
+        if ordered {
+            p.ordered().into_pattern()
+        } else {
+            p.into_pattern()
+        }
+    }
+    let ints = |swap: bool| {
+        let (l, r) = if swap { (3u128, 5u128) } else { (5, 3) };
+        (int_const(l), int_const(r))
+    };
+    let floats = |swap: bool| {
+        let (l, r) = if swap { (5.0f64, 2.0f64) } else { (2.0, 5.0) };
+        (float_const(l.to_bits()), float_const(r.to_bits()))
+    };
+    for op in IntBinaryOp::ALL {
+        check(
+            &shapes::int_bin(5, 3, op),
+            &NodeKind::IntBinaryOp(op),
+            |swap, ordered| {
+                let (l, r) = ints(swap);
+                pin(int_binary(op, l, r), ordered)
+            },
         );
-    }};
-}
-
-#[test]
-fn add_commutes() {
-    commutes!(int_add, 5, 3, IntBinaryOp::Add);
-}
-
-#[test]
-fn mul_commutes() {
-    commutes!(int_mul, 7, 9, IntBinaryOp::Mul);
-}
-
-#[test]
-fn and_or_xor_commute() {
-    commutes!(int_and, 0xF0, 0x0F, IntBinaryOp::And);
-    commutes!(int_or, 0xF0, 0x0F, IntBinaryOp::Or);
-    commutes!(int_xor, 0xF0, 0x0F, IntBinaryOp::Xor);
-}
-
-#[test]
-fn ordered_rejects_swap() {
-    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    a::none(
-        &function,
-        int_add(int_const(3u128), int_const(5u128))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        int_add(int_const(5u128), int_const(3u128))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-
-#[test]
-fn ordered_mul_rejects_swap() {
-    let function = shapes::int_bin(7, 9, IntBinaryOp::Mul);
-    a::none(
-        &function,
-        int_mul(int_const(9u128), int_const(7u128))
-            .ordered()
-            .into_pattern(),
-    );
+    }
+    for op in IntCmpOp::ALL {
+        check(
+            &shapes::int_cmp_5_3(op),
+            &NodeKind::IntCmpOp(op),
+            |swap, ordered| {
+                let (l, r) = ints(swap);
+                pin(int_cmp(op, l, r), ordered)
+            },
+        );
+    }
+    for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
+        check(
+            &shapes::bool_bin(true, false, op),
+            &NodeKind::IntBinaryOp(op),
+            |swap, ordered| {
+                pin(
+                    bool_binary(op, bool_const(!swap), bool_const(swap)),
+                    ordered,
+                )
+            },
+        );
+    }
+    for op in FloatBinaryOp::ALL {
+        check(
+            &shapes::float_bin(2.0, 5.0, op),
+            &NodeKind::FloatBinaryOp(op),
+            |swap, ordered| {
+                let (l, r) = floats(swap);
+                pin(float_binary(op, l, r), ordered)
+            },
+        );
+    }
+    for op in FloatCmpOp::ALL {
+        check(
+            &graph_float_cmp(2.0, 5.0, op),
+            &NodeKind::FloatCmpOp(op),
+            |swap, ordered| {
+                let (l, r) = floats(swap);
+                pin(float_cmp(op, l, r), ordered)
+            },
+        );
+    }
 }
 
 /// `int_add(anything(), anything())` on `int_add(5, 3)`: no captures, so both orderings produce
@@ -268,156 +294,10 @@ fn sub_does_not_commute() {
     );
 }
 
-#[test]
-fn div_shl_shr_do_not_commute() {
-    let g_div = shapes::int_bin(20, 4, IntBinaryOp::Div);
-    let g_shl = shapes::int_bin(1, 8, IntBinaryOp::ShiftLeft);
-    let g_shr = shapes::int_bin(256, 2, IntBinaryOp::ShiftRight);
-
-    a::none(
-        &g_div,
-        int_div(int_const(4u128), int_const(20u128)).into_pattern(),
-    );
-    a::none(
-        &g_shl,
-        int_shl(int_const(8u128), int_const(1u128)).into_pattern(),
-    );
-    a::none(
-        &g_shr,
-        int_shr(int_const(2u128), int_const(256u128)).into_pattern(),
-    );
-}
-
-#[test]
-fn bool_and_or_xor_commute() {
-    let g_and = shapes::bool_bin(true, false, IntBinaryOp::And);
-    let g_or = shapes::bool_bin(true, false, IntBinaryOp::Or);
-    let g_xor = shapes::bool_bin(true, false, IntBinaryOp::Xor);
-    a::matches_both_orders(
-        &g_and,
-        bool_and(bool_const(true), bool_const(false)).into_pattern(),
-        bool_and(bool_const(false), bool_const(true)).into_pattern(),
-    );
-    a::matches_both_orders(
-        &g_or,
-        bool_or(bool_const(true), bool_const(false)).into_pattern(),
-        bool_or(bool_const(false), bool_const(true)).into_pattern(),
-    );
-    a::matches_both_orders(
-        &g_xor,
-        bool_xor(bool_const(true), bool_const(false)).into_pattern(),
-        bool_xor(bool_const(false), bool_const(true)).into_pattern(),
-    );
-}
-
-/// `bool_binary` is chainable: bare it matches commutatively, `.ordered()`
-/// pins the operand slots.
-#[test]
-fn bool_binary_ordered_rejects_swap() {
-    let function = shapes::bool_bin(true, false, IntBinaryOp::And);
-    a::matches(
-        &function,
-        bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false)).into_pattern(),
-        1,
-    );
-    a::matches(
-        &function,
-        bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true)).into_pattern(),
-        1,
-    );
-    a::none(
-        &function,
-        bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-// `IntCmpOp::Carry` / `Scarry` are commutative in `NodeKind::is_commutative`:
-// an addition carry/overflow commutes because addition does.
-
-#[test]
-fn int_carry_commutes() {
-    let function = shapes::int_cmp_5_3(IntCmpOp::Carry);
-    a::matches_both_orders(
-        &function,
-        int_carry(int_const(5u128), int_const(3u128)).into_pattern(),
-        int_carry(int_const(3u128), int_const(5u128)).into_pattern(),
-    );
-}
-
-#[test]
-fn ordered_int_carry_rejects_swap() {
-    let function = shapes::int_cmp_5_3(IntCmpOp::Carry);
-    a::none(
-        &function,
-        int_carry(int_const(3u128), int_const(5u128))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        int_carry(int_const(5u128), int_const(3u128))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-
-#[test]
-fn int_scarry_commutes() {
-    let function = shapes::int_cmp_5_3(IntCmpOp::Scarry);
-    a::matches_both_orders(
-        &function,
-        int_scarry(int_const(5u128), int_const(3u128)).into_pattern(),
-        int_scarry(int_const(3u128), int_const(5u128)).into_pattern(),
-    );
-}
-
-#[test]
-fn ordered_int_scarry_rejects_swap() {
-    let function = shapes::int_cmp_5_3(IntCmpOp::Scarry);
-    a::none(
-        &function,
-        int_scarry(int_const(3u128), int_const(5u128))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        int_scarry(int_const(5u128), int_const(3u128))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-
-#[test]
-fn float_add_and_mul_commute() {
-    let g_add = shapes::float_bin(2.0, 5.0, FloatBinaryOp::Add);
-    let g_mul = shapes::float_bin(2.0, 5.0, FloatBinaryOp::Mul);
-    a::matches_both_orders(
-        &g_add,
-        float_add(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into_pattern(),
-        float_add(float_const(5.0f64.to_bits()), float_const(2.0f64.to_bits())).into_pattern(),
-    );
-    a::matches_both_orders(
-        &g_mul,
-        float_mul(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into_pattern(),
-        float_mul(float_const(5.0f64.to_bits()), float_const(2.0f64.to_bits())).into_pattern(),
-    );
-}
-
 /// `FloatBinaryOp::Sub` is not a primitive: `pattern::float_sub` is an alias
 /// for the lowered `FloatAdd(a, Neg(b))`, which the fixture builds by hand.
 #[test]
-fn float_sub_and_div_do_not_commute() {
+fn float_sub_does_not_commute() {
     let g_sub = {
         let mut t = Tb::empty();
         let a = t.f64(5.0);
@@ -439,16 +319,6 @@ fn float_sub_and_div_do_not_commute() {
     a::none(
         &g_sub,
         float_sub(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into_pattern(),
-    );
-
-    let g_div = shapes::float_bin(10.0, 4.0, FloatBinaryOp::Div);
-    a::none(
-        &g_div,
-        float_div(
-            float_const(4.0f64.to_bits()),
-            float_const(10.0f64.to_bits()),
-        )
-        .into_pattern(),
     );
 }
 
@@ -639,26 +509,6 @@ fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Function {
     t.ret_val(as_int)
 }
 
-#[test]
-fn float_eq_commutes() {
-    let function = graph_float_cmp(1.0, 2.0, FloatCmpOp::Equal);
-    a::matches_both_orders(
-        &function,
-        float_cmp(
-            FloatCmpOp::Equal,
-            float_const(1.0_f64.to_bits()),
-            float_const(2.0_f64.to_bits()),
-        )
-        .into_pattern(),
-        float_cmp(
-            FloatCmpOp::Equal,
-            float_const(2.0_f64.to_bits()),
-            float_const(1.0_f64.to_bits()),
-        )
-        .into_pattern(),
-    );
-}
-
 /// `FloatCmpOp::NotEqual` is not a primitive: `pattern::float_ne` is an alias
 /// for `Xor(FloatEqual(_, _), 1):I1`, which the fixture builds by hand.
 #[test]
@@ -680,31 +530,6 @@ fn float_ne_commutes() {
         )
         .into_pattern(),
         float_ne(
-            float_const(2.0_f64.to_bits()),
-            float_const(1.0_f64.to_bits()),
-        )
-        .into_pattern(),
-    );
-}
-
-#[test]
-fn float_lt_does_not_commute() {
-    let function = graph_float_cmp(1.0, 2.0, FloatCmpOp::Less);
-    a::matches(
-        &function,
-        float_cmp(
-            FloatCmpOp::Less,
-            float_const(1.0_f64.to_bits()),
-            float_const(2.0_f64.to_bits()),
-        )
-        .into_pattern(),
-        1,
-    );
-    // Less is directional.
-    a::none(
-        &function,
-        float_cmp(
-            FloatCmpOp::Less,
             float_const(2.0_f64.to_bits()),
             float_const(1.0_f64.to_bits()),
         )
