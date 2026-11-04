@@ -72,8 +72,8 @@ These raise:
 - `ElfLifter.arch` and `reader()` raise while the handle is in use;
   `reader()` returns the handle's own `BufferReader`.
 - An address, node id or operand index outside the unsigned range raises
-  `StriderError`, not `OverflowError`; a `bool` there raises `TypeError`
-  where it read as 0 or 1.
+  `StriderError`, not `OverflowError`; a `bool` there, `entry` included,
+  raises `TypeError` where it read as 0 or 1.
 - `of_width`, `value_of_width` and `inputs_of_width` raise `StriderError` for
   a width no value type has; they matched nothing.
 

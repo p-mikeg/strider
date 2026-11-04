@@ -103,9 +103,13 @@ fn reentrant_lifter_err() -> PyErr {
 }
 
 fn entry_addr(entry: &Bound<'_, PyAny>) -> PyResult<u64> {
-    let int = !entry.is_instance_of::<pyo3::types::PyBool>();
-    int.then(|| entry.extract().ok()).flatten().ok_or_else(|| {
-        if int && entry.is_instance_of::<pyo3::types::PyInt>() {
+    if entry.is_instance_of::<pyo3::types::PyBool>() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "`entry`: expected an int, got bool",
+        ));
+    }
+    entry.extract().map_err(|_| {
+        if entry.is_instance_of::<pyo3::types::PyInt>() {
             into_strider_err(anyhow::anyhow!(
                 "`entry` is out of range for an address: it must fit an \
                  unsigned 64-bit integer"
