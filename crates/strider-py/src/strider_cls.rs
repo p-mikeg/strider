@@ -407,7 +407,7 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 
 /// Lifts, optimises and resolves functions for one architecture. Build one
 /// with `strider.lift.lifter(arch, mem, rom=None)`.
-#[pyclass(name = "Lifter", module = "strider.lift", subclass)]
+#[pyclass(name = "Lifter", module = "strider.lift", subclass, weakref)]
 pub struct PyLifter {
     /// `None` once `__clear__` has released it.
     inner: Option<strider_orchestrator::Strider<AnyMemReader>>,
