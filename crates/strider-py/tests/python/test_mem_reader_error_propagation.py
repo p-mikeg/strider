@@ -95,7 +95,6 @@ def test_reader_failure_fails_the_lift_at_any_address(bad, result, cause, text, 
     msg = str(excinfo.value)
     assert text in msg
     assert "MemReader.read" in msg and "PyMemReader" not in msg
-    assert "not mapped" not in msg
     assert isinstance(excinfo.value.__cause__, cause)
 
 
@@ -106,3 +105,14 @@ def test_reader_failure_does_not_leak_into_the_next_call():
         lift.analyze(0x1000, CallingConvention.x86_64_systemv())
     reader.bad = 1 << 63
     lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+
+
+@pytest.mark.parametrize("bad", [0x1000, 0x1002])
+def test_reader_failure_keeps_the_backtrace_and_the_decode_site(bad):
+    lift = strider.lift.lifter(SleighArch.x86_64(), _FailingAt(bad, _raise))
+    with pytest.raises(StriderError) as excinfo:
+        lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+    assert "backend down" in excinfo.value.backtrace
+    assert isinstance(excinfo.value.__cause__, ValueError)
+    if bad == 0x1000:
+        assert "sleigh could not lift 0x1000" in str(excinfo.value)

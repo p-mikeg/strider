@@ -378,17 +378,22 @@ pub(crate) fn machine_addrs(
 }
 
 /// Run `f`, then drain the pending-exception cell: an exception a Python
-/// callback stashed (a `KeyboardInterrupt` / `SystemExit` from a `read`, or
-/// anything a `.when()` predicate raised) wins over `f`'s result. Every entry
+/// callback stashed (a `KeyboardInterrupt` / `SystemExit` from a `read`, a
+/// failing `MemReader.read`, or anything a `.when()` predicate raised) wins
+/// over `f`'s result, except that a reader failure `f` raised itself raises
+/// as `f` did ([`crate::errors::pending_over`]). Every entry
 /// point that can reach a callback goes through this, so a later call cannot
 /// inherit a stashed exception.
 pub(crate) fn with_pending_control_flow<T>(f: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
     let out = f();
     // A surviving callback cause would chain onto an unrelated later error.
     crate::errors::clear_callback_cause();
-    match crate::pattern::take_pending_query_error() {
-        Some(err) => Err(err),
-        None => out,
+    match (crate::pattern::take_pending_query_error(), out) {
+        (Some(pending), Err(out)) => Err(Python::with_gil(|py| {
+            crate::errors::pending_over(py, pending, out)
+        })),
+        (Some(pending), Ok(_)) => Err(pending),
+        (None, out) => out,
     }
 }
 

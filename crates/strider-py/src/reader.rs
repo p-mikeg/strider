@@ -1109,9 +1109,10 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
             // error as an unmapped address.
             let fail = |msg: String, cause: Option<PyErr>| {
                 if !crate::pattern::peek_pending_query_error() {
-                    let err = crate::errors::StriderError::new_err(msg.clone());
-                    err.set_cause(py, cause);
-                    crate::pattern::stash_pending_query_error(err);
+                    crate::pattern::stash_pending_query_error(crate::errors::reader_failure(
+                        msg.clone(),
+                        cause,
+                    ));
                 }
                 anyhow::anyhow!(msg)
             };
