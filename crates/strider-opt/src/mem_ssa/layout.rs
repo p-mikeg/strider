@@ -19,10 +19,10 @@
 //! merge's immediate dominator; an arm precedes its merge, so deciding a merge
 //! from its arms' answers ends.
 //!
-//! An irreducible memory graph has no such order, so it is laid out in
-//! discovery order with no [`Positions`] and climbed the slow way: one
-//! dominator per iteration, each merge's region walked whole.  Same answer,
-//! same memo, no range to lean on.
+//! An irreducible loop is one block too, opened by its DFS-first node, but
+//! that node dominates none of it.  The climb crosses such a block from
+//! outside as any other, and inside it steps one dominator at a time, walking
+//! each merge's region whole.
 
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -90,12 +90,11 @@ pub(crate) struct MemLayout {
     preds: Vec<SmallVec<[u32; 2]>>,
     /// `InitialMemory` is its own immediate dominator.
     idom: Vec<u32>,
-    fast: Option<Positions>,
+    pos: Positions,
 }
 
-/// What the index numbers mean when it is a position order: a range of them
-/// is a set of defs the climb can pass at once.  Absent on an irreducible
-/// memory graph, where the index is discovery order.
+/// What a position means beyond its order: a range of them is a set of defs
+/// the climb can pass at once.
 pub(crate) struct Positions {
     /// Skip pointer up the dominator tree, `O(log depth)` hops to any
     /// ancestor.
@@ -107,12 +106,13 @@ pub(crate) struct Positions {
     loop_jump: Vec<u32>,
     /// Last position of a header's block; the node itself otherwise.
     end: Vec<u32>,
+    /// In an irreducible loop's block, where no header dominates the block and
+    /// the climb steps one dominator at a time.
+    tangled: Vec<bool>,
 }
 
 impl MemLayout {
-    /// The layout of every memory def reachable from `InitialMemory`.  An
-    /// irreducible memory graph has no position order, so it is laid out in
-    /// discovery order with no [`Positions`].
+    /// The layout of every memory def reachable from `InitialMemory`.
     pub(crate) fn build(function: &Function) -> Self {
         let graph = Discovered::collect(function);
         let n = graph.node.len();
@@ -124,10 +124,7 @@ impl MemLayout {
                 .collect::<SmallVec<[u32; 2]>>()
         });
         let loops = LoopForest::new(&graph.preds, &dfs);
-        let (order, block_end) = match &loops {
-            Some(loops) => loops.nested_order(&graph.preds, &dfs),
-            None => ((0..n as u32).collect(), Vec::new()),
-        };
+        let (order, block_end) = loops.nested_order(&graph.preds, &dfs);
 
         let mut pos = vec![NONE; n];
         for (p, &v) in order.iter().enumerate() {
@@ -148,12 +145,21 @@ impl MemLayout {
         }
         debug_assert_eq!(pos[0], 0, "InitialMemory leads");
 
-        let fast = loops.map(|loops| {
+        let positions = {
             // The top level, `n` in the forest, is `NONE` here.
             let at = |v: u32| pos.get(v as usize).copied().unwrap_or(NONE);
+            // Parents before children: preorder reaches an enclosing header
+            // first.
+            let mut tangled_node = vec![false; n];
+            for &v in &dfs.vertex {
+                let v = v as usize;
+                let p = loops.parent[v];
+                tangled_node[v] = loops.irreducible[v] || (p != NONE && tangled_node[p as usize]);
+            }
             let mut encl = Vec::with_capacity(n);
             let mut loop_jump = Vec::with_capacity(n);
             let mut end = Vec::with_capacity(n);
+            let mut tangled = Vec::with_capacity(n);
             for (p, &v) in order.iter().enumerate() {
                 let v = v as usize;
                 encl.push(at(loops.parent[v]));
@@ -163,6 +169,7 @@ impl MemLayout {
                 } else {
                     p as u32
                 });
+                tangled.push(tangled_node[v]);
             }
 
             // Parents before children: preorder reaches a dominator first.
@@ -184,28 +191,29 @@ impl MemLayout {
                 encl,
                 loop_jump,
                 end,
+                tangled,
             }
-        });
+        };
         Self {
             slot,
             node,
             shape,
             preds,
             idom,
-            fast,
+            pos: positions,
         }
     }
 
-    /// The position index, absent on an irreducible memory graph.
-    pub(crate) fn positions(&self) -> Option<&Positions> {
-        self.fast.as_ref()
+    #[cfg(test)]
+    pub(crate) fn is_reducible(&self) -> bool {
+        !self.pos.tangled.contains(&true)
     }
 
-    /// The position index the fast climb reads.
-    fn pos(&self) -> &Positions {
-        self.fast
-            .as_ref()
-            .expect("the fast climb runs on a positioned layout")
+    /// `None` on an irreducible memory graph.  Kept for a test outside this
+    /// module; [`Self::is_reducible`] replaces it.
+    #[cfg(test)]
+    pub(crate) fn positions(&self) -> Option<&Positions> {
+        self.is_reducible().then_some(&self.pos)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -237,51 +245,12 @@ impl MemLayout {
         // Unreachable from `InitialMemory`, so nothing above it is proven and
         // the caller bounds the answer at `start` itself.
         let start = self.position(start)?;
-        let answer = match self.fast {
-            Some(_) => self.climb(function, start, probe, answers),
-            None => self.climb_slow(function, start, probe, answers),
-        };
-        Some(self.node_at(answer))
-    }
-
-    /// The definition, one dominator per iteration: no position order, so
-    /// nothing is passed in a range and each merge's region is walked whole.
-    /// The answers and their memo are the fast climb's.
-    fn climb_slow(
-        &self,
-        function: &Function,
-        start: u32,
-        probe: &mut dyn ClobberProbe,
-        answers: &mut Answers,
-    ) -> u32 {
-        let mut path: SmallVec<[u32; 8]> = SmallVec::new();
-        let mut x = start;
-        let answer = loop {
-            #[cfg(test)]
-            step();
-            if let Some(&a) = answers.nearest.get(&x) {
-                break a;
-            }
-            path.push(x);
-            let stop = match self.shape[x as usize] {
-                Shape::Initial => true,
-                Shape::Phi => self.region_dirty_slow(function, x, probe, answers),
-                Shape::Def => probe.clobbers(function, self.node[x as usize]),
-            };
-            if stop {
-                break x;
-            }
-            x = self.idom[x as usize];
-        };
-        for p in path {
-            answers.nearest.insert(p, answer);
-        }
-        answer
+        Some(self.node_at(self.climb(function, start, probe, answers)))
     }
 
     /// Whether merge `phi`'s region holds a clobber, over the defs that reach
     /// it without passing its immediate dominator.
-    fn region_dirty_slow(
+    fn region_dirty_walked(
         &self,
         function: &Function,
         phi: u32,
@@ -396,12 +365,24 @@ impl MemLayout {
                 return Step::Answer(a);
             }
             path.push(*x);
+            if self.pos.tangled[*x as usize] {
+                let stop = match self.shape[*x as usize] {
+                    Shape::Initial => true,
+                    Shape::Phi => self.region_dirty_walked(function, *x, probe, answers),
+                    Shape::Def => probe.clobbers(function, self.node[*x as usize]),
+                };
+                if stop {
+                    return Step::Answer(*x);
+                }
+                *x = self.idom[*x as usize];
+                continue;
+            }
             // Every def reaching `x` without passing a dominator inside the
             // same loop lies in `floor..=end[x]`.
-            let enc = self.pos().encl[*x as usize];
+            let enc = self.pos.encl[*x as usize];
             let floor = if enc == NONE { 0 } else { enc + 1 };
             let Some(c) =
-                self.highest_clobber(function, probe, answers, floor, self.pos().end[*x as usize])
+                self.highest_clobber(function, probe, answers, floor, self.pos.end[*x as usize])
             else {
                 if enc == NONE {
                     // `InitialMemory` leads the order.
@@ -413,6 +394,9 @@ impl MemLayout {
             let a = self.topmost_dominator_above(*x, c);
             if a != *x {
                 *x = a;
+                if self.pos.tangled[a as usize] {
+                    continue;
+                }
                 if past(*x) {
                     return Step::Bounded;
                 }
@@ -428,7 +412,7 @@ impl MemLayout {
                     // `c`, so the region may hold `c`.
                     debug_assert!(self.idom[*x as usize] <= c, "a merge passed by the jump");
                     // Every def in a loop block is in its header's region.
-                    let block_dirty = self.pos().end[*x as usize] > *x && c > *x;
+                    let block_dirty = self.pos.end[*x as usize] > *x && c > *x;
                     match answers
                         .dirty
                         .get(x)
@@ -489,7 +473,7 @@ impl MemLayout {
         probe: &mut dyn ClobberProbe,
         answers: &mut Answers,
     ) -> u32 {
-        let pos = self.pos();
+        let pos = &self.pos;
         farthest(
             header,
             &pos.loop_jump,
@@ -503,12 +487,7 @@ impl MemLayout {
 
     /// The topmost dominator of `x` laid out above `c`.
     fn topmost_dominator_above(&self, x: u32, c: u32) -> u32 {
-        farthest(
-            x,
-            &self.pos().dom_jump,
-            |a| self.idom[a as usize],
-            |a| a > c,
-        )
+        farthest(x, &self.pos.dom_jump, |a| self.idom[a as usize], |a| a > c)
     }
 
     /// The highest position in `lo..=hi` whose def clobbers.  Every
@@ -768,12 +747,15 @@ impl DepthFirst {
     }
 }
 
-/// Natural loops, found by collapsing each header's body into it innermost
-/// first.
+/// Loops, found by collapsing each header's body into it innermost first
+/// (Havlak).  A header is the DFS-first node of its loop; the loop is
+/// irreducible when some body node is entered from outside the header's DFS
+/// subtree.
 struct LoopForest {
     /// Innermost header whose loop holds the node, the node excluded.
     parent: Vec<u32>,
     is_header: Vec<bool>,
+    irreducible: Vec<bool>,
     /// Loop depth of a header, by node, the top level `n` at depth 0.
     depth: Vec<u32>,
     /// Skip pointer up the headers enclosing a header, by node; `n` otherwise.
@@ -781,13 +763,15 @@ struct LoopForest {
 }
 
 impl LoopForest {
-    /// `None` on an irreducible graph: a loop body with a predecessor outside
-    /// its header's DFS subtree is entered somewhere other than its header.
-    fn new(preds: &[SmallVec<[u32; 2]>], dfs: &DepthFirst) -> Option<Self> {
+    fn new(preds: &[SmallVec<[u32; 2]>], dfs: &DepthFirst) -> Self {
         let n = preds.len();
         let mut rep: Vec<u32> = (0..n as u32).collect();
         let mut parent = vec![NONE; n];
         let mut is_header = vec![false; n];
+        let mut irreducible = vec![false; n];
+        // A collapsed header's entries from outside its subtree, which its
+        // enclosing loops see as its own predecessors.
+        let mut entries: Vec<SmallVec<[u32; 2]>> = vec![SmallVec::new(); n];
         let mut mark = vec![NONE; n];
         let mut body: Vec<u32> = Vec::new();
         for &w in dfs.vertex.iter().rev() {
@@ -809,21 +793,25 @@ impl LoopForest {
             }
             is_header[w as usize] = true;
             let mut i = 0;
+            let mut outside: SmallVec<[u32; 2]> = SmallVec::new();
             while i < body.len() {
                 let x = body[i];
                 i += 1;
-                for &y in &preds[x as usize] {
+                for &y in preds[x as usize].iter().chain(&entries[x as usize]) {
                     let r = find(&mut rep, y);
                     if r == w || mark[r as usize] == w {
                         continue;
                     }
                     if !dfs.is_ancestor(dw, dfs.num[r as usize]) {
-                        return None;
+                        irreducible[w as usize] = true;
+                        outside.push(y);
+                        continue;
                     }
                     mark[r as usize] = w;
                     body.push(r);
                 }
             }
+            entries[w as usize] = outside;
             for &x in &body {
                 parent[x as usize] = w;
                 rep[x as usize] = w;
@@ -843,12 +831,13 @@ impl LoopForest {
                 jump[v as usize] = skip(&depth, &jump, p);
             }
         }
-        Some(Self {
+        Self {
             parent,
             is_header,
+            irreducible,
             depth,
             jump,
-        })
+        }
     }
 
     /// Nodes in position order, and each header's last position.  Each level
@@ -856,8 +845,10 @@ impl LoopForest {
     /// headers) is ordered topologically from its entry, and an inner loop's
     /// block is spliced in where its header falls.
     ///
-    /// Every node in `preds` is reachable from node 0, and the forest
-    /// exists, so the graph is reducible and every level has an order.
+    /// An edge entering an irreducible loop away from its header counts at
+    /// the innermost level holding both ends, between their representatives.
+    /// Every node in `preds` is reachable from node 0, and with the DFS back
+    /// edges dropped every level is acyclic, so every level has an order.
     fn nested_order(&self, preds: &[SmallVec<[u32; 2]>], dfs: &DepthFirst) -> (Vec<u32>, Vec<u32>) {
         let n = preds.len();
         let top = n as u32;
@@ -868,6 +859,22 @@ impl LoopForest {
         let depth = &self.depth;
         let ancestor_at =
             |h: u32, d: u32| farthest(h, &self.jump, level, |a| depth[a as usize] >= d);
+        let common = |a: u32, b: u32| {
+            let d = depth[a as usize].min(depth[b as usize]);
+            let (mut a, mut b) = (ancestor_at(a, d), ancestor_at(b, d));
+            while a != b {
+                (a, b) = (level(a), level(b));
+            }
+            a
+        };
+        // The representative of `x` at the level inside loop `l`.
+        let rep_in = |l: u32, x: u32, lx: u32| {
+            if lx == l {
+                x
+            } else {
+                ancestor_at(lx, depth[l as usize] + 1)
+            }
+        };
 
         // Edges between the representatives of one level: a node at its own
         // level, or the header of the inner loop holding it.  A header opens
@@ -882,17 +889,19 @@ impl LoopForest {
                     continue;
                 }
                 let lv = level(v);
-                indegree[v as usize] += 1;
-                if u == lv {
-                    source_succs[u as usize].push(v);
+                // A header's edges into its own block leave from its level.
+                let lu = if self.is_header[u as usize] {
+                    u
                 } else {
-                    let lu = level(u);
-                    let r = if lu == lv {
-                        u
-                    } else {
-                        ancestor_at(lu, depth[lv as usize] + 1)
-                    };
-                    member_succs[r as usize].push(v);
+                    level(u)
+                };
+                let l = common(lu, lv);
+                let rv = rep_in(l, v, lv);
+                indegree[rv as usize] += 1;
+                if u == l {
+                    source_succs[u as usize].push(rv);
+                } else {
+                    member_succs[rep_in(l, u, lu) as usize].push(rv);
                 }
             }
         }

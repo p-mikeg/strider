@@ -112,8 +112,7 @@ pub(crate) struct MemQuery {
 
 struct MemIndex {
     layout: MemLayout,
-    /// Absent without a position index, which is what a range of defs means.
-    stores: Option<StoreIndex>,
+    stores: StoreIndex,
 }
 
 impl MemQuery {
@@ -121,9 +120,7 @@ impl MemQuery {
         self.index.get_or_init(|| {
             let layout = MemLayout::build(function);
             MemIndex {
-                stores: layout
-                    .positions()
-                    .map(|_| StoreIndex::build(function, &layout)),
+                stores: StoreIndex::build(function, &layout),
                 layout,
             }
         })
@@ -151,7 +148,7 @@ impl MemQuery {
             query: self,
             policy,
             loc,
-            stores: index.stores.as_ref(),
+            stores: Some(&index.stores),
             private_frame: OnceCell::new(),
         };
         let mut memo = memoize.then(|| self.answers.borrow_mut());
