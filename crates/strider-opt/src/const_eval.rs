@@ -16,7 +16,6 @@ pub(crate) fn read_rom_const(
     if !ty.is_integer() {
         return None;
     }
-    // At most 64, the widest `ValueType`.
     let mut bytes = vec![0u8; ty.byte_size()];
     rom.read(addr, &mut bytes).ok()?;
     if endianness == Endianness::Big {
@@ -66,11 +65,9 @@ pub(crate) fn load_slice(
     u32::try_from(bits).ok().map(LoadSlice::Narrow)
 }
 
-/// Whether every operand carries the width [`NodeKind::operand_width`] says
-/// `kind` evaluates it at: the output's for `OfOutput`, operand 0's for
-/// `OfFirstOperand`. A fold masks those operands to that width, which is only
-/// correct when they already carry it; a free slot, such as a shift count, is
-/// read at its own width.
+/// Whether every tied operand carries the width [`NodeKind::operand_width`]
+/// says `kind` evaluates it at; a fold masks to that width, which is only
+/// correct when they already carry it. A free slot (a shift count) is exempt.
 fn operands_carry(
     function: &Function,
     kind: &NodeKind,
@@ -115,9 +112,7 @@ pub(crate) fn eval_node_const(
         NodeKind::IntUnaryOp(op) => {
             let ty = out_ty?;
             let v = ins.get(0).copied()?;
-            // Checked like the binary arm: `IntUnaryOp` pins its operand to
-            // the output width, and `validate` rejects a node that does not,
-            // but this folds mid-pipeline where nothing has validated yet.
+            // Mid-pipeline, nothing has validated the width yet.
             operands_carry(function, &kind, &[v], ty)?;
             eval::int_unary(op, &resolve(v)?, ty)
         }
@@ -147,11 +142,7 @@ pub(crate) fn eval_node_const(
                 in_ty,
             )?)))
         }
-        // Only a RAM load reads the image.  A register / unique / const-space
-        // load names a different address space.  A nested load reaches here
-        // from `post_opt::indirect_branch_resolve::eval`, whose `resolve` reads
-        // the evaluator's memo; `load_readonly` passes a `resolve` that never
-        // recurses into another node.
+        // Only a RAM load reads the image.
         NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
             let rom = rom?;
             let addr = u64::try_from(&resolve(function.load_addr(node))?).ok()?;
@@ -162,12 +153,8 @@ pub(crate) fn eval_node_const(
 }
 
 /// `(x, c)` for a two-operand node with exactly one operand an integer
-/// constant, `c` its value; `None` where that constant is past `u128`.
-///
-/// Which operand is the variable is asked of the stored constant, not of the
-/// carrier: a shift count is free to be narrower than its value
-/// ([`strider_ir::node::NodeKind::operand_width`]), so reading both through
-/// `int_const_u128` would name a constant too wide to read as the variable.
+/// constant, `c` its value; `None` where that constant is past `u128`. Which
+/// operand is constant is asked of the stored constant, not the `u128` carrier.
 pub(crate) fn var_and_const(
     function: &(impl IRViewer + ?Sized),
     node: NodeId,
@@ -211,9 +198,7 @@ mod tests {
         assert_eq!(got, Some(UBig::from(105u8)));
     }
 
-    /// `(2^256 - 1) + 2` at I256 is 1: the fold masks at the declared width,
-    /// not at a 128-bit carrier, where the same sum would be 1 for the wrong
-    /// reason and the operands would not even be readable.
+    /// `(2^256 - 1) + 2` at I256 is 1: the fold masks at the declared width.
     #[test]
     fn folds_an_i256_add_that_wraps_at_256_bits() {
         use strider_ir::IntBinaryOp;
@@ -251,10 +236,7 @@ mod tests {
         );
     }
 
-    /// The ROM answers for RAM. A register-space load names a different address
-    /// space, so folding it against the image would read the wrong memory; the
-    /// root gate in `load_readonly` checks the root only, so a nested one
-    /// arrives here.
+    /// The ROM answers for RAM only; a register-space load is not folded.
     #[test]
     fn a_non_ram_load_is_not_folded_against_the_rom() {
         use strider_ir_test_utils::{MockRom, make_empty_fn};
@@ -310,10 +292,8 @@ mod tests {
         assert_eq!(split(xx), None, "no constant side");
     }
 
-    /// A shift count is free to be narrower than the value it shifts, so a
-    /// constant past the `u128` carrier can sit opposite one inside it.  Read
-    /// through the carrier alone, the wide constant answers `None` and is
-    /// named as the VARIABLE operand.
+    /// A constant past the `u128` carrier opposite a narrow shift count is
+    /// not named as the variable operand.
     #[test]
     fn var_and_const_does_not_name_a_wide_constant_as_the_variable() {
         use strider_ir::node::NodeKind;
@@ -324,9 +304,7 @@ mod tests {
         let function = make_empty_fn(|b| {
             let value = b.build_int_const(UBig::ONE << 200, wide)?;
             let count = b.build_int_const(8u64, ValueType::int(8))?;
-            // Under `build_int_binary_operation`, which coerces every operand
-            // to the output width as the lifter does: the free width a shift
-            // count is allowed is what this pins.
+            // Not `build_int_binary_operation`, which would widen the count.
             let shifted = b.build_single_output_pure(
                 NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
                 [value, count],
