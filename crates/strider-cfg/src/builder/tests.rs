@@ -781,7 +781,10 @@ fn a_later_thumb_region_repaints_the_dispatch_a_site_already_sampled() {
         "the dispatch's own region decoded as ARM",
     );
     assert!(
-        crate::flowing_isa_bit_at(&arch, engine.sleigh(), dispatch.machine(), false),
+        engine
+            .sleigh()
+            .get_context_at(dispatch.machine(), arch.isa_mode_var().expect("arm"))
+            .is_ok_and(|mode| mode != 0),
         "premise: a read after the build must see the Thumb arm's paint, or \
          the seal-time sample is proving nothing",
     );

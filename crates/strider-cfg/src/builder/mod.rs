@@ -363,11 +363,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// decodes in.
     ///
     /// Sampled at the site's seal, where `RegionBuilder::hold_isa_mode` has just
-    /// re-imposed the owning region's mode at this address, and kept: reading
-    /// [`crate::flowing_isa_bit_at`] again after the build answers for whichever
-    /// region painted the address last. `None` on an arch with no ISA-mode var.
+    /// re-imposed the owning region's mode at this address, and kept: a read
+    /// after the build answers for whichever region painted the address last. `None` on an arch with no ISA-mode var.
     pub(super) fn sample_flowing_isa_bit(&mut self, site: PcodeInsnAddr) -> Option<bool> {
-        self.engine.arch.isa_mode_var()?;
+        let var = self.engine.arch.isa_mode_var()?;
         if let Some(&bit) = self.report.flowing_isa_bits.get(&site) {
             return Some(bit);
         }
@@ -376,12 +375,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let entry_bit = self
             .isa_mode_of(&self.function_mode)
             .is_some_and(|v| v != 0);
-        let bit = crate::flowing_isa_bit_at(
-            &self.engine.arch,
-            &self.engine.sleigh,
-            site.machine(),
-            entry_bit,
-        );
+        let bit = self
+            .engine
+            .sleigh
+            .get_context_at(site.machine(), var)
+            .map_or(entry_bit, |mode| mode != 0);
         self.report.flowing_isa_bits.insert(site, bit);
         Some(bit)
     }
