@@ -225,10 +225,8 @@ impl<'a> Ctx<'a, '_> {
         width: usize,
         endian_le: bool,
     ) {
-        if holder.is_some()
-            && let Some(patch) = Patch::new(addr, value, width, endian_le)
-        {
-            self.patches.push(patch);
+        if holder.is_some() {
+            self.patches.push(Patch::new(addr, value, width, endian_le));
         }
     }
 
@@ -403,8 +401,7 @@ mod tests {
             MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
             MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
         ];
-        let all: Arc<[Patch]> =
-            vec![Patch::new(field, value, 8, true).expect("an 8 byte field")].into();
+        let all: Arc<[Patch]> = vec![Patch::new(field, value, 8, true)].into();
         for region in &mut regions {
             region.attach_patches(&all);
         }
@@ -432,8 +429,7 @@ mod tests {
             MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
             MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
         ];
-        let all: Arc<[Patch]> =
-            vec![Patch::new(field, value, 8, true).expect("an 8 byte field")].into();
+        let all: Arc<[Patch]> = vec![Patch::new(field, value, 8, true)].into();
         for region in &mut regions {
             region.attach_patches(&all);
         }
@@ -457,8 +453,7 @@ mod tests {
             MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
             MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
         ];
-        let all: Arc<[Patch]> =
-            vec![Patch::new(field, value, 8, true).expect("an 8 byte field")].into();
+        let all: Arc<[Patch]> = vec![Patch::new(field, value, 8, true)].into();
         for region in &mut regions {
             region.attach_patches(&all);
         }
