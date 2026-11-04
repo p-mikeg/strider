@@ -20,8 +20,8 @@ RAM a `Load` / `Store`. The set is frozen before the lift, and a write to a
 register outside it fails the function. It holds:
 
 - every REGISTER / UNIQUE varnode the pcode names,
-- the convention's registers (above all the stack pointer), plus the argument
-  registers of the `per_address_ccs` overrides this CFG's direct calls select,
+- the convention's registers, plus the argument registers of the
+  `per_address_ccs` overrides this CFG's direct calls select,
 - each `CallOther`'s ABI footprint (x86-64 `syscall` reads `R10`, writes `R11`),
 - the declared register enclosing each resolved register-space LOAD / STORE
   address,
@@ -51,16 +51,14 @@ space uses `register_endianness` (`Function::byte_order`).
 
 ## SSA construction
 
-`collect_def_sites` records what each region writes; `is_local_temporary` drops
-UNIQUE temporaries no region reads before writing; `phi_placement` gives the
-phis per region. `record_insn_effects` is a hand-written mirror of the lift's
-write paths: a spurious def costs a dead phi, a missed one miscompiles.
+Semi-pruned: phis at the iterated dominance frontier of each variable's def
+sites, less UNIQUE temporaries no region reads before writing. The def sites
+come from `record_insn_effects`, a hand-written mirror of the lift's write
+paths: a spurious def costs a dead phi, a missed one miscompiles.
 
 Regions are renamed in dominator-tree pre-order, each starting from its
-immediate dominator's variable map. Terminators wire their own successors;
-fallthrough edges are wired afterwards. Reading a variable no definition
-reaches is an error, so an unreachable region branching into a phi-carrying
-one fails the lift.
+immediate dominator's variable map. Reading a variable no definition reaches
+is an error.
 
 ## Lift-time canonicalisations
 
@@ -75,12 +73,9 @@ one fails the lift.
     FloatNan(x)          -> Xor(FloatEqual(x, x), IntConst(1)):I1
     FloatLessEqual(a, b) -> Or(FloatLess(a, b), FloatEqual(a, b)):I1
 
-All are exact, except that `FloatSub` flips a NaN subtrahend's sign, which IEEE
-754 leaves unspecified. Float `<=` is not `Not(Less(b, a))`, which is true on
-NaN.
-
-A shift count wider than the output saturates rather than truncating (p-code
-compares the full count).
+All are exact but `FloatSub` on a NaN subtrahend, whose sign IEEE 754 leaves
+unspecified. A shift count wider than the output saturates rather than
+truncating (p-code compares the full count).
 
 ## Terminators
 
@@ -90,7 +85,7 @@ selector live; a `TailCall` becomes `Call` + `Return`; an unresolved indirect
 branch becomes an `IndirectBranch` anchoring the dispatch varnode and, on ARM
 and MIPS, the ISA-mode bit, so a resolver decodes each target in the right mode.
 
-A control cycle with no exit roots no terminator, so one
+A control cycle with no exit reaches no terminator, so an
 `If(true) { back edge } { Unreachable }` is seated on each to keep it valid.
 
 ## Fail-closed

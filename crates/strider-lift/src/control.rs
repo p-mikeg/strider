@@ -13,7 +13,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Lowers a resolved jump table to one `Switch` node with a control output
-    /// per target.  `region_id` is the dispatch region.
+    /// per target. `region_id` is the dispatch region.
     pub(crate) fn handle_switch(
         &mut self,
         region_id: strider_cfg::RegionId,

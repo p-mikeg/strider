@@ -3,11 +3,9 @@
 //!
 //! `record_insn_effects` is a hand-written mirror of the lift's writes: an
 //! extra def costs a dead phi, a missed one miscompiles. Debug builds assert
-//! every write through [`FunctionLifter::write_variable`] was recorded.
-//! [`strider_ir::FunctionBuilder::build_call`]'s SP rebind bypasses that
-//! funnel, covered by [`FunctionLifter::record_cc_call_effects`] recording SP
-//! and [`crate::Lifter::check_override_cc`]. Reads over-approximate, and
-//! matter for UNIQUE only.
+//! every write through [`FunctionLifter::write_variable`] was recorded;
+//! `build_call`'s SP rebind bypasses it, so
+//! [`FunctionLifter::record_cc_call_effects`] records SP.
 
 use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};

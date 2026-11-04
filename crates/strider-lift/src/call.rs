@@ -123,8 +123,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             })
     }
 
-    /// Implicit-read registers come FIRST in the arg list, before the explicit
-    /// pcode operands.
+    /// Implicit-read registers precede the explicit pcode operands in the
+    /// argument list.
     pub(super) fn build_abi_call_other(
         &mut self,
         user_op_id: u64,

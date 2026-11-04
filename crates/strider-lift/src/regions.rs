@@ -74,9 +74,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 self.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, region_map)?;
             }
             // The terminator's fingerprint address: the region's last pcode
-            // insn, else (a stub, a zero-op run) a predecessor's last insn or
-            // start, the `max` when several share it. Unfingerprinted nodes
-            // fail the validator.
+            // insn, else (a stub) the greatest predecessor's last insn or start.
             let term_addr = region
                 .insns
                 .last()
@@ -143,9 +141,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 }
 
 /// Whether the per-instruction loop skips `opcode`, leaving it to the
-/// terminator handler. A `TailCall` may end in a `BranchIndirect` (a
-/// `known_targets` answer outside the function). Skipping by opcode is safe:
-/// a skipped opcode closes its region, so it is only ever the last op.
+/// terminator handler. Safe by opcode: a skipped one closes its region.
 fn skips_opcode(terminator: &strider_cfg::RegionTerminator, opcode: rsleigh::Opcode) -> bool {
     match terminator {
         strider_cfg::RegionTerminator::UnresolvedIndirectBranch { .. }
