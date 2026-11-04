@@ -1276,6 +1276,52 @@ fn nested_guards_intersect_at_inner_region() {
     );
 }
 
+/// A guard dominating both arms of a phi bounds each arm alike, whichever
+/// edge of an unrelated inner `If` the arm arrives on.
+#[test]
+fn a_dominating_guard_bounds_a_phi_arm_on_either_inner_edge() {
+    for x_first in [true, false] {
+        let idx_vn = reg_vn(0x10, 4);
+        let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+        let [entry, inner, path_a, path_b, join, exit] =
+            std::array::from_fn(|_| b.create_region_all().unwrap());
+        b.set_entry_region_all(entry).unwrap();
+
+        b.set_region(entry);
+        let x = opaque(&mut b, 0xAAAA);
+        guard_if(&mut b, x, 5, inner, exit);
+
+        b.set_region(inner);
+        let y = opaque(&mut b, 0xBBBB);
+        let cond = cmp_c(&mut b, y, IntCmpOp::Equal, 9);
+        b.build_if(cond, path_a, path_b).unwrap();
+
+        for (region, is_x) in [(path_a, x_first), (path_b, !x_first)] {
+            b.set_region(region);
+            let v = if is_x {
+                x
+            } else {
+                b.build_int_const(3u64, ValueType::int(32)).unwrap()
+            };
+            b.write_variable(&idx_vn, v).unwrap();
+            b.build_branch(join).unwrap();
+        }
+
+        b.set_region(join);
+        let phi = b.read_variable(&idx_vn).unwrap();
+        b.build_return(Some(phi), &[]).unwrap();
+        b.set_region(exit);
+        b.build_return(Some(x), &[]).unwrap();
+
+        b.set_lift_addr(None);
+        let mut f = b.build().unwrap();
+        canonicalize(&mut f);
+        let (phi, join_node) = join_phi(&f, 2);
+        let iv = range_at(&f, phi, join_node);
+        assert_eq!((iv.lo, iv.hi), (0, 4), "x first: {x_first}, got {iv:?}");
+    }
+}
+
 // The same value guarded `< 8` in one sibling branch and `< 16` in the other
 // must get each bound independently at its own dispatch.
 #[test]
