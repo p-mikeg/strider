@@ -169,6 +169,26 @@ mod tests {
     use crate::types::{PcodeInsnAddr, Region};
 
     #[test]
+    fn is_addr_tail_call_by_bound() {
+        let open = |code_before_start| FunctionBound::Open { code_before_start };
+        let size = FunctionBound::size(0x100);
+        for (target, bound, tail) in [
+            (0x0800, open(false), true),
+            (0x0800, open(true), false),
+            (0x1200, open(false), false),
+            (0x0800, size, true),
+            (0x10ff, size, false),
+            (0x1100, size, true),
+        ] {
+            assert_eq!(
+                is_addr_tail_call(target, 0x1000, bound),
+                tail,
+                "{target:#x} {bound:?}"
+            );
+        }
+    }
+
+    #[test]
     fn is_addr_tail_call_overflowing_window_top_addr_is_in_range() {
         // The window cannot wrap, so it clamps to `[start, u64::MAX]` and
         // every target at or above start, u64::MAX included, is in range.
