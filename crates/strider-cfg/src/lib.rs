@@ -97,22 +97,19 @@ impl Cfg {
     }
 
     /// Live sites seated as a `Return` because the answer was `LinkRegister`.
-    /// The seat leaves no trace in the graph.
     pub fn link_register_seated(&self) -> &[PcodeInsnAddr] {
         &self.report.link_register_seated
     }
 
     /// Live sites seated as a `TailCall` because the answer was a single
-    /// target outside the function; like [`Self::link_register_seated`], a
-    /// trace the graph does not keep.
+    /// target outside the function.
     pub fn tail_call_seated(&self) -> &[PcodeInsnAddr] {
         &self.report.tail_call_seated
     }
 
-    /// The ISA-mode bit flowing into the indirect branch at `site`, sampled
-    /// while its region decoded: the mode a mode-less target seated there
-    /// decodes in. `None` off a sealed indirect branch, or with no ISA-mode
-    /// var.
+    /// The ISA-mode bit flowing into the indirect branch at `site`: the mode
+    /// a mode-less target seated there decodes in. `None` off a sealed
+    /// indirect branch, or with no ISA-mode var.
     pub fn flowing_isa_bit_at_site(&self, site: PcodeInsnAddr) -> Option<bool> {
         self.report.flowing_isa_bits.get(&site).copied()
     }

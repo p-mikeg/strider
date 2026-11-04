@@ -695,10 +695,8 @@ fn a_seat_time_interior_switch_arm_is_reported_and_defers() {
     );
 }
 
-/// The assert's real purpose: an interior target naming NO arm of the
-/// `Switch` that routed it is a construction bug, and stays one now that a
-/// repeated arm is tolerated. Debug-only, since the assert is compiled out
-/// of a release test run.
+/// An interior target naming no arm of the `Switch` that routed it is a
+/// construction bug. Debug-only: the assert is compiled out of release.
 #[test]
 #[cfg(debug_assertions)]
 #[should_panic(expected = "names no arm of the Switch")]
@@ -1194,10 +1192,8 @@ fn split_creates_two_regions_second_keeps_original_id() {
 
 #[test]
 fn split_second_half_is_always_non_empty() {
-    // Pins what `split_region`'s `debug_assert!` defends: a real split
-    // must leave the second half (which keeps `region_id` and the
-    // original terminator) non-empty, so it never silently bypasses
-    // `add_region`'s empty-region guard.
+    // A real split leaves the second half (which keeps `region_id` and the
+    // terminator) non-empty.
     for split_at in [0x1004u64, 0x1008, 0x100c] {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
