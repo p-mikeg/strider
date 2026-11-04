@@ -61,7 +61,8 @@ reasons! {
     /// an arm onto an existing stub, keeps it. An unmapped entry fails the
     /// build.
     UnmappedTarget => "unmapped_target",
-    /// Holds no instruction: Sleigh rejects the bytes or
+    /// Holds no liftable instruction: Sleigh rejects the bytes or has no
+    /// p-code for them (`unimpl`), or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks them.
     /// A branch, a fall-through into data, or a zero-p-code-op run a call
     /// falls into leaves through a `TailCall` stub; a call falling into them,
