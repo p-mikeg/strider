@@ -147,10 +147,42 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
 }
 
 /// Field width of a relocation `object` does not size: 8 for a MIPS64
-/// composite with `R_MIPS_64`, else an instruction word or x86 displacement.
+/// composite with `R_MIPS_64`, 2 for a PowerPC half16 (`r_offset` names the
+/// halfword), else an instruction word or x86 displacement.
 pub(super) fn unknown_field_bytes(arch: A, r: &RelocInfo) -> usize {
     match arch {
         A::Mips64 if [r.r_type, r.r_type2, r.r_type3].contains(&object::elf::R_MIPS_64) => 8,
+        // The `*16*` types; ppc32 and ppc64 number some apart.
+        A::PowerPc => match r.r_type {
+            3..=6
+            | 14..=17
+            | 25
+            | 29..=32
+            | 69..=72
+            | 74..=77
+            | 79..=94
+            | 102..=107
+            | 111
+            | 249..=252
+            | 255 => 2,
+            _ => 4,
+        },
+        A::PowerPc64 => match r.r_type {
+            3..=6
+            | 14..=17
+            | 25
+            | 29..=31
+            | 39..=42
+            | 47..=50
+            | 52..=60
+            | 63..=66
+            | 69..=72
+            | 74..=77
+            | 79..=106
+            | 110..=115
+            | 249..=252 => 2,
+            _ => 4,
+        },
         _ => 4,
     }
 }
