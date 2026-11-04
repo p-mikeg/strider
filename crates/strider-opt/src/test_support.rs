@@ -422,6 +422,34 @@ pub(crate) mod memory_shapes {
         })
     }
 
+    /// A two-entry loop whose body holds `n` stores to distinct slots, then
+    /// `n` reloads of distinct slots never written.
+    pub(crate) fn irreducible_body(n: usize) -> crate::Result<strider_ir::Function> {
+        shape(|b| {
+            let (top, mid, exit) = (
+                b.create_region_all()?,
+                b.create_region_all()?,
+                b.create_region_all()?,
+            );
+            let enter_mid = b.build_boolean_const(true);
+            b.build_if(enter_mid, mid, top)?;
+            b.set_region(top);
+            store_const(b, 0, 1)?;
+            b.build_branch(mid)?;
+            b.set_region(mid);
+            for i in 0..n {
+                store_const(b, 1 + i, i as u64)?;
+            }
+            for i in 0..n {
+                read(b, 1 + n + i)?;
+            }
+            let again = b.build_boolean_const(true);
+            b.build_if(again, top, exit)?;
+            b.set_region(exit);
+            Ok(())
+        })
+    }
+
     /// A 32-bit function taking stack arguments at `sp + 4`, its region phis
     /// over SP collapsed.
     fn stack_shape(

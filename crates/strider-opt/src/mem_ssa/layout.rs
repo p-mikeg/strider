@@ -18,7 +18,8 @@
 //!
 //! An irreducible loop is one block too, opened by its DFS-first node, but
 //! that node dominates none of it.  The climb crosses such a block from
-//! outside as any other, and inside it steps one dominator at a time, walking
+//! outside as any other, and inside it steps one dominator at a time, passing
+//! a run of defs each the only predecessor of the next at once and walking
 //! each merge's region whole.
 
 use cranelift_entity::SecondaryMap;
@@ -102,6 +103,9 @@ pub(crate) struct Positions {
     end: Vec<u32>,
     /// In an irreducible loop's block.
     tangled: Vec<bool>,
+    /// For a tangled def, the first of the run of tangled defs at consecutive
+    /// positions, each the only predecessor of the next, that ends at it.
+    run_start: Vec<u32>,
 }
 
 impl MemLayout {
@@ -163,6 +167,12 @@ impl MemLayout {
                 });
                 tangled.push(tangled_node[v]);
             }
+            let mut run_start: Vec<u32> = Vec::with_capacity(n);
+            for p in 0..n {
+                let def = |p: usize| tangled[p] && shape[p] == Shape::Def;
+                let linked = p > 0 && def(p) && def(p - 1) && preds[p][..] == [p as u32 - 1];
+                run_start.push(if linked { run_start[p - 1] } else { p as u32 });
+            }
 
             // Preorder reaches a dominator first.
             let mut dom_depth = vec![0u32; n];
@@ -184,6 +194,7 @@ impl MemLayout {
                 loop_jump,
                 end,
                 tangled,
+                run_start,
             }
         };
         Self {
@@ -257,12 +268,22 @@ impl MemLayout {
                 if p == stop || !seen.insert(p) {
                     continue;
                 }
-                if self.shape[p as usize] == Shape::Def
-                    && probe.clobbers(function, self.node[p as usize])
-                {
-                    break 'walk true;
+                let mut next = p;
+                if self.shape[p as usize] == Shape::Def {
+                    // The region holds `p`'s run down to `stop`.
+                    let lo = self.pos.run_start[p as usize].max(stop + 1);
+                    if self
+                        .highest_clobber(function, probe, answers, lo, p)
+                        .is_some()
+                    {
+                        break 'walk true;
+                    }
+                    if lo != p && !seen.insert(lo) {
+                        continue;
+                    }
+                    next = lo;
                 }
-                work.push(p);
+                work.push(next);
             }
         };
         answers.dirty.insert(phi, dirty);
@@ -352,7 +373,15 @@ impl MemLayout {
                 let stop = match self.shape[*x as usize] {
                     Shape::Initial => true,
                     Shape::Phi => self.region_dirty_walked(function, *x, probe, answers),
-                    Shape::Def => probe.clobbers(function, self.node[*x as usize]),
+                    Shape::Def => {
+                        // The run's defs are `x`'s nearest dominators.
+                        let lo = self.pos.run_start[*x as usize];
+                        if let Some(c) = self.highest_clobber(function, probe, answers, lo, *x) {
+                            return Step::Answer(c);
+                        }
+                        *x = self.idom[lo as usize];
+                        continue;
+                    }
                 };
                 if stop {
                     return Step::Answer(*x);
