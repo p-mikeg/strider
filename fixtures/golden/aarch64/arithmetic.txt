@@ -21,7 +21,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x600
 cfg
   0x600 193 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0xc000:8, u:0xf100:8, u:0x3fd00:4, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0xc000:8, u:0xf100:8, u:0x3fd00:4, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b200:4, u:0x77200:8, u:0x77300:8, u:0x77400:8]
 arg 2 [%v18]
 arg 3 [%v19]
 arg 4 [%v20]
@@ -325,7 +325,7 @@ return %v0, %v1, %v7, %v4, %v8, %v9, %v10, %v11
 == sub @0x8f0
 cfg
   0x8f0 4 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x7a800:4]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x7cd00:4]
 arg 0 [%v2]
 arg 1 [%v4]
 float_arg 0 [%v9]
@@ -350,7 +350,7 @@ return %v0, %v1, %v8, %v4, %v9, %v10, %v11, %v12
 == mul @0x900
 cfg
   0x900 4 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x56c00:4]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x59100:4]
 arg 0 [%v2]
 arg 1 [%v4]
 float_arg 0 [%v8]
@@ -376,7 +376,7 @@ cfg
   0x910 3 ops cbranch 0x910.4 -> [0x910.3, 0x910.4]
   0x910.3 1 ops goto -> [0x910.4]
   0x910.4 3 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x83900:4, u:0x83a00:1]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x86100:4, u:0x86200:1]
 arg 0 [%v7]
 arg 1 [%v1]
 float_arg 0 [%v15]
@@ -394,7 +394,7 @@ float_arg 3 [%v18]
 %v9:i32 = int.div %v8, %v2
 
 %v10:ctrl, %v11:token = region %v5, %v6
-%v12:i32<u:0x83900:4> = phi %v11, %v3, %v9
+%v12:i32<u:0x86100:4> = phi %v11, %v3, %v9
 %v13:mem = initial_memory
 %v14:i64 = extend.zero %v12
 %v15:i128 = initial_var[q0]
@@ -408,7 +408,7 @@ cfg
   0x920 3 ops cbranch 0x920.4 -> [0x920.3, 0x920.4]
   0x920.3 1 ops goto -> [0x920.4]
   0x920.4 6 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x56300:4, u:0x56500:4, u:0x83900:4, u:0x83a00:1]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x58800:4, u:0x58a00:4, u:0x86100:4, u:0x86200:1]
 arg 0 [%v12]
 arg 1 [%v1]
 float_arg 0 [%v18]
@@ -424,7 +424,7 @@ float_arg 3 [%v21]
 %v7:i32 = int.div %v13, %v2
 
 %v8:ctrl, %v9:token = region %v5, %v6
-%v10:i32<u:0x83900:4> = phi %v9, %v3, %v7
+%v10:i32<u:0x86100:4> = phi %v9, %v3, %v7
 %v11:mem = initial_memory
 %v12:i64 = initial_var[x0]
 %v13:i32 = truncate %v12
@@ -443,7 +443,7 @@ cfg
   0x930 3 ops cbranch 0x930.4 -> [0x930.3, 0x930.4]
   0x930.3 1 ops goto -> [0x930.4]
   0x930.4 3 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x6cd00:4, u:0x6ce00:1]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x6f200:4, u:0x6f300:1]
 arg 0 [%v7]
 arg 1 [%v1]
 float_arg 0 [%v15]
@@ -461,7 +461,7 @@ float_arg 3 [%v18]
 %v9:i32 = int.sdiv %v8, %v2
 
 %v10:ctrl, %v11:token = region %v5, %v6
-%v12:i32<u:0x6cd00:4> = phi %v11, %v3, %v9
+%v12:i32<u:0x6f200:4> = phi %v11, %v3, %v9
 %v13:mem = initial_memory
 %v14:i64 = extend.zero %v12
 %v15:i128 = initial_var[q0]
@@ -475,7 +475,7 @@ cfg
   0x940 3 ops cbranch 0x940.4 -> [0x940.3, 0x940.4]
   0x940.3 1 ops goto -> [0x940.4]
   0x940.4 6 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x56300:4, u:0x56500:4, u:0x6cd00:4, u:0x6ce00:1]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x58800:4, u:0x58a00:4, u:0x6f200:4, u:0x6f300:1]
 arg 0 [%v12]
 arg 1 [%v1]
 float_arg 0 [%v18]
@@ -491,7 +491,7 @@ float_arg 3 [%v21]
 %v7:i32 = int.sdiv %v13, %v2
 
 %v8:ctrl, %v9:token = region %v5, %v6
-%v10:i32<u:0x6cd00:4> = phi %v9, %v3, %v7
+%v10:i32<u:0x6f200:4> = phi %v9, %v3, %v7
 %v11:mem = initial_memory
 %v12:i64 = initial_var[x0]
 %v13:i32 = truncate %v12
@@ -532,7 +532,7 @@ return %v0, %v1, %v7, %v4, %v8, %v9, %v10, %v11
 == bit_or @0x960
 cfg
   0x960 4 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x5af00:4]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x5d400:4]
 arg 0 [%v2]
 arg 1 [%v4]
 float_arg 0 [%v8]
@@ -580,7 +580,7 @@ return %v0, %v1, %v7, %v4, %v8, %v9, %v10, %v11
 == bit_not @0x980
 cfg
   0x980 4 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x57100:4]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x59600:4]
 arg 0 [%v2]
 arg 1 [%v7]
 float_arg 0 [%v8]
@@ -604,7 +604,7 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 == shl @0x990
 cfg
   0x990 6 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x4fc00:4, u:0x4fe00:8, u:0x50000:4]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x52100:4, u:0x52300:8, u:0x52500:4]
 arg 0 [%v2]
 arg 1 [%v4]
 float_arg 0 [%v20]
@@ -640,7 +640,7 @@ return %v0, %v1, %v19, %v4, %v20, %v21, %v22, %v23
 == lshr @0x9a0
 cfg
   0x9a0 6 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x50e00:4, u:0x51000:8, u:0x51200:4]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x53300:4, u:0x53500:8, u:0x53700:4]
 arg 0 [%v2]
 arg 1 [%v4]
 float_arg 0 [%v20]
@@ -702,7 +702,7 @@ return %v0, %v1, %v9, %v4, %v10, %v11, %v12, %v13
 == negate @0x9c0
 cfg
   0x9c0 4 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x57700:4]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x59c00:4]
 arg 0 [%v2]
 arg 1 [%v6]
 float_arg 0 [%v7]

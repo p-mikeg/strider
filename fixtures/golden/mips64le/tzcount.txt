@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x120000890
 cfg
   0x120000890 44 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x7200:4, u:0x13600:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x8100:4, u:0x14600:4]
 arg 1 [%v15]
 arg 2 [%v16]
 arg 3 [%v17]
@@ -66,7 +66,7 @@ cfg
   0x120000ad0 5 ops cbranch 0x120000ac8 -> [0x120000ac8, 0x120000adc]
   0x120000adc 6 ops return -> []
   0x120000ae4 7 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x3400:1, u:0x114500:8, u:0x114600:1, u:0x114700:8]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x3400:1, u:0x115500:8, u:0x115600:1, u:0x115700:8]
 arg 0 [%v1]
 %v0:ctrl = entry
 %v1:i64 = initial_var[a0]
