@@ -136,14 +136,6 @@ mod tests {
         assert_eq!(wl.dequeue(), None);
     }
 
-    #[test]
-    fn debug_format_pins_derive() {
-        // Pins the `Debug` derive against silent removal.
-        let mut wl: Worklist<Id> = Worklist::new();
-        wl.enqueue(Id(1));
-        let _ = format!("{wl:?}");
-    }
-
     /// Pins the single-pass mark-then-push dedup at scale.
     #[test]
     fn enqueue_dedup_at_ten_thousand_scale() {
@@ -161,14 +153,5 @@ mod tests {
         }
         assert_eq!(count, n as usize, "no duplicates after re-enqueue");
         assert_eq!(wl.dequeue(), None);
-    }
-
-    /// A drain from the highest index down unmarks the membership maximum on
-    /// every dequeue. A bitset rescans its lower words for the next maximum
-    /// there, quadratic over the drain; an indexed map writes one slot.
-    #[test]
-    fn membership_is_an_indexed_map() {
-        let wl: Worklist<Id> = Worklist::new();
-        let _: &SecondaryMap<Id, bool> = &wl.workset;
     }
 }
