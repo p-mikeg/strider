@@ -1,14 +1,11 @@
-//! The interval lattice: the value set [`RangeMap`](super::RangeMap) carries,
-//! the constant scalings it maps through, and the width masks they are read
-//! against.
+//! The interval lattice [`RangeMap`](super::RangeMap) carries, and the
+//! constant scalings it maps through.
 
 use strider_ir::IRViewer;
 use strider_ir::eval::bit;
 use strider_ir::node::{ValueId, ValueType};
 
-/// `gcd(0, x) == x` and `gcd(0, 0) == 0`, the identity: a side contributing no
-/// spacing must take the other's, not flatten it.  Every caller clamps the
-/// result where a divisor of zero would be meaningless.
+/// `gcd(0, x) == x`: a side with no spacing takes the other's.
 fn gcd(mut a: u128, mut b: u128) -> u128 {
     while b != 0 {
         (a, b) = (b, a % b);
@@ -19,14 +16,8 @@ fn gcd(mut a: u128, mut b: u128) -> u128 {
 /// The empty set (`hi < lo`).
 pub(super) const EMPTY: Interval = Interval::new(1, 0, 1);
 
-/// The inclusive value set `{ lo, lo+stride, lo+2*stride, ... hi }`.
-///
-/// `lo`/`hi` are unsigned regardless of signedness: guard extraction gates
-/// `Sless` on KnownBits sign-bit = 0, so the interval is non-negative.
-///
-/// `stride` is a must-congruence, from KnownBits trailing zeros or carried
-/// through a union, a meet or a constant `Mul` / `ShiftLeft`, and always a
-/// sound divisor of the real spacing.
+/// The inclusive unsigned value set `{ lo, lo+stride, ... hi }`. `stride`
+/// always divides the real spacing.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct Interval {
     pub(super) lo: u128,
@@ -99,15 +90,11 @@ impl Interval {
         }
     }
 
-    /// Meet of two arithmetic progressions: the first element `>= max(lo1,
-    /// lo2)` congruent to both sources, stepping by `lcm(s1, s2)`.
-    /// Incompatible residues (or an empty range) yield an empty interval
-    /// (`count() == 0`). Where `lcm` overflows or the residue search is
-    /// capped, the wider stride's progression alone, which still contains
-    /// the real value set, a subset of both operands.
+    /// Meet of two arithmetic progressions, stepping by `lcm(s1, s2)`; empty
+    /// for incompatible residues. Where `lcm` overflows or the residue search
+    /// is capped, the wider stride's progression alone, a superset.
     pub(super) fn intersect(self, other: Self) -> Self {
-        // `a` takes the wider stride, so the search below steps by it and
-        // the answer does not depend on the operand order.
+        // `a` takes the wider stride, so the answer is order-independent.
         let (a, b) = if self.stride >= other.stride {
             (self, other)
         } else {
@@ -123,8 +110,6 @@ impl Interval {
         if x0 > hi {
             return EMPTY;
         }
-        // Each `lcm` span holds one element congruent to both, or none when
-        // the residues are incompatible; past the cap the search stops short.
         const MAX_CRT_STEPS: u128 = 64;
         let steps = (a.stride / gcd(a.stride, b.stride))
             .checked_mul(b.stride)
@@ -145,13 +130,9 @@ impl Interval {
         Self::new(x0, hi, a.stride)
     }
 
-    /// Join of two arithmetic progressions.  The stride survives as the gcd of
-    /// both strides and the gap between their starts, which is what every
-    /// element of either side is congruent to.  A side holding at most one
-    /// element constrains no spacing and takes the other's: a phi arm pinned to
-    /// a constant must not flatten the strided arm it joins, and two of them
-    /// keep the gap between their starts.  Zero survives only where the join is
-    /// one point, where 1 is as tight.  An empty side adds nothing.
+    /// Join of two arithmetic progressions, its stride the gcd of both strides
+    /// and the gap between their starts. A side of at most one element
+    /// contributes no stride of its own.
     pub(super) fn union(self, other: Self) -> Self {
         if self.is_empty() {
             return other;
@@ -167,7 +148,7 @@ impl Interval {
         )
     }
 
-    /// `{ x * c : x in self }` for `c > 0`.  Exact, or top on overflow / `c == 0`.
+    /// `{ x * c : x in self }`; top on overflow or `c == 0`.
     pub(super) fn mul(self, c: u128, width_mask: u128) -> Self {
         match (
             self.lo.checked_mul(c),
@@ -181,13 +162,10 @@ impl Interval {
         }
     }
 
-    /// `{ x / c : x in self }` (`c == 0` treated as 1).  Floor maps the endpoints
-    /// directly.  The stride survives as `stride / c` when `c` divides it, else
-    /// floor breaks the progression and it widens to 1, never a stride tighter
-    /// than the real spacing.
+    /// `{ x / c : x in self }` (`c == 0` read as 1); the stride is
+    /// `stride / c` when `c` divides it, else 1.
     pub(super) fn udiv(self, c: u128) -> Self {
-        // Both endpoints map independently, so an empty interval would come
-        // back as `{0, 0}`, "exactly zero", and pass `bounded_index`'s gate.
+        // Mapped endpoint-wise, an empty interval could come back `{0, 0}`.
         if self.is_empty() {
             return self;
         }
@@ -201,8 +179,7 @@ impl Interval {
     }
 }
 
-/// A monotone constant scaling of one variable operand: forward-propagating a
-/// bound on the operand through it yields a bound on the result.
+/// A monotone constant scaling of one variable operand.
 #[derive(Clone, Copy)]
 pub(crate) enum ScaleOp {
     Mul(u128),
@@ -233,10 +210,9 @@ pub(crate) fn width_mask(f: &strider_ir::Function, v: ValueId) -> u128 {
     type_mask_or_top(f.value_type_opt(v))
 }
 
-/// `u128::MAX` (unconstrained top) when the value carries no typed edge, for a
-/// non-integer type, and for a width past the `u128` carrier, where no `u128`
-/// is a bound the value is inside. Every consumer that needs a real bound gates
-/// on [`ValueType::int_mask_u128`], which answers `None` in all three cases.
+/// `ty`'s integer mask, or `u128::MAX` (top, no bound) for no type, a
+/// non-integer or a width past `u128`. A consumer needing a real bound gates
+/// on [`ValueType::int_mask_u128`].
 pub(super) fn type_mask_or_top(ty: Option<ValueType>) -> u128 {
     ty.and_then(ValueType::int_mask_u128).unwrap_or(u128::MAX)
 }
