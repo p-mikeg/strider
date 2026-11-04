@@ -48,9 +48,10 @@ impl KindSpec {
 /// screened before the root is matched, at both slots of an unordered pair.
 pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool + Send>;
 
-/// Runs once every input has resolved, so it sees the accumulated bindings.
-/// The type is that of the matched output, `None` where there is none: a
-/// control, memory or `PhiToken` edge, or a zero-output node.
+/// Runs once the node's inputs have matched. Below the root it sees the
+/// captures of its own cone and of operands written before it. The type is the
+/// matched output's, `None` for a control, memory or `PhiToken` edge or a
+/// zero-output node.
 pub type PostMatchFn =
     Box<dyn Fn(&Matcher, NodeId, Option<ValueType>, &crate::bindings::Bindings) -> bool + Send>;
 
@@ -163,8 +164,8 @@ pub(crate) struct PatValue {
     /// Repeatable: `var(x).capture(y)` binds both to the matched value.
     pub(crate) captures: Vec<crate::capture::Capture>,
     /// Widens an `AnyValue` vertex to also accept the memory token of a node
-    /// that produces no value output. Set only on an alternation arm at the
-    /// root, where nothing consumes the edge.
+    /// with no value output. Set on a pattern root's output (and its
+    /// alternation arms), where nothing consumes the edge.
     pub(crate) token_fallback: bool,
     /// A crate-minted capture pinning ONE vertex consumed at several pattern
     /// slots to a single IR value. Structural sharing alone does not do it:
