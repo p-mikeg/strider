@@ -1374,3 +1374,53 @@ fn a_fall_through_past_a_fragment_end_is_past_function_end() {
         vec![(0x0ff3, strider_cfg::Reason::PastFunctionEnd)]
     );
 }
+
+/// A fragment above the entry ends the function under every bound: the
+/// `ret` at 0x1013 after the fragment `[0x1010, 0x1013)` is not decoded.
+///
+/// ```text
+/// 0x1000: test edi, edi     85 ff
+/// 0x1002: js 0x1010         78 0c
+/// 0x1004: ret               c3
+/// 0x1005: nop x11
+/// 0x1010: add eax, 1        83 c0 01
+/// 0x1013: ret               c3
+/// ```
+#[test]
+fn a_fall_through_past_a_fragment_above_the_entry_is_past_function_end() {
+    let mut bytes = vec![0x85, 0xff, 0x78, 0x0c, 0xc3];
+    bytes.extend(std::iter::repeat_n(0x90u8, 11));
+    bytes.extend([0x83, 0xc0, 0x01, 0xc3]);
+    for bound in [
+        strider_cfg::FunctionBound::size(5),
+        strider_cfg::FunctionBound::Open {
+            code_before_start: false,
+        },
+        strider_cfg::FunctionBound::Open {
+            code_before_start: true,
+        },
+    ] {
+        let opts = CfgOptions {
+            bound,
+            fragment_ranges: strider_cfg::DataRanges::try_new(
+                "fragment_ranges",
+                vec![(0x1010, 0x1013)],
+            )
+            .unwrap(),
+            ..CfgOptions::default()
+        };
+        let cfg = DecodeEngine::new(
+            SleighArch::x86_64(),
+            BufMemReader::new(bytes.clone(), 0x1000),
+        )
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
+        .expect("build_cfg");
+        assert_tail_call_stub_at(&cfg, 0x1013);
+        assert_eq!(
+            incomplete_of(&cfg),
+            vec![(0x1013, strider_cfg::Reason::PastFunctionEnd)],
+            "{bound:?}"
+        );
+    }
+}
