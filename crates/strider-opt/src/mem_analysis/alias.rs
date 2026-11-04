@@ -66,7 +66,7 @@ impl Loc {
         }
     }
 
-    pub(super) fn read_by(function: &Function, load: NodeId) -> Self {
+    pub(crate) fn read_by(function: &Function, load: NodeId) -> Self {
         let NodeKind::Load(space) = *function.node_kind(load) else {
             unreachable!("read_by on a non-Load");
         };
