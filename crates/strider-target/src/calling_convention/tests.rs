@@ -54,9 +54,9 @@ const PPC64_ARG_F: &[&str] = &[
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "vs34",
     "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
 ];
-/// `long double` is IBM double-double in the f1:f2 pair; a vector, and an
-/// IEEE `__float128`, come back in v2.
-const PPC_RET_F: &[&str] = &["f1", "f2", "vs34"];
+/// `long double` is IBM double-double in the f1:f2 pair and its `_Complex` in
+/// f1-f4; a vector, and an IEEE `__float128`, come back in v2.
+const PPC_RET_F: &[&str] = &["f1", "f2", "f3", "f4", "vs34"];
 /// ELFv2 2.2.3.3 returns a homogeneous float aggregate in f1-f8 and a
 /// homogeneous vector aggregate in v2-v9.
 const PPC_ELFV2_RET_F: &[&str] = &[
@@ -69,7 +69,7 @@ const PPC32_ARG_F_KERNEL: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", 
 const PPC64_ARG_F_KERNEL: &[&str] = &[
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
 ];
-const PPC_RET_F_KERNEL: &[&str] = &["f1", "f2"];
+const PPC_RET_F_KERNEL: &[&str] = &["f1", "f2", "f3", "f4"];
 const PPC_ELFV2_RET_F_KERNEL: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
 
 /// One supported convention plus everything `build()` should produce for it.
