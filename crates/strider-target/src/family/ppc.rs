@@ -523,10 +523,8 @@ const CALL_OTHER: &[Row] = &[
 ];
 
 /// AltiVec / VSX / named vector ops (`altv207_<n>`, `vsx<ver>_<n>`,
-/// `vector<Op>`). Reached only after `CALL_OTHER`, which holds the nineteen
-/// `vsx*` memory forms, the forms setting FPSCR bits and the record forms
-/// setting CR6; the rest is register compute whose destination is the op's
-/// output.
+/// `vector<Op>`) that `CALL_OTHER` does not name: register compute whose
+/// destination is the op's output.
 const PREFIXES: &[Prefix] = &[Prefix {
     prefixes: &["altv", "vsx", "vector"],
     class: PURE,
@@ -632,11 +630,9 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
         "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
     ],
     callee_saved_regs: &[
-        // r13 is the TLS pointer, or the kernel's per-CPU `paca`, which a
-        // migrating task changes; listed anyway, since the call's memory
-        // clobber already cuts loads through it. r2 (TOC) is caller-saved,
-        // but a caller needing it reloads it from the save slot, so it is
-        // listed to keep TOC-relative loads resolvable.
+        // r13 (TLS, or the kernel's per-CPU `paca`) is listed since the
+        // call's memory clobber already cuts loads through it; r2 (TOC) since
+        // a caller reloads it, keeping TOC-relative loads resolvable.
         "r2", "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24",
         "r25", "r26", "r27", "r28", "r29", "r30", "r31",
         // LR is volatile, but listed so `InitialVar(LR)` survives calls and

@@ -8,12 +8,10 @@ pub enum Endianness {
 }
 
 impl Endianness {
-    /// Decodes an N-byte word into a `u128`: `[0x01,0x02,0x03,0x04]` gives
-    /// `0x0403_0201` little-endian, `0x0102_0304` big-endian.
+    /// Decodes an N-byte word into a `u128`.
     ///
     /// # Panics
-    ///
-    /// Panics if `bytes.len() > 16`.
+    /// If `bytes.len() > 16`.
     pub fn read_uint(self, bytes: &[u8]) -> u128 {
         let n = bytes.len();
         assert!(n <= 16, "read_uint supports at most 16 bytes, got {n}");
@@ -23,8 +21,7 @@ impl Endianness {
                 buf[..n].copy_from_slice(bytes);
                 u128::from_le_bytes(buf)
             }
-            // BE bytes go in the high slots so the widened word still reads
-            // as an N-byte big-endian value.
+            // The high slots, so the widened word reads as N-byte big-endian.
             Self::Big => {
                 buf[16 - n..].copy_from_slice(bytes);
                 u128::from_be_bytes(buf)
@@ -34,11 +31,6 @@ impl Endianness {
 
     /// Bit distance between `reg`'s slot and `container`'s LSB in this order,
     /// or `None` when `reg` does not sit inside `container`.
-    ///
-    /// Little-endian: the LSB byte is at offset 0, so the byte distance from
-    /// the container's start is the shift. Big-endian: the MSB byte is at
-    /// offset 0, so the slice sits `container.size - reg.size - (reg.off -
-    /// container.off)` bytes above the LSB.
     #[must_use]
     pub fn slice_shift_bits(self, reg: &rsleigh::Vn, container: &rsleigh::Vn) -> Option<u64> {
         if !vn_container::vn_contains(container, reg) {
