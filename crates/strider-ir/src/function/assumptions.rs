@@ -189,7 +189,7 @@ claims! {
         /// `cvtsi2ss`, the 64-bit `cvtsi2sd` and the scalar VEX forms), the x87
         /// control word's RC (bits 10-11) at `fst` and `fstp` to a single or a
         /// double, PowerPC FPSCR.RN at `fctid`, `fctiw`, `fctidu`, `fctiwu`,
-        /// `fcfid`, `fcfids`, `fcfidu`, `fcfidus`, `frsp` and `xscvdpspn`, ARM
+        /// `fcfid`, `fcfids`, `fcfidu`, `fcfidus` and `frsp`, ARM
         /// FPSCR.RMode (bits 22-23) at `vcvtr`, `vcvt.f32.f64`, `vcvt.f32.s32`,
         /// `vcvt.f32.u32` and `vcvtb` and `vcvtt` to half, AArch64 FPCR.RMode
         /// (bits 22-23) at `fcvt` to a narrower float, `fcvtn`, `scvtf` and
