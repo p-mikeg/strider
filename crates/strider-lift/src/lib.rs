@@ -207,7 +207,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// Lifts `cfg`, built with `cfg_opts`, under default convention `cc`; a
     /// direct call to a `per_address_ccs` key uses its override. The function
     /// holds `claims`, of which the lift reads `msr_register_keeps_mode` and
-    /// `fp_rounding_mode_is_nearest`. Incompleteness is not an error.
+    /// `fp_rounding_mode_is_nearest`. Incompleteness is not an error. `cc` and
+    /// every override must be built against this engine's registers.
     ///
     /// # Errors
     ///
