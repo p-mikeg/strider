@@ -26,22 +26,15 @@ pub enum MemDecomp {
     Heap(MemoryId),
 }
 
-/// Everything the analyses derive from a [`Function`]'s graph, and nothing
-/// else.
-///
-/// What makes a field one of these is the clearing rule:
-/// [`Function::invalidate_analyses`] replaces the whole struct with its
-/// [`Default`], so a memo added here is dropped with the rest and no caller
-/// has to remember it.  A field only belongs here if its `Default` means "not
-/// yet computed" and the graph alone can recompute it; a fact the graph does
-/// not derive belongs with the claims on [`Function`] instead.
+/// What the analyses derive from a [`Function`]'s graph.
+/// [`Function::invalidate_analyses`] resets the whole struct to [`Default`],
+/// so every field's `Default` must mean "not yet computed" and be
+/// recomputable from the graph alone.
 #[derive(Clone, Default)]
 pub(crate) struct FunctionMemos {
-    /// SP-decomposition memo keyed by the value whose address cone was
-    /// analysed.  A [`MemDecomp::Stack`] resolves through `memory_interner` to
-    /// `(base, offset)`, where `base` is the SP-derived terminal and the offset
-    /// is in bytes relative to it: two accesses are the same slot iff they
-    /// share both.
+    /// Address decomposition per analysed value. A [`MemDecomp::Stack`]
+    /// resolves through `memory_interner` to `(base, byte offset)`; two
+    /// accesses are the same slot iff they share both.
     memory_offsets: SecondaryMap<ValueId, MemDecomp>,
     memory_interner: EntityInterner<MemoryId, (ValueId, i128)>,
     /// Whole-function frame-escape verdict, or `None` when not computed.
@@ -52,8 +45,7 @@ impl FunctionMemos {
     /// Carries the memory classes through a compaction and drops the verdicts
     /// a compacted graph has to re-derive.
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
-        // Every field named, so one added later states what compaction does
-        // to it.
+        // Exhaustive, so a new field must state what compaction does to it.
         let Self {
             memory_offsets,
             memory_interner,
@@ -88,8 +80,8 @@ impl FunctionMemos {
     }
 }
 
-/// The memo group is written through a shared `&Function`: an analysis holds
-/// the function immutably while it fills them in.
+/// Memo accessors; the setters take `&self`, so an analysis holding
+/// `&Function` fills them in.
 impl Function {
     #[inline]
     pub fn memory_class(&self, value: ValueId) -> MemDecomp {
@@ -124,7 +116,7 @@ impl Function {
     }
 
     /// `offset` is in bytes from the heap `base` (an allocator's return
-    /// pointer). Distinct from [`Self::set_stack_slot`] only in the region tag.
+    /// pointer).
     #[inline]
     pub fn set_heap_slot(&self, value: ValueId, base: ValueId, offset: i128) {
         self.set_slot(value, base, offset, MemDecomp::Heap);
@@ -150,10 +142,8 @@ impl Function {
         self.memos.borrow_mut().memory_offsets[value] = MemDecomp::NotMemory;
     }
 
-    /// Drops the memo group as a whole (the memory classes, invalidating all
-    /// [`MemoryId`]s, and the frame-escape verdict), keeping the tables and
-    /// the claims.  A caller that rewires an address value's producers owes
-    /// the call.
+    /// Drops every memo, invalidating all [`MemoryId`]s. Required after
+    /// rewiring an address value's producers.
     #[inline]
     pub fn invalidate_analyses(&self) {
         *self.memos.borrow_mut() = FunctionMemos::default();
