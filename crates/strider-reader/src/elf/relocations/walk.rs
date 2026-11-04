@@ -12,9 +12,10 @@ use super::apply::apply_one_relocation;
 use super::implicit::note_copy;
 use super::{Ctx, RelocSite};
 
-/// One relocation, decoded once. `object` reads a mips64el `Elf64_Rel` `r_info` as one little-endian `u64`,
-/// which swaps `r_sym` with the type word (`r_ssym | r_type3 | r_type2 |
-/// r_type`); that is undone here and nowhere else.
+/// One relocation, decoded once. `object` reads a mips64el `Elf64_Rel`
+/// `r_info` as one little-endian `u64`, which swaps `r_sym` with the type
+/// word (`r_ssym | r_type3 | r_type2 | r_type`); that is undone here and
+/// nowhere else.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RelocInfo {
     pub(crate) r_type: u32,
