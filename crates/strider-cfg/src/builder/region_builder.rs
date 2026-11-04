@@ -151,6 +151,17 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         )
     }
 
+    /// Whether falling through from `from` to `to` leaves the function.
+    fn is_fall_through_past_end(&self, from: PcodeInsnAddr, to: PcodeInsnAddr) -> bool {
+        crate::is_fall_through_past_end(
+            from.machine(),
+            to.machine(),
+            self.builder.start_addr,
+            self.builder.options.bound,
+            &self.builder.options.fragment_ranges,
+        )
+    }
+
     /// Appends `insn` to the current region, then dispatches on the opcode.
     fn process_new_insn(
         &mut self,
@@ -175,7 +186,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             rsleigh::Opcode::Call => self.process_call(insn, addr, lift_res),
             // No target address to look up; only the return address matters.
             rsleigh::Opcode::CallIndirect => {
-                self.end_at_call_returning_past_end(next_pcode_addr(addr, lift_res)?)
+                self.end_at_call_returning_past_end(addr, next_pcode_addr(addr, lift_res)?)
             }
             _ => Ok(InsnOutcome::Continue),
         }
@@ -200,7 +211,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             self.finish_current_region(RegionTerminator::NoReturn)?;
             return Ok(InsnOutcome::RegionClosed);
         }
-        self.end_at_call_returning_past_end(next_pcode_addr(addr, lift_res)?)
+        self.end_at_call_returning_past_end(addr, next_pcode_addr(addr, lift_res)?)
     }
 
     /// Reports an out-of-range `target` that is the end of the instruction at
@@ -224,8 +235,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
     /// Ends the region `NoReturn` at a call whose return address `ret` is
     /// out of range, reporting `ret` as [`crate::Reason::PastFunctionEnd`].
-    fn end_at_call_returning_past_end(&mut self, ret: PcodeInsnAddr) -> Result<InsnOutcome> {
-        if !self.is_branch_tail_call(ret) {
+    fn end_at_call_returning_past_end(
+        &mut self,
+        addr: PcodeInsnAddr,
+        ret: PcodeInsnAddr,
+    ) -> Result<InsnOutcome> {
+        if !self.is_fall_through_past_end(addr, ret) {
             return Ok(InsnOutcome::Continue);
         }
         self.finish_current_region(RegionTerminator::NoReturn)?;
@@ -267,8 +282,13 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
-        let true_oob = self.is_branch_tail_call(target_addr);
-        let false_oob = self.is_branch_tail_call(next_insn_addr);
+        let own_end = addr.machine().checked_add(lift_res.machine_insn_len as u64);
+        let true_oob = if target_addr.insn_index == 0 && own_end == Some(target_addr.machine()) {
+            self.is_fall_through_past_end(addr, target_addr)
+        } else {
+            self.is_branch_tail_call(target_addr)
+        };
+        let false_oob = self.is_fall_through_past_end(addr, next_insn_addr);
 
         let region = self.finish_current_region(RegionTerminator::CondBranch {
             true_target: target_addr,
@@ -516,8 +536,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     return Ok(());
                 }
             }
+            let from = cur_addr;
             cur_addr = next_pcode_addr(cur_addr, &lift_res)?;
-            if self.seal_past_function_end(cur_addr)? {
+            if self.seal_past_function_end(from, cur_addr)? {
                 return Ok(());
             }
         }
@@ -621,8 +642,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// fall-through ran past a [`crate::FunctionBound::Size`] or fragment end, reporting
     /// [`crate::Reason::PastFunctionEnd`]; returns whether it sealed. Off a
     /// seeded arm it is a [`DecodeFailure::PastEnd`] `Err`, dropping the arm.
-    fn seal_past_function_end(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
-        if !self.is_branch_tail_call(cur_addr) {
+    fn seal_past_function_end(
+        &mut self,
+        from: PcodeInsnAddr,
+        cur_addr: PcodeInsnAddr,
+    ) -> Result<bool> {
+        if !self.is_fall_through_past_end(from, cur_addr) {
             return Ok(false);
         }
         if self.builder.descent.is_some() {
