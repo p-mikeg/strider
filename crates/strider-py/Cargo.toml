@@ -10,28 +10,20 @@ publish.workspace = true
 readme = "README.md"
 
 [lib]
-# Independent of the Python import path, which `[tool.maturin] module-name`
-# sets: `import strider` reaches the pure-Python package, which wraps this.
+# Not the Python import path; `[tool.maturin] module-name` sets that.
 name = "strider_py"
 crate-type = ["cdylib"]
-# There is no interpreter to link the pyo3 symbols against, and every test of
-# this crate is a pytest under `tests/python/`.
+# No interpreter to link against; the tests are pytest under `tests/python/`.
 test = false
 doctest = false
 
 [dependencies]
-# `macros`: `#[pyclass]` / `#[pymethods]` / `wrap_pyfunction!` themselves,
-# off under `default-features = false`.
-# `multiple-pymethods`: several `#[pyclass]`es carry more than one `#[pymethods]`
-# block: `forall_castmask!` stamps out one per mask, `forall_preset!` and
-# `match_getters!` one beside the class's own, and `builder_slot_methods!` one
-# per slot kind. Dropping it fails the build with conflicting `PyMethods`
-# impls.
+# `multiple-pymethods`: several pyclasses have more than one `#[pymethods]`
+# block (macro-generated).
 pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "macros", "multiple-pymethods"] }
 anyhow = { workspace = true }
-# `remaining_stack` alone, the pattern compile's stack budget. Never
-# `maybe_grow`: a Python callback on a switched stack trips CPython's own
-# recursion guard.
+# `remaining_stack` only. Never `maybe_grow`: a Python callback on a switched
+# stack trips CPython's recursion guard.
 stacker = "0.1.25"
 
 strider-orchestrator = { workspace = true }
@@ -49,10 +41,8 @@ rustc-hash.workspace = true
 [lints]
 workspace = true
 
-# `extension-module` keeps libpython out of the cdylib, which is what `maturin
-# develop` wants.
+# `extension-module` keeps libpython out of the cdylib.
 [features]
 default = ["pyo3/extension-module"]
-# Hooks only the pytest suite calls, kept out of the shipped wheel: CI turns
-# them on for `maturin develop`, never for `maturin build`.
+# Hooks only the pytest suite calls; never in the shipped wheel.
 test-hooks = []

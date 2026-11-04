@@ -1,7 +1,6 @@
 //! `forall_preset!` stamps out one `#[classmethod]` per preset name for the
-//! `SleighArch` / `CallingConvention` wrappers.  Needs PyO3's
-//! `multiple-pymethods` feature so a `#[pyclass]` can carry more than one
-//! `#[pymethods]` block.
+//! `SleighArch` / `CallingConvention` wrappers (needs PyO3's
+//! `multiple-pymethods`).
 
 macro_rules! forall_preset {
     (cc $self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
@@ -10,8 +9,7 @@ macro_rules! forall_preset {
             $(
                 #[doc = concat!(
                     "Preset `", stringify!($name),
-                    "` calling convention (resolved lazily against a Sleigh \
-                     register table at consumption time)."
+                    "` calling convention."
                 )]
                 #[classmethod]
                 fn $name(_cls: &Bound<'_, PyType>) -> Self {
