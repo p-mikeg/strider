@@ -1,18 +1,11 @@
-//! ELF relocation application, as one sorted patch list per image that every
-//! region shares and a read applies where it crosses a site.
+//! Static ELF relocation application, as one sorted patch list per image
+//! that every region shares and a read applies where it crosses a site.
 //!
-//! An image that has not been through its linker, or through `ld.so`, holds
-//! only an addend, or nothing, in every cross-reference field. An ET_REL's
-//! `call rel32` sits as `e8 fc ff ff ff` or `e8 00 00 00 00` under an
-//! `R_X86_64_PLT32` the linker would resolve, and an AArch64 `bl` as a branch
-//! to itself; an ET_DYN's dispatch-table slots and GOT/PLT entries hold what
-//! `ld` left under `.rela.dyn` / `.rela.plt` until `ld.so` fills them. Every
-//! one of those decodes as a plausible reference into the image itself. This
-//! applies the relocations statically.
-//!
-//! A relocation whose value is not computed is not left in place where it
-//! would be decoded or folded: its field becomes a hole no read serves, by the
-//! rule [`Ctx::unmodelled`] states.
+//! Unrelocated, every cross-reference field holds an addend or nothing (an
+//! ET_REL `call rel32` as `e8 fc ff ff ff`, an ET_DYN GOT slot as `ld` left
+//! it), each of which decodes as a plausible reference into the image. A
+//! field whose value is not computed becomes a hole by the rule
+//! [`Ctx::unmodelled`] states.
 
 use object::{Architecture as A, Object};
 
@@ -36,80 +29,38 @@ use crate::elf::sections::AddressSet;
 use crate::{MemRegion, Patch, RegionIndex, Result};
 
 /// Attaches one relocation patch list, sorted by address, to every region,
-/// walking the tables the loader reads: for a linked image with a
-/// `PT_DYNAMIC` the ones its tags place
-/// ([`loader_view`](crate::elf::dynamic::loader_view)), else
-/// `obj.dynamic_relocations()` for ET_EXEC / ET_DYN and per-section
-/// `section.relocations()` for ET_REL. Each
-/// region keeps the part that can overlap it, so a read searches no more
-/// patches than a list of its own would hold.
+/// replacing any it carries. The tables walked are the ones the loader reads:
+/// for a linked image with a `PT_DYNAMIC` those its tags place
+/// ([`loader_view`](crate::elf::dynamic::loader_view)), else the section
+/// headers'. Each region keeps the part of the list that can overlap it.
 ///
-/// # Supported
+/// Computed: every [`classify`](crate::elf::encodings::classify) row, and
+/// `object`'s plain `Absolute` (`S + A`), `Relative` and `PltRelative`
+/// (`S + A - P`, no PLT materialised). The image base is 0; `S` exists only
+/// for a symbol target. On an ET_REL an undefined or `SHN_COMMON` symbol
+/// resolves to its
+/// [`extern_address`](crate::elf::sections::ElfSectionLayout::extern_address),
+/// except a weak undefined one (`Target::weak_undefined`). Instruction fields
+/// use the instruction byte order (AArch64: always little-endian), data
+/// fields `EI_DATA`.
 ///
-/// Every row [`classify`](crate::elf::encodings::classify) lists, which says what each `(arch, r_type)`
-/// computes and the field it is encoded into: instruction immediates, GOT and
-/// TOC references, `R_*_RELATIVE` (image base modelled 0; an `SHT_REL` one's
-/// field already holds the whole value and is served as assembled), GOT/PLT
-/// slots and PC-relative words. A GOT reference resolves
-/// through a synthetic GOT slot holding the symbol's address, which exists
-/// only for an ET_REL.
+/// Not computed, so holed per [`Ctx::unmodelled`]: an unlisted kind, a symbol
+/// with no address or weak undefined, a value its field cannot hold, a branch
+/// needing a veneer, and an IFUNC's value (`R_*_IRELATIVE`, or `S` of a
+/// defined `STT_GNU_IFUNC` outside code, see [`Ctx::in_code`]). Also holed:
+/// every byte of an `R_*_COPY` object ([`hole_copies`]), the MIPS GOT
+/// entries the loader writes ([`mips_implicit_got`]) and the ARM / PPC32
+/// lazy-binding words ([`lazy_got_header`]).
 ///
-/// Otherwise the plain data fields `object` describes: `Absolute` is `S + A`
-/// (`R_X86_64_64`), `Relative` `S + A - P` (`R_X86_64_PC32`,
-/// `R_AARCH64_PREL32`), and `PltRelative` valued the same, no PLT being
-/// materialised (`R_X86_64_PLT32`).
-///
-/// `S` exists only for a symbol target: a value reading it against
-/// STN_UNDEF is not computed.
-///
-/// On an ET_REL an undefined or `SHN_COMMON` symbol resolves to its
-/// [`ElfSectionLayout::extern_address`](crate::elf::sections::ElfSectionLayout::extern_address),
-/// outside every mapping. An undefined `STB_WEAK` one is the exception: see
-/// `Target::weak_undefined`.
-///
-/// An instruction field is read and written in the instruction byte order,
-/// which on AArch64 is little-endian whatever `EI_DATA` says; a data field
-/// follows `EI_DATA`.
-///
-/// # Not computed
-///
-/// A relocation whose value is not computed (a kind not listed above, a symbol
-/// with no address or a weak undefined one, a value its field cannot hold, a
-/// branch needing a veneer, an IFUNC's in data) leaves no plausible bytes
-/// behind where they would be decoded or folded: [`Ctx::unmodelled`] says
-/// which fields become holes, through which decoding or folding fails.
-///
-/// An IFUNC's value is what its resolver returns, which only running it
-/// computes: `R_*_IRELATIVE`, and every value reading `S` of a defined
-/// `STT_GNU_IFUNC` symbol, whose `st_value` is the resolver, outside an
-/// executable mapping. A GOT reference to one still addresses its slot, which
-/// is left unmapped; inside an executable mapping `S` is the symbol's address,
-/// as [`Ctx::in_code`] says.
-///
-/// An `R_*_COPY` object holds what the loader copies from the library
-/// defining it: every byte of its `st_size` is a hole, see [`hole_copies`].
-///
-/// A MIPS image's primary GOT holds entries no relocation record covers:
-/// [`mips_implicit_got`] holes the ones the loader writes, and
-/// [`lazy_got_header`] the ARM and PPC32 lazy-binding words.
-///
-/// Any patch list the regions already carry is replaced, so re-applying over
-/// one region set is idempotent.
-///
-/// `layout` must be the one built for `obj`, `owners` the sections the regions
-/// were loaded from ([`LoadedImage::owners`](crate::elf::sections::LoadedImage::owners))
-/// and `writable` the image's writable mappings.
-///
-/// Returns the GOT slots the relocations referenced, as regions of their own.
+/// `layout` must be `obj`'s, `owners` the sections the regions came from
+/// ([`LoadedImage::owners`](crate::elf::sections::LoadedImage::owners)).
+/// Returns the GOT slots the relocations referenced (ET_REL only) as regions.
 ///
 /// # Errors
 ///
-/// When the relocation tables walked name more entries than
-/// [`RELOCATION_ENTRY_BUDGET`] times what the file holds (see
-/// `without_repeated_tables` and
-/// [`loader_view`](crate::elf::dynamic::loader_view)); and when a table the
-/// dynamic tags place cannot be read or decoded and the loader may relocate
-/// code (see `relocates_code`).
+/// When the tables name more than [`RELOCATION_ENTRY_BUDGET`] times the
+/// entries the file holds, or a table the tags place cannot be read and the
+/// loader may relocate code (`relocates_code`).
 pub(crate) fn apply_elf_relocations_with(
     regions: &mut [MemRegion],
     obj: &object::File<'_>,
@@ -139,8 +90,6 @@ pub(crate) fn apply_elf_relocations_with(
         ),
         _ => {}
     }
-    // One lookup per relocation instead of a scan of every region; an ET_REL
-    // carries one region per SHF_ALLOC section.
     let region_index = RegionIndex::new(regions);
     let mut ctx = Ctx {
         obj,
@@ -157,11 +106,8 @@ pub(crate) fn apply_elf_relocations_with(
         copies: Vec::new(),
         patches: Vec::new(),
     };
-    // A linked image with a `PT_DYNAMIC` is relocated from the tables its tags
-    // place, as an ELF of their own; anything else from its section headers,
-    // a repeated table dropped. Both are rewritten bytes for `object` to walk
-    // because only its relocation iterators derive the kind, size and
-    // encoding `apply_plain` reads, from a parser it does not export.
+    // Rewritten as an ELF for `object` to walk: only its relocation iterators
+    // derive the kind, size and encoding `apply_plain` reads.
     let from_sections = matches!(view, LoaderView::NotDynamic);
     let rewritten: Option<Cow<'_, [u8]>> = match view {
         LoaderView::NotDynamic => without_repeated_tables(obj)?.map(Cow::Owned),
@@ -190,7 +136,7 @@ pub(crate) fn apply_elf_relocations_with(
     lazy_got_header(&mut ctx);
     let got = got_regions(&ctx.got, ctx.endian_le)?;
     let mut patches = ctx.patches;
-    // Stable, so the last patch recorded at a site is the one a read applies.
+    // Stable: the last patch recorded at a site wins.
     patches.sort_by_key(|p| p.addr);
     let patches: Arc<[Patch]> = patches.into();
     for region in regions {
@@ -203,16 +149,14 @@ pub(crate) fn apply_elf_relocations_with(
 struct Ctx<'a, 'd> {
     obj: &'a object::File<'d>,
     layout: &'a crate::elf::sections::ElfSectionLayout,
-    /// Unique starts (`collapse_equal_starts`), so the highest-start region
-    /// holding a field is the one a read of it reaches.
+    /// Unique starts (`collapse_equal_starts`).
     regions: &'a [MemRegion],
     region_index: &'a RegionIndex,
     writable: &'a AddressSet,
     executable: &'a AddressSet,
     endian_le: bool,
-    /// Byte order of an instruction field: A64 instructions are little-endian
-    /// whatever `EI_DATA` says, and only data follows it. ARM BE32 instructions
-    /// really are big-endian, BE8's swap being the link's.
+    /// Byte order of an instruction field: A64 is always little-endian; ARM
+    /// BE32 is big-endian (BE8's swap is the link's).
     insn_le: bool,
     /// ELFv1 descriptor address -> the code entry its first word relocates to.
     opd_entries: BTreeMap<u64, u64>,
@@ -233,35 +177,27 @@ impl<'a> Ctx<'a, '_> {
         }
     }
 
-    /// The highest-start region holding all of `[addr, addr + width)`: the
-    /// one a read of the whole field is served from.
+    /// The highest-start region holding all of `[addr, addr + width)`, which
+    /// serves a read of the whole field.
     fn holding(&self, addr: u64, width: usize) -> Option<&'a MemRegion> {
         let regions = self.regions;
         let i = self.region_index.covering(addr, width as u64).next()?;
         Some(&regions[i])
     }
 
-    /// [`holding`](Self::holding) for a field of `site`, and `None` too when
-    /// the field runs past `site.avail`, what is left of the section owning
-    /// the site. A field past its section, or past the end of every mapping
-    /// holding its first byte, would write a neighbour's bytes, so it is
-    /// not patched. [`holder_or_hole`](Self::holder_or_hole) holes the
-    /// latter, and the walk of tables off `.dynsym` asks for a hole's first
-    /// byte only, which leaves no mapped byte of the field served.
+    /// [`holding`](Self::holding), or `None` when the field runs past
+    /// `site.avail` (the rest of the owning section): patching it would write
+    /// a neighbour's bytes.
     fn holder(&self, site: RelocSite, addr: u64, width: usize) -> Option<&'a MemRegion> {
-        // `addr` is `site.addr` plus a non-negative `mips_half_field_skew` and
-        // `width` is at most 8, so neither wraps; saturating anyway keeps a
-        // malformed pair on the `None` path.
+        // Saturating keeps a malformed MIPS pair on the `None` path.
         if addr.wrapping_sub(site.addr).saturating_add(width as u64) > site.avail {
             return None;
         }
         self.holding(addr, width)
     }
 
-    /// [`holder`](Self::holder), and a hole over the field when no one region
-    /// holds it but one holds its first byte, inside `site.avail`: a field
-    /// over two adjacent mappings, or past the end of the one holding its
-    /// start, can be neither read nor patched whole.
+    /// [`holder`](Self::holder), plus a hole over a field inside
+    /// `site.avail` that no one region holds whole but one holds the start of.
     fn holder_or_hole(
         &mut self,
         site: RelocSite,
@@ -280,9 +216,7 @@ impl<'a> Ctx<'a, '_> {
     }
 
     /// Records the low `width` bytes of `value` at `addr` when a region holds
-    /// the field. Every region overlapping it then serves the patch, clipped
-    /// to its own bytes: a narrow read inside a field that straddles an inner
-    /// region's end is that region's, a wide one the outer region's.
+    /// the field; every overlapping region serves it, clipped to its bytes.
     fn record(
         &mut self,
         holder: Option<&MemRegion>,
@@ -298,33 +232,18 @@ impl<'a> Ctx<'a, '_> {
         }
     }
 
-    /// Whether the field lies in an executable mapping, where it may be part
-    /// of an instruction. There a relocation against a defined IFUNC takes
-    /// the symbol's own address: a hole would stop the decoder, and the
-    /// symbol is how the image names the function a `call` reaches (a
-    /// FreeBSD kernel's `call memcpy`, which its linker binds at boot).
-    ///
-    /// A PC-relative call and a PC-relative `lea` look alike, so two limits
-    /// follow: an address taken in code (`lea f(%rip)`, `mov $f`) and a data
-    /// word in an executable mapping (FreeBSD 12's `.rodata`) take the
-    /// symbol's address too, where at run time they hold the resolver's
-    /// result.
+    /// Whether the field lies in an executable mapping. There an IFUNC's `S`
+    /// is the symbol's own address, so a `call` decodes to the function the
+    /// image names; an address taken in code then also gets it, where at run
+    /// time it holds the resolver's result.
     fn in_code(&self, addr: u64, width: usize) -> bool {
         self.executable.touches(addr, width)
     }
 
-    /// A relocation whose value is not computed: a hole over the field, when
-    /// a region holds it, unless the field is writable and NOT executable at
-    /// runtime.
-    ///
-    /// Writable data the program rewrites anyway is not worth a hole.  A
-    /// writable EXECUTABLE field is a different thing: `CodeAndReadOnly` keeps
-    /// an RWX mapping on purpose (firmware, `ld -N`), so those bytes reach the
-    /// decoder, and serving them unrelocated hands it a plausible wrong
-    /// instruction with nothing said about it. A ROM view's served `.got` /
-    /// `.data.rel.ro` has left `writable`, so a field there is a hole too.
-    ///
-    /// A field wider than a patch takes one hole per patch-wide piece.
+    /// A relocation whose value is not computed: a hole over the field, one
+    /// per patch-wide piece, unless it is writable and not executable (data
+    /// the program rewrites anyway). An RWX field reaches the decoder, and a
+    /// served ROM `.got` / `.data.rel.ro` has left `writable`, so both hole.
     fn unmodelled(&mut self, holder: Option<&MemRegion>, addr: u64, width: usize, r_type: u32) {
         if holder.is_none() {
             return;
@@ -341,8 +260,7 @@ impl<'a> Ctx<'a, '_> {
     }
 }
 
-/// A relocation site: where the field lands, and how many bytes of the section
-/// owning it remain from there.
+/// Where a field lands, and the bytes of its owning section left from there.
 #[derive(Clone, Copy)]
 struct RelocSite {
     addr: u64,
@@ -354,10 +272,7 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
     let mut out = Vec::new();
     let mut run: Option<(u64, Vec<u8>)> = None;
     for (&addr, &(value, width)) in got {
-        // `ElfSectionLayout::got_slot`, the only producer, yields the image's
-        // word, 4 or 8, so this cannot fire -- but both slices below index
-        // blind, and `8 - width` underflows for a wider one. Its twin
-        // `Patch::new` already checks.
+        // `got_slot` yields 4 or 8; the slices below index blind.
         if width == 0 || width > 8 {
             anyhow::bail!("GOT slot at {addr:#x} has width {width}, not 1..=8");
         }
@@ -379,9 +294,8 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
     Ok(out)
 }
 
-/// Whether the loader may relocate code: `DT_TEXTREL`, `DF_TEXTREL`, or a
-/// `PT_LOAD` both writable and executable. A dynamic array that cannot be
-/// read says nothing, so it may.
+/// Whether the loader may relocate code: `DT_TEXTREL`, `DF_TEXTREL`, an RWX
+/// `PT_LOAD`, or an unreadable dynamic array.
 fn relocates_code(obj: &object::File<'_>) -> bool {
     fn rwx<Elf: object::read::elf::FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> bool {
         use object::read::elf::ProgramHeader as _;
@@ -413,10 +327,7 @@ mod tests {
     use super::*;
     use crate::elf::encodings::{Kind, Value, classify};
 
-    /// Re-applying over one region set overwrites the patch list rather than
-    /// appending to it, so the bytes a second pass serves are the first pass's.
-    /// Only reachable from inside the crate: a caller gets its relocations
-    /// through [`crate::OwnedElf::image`], which loads a fresh set each time.
+    /// Re-applying over one region set replaces the patch list.
     #[test]
     fn applying_twice_serves_what_applying_once_served() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -481,9 +392,8 @@ mod tests {
         assert_eq!(once, bytes(&regions));
     }
 
-    /// Which region serves a read depends on the read's WIDTH, so a field
-    /// straddling an inner region's end has to read back patched at every
-    /// width: every region overlapping it keeps the patch.
+    /// A field straddling an inner region's end reads back patched at every
+    /// width, whichever region serves it.
     #[test]
     fn a_field_over_an_inner_regions_end_reads_back_patched_at_every_width() {
         let field = 0x1084;
