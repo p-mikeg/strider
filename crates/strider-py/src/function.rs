@@ -348,7 +348,12 @@ impl PyFunction {
     /// A `Node` handle on `node_id`, else `StriderError`. A raw id is
     /// meaningful only until `compact`, `optimize` or `rewrite`; a `Node` then
     /// goes stale, while an int silently names something else.
-    fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {
+    fn node(
+        slf: Py<Self>,
+        py: Python<'_>,
+        node_id: crate::bigint::Unsigned<u32>,
+    ) -> PyResult<crate::node::PyNode> {
+        let node_id = node_id.0;
         let generation = {
             let function = slf.borrow(py);
             let function = function.read()?;

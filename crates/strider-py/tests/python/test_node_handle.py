@@ -193,11 +193,10 @@ def test_function_node_invalid_id_message_names_the_id():
         a.node(bad)
 
 
-def test_function_node_negative_id_overflows_at_conversion():
-    """A negative id fails the unsigned conversion eagerly: OverflowError,
-    not StriderError."""
+def test_function_node_negative_id_raises_at_conversion():
+    """A negative id fails the unsigned conversion eagerly."""
     a = _analyze_add()
-    with pytest.raises(OverflowError):
+    with pytest.raises(strider.StriderError, match="out of range"):
         a.node(-1)
 
 
