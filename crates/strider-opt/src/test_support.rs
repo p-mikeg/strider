@@ -276,11 +276,19 @@ pub(crate) mod memory_shapes {
     }
 
     /// `-O0`'s `if (verbose) call();` `n` times over a slot stored
-    /// `verbose`: each guard reloads the slot past the previous guard's call.
-    pub(crate) fn guard_chain(n: usize, verbose: u64) -> crate::Result<strider_ir::Function> {
+    /// `verbose`: each guard reloads the slot past the previous guard's call,
+    /// and with `spill` past a store to another slot.
+    pub(crate) fn guard_chain(
+        n: usize,
+        verbose: u64,
+        spill: bool,
+    ) -> crate::Result<strider_ir::Function> {
         shape(|b| {
             store_const(b, 0, verbose)?;
-            for _ in 0..n {
+            for i in 0..n {
+                if spill {
+                    store_const(b, 1, i as u64)?;
+                }
                 let v = load(b, 0)?;
                 let zero = b.build_int_const(0u64, TY)?;
                 let cond = b.build_int_cmp_operation(v, zero, strider_ir::IntCmpOp::Equal, TY)?;

@@ -359,22 +359,42 @@ mod tests {
         use crate::test_support::memory_shapes::guard_chain;
         let is_call =
             |k: &strider_ir::node::NodeKind| matches!(k, strider_ir::node::NodeKind::Call { .. });
-        let mut f = guard_chain(200, 0)?;
+        let mut f = guard_chain(200, 0, false)?;
         let iterations = crate::test_support::steps(&[&super::ITERATIONS], || {
             crate::default_pipeline().run(&mut f, &OptCtx::new(None))
         })?;
         assert!(iterations <= 10, "{iterations} iterations");
         assert!(!f.has_kind(is_call));
-        let mut f = guard_chain(1500, 0)?;
+        let mut f = guard_chain(1500, 0, false)?;
         crate::default_pipeline().run(&mut f, &OptCtx::new(None))?;
         Ok(())
+    }
+
+    /// A store between guards costs each reload a bounded number of settle
+    /// rounds, not one per guard above it.
+    #[test]
+    fn a_guard_chain_over_a_spill_costs_near_linear_work() -> crate::Result<()> {
+        use crate::mem_analysis::WALK_STEPS;
+        use crate::mem_ssa::CLIMB_STEPS;
+        use crate::opt::load_forward::SETTLE_ROUNDS;
+        use crate::test_support::memory_shapes::guard_chain;
+        let work = |n| {
+            let mut f = guard_chain(n, 0, true)?;
+            let work =
+                crate::test_support::steps(&[&SETTLE_ROUNDS, &WALK_STEPS, &CLIMB_STEPS], || {
+                    crate::default_pipeline().run(&mut f, &OptCtx::new(None))
+                })?;
+            assert!(!f.has_kind(|k| matches!(k, strider_ir::node::NodeKind::Call { .. })));
+            Ok(work)
+        };
+        crate::test_support::assert_near_linear("guard chain over a spill", 200, work, 260)
     }
 
     /// A guard whose constant takes the call keeps every later reload behind
     /// it. Mutation: skip the arm the `If` takes instead.
     #[test]
     fn a_taken_guard_call_blocks_the_reload() -> crate::Result<()> {
-        let mut f = crate::test_support::memory_shapes::guard_chain(3, 1)?;
+        let mut f = crate::test_support::memory_shapes::guard_chain(3, 1, false)?;
         crate::default_pipeline().run(&mut f, &OptCtx::new(None))?;
         let count = |k: fn(&strider_ir::node::NodeKind) -> bool| {
             f.walk().filter(|&n| k(f.node_kind(n))).count()
