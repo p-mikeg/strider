@@ -924,8 +924,9 @@ one of seven reasons (`strider.cfg.INCOMPLETE_REASONS`):
 - `"past_function_end"`: where code falls through past `function_max_size`
   or a `fragment_ranges` end (sequentially, on a not-taken branch, or a
   conditional instruction skipping itself), at the first address after the
-  last decoded instruction. The region tail-calls it; a call whose return address is there is reported too unless
-  its target is in `no_return_targets`.
+  last decoded instruction. The region tail-calls it; a call whose return
+  address is there is reported too unless its target is in
+  `no_return_targets`.
 
 A seeded arm that would be unmapped, undecodable or past the end is dropped
 and named. The five target reasons accumulate across resolution rounds; the
@@ -966,9 +967,10 @@ name some.
 a tail call, and a fall-through past one's end is `"past_function_end"`.
 `ElfLifter.analyze` and `build_cfg` fill it, unless the options name some,
 from the sized function symbols `<name>.cold` and `<name>.cold.N` of every
-function symbol at the entry. A `<name>.part.N`, `.constprop.N` or `.isra.N`
-clone is a separate callee, and a branch into another function's cold
-partition stays a tail call.
+function symbol at the entry. Fragments are matched by name alone, so local
+functions sharing a name share their fragments. A `<name>.part.N`,
+`.constprop.N` or `.isra.N` clone is a separate callee, and a branch into a
+cold partition named for another function stays a tail call.
 
 `no_return_targets` lists direct-call targets that never return (`exit`,
 `abort`); it is the only way to mark one. List the address the call names: a
