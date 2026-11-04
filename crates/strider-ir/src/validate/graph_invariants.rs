@@ -539,10 +539,10 @@ pub(super) fn check_function_invariants_memory_linearity(
 ///
 /// A control node's state is the nearest dominating memory effect: the entry,
 /// a `Region` with a `MemPhi` on the chain, a non-memory-preserving `Call`, or
-/// a `Call` / `CallOther` on the chain. A memory input steps back through
-/// `Store`s to the state before its consumer. A `MemPhi` arm must be its edge's
-/// state; at a `Region` with no `MemPhi`, every live edge carries its
-/// immediate dominator's state.
+/// a `Call` / `CallOther` on the chain. A memory input, stepped back through
+/// `Store`s, must reach the state before its consumer. A `MemPhi` arm must be
+/// its edge's state; at a `Region` with no `MemPhi`, every live edge carries
+/// its immediate dominator's state.
 fn check_memory_order(
     ctx: &ScheduleContext<'_>,
     on_chain: &NodeIdSet,
