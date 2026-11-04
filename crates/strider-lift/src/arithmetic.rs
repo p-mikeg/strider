@@ -15,7 +15,7 @@ use strider_ir::{
 use crate::FunctionLifter;
 use crate::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
-/// Errs unless `a` and `b` have the width Sleigh guarantees them; the lift
+/// Errs unless `a` and `b` have equal widths, as Sleigh guarantees; the lift
 /// resizes operands afterwards, so a malformed `.sla` fails only here.
 pub(super) fn require_same_size(a: &rsleigh::Vn, b: &rsleigh::Vn, what: &str) -> Result<()> {
     if a.size != b.size {
