@@ -33,7 +33,7 @@ than vendoring either, so neither is redistributed here.
   carry the `IP: GHIDRA` Apache header (the other two are Bison-generated); the
   146 processor `.slaspec` specifications are GHIDRA's too.
 - Shipped as: `libsla.a`, statically linked into `strider/_strider.abi3.so`,
-  plus the 14 compiled `.sla` images `SleighArch`'s constructors name, embedded
+  plus the 15 compiled `.sla` images `SleighArch`'s constructors name, embedded
   in the module with `include_bytes!`. The sdist additionally carries the C++
   and `.slaspec` sources.
 
