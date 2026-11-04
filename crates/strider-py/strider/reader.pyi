@@ -38,11 +38,11 @@ class MemReader:
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Return up to `size` bytes at `addr` (a short read near a region edge
-        is allowed), or `None` when `addr` is unmapped. Returning more than
-        `size` bytes is an error. The base implementation raises
-        `NotImplementedError`.
+        is allowed), or `None` when `addr` is unmapped. The base
+        implementation raises `NotImplementedError`.
 
-        An exception here fails the lift with `StriderError`, chained as its
+        An exception here, a return of another type or of more than `size`
+        bytes fails the lift with `StriderError`, an exception chained as its
         `__cause__`; `KeyboardInterrupt` and `SystemExit` propagate unchanged."""
         ...
 
@@ -63,8 +63,9 @@ class ReadOnlyMemory:
         endianness. A short return is an error, not a partial read. The base
         implementation raises `NotImplementedError`.
 
-        An exception here is swallowed, as if `None` were returned, except
-        `KeyboardInterrupt` and `SystemExit`, which stop the run."""
+        An exception here, or a return of another type or length, is
+        swallowed as if `None` were returned, except `KeyboardInterrupt` and
+        `SystemExit`, which stop the run."""
         ...
 
 class Symbol:
