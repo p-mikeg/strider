@@ -1,7 +1,7 @@
 # `strider-py` examples
 
-Most run against the committed fixture ELFs in `fixtures/out/x86/`; 02, 08,
-10, 11, 12, 15 and 17 supply bytes from Python.
+Most run against the committed fixture ELFs in `fixtures/out/x86/`; 02, 07,
+08, 10, 11, 12, 15 and 17 supply bytes from Python.
 
 ## Prerequisites
 
@@ -46,5 +46,6 @@ lazily-produced bytes.
 - **Padding**: the disassembler prefetches past the last instruction. A
   `BufferReader` short-reads there, so its padding is harmless; a `MemReader`
   returning `None` needs real padding (02 and 08 carry 64 bytes).
-- **`allow_code_before_start_addr=True`** (all but 02): otherwise an
-  unconditional branch below the entry is a tail call, not an edge.
+- **`allow_code_before_start_addr=True`** (all five; also 03, 04, 07 and
+  08): otherwise an unconditional branch below the entry is a tail call, not
+  an edge.
