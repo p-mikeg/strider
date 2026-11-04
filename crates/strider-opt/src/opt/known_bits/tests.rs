@@ -1081,3 +1081,24 @@ fn an_i1_lzcount_may_set_bit_3() -> Result<()> {
     assert_eq!((kb.ones, kb.zeros), (0, 0xF0));
     Ok(())
 }
+
+/// Two stacked redundant masks both drop in one run, whichever the pass
+/// visits first.
+#[test]
+fn stacked_redundant_masks_drop_in_one_run() -> Result<()> {
+    let mut zext = None;
+    let (mut fg, _) = make_fn_with_var(reg_vn(0x40, 1), |b, x| {
+        let wide = b.extend_if_needed(x, ValueType::int(32), ExtendOp::ZeroExtend)?;
+        zext = Some(wide);
+        let inner = b.build_const_binop(0xFFFu64, wide, IntBinaryOp::And, ValueType::int(32))?;
+        b.build_const_binop(0xFFFFu64, inner, IntBinaryOp::And, ValueType::int(32))
+    })?;
+    run_pass(&KnownBits, &mut fg)?;
+    assert_eq!(
+        Some(return_value(fg.graph())?),
+        zext,
+        "{}",
+        fg.to_text(false)
+    );
+    Ok(())
+}
