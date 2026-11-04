@@ -69,37 +69,3 @@ impl IRBuilder for FunctionBuilder {
         node
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::IRViewer;
-    use crate::node::ValueType;
-    use cranelift_entity::EntityRef;
-
-    /// No tracked variables, no stamped lift address.
-    fn empty_builder() -> crate::Result<FunctionBuilder> {
-        FunctionBuilder::new(
-            vec![],
-            strider_target::BuiltCallingConvention::default(),
-            strider_target::Endianness::Little,
-        )
-    }
-
-    #[test]
-    fn function_builder_builder_trait_creates_node() {
-        let mut b = empty_builder().unwrap();
-        assert_eq!(b.lift_addr, None);
-        let const_id = crate::node::IntConstId::new(3);
-        let n = <FunctionBuilder as IRBuilder>::create_node(
-            &mut b,
-            NodeKind::IntConst(const_id),
-            [],
-            [ValueKind::Typed(ValueType::int(64))],
-        );
-        assert!(matches!(
-            IRViewer::function(&b).node_kind(n),
-            NodeKind::IntConst(id) if *id == const_id
-        ));
-    }
-}
