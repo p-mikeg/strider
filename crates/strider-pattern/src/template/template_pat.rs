@@ -1,7 +1,7 @@
 use crate::expr::IntoExpr;
 use crate::template::Template;
 
-/// No type outside this crate is one.
+/// Seals [`TemplatePat`].
 pub(crate) mod sealed {
     pub trait Sealed {}
 }
