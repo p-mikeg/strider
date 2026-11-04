@@ -1,7 +1,5 @@
-//! Value-only DAG generator for the workspace's property tests: a sequence of
-//! [`FunctionBuilder`] actions replayed against type-tagged operand buckets,
-//! mirroring `cranelift-fuzzgen`. Control-flow properties stay in hand-authored
-//! fixtures.
+//! Value-only DAG generator: a sequence of [`FunctionBuilder`] actions
+//! replayed against type-tagged operand buckets. No control flow.
 
 use proptest::prelude::*;
 use strider_ir::node::ValueType;
