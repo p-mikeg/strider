@@ -1,7 +1,6 @@
 //! Runs `Strider::analyze` on `SYMBOL` in the image named by `argv[1]` or
-//! `$STRIDER_KERNEL`, a heavy function in the FreeBSD 12.4 kernel it was
-//! written against, with no profiler wiring, so an external sampling profiler
-//! gets a clean target.  Run under samply:
+//! `$STRIDER_KERNEL` (a FreeBSD 12.4 kernel), as a target for an external
+//! sampling profiler:
 //!
 //! ```text
 //! cargo build --profile profiling --example analyze_kernel
@@ -10,7 +9,6 @@
 
 use object::{Object, ObjectSymbol};
 
-/// Path to the image to analyze, from `argv[1]` or `$STRIDER_KERNEL`.
 fn kernel_path() -> String {
     std::env::args()
         .nth(1)

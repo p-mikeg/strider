@@ -19,25 +19,22 @@ use anyhow::{Result, anyhow};
 use strider_cfg::MachineInsnAddr;
 use strider_opt::{AssumptionOptions, ReadOnlyMemory};
 
-/// What `Default` lends: a `&'a` cannot borrow a temporary.
+/// `Default`'s `per_address_ccs`: a `&'a` cannot borrow a temporary.
 static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 
-/// [`Strider::analyze`]'s options. `Default` decodes an unbounded function
-/// with no seeds and no CC overrides, optimises under
-/// [`AssumptionOptions::default`], resolves indirect branches and compacts.
+/// [`Strider::analyze`]'s options.
 #[derive(Clone, Debug)]
 pub struct AnalyzeOptions<'a> {
     /// Its `derived_targets` must be empty: [`Strider::analyze`] fills that
     /// layer with its own answers.
     pub cfg: strider_cfg::CfgOptions<'a>,
-    /// Keyed by direct-call target address, through `cfg`'s
-    /// [`strider_cfg::CfgOptions::local_entries`]. Built against this engine's
-    /// registers and fitting its arch, as the default CC must
-    /// ([`Lifter::build_ir_with`]).
+    /// Callee CCs by direct-call target, looked up through `cfg`'s
+    /// [`strider_cfg::CfgOptions::local_entries`]; built for this engine's
+    /// arch, as the default CC must be.
     pub per_address_ccs: &'a FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// Run the indirect-branch classifier. Off leaves every unseeded site an
-    /// `IndirectBranch` placeholder; `CfgOptions::known_targets` still seat.
+    /// Off leaves every unseeded site an `IndirectBranch` placeholder;
+    /// `CfgOptions::known_targets` still seat.
     pub resolve_indirect_branches: bool,
     /// The claims each round's lift holds
     /// ([`strider_ir::Function::assumptions`]).
@@ -64,8 +61,6 @@ where
     R: rsleigh::MemReader,
 {
     lifter: Lifter<R>,
-    /// What `LoadReadOnly` and the jump-table classifier read; `None`
-    /// disables both.
     rom: Option<Box<dyn ReadOnlyMemory>>,
 }
 
@@ -111,14 +106,14 @@ where
         self.lifter.sleigh()
     }
 
-    /// The engine `analyze` lifts with, the only one that can lift the CFGs
-    /// it returns.
+    /// The only engine that can lift the CFGs `analyze` returns.
     #[must_use]
     pub fn lifter(&self) -> &Lifter<R> {
         &self.lifter
     }
 
-    /// The image `analyze`'s `OptCtx` reads.
+    /// The read-only image `LoadReadOnly` and the jump-table classifier
+    /// read; `None` disables both.
     #[must_use]
     pub fn rom(&self) -> Option<&dyn ReadOnlyMemory> {
         self.rom.as_deref()
@@ -140,28 +135,19 @@ where
             .build_cfg(MachineInsnAddr::from(entry), cfg_opts)
     }
 
-    /// Lift, optimise, and resolve indirect branches at `entry`.
+    /// Lifts `entry`, runs `pipeline` (default
+    /// [`strider_opt::default_pipeline`]) and classifies its dispatch sites
+    /// with [`strider_opt::classify_sites`], re-lifting until the seats stop
+    /// changing or the iteration cap runs out.
     ///
-    /// Each round builds the cfg from the seats, lifts, runs `pipeline`
-    /// (default [`strider_opt::default_pipeline`]) and classifies dispatch
-    /// sites with [`strider_opt::classify_sites`], until the seats stop
-    /// changing or the iteration cap, the discovery depth limit, runs out. A
-    /// site that narrows twice is withdrawn.
-    ///
-    /// Returns even when it cannot vouch for every path: check
-    /// [`AnalyzeResult::incomplete`] before trusting an absence. An unresolved
-    /// site keeps its placeholder. A site the cfg consumed as a `TailCall`, or
-    /// as a `Return` the caller seeded, is [`Reason::UnverifiedSeed`].
-    ///
-    /// `opts.cfg.known_targets` is borrowed, never mutated; a seed suppresses
-    /// the report of an unclassifiable seated `Switch` only while the settled
-    /// answer names nothing beyond it. `opts.compact` applies once, after the
-    /// loop.
+    /// Check [`AnalyzeResult::incomplete`] before trusting an absence; an
+    /// unresolved site keeps its placeholder. `opts.compact` applies once,
+    /// after the loop.
     ///
     /// # Errors
     ///
-    /// A non-empty `opts.cfg.derived_targets`, which is the loop's own layer;
-    /// lift / cfg / opt / validation failures; never an incomplete result.
+    /// A non-empty `opts.cfg.derived_targets`; lift, cfg, opt or validation
+    /// failures. Never an incomplete result.
     pub fn analyze(
         &mut self,
         entry: u64,
@@ -191,11 +177,10 @@ where
     }
 }
 
-/// What [`Strider::analyze`] returns: the lifted function and the CFG it
-/// was lifted from.
+/// [`Strider::analyze`]'s result.
 pub struct AnalyzeResult {
-    /// The final round's CFG, the one `function` was lifted from, carrying
-    /// this analysis's [`Incompleteness`] rather than that build's own.
+    /// The CFG `function` was lifted from, carrying this analysis's
+    /// [`Incompleteness`] rather than that build's own.
     pub cfg: strider_cfg::Cfg,
     /// May still hold an `IndirectBranch` placeholder at a
     /// [`Reason::UnresolvedBranch`] site.

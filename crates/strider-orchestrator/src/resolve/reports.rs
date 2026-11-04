@@ -1,6 +1,3 @@
-//! What a round's cfg and the loop's seats say about each site: the seats the
-//! cfg refused, and the sites reported.
-
 use std::collections::BTreeSet;
 
 use rustc_hash::{FxHashMap, FxHashSet};

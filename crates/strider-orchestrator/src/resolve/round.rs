@@ -1,6 +1,3 @@
-//! One round of the resolve loop: the whole function rebuilt from one seat
-//! set.
-
 use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{CfgOptions, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
@@ -20,15 +17,13 @@ pub(super) type FlowingAnchor = (PcodeInsnAddr, NodeId, bool);
 /// The classifier's answers, by node: a site it could not derive has none.
 pub(super) type Resolutions = FxHashMap<NodeId, ResolvedTargets>;
 
-/// What a round classifies its dispatch sites with:
-/// [`strider_opt::classify_sites`], or a test's stand-in.
+/// A dispatch-site classifier, as [`strider_opt::classify_sites`].
 pub type Classifier<'c> = &'c dyn Fn(
     &strider_ir::Function,
     Option<&dyn ReadOnlyMemory>,
 ) -> Result<strider_opt::ClassifiedSites>;
 
-/// One round's cfg, the function lifted and optimised from it, and what the
-/// loop reads off the two.
+/// One round's cfg, the function lifted and optimised from it, and its sites.
 pub(super) struct Round {
     /// The cfg `function` was lifted from.
     pub(super) cfg: strider_cfg::Cfg,
@@ -80,7 +75,7 @@ where
     R: rsleigh::MemReader,
 {
     /// Builds the cfg under `cfg_opts`, lifts and optimises it, and
-    /// classifies its dispatch sites, keeping the node-keyed answers apart.
+    /// classifies its dispatch sites.
     ///
     /// # Errors
     ///
