@@ -773,10 +773,35 @@ fn a_fetch_on_an_uncomputed_relocation_names_it() {
 /// leaves the next instruction fetchable.
 #[test]
 fn an_uncomputed_ppc_be_half16_holes_only_its_halfword() {
-    for (arch, r_type) in [
-        (Architecture::PowerPc, elf::R_PPC_GOT16),
-        (Architecture::PowerPc64, elf::R_PPC64_TPREL16_LO),
-    ] {
+    let ppc32 = [
+        elf::R_PPC_GOT16,
+        elf::R_PPC_SECTOFF,
+        elf::R_PPC_SECTOFF_LO,
+        elf::R_PPC_SECTOFF_HI,
+        elf::R_PPC_SECTOFF_HA,
+        elf::R_PPC_EMB_SDA2REL,
+        elf::R_PPC_EMB_RELST_LO,
+        elf::R_PPC_EMB_RELST_HI,
+        elf::R_PPC_EMB_RELST_HA,
+        elf::R_PPC_EMB_RELSDA,
+    ];
+    // `R_PPC64_REL16_HIGH` .. `_HIGHESTA`, which `object` does not name.
+    let ppc64 = [
+        elf::R_PPC64_TPREL16_LO,
+        elf::R_PPC64_SECTOFF,
+        elf::R_PPC64_SECTOFF_LO,
+        elf::R_PPC64_SECTOFF_HI,
+        elf::R_PPC64_SECTOFF_HA,
+        elf::R_PPC64_SECTOFF_DS,
+        elf::R_PPC64_SECTOFF_LO_DS,
+    ]
+    .into_iter()
+    .chain(240..=245);
+    for (arch, r_type) in ppc32
+        .into_iter()
+        .map(|t| (Architecture::PowerPc, t))
+        .chain(ppc64.map(|t| (Architecture::PowerPc64, t)))
+    {
         let mut obj = Object::new(BinaryFormat::Elf, arch, Endianness::Big);
         let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
         // lwz r9, 0(r30); lwz r3, 0(r9)
@@ -795,13 +820,17 @@ fn an_uncomputed_ppc_be_half16_holes_only_its_halfword() {
         assert_eq!(
             table.read(insn, &mut half),
             Some(2),
-            "{arch:?}: the opcode half"
+            "{arch:?} type {r_type}: the opcode half"
         );
         assert_eq!(
             table.read(insn + 2, &mut half),
             None,
-            "{arch:?}: the field is a hole"
+            "{arch:?} type {r_type}: the field is a hole"
         );
-        assert_eq!(word(&table, insn + 4, true), 0x8069_0000, "{arch:?}");
+        assert_eq!(
+            word(&table, insn + 4, true),
+            0x8069_0000,
+            "{arch:?} type {r_type}"
+        );
     }
 }
