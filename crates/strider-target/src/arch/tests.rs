@@ -190,7 +190,7 @@ fn volatile_registers_per_preset() {
     for preset in ArchPreset::ALL {
         let arch = preset.arch();
         let regs = arch.probe_regs();
-        let ranges = arch.volatile_register_ranges().expect("resolves");
+        let ranges = arch.volatile_register_ranges(&regs).expect("resolves");
         let volatile = |name: &str| {
             let vn = regs.name_to_vn(name).expect(name);
             let end = vn.addr_off + u64::from(vn.size);
