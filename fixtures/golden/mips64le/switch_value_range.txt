@@ -110,7 +110,7 @@ cfg
   0x120000c18 24 ops unresolved@0x120000c34.5 -> []
   0x120000c44 11 ops return -> []
   0x120000cc0 2 ops goto -> [0x120000c44]
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xc000:1, u:0x14600:4, u:0x115500:8, u:0x115600:1, u:0x115700:8]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0xc000:1, u:0x14600:4, u:0x117100:8, u:0x117200:1, u:0x117300:8]
 arg 0 [%v1]
 %v0:ctrl = entry
 %v1:i64 = initial_var[a0]

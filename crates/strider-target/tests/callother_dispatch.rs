@@ -376,7 +376,7 @@ fn arm32_smc_and_hvc_clobber_the_smccc_result_registers() {
 /// resolves to on both x86 widths, and that no other arch answers for them.
 #[test]
 fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
-    let pure = ["rdtsc", "rdmsr", "readfsbase", "readgsbase"];
+    let pure = ["rdtsc", "rdtscp", "rdmsr", "readfsbase", "readgsbase"];
     let mem_clobber = ["swi", "wrmsr", "writefsbase", "writegsbase", "swapgs"];
     for preset in [ArchPreset::X86, ArchPreset::X86_64] {
         for name in pure {

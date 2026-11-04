@@ -38,7 +38,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6
 == branch_on_const_string @0x401120
 cfg
   0x401120 12 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v2]
 arg 1 [%v3]
 %v0:ctrl = entry
@@ -56,7 +56,7 @@ cfg
   0x401130 15 ops cbranch 0x401143 -> [0x40113c, 0x401143]
   0x40113c 4 ops goto -> [0x401143]
   0x401143 3 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x17200:4, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x6ad00:4, u:0x6af00:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x17200:4, u:0x17f00:1, u:0x18100:1, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x6ae00:4, u:0x6b000:4]
 arg 0 [%v2]
 arg 1 [%v16]
 %v0:ctrl = entry
@@ -83,7 +83,7 @@ return %v12, %v15, %v14, %v16, %v17, %v18, %v19
 == main @0x401150
 cfg
   0x401150 96 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 2 [%v18]
 %v0:ctrl = entry
 %v1:mem = initial_memory
