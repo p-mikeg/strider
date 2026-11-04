@@ -1198,7 +1198,7 @@ fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
 }
 
 // Each logical NOT at I1 is `Xor(_, IntConst(1))`, so this builds
-// `Xor(Xor(cmp, 1), 1)` for the double-negation rule to collapse.
+// `Xor(Xor(cmp, 1), 1)`, which reassociation and `x ^ 0 -> x` collapse.
 #[test]
 fn fold_bool_double_not_to_x() -> Result<()> {
     let vn = reg_vn(0x1000, 8);

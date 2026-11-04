@@ -12,7 +12,7 @@ use strider_ir::node::{IntUnaryOp, NodeId, NodeKind, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer};
 use strider_pattern::{
     Capture, CaptureExt, any_float_binary, any_float_cmp, any_float_unary, bool_const_with,
-    bool_not, capture_typed, float_bits_to_int, float_const, float_const_with, int_add, int_and,
+    capture_typed, float_bits_to_int, float_const, float_const_with, int_add, int_and,
     int_bits_to_float, int_const, int_const_with, int_mul, int_neg, int_or, int_sborrow,
     int_scarry, int_shl, int_shr, int_sign_extend, int_sshr, int_sub, int_truncate, int_xor,
     int_zero_extend, one_of, template, var,
@@ -36,7 +36,7 @@ pub(super) fn build_rules() -> Vec<Rule> {
         },
         fold: const_eval_rule,
     });
-    rules.extend(build_bool_float_rules());
+    rules.extend(build_float_rules());
     rules.extend(build_reassoc_and_mask_rules());
     rules.extend(build_factor_rules());
     rules.extend(build_bitcast_extend_rules());
@@ -488,21 +488,16 @@ fn const_eval_rule(edit: &mut EditFunction<'_>, root: NodeId) -> Result<Option<V
     Ok(changed.then_some(new))
 }
 
-/// Const-eval rules for the I1 boolean ops and all float ops.
-fn build_bool_float_rules() -> Vec<Rule> {
-    let (op, l, r, v, x) = (
-        Capture::new(),
+/// Const-eval rules for the float ops.
+fn build_float_rules() -> Vec<Rule> {
+    let (op, l, r, v) = (
         Capture::new(),
         Capture::new(),
         Capture::new(),
         Capture::new(),
     );
 
-    // The integer rules already fire at I1; only shapes with no integer
-    // analogue belong here.
     vec![
-        // !!x -> x
-        { Rule::rewrite(bool_not(bool_not(var(x))), var(x)) },
         {
             Rule::rewrite(
                 any_float_binary(float_const(l), float_const(r)).capture(op),
