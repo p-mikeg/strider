@@ -25,11 +25,13 @@ def test_named_capture_reads_by_handle_and_by_string():
 
 
 def test_reserved_capture_name_raises():
-    for name in ("_", "any_"):
-        with pytest.raises(
-            strider.StriderError, match=f'^"{name}" is reserved; anything\\(\\) is the wildcard$'
-        ):
-            Capture(name)
+    with pytest.raises(strider.StriderError, match='^"_" is reserved; anything\\(\\) is the wildcard$'):
+        Capture("_")
+
+
+def test_any_underscore_is_an_ordinary_name():
+    assert Capture("any_") == Capture("any_")
+    assert repr(Capture("any_")) == "Capture('any_')"
 
 
 def test_capture_repr_shows_name_or_id():
