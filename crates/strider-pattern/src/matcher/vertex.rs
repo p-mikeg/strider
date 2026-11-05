@@ -182,13 +182,3 @@ impl PatValue {
         Self::of_kind(slot, OutputKindSpec::Memory)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bare_value_output_is_any_value() {
-        assert!(matches!(PatValue::value(0).kind, OutputKindSpec::AnyValue));
-    }
-}

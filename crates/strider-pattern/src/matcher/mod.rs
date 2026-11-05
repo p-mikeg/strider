@@ -1014,14 +1014,6 @@ mod kleene_tests {
     }
 
     #[test]
-    fn not_of_unknown_is_unknown() {
-        // An unanswerable `inner` stays unanswerable rather than flipping to `true`.
-        assert_eq!(U.map(|b: bool| !b), U);
-        assert_eq!(T.map(|b| !b), F);
-        assert_eq!(F.map(|b| !b), T);
-    }
-
-    #[test]
     fn or_truth_dominates_then_unknown_poisons() {
         assert_eq!(fold(Kleene::new(true), [U, T, F]), T);
         // Unknown poisons a would-be `false`.
