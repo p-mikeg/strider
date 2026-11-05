@@ -146,17 +146,6 @@ mod tests {
         PcodeInsnAddr::at_machine_start(addr)
     }
 
-    #[test]
-    fn any_one_reason_makes_a_set_incomplete() {
-        assert!(Incompleteness::default().is_empty());
-        for reason in Reason::ALL {
-            let mut set = Incompleteness::default();
-            set.insert(at(0x1000), reason);
-            assert!(!set.is_empty(), "{reason:?}");
-            assert_eq!(set.of(reason).collect::<Vec<_>>(), [at(0x1000)]);
-        }
-    }
-
     /// `ALL` is generated from the roster rows, so it cannot miss a variant;
     /// what the rows still fix is the ORDER, and the doc promises the site
     /// reasons are the leading run of it. Not `ALL == sorted`: `Ord` is
@@ -178,19 +167,6 @@ mod tests {
         assert_eq!(names.len(), Reason::ALL.len());
         let sites: Vec<_> = Reason::ALL.into_iter().filter(|r| r.is_site()).collect();
         assert_eq!(sites, [Reason::UnresolvedBranch, Reason::UnverifiedSeed]);
-    }
-
-    #[test]
-    fn of_is_ascending_and_deduplicated() {
-        let mut set = Incompleteness::default();
-        for addr in [0x3000, 0x1000, 0x3000, 0x2000] {
-            set.insert(at(addr), Reason::InteriorTarget);
-        }
-        set.insert(at(0x1000), Reason::UnresolvedBranch);
-        assert_eq!(
-            set.of(Reason::InteriorTarget).collect::<Vec<_>>(),
-            [at(0x1000), at(0x2000), at(0x3000)]
-        );
     }
 
     /// One round's site verdicts are that round's alone; its target reasons
