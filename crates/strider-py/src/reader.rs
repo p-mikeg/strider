@@ -709,8 +709,13 @@ impl PyLoadedElf {
                     matches!(sym.size(), 16 | 24) || dot_names.contains(format!(".{name}").as_str())
                 };
                 let address = followed.unwrap_or(declared);
-                let size = (sym.size() != 0 && !(followed.is_some() && measures_opd()))
-                    .then(|| sym.size());
+                // A defined IFUNC's `st_size` is its resolver's, not its
+                // extern slot's.
+                let ifunc_extern = matches!(place, SymbolPlace::Import(_))
+                    && matches!(sym.section(), object::SymbolSection::Section(_));
+                let size =
+                    (sym.size() != 0 && !ifunc_extern && !(followed.is_some() && measures_opd()))
+                        .then(|| sym.size());
                 if !seen.insert((name.to_string(), address)) {
                     continue;
                 }
