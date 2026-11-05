@@ -211,9 +211,10 @@ def load_elf(
     calling convention from its header.
 
     `from_segments=True` maps PT_LOAD segments (sections for a relocatable
-    object); `False` maps sections. `arch=` / `cc=` override the detected
-    preset; with `arch=` alone, `analyze` raises `StriderError` if the
-    header's convention has another arch's stack geometry.
+    object); `False` maps sections, each writable where its PT_LOAD is.
+    `arch=` / `cc=` override the detected preset; with `arch=` alone,
+    `analyze` raises `StriderError` if the header's convention has another
+    arch's stack geometry.
 
     `apply_relocations=True` relocates the image (Android packed tables
     included); `False` drops writable non-executable sections and serves
