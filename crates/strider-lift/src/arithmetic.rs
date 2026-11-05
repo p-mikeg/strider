@@ -43,9 +43,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         })
     }
 
-    /// Single-input integer op. `enforce_equal_io_width` requires and coerces
-    /// to the output width; off for `popcount` / `lzcount`, which count over
-    /// the input's own width.
+    /// Single-input integer op. `enforce_equal_io_width` requires the output
+    /// width; off for `popcount` / `lzcount`, which count over the input's
+    /// own width.
     pub(super) fn lift_int_unary(
         &mut self,
         insn: &rsleigh::Insn,
@@ -57,13 +57,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             require_same_size(nth_input_or_err(insn, 0)?, out_vn, "unary op")?;
         }
         let value = self.read_input(insn, 0)?;
-        let out_ty = out_vn.int_type()?;
-        let value = if enforce_equal_io_width {
-            self.builder.convert_to_int_if_needed(value, out_ty)?
-        } else {
-            value
-        };
-        let result = build(&mut self.builder, value, out_ty)?;
+        let result = build(&mut self.builder, value, out_vn.int_type()?)?;
         self.write_vn(out_vn, result)
     }
 
@@ -220,8 +214,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let out_vn = require_output_vn(insn)?;
         let out_ty = out_vn.int_type()?;
         require_same_size(a, out_vn, "output")?;
-        let lhs = self.builder.convert_to_int_if_needed(lhs, out_ty)?;
-        let rhs = self.builder.convert_to_int_if_needed(rhs, out_ty)?;
         let neg_rhs = self
             .builder
             .build_int_unary_operation(rhs, IntUnaryOp::Neg, out_ty)?;

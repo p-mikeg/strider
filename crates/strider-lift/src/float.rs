@@ -143,13 +143,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     pub(super) fn handle_float_int_to_float(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let raw_value = self.read_input(insn, 0)?;
+        let int_value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
-        let float_ty = out_vn.float_type()?;
-        // Reads are int-typed; this coerces the width.
-        let in_size = nth_input_or_err(insn, 0)?.int_type()?;
-        let int_value = self.builder.convert_to_int_if_needed(raw_value, in_size)?;
-        let float_result = self.builder.build_int_to_float(int_value, float_ty)?;
+        let float_result = self
+            .builder
+            .build_int_to_float(int_value, out_vn.float_type()?)?;
         self.write_float_to_vn(out_vn, float_result)
     }
 
