@@ -249,7 +249,7 @@ fn msr_and_segment_base_ops_classify_pure_or_pure_with_mem_edge() {
     // carry a memory edge so opt passes cannot forward across them.
     let pure_ops = ["rdmsr", "readfsbase", "readgsbase"];
     let edge_ops = [
-        ("wrmsr", &[] as &[&str]),
+        ("wrmsr", &["FS_OFFSET", "GS_OFFSET"] as &[&str]),
         ("writefsbase", &["FS_OFFSET"]),
         ("writegsbase", &["GS_OFFSET"]),
         ("swapgs", &["GS_OFFSET"]),
