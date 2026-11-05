@@ -286,8 +286,8 @@ struct Rebased {
     /// Sections whose base plus declared size overflows: no symbol in them
     /// has an address.
     unseated: BTreeSet<usize>,
-    /// Symbol index -> synthetic address of each undefined or `SHN_COMMON`
-    /// symbol.
+    /// Symbol index -> synthetic address of each undefined, `SHN_COMMON` or
+    /// defined `STT_GNU_IFUNC` symbol.
     externs: BTreeMap<usize, u64>,
     /// Where the synthetic GOT starts: slot `i` holds symbol `i`'s address.
     got_base: u64,
@@ -366,6 +366,11 @@ impl ElfSectionLayout {
                 cursor = align_up(cursor, sym.address());
                 externs.insert(sym.index().0, cursor);
                 cursor = cursor.saturating_add(sym.size().max(1));
+            } else if is_ifunc(&sym) && !sym.is_undefined() {
+                // Its `st_value` is the resolver.
+                cursor = align_up(cursor, EXTERN_STRIDE);
+                externs.insert(sym.index().0, cursor);
+                cursor = cursor.saturating_add(EXTERN_STRIDE);
             } else if sym.is_undefined() && sym.index().0 != 0 {
                 match sym.name() {
                     Ok(".TOC.") if arch == object::Architecture::PowerPc64 => {
@@ -399,8 +404,8 @@ impl ElfSectionLayout {
         }))
     }
 
-    /// The synthetic address of an ET_REL undefined or `SHN_COMMON` symbol,
-    /// in an unmapped range past the image; `.TOC.` is the PowerPC64 TOC
+    /// The synthetic address of an ET_REL undefined, `SHN_COMMON` or defined
+    /// `STT_GNU_IFUNC` symbol, in an unmapped range past the image; `.TOC.` is the PowerPC64 TOC
     /// pointer, `_GLOBAL_OFFSET_TABLE_` the GOT's start. `None` otherwise.
     pub fn extern_address(&self, symbol_index: usize) -> Option<u64> {
         self.0.as_ref()?.externs.get(&symbol_index).copied()
@@ -451,6 +456,14 @@ impl ElfSectionLayout {
         self.try_symbol_address(sym)
             .unwrap_or_else(|| sym.address())
     }
+}
+
+/// `STT_GNU_IFUNC`, from `st_info`'s low nibble.
+pub(crate) fn is_ifunc<'d>(sym: &impl object::ObjectSymbol<'d>) -> bool {
+    matches!(
+        sym.flags(),
+        object::SymbolFlags::Elf { st_info, .. } if st_info & 0xf == object::elf::STT_GNU_IFUNC
+    )
 }
 
 /// The spans of executable sections that ARM / AArch64 mapping symbols mark as

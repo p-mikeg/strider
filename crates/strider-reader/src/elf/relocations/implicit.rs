@@ -4,7 +4,8 @@ use crate::MemRegion;
 use crate::elf::sections::AddressSet;
 
 use super::Ctx;
-use super::apply::{is_ifunc, read_field};
+use super::apply::read_field;
+use crate::elf::sections::is_ifunc;
 
 /// Records the object an `R_*_COPY` at `addr` fills: `size` bytes, or with
 /// no size known, up to the end of every region holding `addr`.
