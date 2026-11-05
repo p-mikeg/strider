@@ -139,9 +139,7 @@ def test_the_wildcard_name_is_not_a_replacement(name):
     with pytest.raises(
         strider.StriderError,
         match="^"
-        + re.escape(
-            f'cannot use "{name}" as a rewrite RHS: it is the wildcard, not a capture name'
-        )
+        + re.escape(f'"{name}" is reserved; anything() is the wildcard')
         + "$",
     ):
         g.rewrite(find=int_add(var(x), int_const(0)), replace=name)
