@@ -1,6 +1,8 @@
 """Dedup is by VALUE, not by node, so structurally distinct matches that agree
 on the value collapse where `find_unique` over-fails."""
 
+import re
+
 import pytest
 
 import strider
@@ -38,6 +40,17 @@ def test_none_when_no_match():
     fn = _lift(bytes([0x48, 0x8B, 0x47, 0x08, 0x48, 0x8B, 0x4E, 0x08, 0x48, 0x01, 0xC8, 0xC3]))
     z = p.Capture("z")
     assert fn.find_unique_value(p.load(addr=p.int_mul(p.anything(), p.int_const(z))), z) is None
+
+
+def test_raises_when_no_pattern_binds_the_capture():
+    """A capture `pat` never binds is a typo, not "no match"."""
+    fn = _lift(bytes([0x48, 0x8B, 0x47, 0x08, 0x48, 0x8B, 0x4E, 0x08, 0x48, 0x01, 0xC8, 0xC3]))
+    pat = p.load(addr=p.int_add(p.anything(), p.int_const(p.Capture("off"))))
+    for cap in ("of", p.Capture()):
+        with pytest.raises(strider.StriderError, match="no pattern binds Capture"):
+            fn.find_unique_value(pat, cap)
+    with pytest.raises(strider.StriderError, match=re.escape("Capture('of')")):
+        fn.find_unique_value([pat, p.load(addr=p.anything())], "of")
 
 
 def test_raises_on_distinct_values():
