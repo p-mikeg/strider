@@ -122,14 +122,7 @@ impl MemQuery {
 
     /// The nearest clobber of `loc` backward from `start`'s memory output,
     /// under `policy`.
-    fn nearest(
-        &self,
-        function: &Function,
-        start: NodeId,
-        loc: Loc,
-        policy: Policy,
-        memoize: bool,
-    ) -> NodeId {
+    fn nearest(&self, function: &Function, start: NodeId, loc: Loc, policy: Policy) -> NodeId {
         debug_assert!(
             !policy.distinct_sp_bases_disjoint
                 || !matches!(loc.class, AddrClass::StackRooted { base, .. } if !function.is_entry_sp(base)),
@@ -143,17 +136,20 @@ impl MemQuery {
             stores: Some(&index.stores),
             private_frame: OnceCell::new(),
         };
-        let mut memo = memoize.then(|| self.answers.borrow_mut());
-        let mut fresh = Answers::default();
-        let answers = match &mut memo {
-            Some(memo) => memo.entry((loc, policy)).or_default(),
-            None => &mut fresh,
-        };
-        index
+        // Taken out for the walk: a call's arg-window scan inside it queries
+        // again.
+        let mut answers = self
+            .answers
+            .borrow_mut()
+            .remove(&(loc, policy))
+            .unwrap_or_default();
+        let found = index
             .layout
-            .nearest_clobber(function, start, &mut walker, answers)
+            .nearest_clobber(function, start, &mut walker, &mut answers)
             // Unreachable from `InitialMemory`: nothing above it is proven.
-            .unwrap_or(start)
+            .unwrap_or(start);
+        self.answers.borrow_mut().insert((loc, policy), answers);
+        found
     }
 
     /// Whether `[offset, hi)` meets `call`'s argument window. An unplaced
@@ -184,7 +180,7 @@ impl MemQuery {
     ) -> ReachingDef {
         let probe = Loc::read_by(function, load);
         let start = function.producer(function.load_mem(load));
-        let node = self.nearest(function, start, probe, policy, true);
+        let node = self.nearest(function, start, probe, policy);
         match *function.node_kind(node) {
             NodeKind::Store(_)
                 if alias_verdict(probe, Loc::written_by(function, node), policy)
@@ -230,7 +226,7 @@ impl MemQuery {
         space: rsleigh::VnSpace,
     ) -> NodeId {
         let probe = sp_slot(function, base, offset, probe_size, space);
-        self.nearest(function, function.producer(mem_start), probe, policy, false)
+        self.nearest(function, function.producer(mem_start), probe, policy)
     }
 
     /// `clobber` as a `Store` whose address shares SP terminal `base`.
