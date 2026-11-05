@@ -479,3 +479,50 @@ fn data_ranges_answer_half_open_overlap_across_overlapping_inputs() {
     assert!(!ranges.overlaps(0x1000, 0x1010));
     assert!(ranges.overlaps(0x2003, 0x2004));
 }
+
+/// aarch64 `-mcmodel=large`: `bl die` to a no-return function, its literal
+/// pool, then `die` itself. With no size bound the call stays a call, cut
+/// where the pool begins, not a jump into the next function.
+#[test]
+fn a_call_before_a_literal_pool_and_the_next_function_stays_a_reported_call() {
+    const WORDS: [u32; 13] = [
+        0x7100_0c1f, // cmp w0, #3
+        0x5400_00cd, // b.le .+0x18
+        0x2a00_03e1, // mov w1, w0
+        0x9000_0000, // adrp x0, ...
+        0xf942_fc00, // ldr x0, [x0, #0x5f8]
+        0xb861_d800, // ldr w0, [x0, w1, sxtw #2]
+        0xd65f_03c0, // ret
+        0xa9bf_7bfd, // stp x29, x30, [sp, #-16]!
+        0x9100_03fd, // mov x29, sp
+        0x9400_0003, // bl 0x400600 <die>
+        0x0041_1030, // literal pool
+        0x0000_0000,
+        0x1400_0000, // die: b .
+    ];
+    let cfg = build(
+        &SleighArch::aarch64(),
+        le_words(&WORDS),
+        0x40_05d0,
+        &CfgOptions::default(),
+    )
+    .expect("cfg");
+    let call_region = cfg
+        .regions()
+        .find(|r| r.insns.iter().any(|i| i.addr.machine() == 0x40_05f4))
+        .expect("the bl is decoded");
+    assert_eq!(call_region.terminator, RegionTerminator::NoReturn);
+    assert!(
+        call_region
+            .insns
+            .iter()
+            .any(|i| i.addr.machine() == 0x40_05f4 && i.insn.opcode == rsleigh::Opcode::Call)
+    );
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x40_05f8)]
+    );
+    assert!(!decoded_addrs(&cfg).contains(&0x40_0600));
+}
