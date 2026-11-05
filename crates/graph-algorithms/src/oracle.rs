@@ -83,8 +83,8 @@ pub fn idoms(dom: &[Vec<bool>], root: u32) -> Vec<Option<u32>> {
 }
 
 /// `b` is in `DF(x)` when `x` dominates a predecessor of `b` and does not
-/// strictly dominate `b`. An unreachable `x` dominates nothing; its frontier
-/// is the reachable vertices it has an edge into.
+/// strictly dominate `b`. An unreachable `x` dominates nothing, yet its
+/// frontier holds the reachable vertices it has an edge into.
 pub fn frontiers(succs: &[Vec<u32>], dom: &[Vec<bool>], root: u32) -> Vec<BTreeSet<u32>> {
     let reach = &dom[root as usize];
     let mut df = vec![BTreeSet::new(); succs.len()];
