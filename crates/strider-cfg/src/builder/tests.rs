@@ -1173,28 +1173,11 @@ fn split_at_start_is_noop() {
     assert_eq!(b.index, index_before);
 }
 
+/// The second half keeps the region's id and ends it; the first half gets a
+/// fresh id and one edge into the second.
 #[test]
-fn split_creates_two_regions_second_keeps_original_id() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let original = b
-        .add_region(make_region(&[
-            (0x1000, 0),
-            (0x1004, 0),
-            (0x1008, 0),
-            (0x100c, 0),
-        ]))
-        .unwrap();
-    let second = b.split_region(original, addr(0x1008, 0)).unwrap();
-    assert_eq!(second, original, "second half retains original NodeIndex");
-    assert_eq!(b.region_graph.node_count(), 2);
-}
-
-#[test]
-fn split_second_half_is_always_non_empty() {
-    // A real split leaves the second half (which keeps `region_id` and the
-    // terminator) non-empty.
-    for split_at in [0x1004u64, 0x1008, 0x100c] {
+fn split_halves_the_region_at_each_boundary() {
+    for (split_at, first_len) in [(0x1004u64, 1), (0x1008, 2), (0x100c, 3)] {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
         let original = b
@@ -1206,48 +1189,21 @@ fn split_second_half_is_always_non_empty() {
             ]))
             .unwrap();
         let second = b.split_region(original, addr(split_at, 0)).unwrap();
-        assert_eq!(second, original);
-        assert!(
-            !b.region_graph[second].insns.is_empty(),
-            "second half empty after split at {split_at:#x}"
-        );
+        assert_eq!(second, original, "split at {split_at:#x}");
+        assert_eq!(b.region_graph.node_count(), 2);
+        assert_eq!(b.region_graph[second].start_addr, addr(split_at, 0));
+        assert_eq!(b.region_graph[second].insns.len(), 4 - first_len);
+
+        let first = b.index.get(addr(0x1000, 0)).expect("indexed");
+        assert_ne!(first, second);
+        assert_eq!(b.region_graph[first].insns.len(), first_len);
+        let edges: Vec<_> = b
+            .region_graph
+            .edge_references()
+            .map(|e| (e.source(), e.target()))
+            .collect();
+        assert_eq!(edges, [(first, second)], "split at {split_at:#x}");
     }
-}
-
-#[test]
-fn split_produces_correct_addr_ranges() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let original = b
-        .add_region(make_region(&[
-            (0x1000, 0),
-            (0x1004, 0),
-            (0x1008, 0),
-            (0x100c, 0),
-        ]))
-        .unwrap();
-    b.split_region(original, addr(0x1008, 0)).unwrap();
-
-    assert_eq!(b.region_graph[original].start_addr, addr(0x1008, 0));
-    assert_eq!(b.region_graph[original].insns.len(), 2);
-
-    let first_id = b.index.get(addr(0x1000, 0)).expect("indexed");
-    assert_eq!(b.region_graph[first_id].start_addr, addr(0x1000, 0));
-    assert_eq!(b.region_graph[first_id].insns.len(), 2);
-}
-
-#[test]
-fn split_adds_fallthrough_edge() {
-    let mut engine = make_engine();
-    let mut b = make_builder(0x1000, &mut engine);
-    let original = b
-        .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
-        .unwrap();
-    b.split_region(original, addr(0x1008, 0)).unwrap();
-
-    let edges: Vec<_> = b.region_graph.edge_references().collect();
-    assert_eq!(edges.len(), 1);
-    assert_eq!(edges[0].target(), original);
 }
 
 #[test]
