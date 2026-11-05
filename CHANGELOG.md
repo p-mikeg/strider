@@ -102,6 +102,10 @@ stored as `dashu-int` `UBig`, and a sealed `TemplatePat`. One silent change:
 a repeated `CallOtherPat::name` or `PhiPat::for_vn` intersects where the last
 replaced the rest.
 
+- `Lifter::build_ir_with` takes `entry_values`, registers bound to a known
+  value on entry, which `AnalyzeOptions::entry_values` passes;
+  `OpdTable::toc_at` reads an ELFv1 descriptor's TOC pointer.
+
 ### Added, Python
 
 - `Capture("any_")` is an ordinary name; only `"_"` stays reserved.
@@ -147,6 +151,9 @@ replaced the rest.
   and raise when a replacement would build nodes no instruction produced.
 - `ElfLifter.build_cfg` derives `data_ranges` and ppc64 local entries from
   the ELF as `analyze` does.
+- `ElfLifter.analyze` enters a ppc64 ELFv1 function with `r2` holding its
+  `.opd` descriptor's TOC pointer, so TOC-relative loads and jump tables
+  resolve as they do on ELFv2.
 - `analyze` refuses a calling convention whose stack geometry belongs to
   another arch; `CallingConvention.custom` checks stack geometry at
   construction.

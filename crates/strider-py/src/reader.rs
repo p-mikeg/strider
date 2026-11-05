@@ -188,6 +188,9 @@ struct ElfMemo {
     local_entries: OnceLock<Arc<strider_cfg::LocalEntries>>,
     /// Whether an ELF or symbol file has a `<base>.cold` function symbol.
     has_cold_symbols: OnceLock<bool>,
+    /// ppc64 ELFv1 function entries to their descriptors' TOC pointers;
+    /// `None` where two descriptors disagree.
+    entry_tocs: OnceLock<HashMap<u64, Option<u64>>>,
 }
 
 fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
@@ -536,6 +539,45 @@ impl PyLoadedElf {
                     .cloned(),
             )
         })
+    }
+
+    /// `r2` on entry to the ppc64 ELFv1 function whose code starts at
+    /// `entry`: the TOC pointer of the `.opd` descriptor a function symbol
+    /// names there. `None` off ELFv1, for an address no descriptor enters,
+    /// or where two descriptors give it different TOCs.
+    pub(crate) fn entry_toc(&self, entry: u64) -> PyResult<Option<u64>> {
+        if let Some(tocs) = self.memo.entry_tocs.get() {
+            return Ok(tocs.get(&entry).copied().flatten());
+        }
+        let mut tocs: HashMap<u64, Option<u64>> = HashMap::new();
+        for obj in self.elfs.iter().chain(&self.symbol_elfs) {
+            let file = obj.checked_file().map_err(into_strider_err)?;
+            let Some(opd) = OpdTable::new(&file) else {
+                continue;
+            };
+            let layout = ElfSectionLayout::new(&file);
+            for sym in file.symbols().chain(file.dynamic_symbols()) {
+                if sym.kind() != object::SymbolKind::Text
+                    || !matches!(symbol_place(&sym, &layout), SymbolPlace::Defined)
+                {
+                    continue;
+                }
+                let descriptor = layout.symbol_address(&sym);
+                let (Some(code), Some(toc)) = (opd.entry_at(descriptor), opd.toc_at(descriptor))
+                else {
+                    continue;
+                };
+                tocs.entry(code)
+                    .and_modify(|seen| {
+                        if *seen != Some(toc) {
+                            *seen = None;
+                        }
+                    })
+                    .or_insert(Some(toc));
+            }
+        }
+        let tocs = self.memo.entry_tocs.get_or_init(|| tocs);
+        Ok(tocs.get(&entry).copied().flatten())
     }
 
     /// The local entries of every ELF and symbol file; empty off ppc64.
@@ -892,10 +934,11 @@ impl PyLoadedElf {
             });
         }
         self.extra_symbols.append(&mut added);
-        // `$d` spans and the files' cold symbols come from the ELFs alone.
+        // `$d` spans, the files' cold symbols and TOCs come from the ELFs alone.
         self.memo = ElfMemo {
             data_ranges: std::mem::take(&mut self.memo.data_ranges),
             has_cold_symbols: std::mem::take(&mut self.memo.has_cold_symbols),
+            entry_tocs: std::mem::take(&mut self.memo.entry_tocs),
             ..ElfMemo::default()
         };
         Ok(())

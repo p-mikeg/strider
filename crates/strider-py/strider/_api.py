@@ -425,7 +425,9 @@ class ElfLifter(Lifter):
         set. The ELF's `$d` mapping symbols and the entry's `<name>.cold[.N]`
         symbols fill empty `data_ranges` and `fragment_ranges`. A
         `no_return_targets` address or `per_address_ccs` key at a ppc64 ELFv2
-        symbol's `address` also covers its `Symbol.local_entry`.
+        symbol's `address` also covers its `Symbol.local_entry`. At a ppc64
+        ELFv1 function's code entry, `r2` holds the TOC pointer of the `.opd`
+        descriptor its symbol names.
 
         Raises `TypeError` when `entry` is a `bool` or neither `str` nor
         `int`, and `StriderError` when the binary changed on disk since

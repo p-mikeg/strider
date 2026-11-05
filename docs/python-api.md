@@ -42,7 +42,9 @@ loaded image, so re-open to see a new build. `STRIDER_NO_MMAP=1` reads the
 file instead, which a network or 9p mount needs.
 
 On ppc64 ELFv1 a function symbol names its `.opd` descriptor; `load_elf`
-follows it, so `symbol("f").address` and `analyze("f")` name the code.
+follows it, so `symbol("f").address` and `analyze("f")` name the code, and
+`analyze` at that code (by name or address) enters with `r2` holding the
+descriptor's TOC pointer.
 
 An unlinked object (`ET_REL`) loads from sections, each colliding section at
 its own synthetic base; addresses are comparable only within one load. With
