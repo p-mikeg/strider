@@ -832,7 +832,9 @@ callee. On 32-bit x86 three kinds of callee need their own convention in
   thiscall, a struct return's hidden pointer) needs `ret_stack_pop=4 + imm16`,
   or stack reads after the call are off by `imm16`.
 - A PC thunk (`__x86.get_pc_thunk.bx`) needs a convention that does not list
-  its register as callee-saved.
+  its register as callee-saved, or the register keeps its pre-call value
+  after the call. The register is then unknown, so PIC loads and jump tables
+  through it stay unresolved.
 - Under `x86_linux_kernel()`, a variadic (`printk`) or `asmlinkage` callee
   takes every argument on the stack and needs `x86_cdecl()`; otherwise its
   first argument reads as `arg(3)`.
