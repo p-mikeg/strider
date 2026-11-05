@@ -14,7 +14,7 @@ use crate::FunctionLifter;
 use crate::pcode_util::{nth_input_or_err, require_output_vn};
 
 /// Errs unless `a` and `b` have equal widths, as Sleigh guarantees; the lift
-/// resizes operands afterwards, so a malformed `.sla` fails only here.
+/// resizes no operand, so a malformed `.sla` fails here.
 pub(super) fn require_same_size(a: &rsleigh::Vn, b: &rsleigh::Vn, what: &str) -> Result<()> {
     if a.size != b.size {
         return Err(anyhow::anyhow!(
@@ -24,98 +24,6 @@ pub(super) fn require_same_size(a: &rsleigh::Vn, b: &rsleigh::Vn, what: &str) ->
         ));
     }
     Ok(())
-}
-
-/// A narrower operand extends correctly; only a wider one is rejected.
-fn reject_operand_wider_than_output(operand: &rsleigh::Vn, output: &rsleigh::Vn) -> Result<()> {
-    if operand.size > output.size {
-        return Err(anyhow::anyhow!(
-            "p-code op width mismatch: operand={} wider than output={} \
-             (would silently truncate the operand)",
-            operand.size,
-            output.size,
-        ));
-    }
-    Ok(())
-}
-
-/// A width rule on one raw p-code operand, checked before it is read.
-#[derive(Clone, Copy)]
-enum WidthGuard {
-    Any,
-    /// Truncating a wider operand would change the op's low bits.
-    NotWider,
-    /// `SShiftRight`'s sign fill matches p-code only at equal widths.
-    Equal,
-}
-
-impl WidthGuard {
-    fn check(self, insn: &rsleigh::Insn, slot: usize, out: &rsleigh::Vn) -> Result<()> {
-        match self {
-            Self::Any => Ok(()),
-            Self::NotWider => reject_operand_wider_than_output(nth_input_or_err(insn, slot)?, out),
-            Self::Equal => require_same_size(nth_input_or_err(insn, slot)?, out, "signed shift"),
-        }
-    }
-}
-
-/// How one operand is brought to the output width.
-#[derive(Clone, Copy)]
-enum Coerce {
-    /// Truncate a wider operand, zero-extend a narrower one.
-    Convert,
-    /// Sign-extend a narrower operand; never truncates.
-    SignExtend,
-}
-
-impl Coerce {
-    fn apply(self, b: &mut FunctionBuilder, v: ValueId, ty: ValueType) -> Result<ValueId> {
-        match self {
-            Self::Convert => b.convert_to_int_if_needed(v, ty),
-            Self::SignExtend => b.extend_if_needed(v, ty, ExtendOp::SignExtend),
-        }
-    }
-}
-
-/// The guard checks the raw operand; the coercion applies to the value read.
-#[derive(Clone, Copy)]
-struct OperandPolicy {
-    guard: WidthGuard,
-    coerce: Coerce,
-}
-
-const PLAIN: OperandPolicy = OperandPolicy {
-    guard: WidthGuard::Any,
-    coerce: Coerce::Convert,
-};
-
-/// `[lhs, rhs]` policies. A shift count may be any width, so it is saturated
-/// then converted, zero-extending even under `SShiftRight`.
-fn binary_lift_policy(op: IntBinaryOp) -> [OperandPolicy; 2] {
-    use IntBinaryOp as Op;
-    let unsigned = OperandPolicy {
-        guard: WidthGuard::NotWider,
-        coerce: Coerce::Convert,
-    };
-    let signed = OperandPolicy {
-        guard: WidthGuard::NotWider,
-        coerce: Coerce::SignExtend,
-    };
-    match op {
-        Op::Add | Op::And | Op::Or | Op::Xor | Op::Mul | Op::ShiftLeft | Op::ShiftRight => {
-            [PLAIN, PLAIN]
-        }
-        Op::Div | Op::Rem => [unsigned, unsigned],
-        Op::Sdiv | Op::Srem => [signed, signed],
-        // p-code fills at the input width, this lowering at the output's.
-        Op::SShiftRight => [
-            OperandPolicy {
-                guard: WidthGuard::Equal,
-                coerce: Coerce::SignExtend,
-            },
-            PLAIN,
-        ],
-    }
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
@@ -195,28 +103,27 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .build_int_binary_operation(narrow, addend, IntBinaryOp::Or, out_ty)
     }
 
-    /// Inputs may differ in width; [`binary_lift_policy`] brings each to the
-    /// output's.
+    /// Operands match the output width, except a shift count, which may be
+    /// any width and is saturated then zero-extended.
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
         op: IntBinaryOp,
     ) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
-        let policy = binary_lift_policy(op);
-        for (slot, p) in policy.iter().enumerate() {
-            p.guard.check(insn, slot, out_vn)?;
+        require_same_size(nth_input_or_err(insn, 0)?, out_vn, "binary op")?;
+        if !op.is_shift() {
+            require_same_size(nth_input_or_err(insn, 1)?, out_vn, "binary op")?;
         }
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_ty = out_vn.int_type()?;
         let rhs = if op.is_shift() {
-            self.saturate_shift_count(rhs, out_ty)?
+            let count = self.saturate_shift_count(rhs, out_ty)?;
+            self.builder.convert_to_int_if_needed(count, out_ty)?
         } else {
             rhs
         };
-        let lhs = policy[0].coerce.apply(&mut self.builder, lhs, out_ty)?;
-        let rhs = policy[1].coerce.apply(&mut self.builder, rhs, out_ty)?;
         let result = self
             .builder
             .build_int_binary_operation(lhs, rhs, op, out_ty)?;
@@ -227,9 +134,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.lift_int_cmp(insn, op, false, false)
     }
 
-    /// Compares at the wider input width, extending per the predicate's
-    /// signedness. `negate` wraps the result in a logical NOT; `swap` swaps
-    /// the operands.
+    /// Compares two equal-width inputs. `negate` wraps the result in a
+    /// logical NOT; `swap` swaps the operands.
     fn lift_int_cmp(
         &mut self,
         insn: &rsleigh::Insn,
@@ -239,22 +145,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ) -> Result<()> {
         let a = nth_input_or_err(insn, 0)?;
         let b = nth_input_or_err(insn, 1)?;
-        // The overflow flags are relative to the operand width, so widening
-        // would make them false; Sleigh emits them and the negated compares
-        // at equal widths.
-        if negate || matches!(op, IntCmpOp::Carry | IntCmpOp::Scarry | IntCmpOp::Sborrow) {
-            require_same_size(a, b, "input")?;
-        }
+        require_same_size(a, b, "input")?;
         let lhs = self.read_vn(a)?;
         let rhs = self.read_vn(b)?;
         let out_vn = require_output_vn(insn)?;
-        let cmp_width = ValueType::int_from_bytes(a.size.max(b.size))?;
-        let ext_op = match op {
-            IntCmpOp::Sless | IntCmpOp::Scarry | IntCmpOp::Sborrow => ExtendOp::SignExtend,
-            IntCmpOp::Equal | IntCmpOp::Less | IntCmpOp::Carry => ExtendOp::ZeroExtend,
-        };
-        let lhs = self.builder.extend_if_needed(lhs, cmp_width, ext_op)?;
-        let rhs = self.builder.extend_if_needed(rhs, cmp_width, ext_op)?;
+        let cmp_width = a.int_type()?;
         let (lhs, rhs) = if swap { (rhs, lhs) } else { (lhs, rhs) };
         let cmp = self
             .builder
