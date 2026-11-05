@@ -69,7 +69,7 @@ static NAMES: Mutex<Names> = Mutex::new(Names {
 pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
     if name == "_" || name == "any_" {
         return Err(into_strider_err(anyhow::anyhow!(
-            "{name:?} is reserved (use anything() / var() / _ explicitly)"
+            "{name:?} is reserved; anything() is the wildcard"
         )));
     }
     let mut names = NAMES
@@ -669,16 +669,7 @@ impl TemplateLike<'_> {
                 return Ok(expr(t.as_any(), Slot::Template)?.into_template());
             }
             TemplateLike::Capture(c) => c.get().inner,
-            TemplateLike::Str(s) => {
-                let name = s.to_string();
-                if name == "_" || name == "any_" {
-                    return Err(into_strider_err(anyhow::anyhow!(
-                        "cannot use {name:?} as a rewrite RHS: it is the \
-                         wildcard, not a capture name"
-                    )));
-                }
-                intern_str(&name)?
-            }
+            TemplateLike::Str(s) => intern_str(&s.to_string())?,
         };
         Ok(TemplatePat::into_template(sp::var(cap)))
     }
