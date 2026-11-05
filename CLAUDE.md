@@ -199,9 +199,9 @@ node 0: `Function::new` mints it first and `compact` keeps it first.
 Integer constants intern through the side tables' `const_interner` as a
 `dashu_int::UBig`, masked to the declared width (`eval::mask`) before dedup.
 Read them via `IRViewer::int_const` (the masked `UBig`) or its `_u128` /
-`_i128` / `_ibig` forms, never through the `IntConstId`. DOT labels are compared across builds,
-so they spell the value (decimal raw, `const {v:#x}:<ty>` pretty), never a
-`Debug` form.
+`_i128` / `_ibig` forms, never through the `IntConstId`. DOT labels are
+compared across builds, so they spell the value (decimal raw,
+`const {v:#x}:<ty>` pretty), never a `Debug` form.
 
 IR traits: `IRViewer` (point reads), `IRWalker: IRViewer` (control-aware
 walks), `IRBuilder: IRViewer` (`create_node` / `create_node_attributed`),
