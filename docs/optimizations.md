@@ -164,7 +164,9 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 - PowerPC float code lifts to far more p-code than other ISAs because the
   FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
 - A chain of about 500 constant guards held only in registers reaches the
-  1024-iteration cap, and the analysis raises.
+  1024-iteration cap, and the analysis raises. A chain whose guards each test
+  a different stack slot, with stores between them, still costs quadratic
+  settle work (about 2 s at 2000 guards).
 - A pattern nesting commutative nodes `d` deep can cost up to 2^d match
   attempts, even when nothing matches; `.ordered()` pins the operand order.
 
