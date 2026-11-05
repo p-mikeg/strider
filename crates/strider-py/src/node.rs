@@ -7,8 +7,8 @@ use crate::errors::into_strider_err;
 use crate::function::FunctionAt;
 
 /// A handle on one IR node. Every accessor raises `StriderError` once the
-/// function has been compacted or rewritten. Equal handles share the
-/// function, id and graph generation.
+/// function has been compacted, optimized or rewritten. Equal handles share
+/// the function, id and graph generation.
 #[pyclass(eq, hash, name = "Node", module = "strider.ir", frozen)]
 #[derive(PartialEq, Hash)]
 pub struct PyNode {
