@@ -135,7 +135,8 @@ impl Pattern {
     /// The match root, resolved at seal.
     ///
     /// # Errors
-    /// If the pattern is rootless, multi-sink, or was refused at build time.
+    /// If the pattern was refused at build time, unfolds past [`MAX_PATTERN_NODES`] nodes or
+    /// 2^64 reads, or has not exactly one sink.
     pub fn root(&self) -> anyhow::Result<NodeId> {
         self.root.clone().map_err(anyhow::Error::msg)
     }
@@ -171,7 +172,7 @@ impl Pattern {
     /// by captures some but not all alternation arms bind.
     ///
     /// # Errors
-    /// If the pattern is rootless or multi-sink.
+    /// As [`Self::root`].
     pub fn guaranteed_captures(&self) -> anyhow::Result<FxHashSet<crate::capture::Capture>> {
         let mut memo: FxHashMap<NodeId, FxHashSet<crate::capture::Capture>> = FxHashMap::default();
         Ok(self.guaranteed_from(self.root()?, &mut memo))
@@ -218,7 +219,7 @@ impl Pattern {
     }
 
     /// Adds a root guard that runs after the whole match, seeing every capture; `false` rejects
-    /// it. A no-op on a pattern with no unique root.
+    /// it. A no-op when [`Self::root`] errs.
     pub fn with_root_post_match(mut self, f: PostMatchFn) -> Self {
         if let Ok(&root) = self.root.as_ref() {
             self.graph.node_kind_mut(root).post_matches.push(f);

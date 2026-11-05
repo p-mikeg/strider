@@ -162,7 +162,7 @@ pub(crate) mod ops {
     use crate::typed::value_ops::Op;
 
     bin! { int_add, exact, NodeKind::IntBinaryOp(IntBinaryOp::Add),
-    "Unsigned addition `lhs + rhs`. Commutative." }
+    "Wrapping addition `lhs + rhs`. Commutative." }
     bin! { int_mul, exact, NodeKind::IntBinaryOp(IntBinaryOp::Mul),
     "Wrapping multiplication `lhs * rhs`. Commutative." }
     bin! { int_div, exact, NodeKind::IntBinaryOp(IntBinaryOp::Div),
@@ -229,7 +229,7 @@ pub(crate) mod ops {
     }
 
     bin! { int_eq, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Equal),
-    "Unsigned equality `lhs == rhs`. Commutative." }
+    "Equality `lhs == rhs`. Commutative." }
     bin! { int_lt, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Less),
     "Unsigned less-than `lhs < rhs`." }
     bin! { int_slt, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Sless),
@@ -241,7 +241,7 @@ pub(crate) mod ops {
     bin! { int_sborrow, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Sborrow),
     "Signed subtraction borrow." }
 
-    /// Unsigned `lhs != rhs`: `int_xor(int_eq(l, r), 1):I1`; `.ordered()` pins the `int_eq`.
+    /// `lhs != rhs`: `int_xor(int_eq(l, r), 1):I1`; `.ordered()` pins the `int_eq`.
     pub fn int_ne<L: IntoExpr + 'static, R: IntoExpr + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
         let eq = NodeKind::IntCmpOp(IntCmpOp::Equal);
         let (l, r) = (lhs.into_expr(), rhs.into_expr());

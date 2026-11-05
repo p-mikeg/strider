@@ -246,7 +246,8 @@ impl MatcherBuilder {
         }
     }
 
-    /// Seals the pattern; a rootless or multi-sink graph is reported at match time.
+    /// Seals the pattern; a refusal or a rootless or multi-sink graph surfaces through
+    /// [`Pattern::root`].
     pub fn finish(self) -> Pattern {
         Pattern::from_graph(self.core.graph, self.core.refusal)
     }
