@@ -24,9 +24,8 @@ pub(crate) struct RegionIndex {
     /// Starts of the regions another region begins inside of: the only ones a
     /// lookup miss re-probes.
     shadowed: BTreeSet<PcodeInsnAddr>,
-    /// Longest span of a shadowed region, bounding a miss's reverse walk.
-    /// Monotone. A split inside one machine instruction also shadows, by at
-    /// most that instruction's length.
+    /// Longest span of a shadowed region (a split inside one instruction
+    /// shadows its first half), bounding a miss's reverse walk. Monotone.
     max_shadowed_span: u64,
 }
 
