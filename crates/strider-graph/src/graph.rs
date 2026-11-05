@@ -298,7 +298,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.link_use_to_value_list(use_id);
     }
 
-    /// Compacts the remaining inputs' indices. `false` if `index` is out of
+    /// Removes input `index` and compacts the rest; `false` if it is out of
     /// bounds.
     #[cfg(any(test, feature = "test-injectors"))]
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> bool {
@@ -348,7 +348,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         *inputs = UseIdList::from_iter(survivors, &mut self.store.input_pool);
     }
 
-    /// Keeps both affected use-lists consistent. A self-redirect is a no-op.
+    /// Points input slot `input_id` at `value_id`, a no-op if it already is.
     ///
     /// # Panics
     ///
@@ -376,7 +376,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.link_use_to_value_list(input_id);
     }
 
-    /// Unlinks each from its value's use-list.
+    /// Removes every input of `node_id`, unlinking each from its value's
+    /// use-list.
     pub fn detach_node_inputs(&mut self, node_id: NodeId) {
         self.cache.invalidate(node_id);
         let use_ids: SmallVec<[UseId; 4]> = self.store.nodes[node_id]
@@ -391,8 +392,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
             .clear(&mut self.store.input_pool);
     }
 
-    /// `false` if `old` had no uses, or if `old == new_val` since a
-    /// self-redirect changes nothing.
+    /// Redirects every use of `old` to `new_val`; `false` if `old` had none or
+    /// `old == new_val`.
     pub fn replace_all_uses(&mut self, old: ValueId, new_val: ValueId) -> bool {
         if old == new_val || self.store.outputs[old].first_use.is_none() {
             return false;
@@ -413,13 +414,12 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
     /// Rebuilds the arena with exactly the nodes in `reachable` and returns the
     /// old-to-new id table. Invalidates every old id and bumps the generation.
+    /// The cache is left keyed on the old ids: call
+    /// [`rebuild_cache`](Self::rebuild_cache) before any deduping create.
     ///
     /// # Panics
     ///
     /// If `reachable` is not duplicate-free and closed under inputs' producers.
-    ///
-    /// The cache is left keyed on the old ids: call
-    /// [`rebuild_cache`](Self::rebuild_cache) before any deduping create.
     pub fn retain_reachable_stale_cache(
         &mut self,
         reachable: impl IntoIterator<Item = NodeId>,

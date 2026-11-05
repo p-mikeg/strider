@@ -26,8 +26,8 @@ impl<V> ValueData<V> {
     }
 }
 
-/// One use of a [`ValueData`] as some node's input. Doubly linked with every
-/// other use of the same value, so all consumers can be updated in one walk.
+/// One use of a [`ValueData`] as some node's input, doubly linked with every
+/// other use of the same value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UseData {
     pub(crate) value_id: ValueId,
@@ -181,8 +181,8 @@ impl<N, V> RawStore<N, V> {
         self.outputs[value_id].first_use = Some(input_id).into();
     }
 
-    /// Clears `input_id`'s `prev`/`next` afterwards, so the entry can be
-    /// safely abandoned.
+    /// Removes `input_id` from its value's use-list and clears its
+    /// `prev`/`next`.
     pub(crate) fn unlink_use_from_value_list(&mut self, input_id: UseId) {
         let (value_id, prev, next) = {
             let input = &self.inputs[input_id];
