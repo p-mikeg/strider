@@ -443,9 +443,11 @@ pub(super) struct Target {
     ifunc: bool,
     /// MIPS `_gp_disp`.
     gp_disp: bool,
-    /// Defined in `.opd`, so `S` is a ppc64 ELFv1 descriptor.
+    /// Defined in `.opd` with no extern address, so `S` is a ppc64 ELFv1
+    /// descriptor.
     in_opd: bool,
-    /// How far past `S` a ppc64 ELFv2 local call enters.
+    /// How far past `S` a ppc64 ELFv2 local call enters; 0 at an extern
+    /// address.
     ppc64_local_entry: u64,
 }
 
@@ -459,7 +461,8 @@ pub(super) fn resolve_symbol_target(
     idx: object::SymbolIndex,
 ) -> Option<Target> {
     let sym = reloc_symbol(obj, idx)?;
-    let addr = match layout.extern_address(idx.0) {
+    let extern_addr = layout.extern_address(idx.0);
+    let addr = match extern_addr {
         Some(addr) => addr,
         None => {
             // An undefined extern of a linked image: no address.
@@ -493,13 +496,19 @@ pub(super) fn resolve_symbol_target(
         weak_undefined: sym.is_weak() && sym.is_undefined(),
         ifunc: is_ifunc(&sym) && !sym.is_undefined(),
         gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
-        // Arch test first: the name lookup runs once per relocation.
+        // An extern address is no descriptor. Arch test first: the name
+        // lookup runs once per relocation.
         in_opd: arch == A::PowerPc64
+            && extern_addr.is_none()
             && sym
                 .section_index()
                 .and_then(|i| obj.section_by_index(i).ok())
                 .is_some_and(|sec| sec.name() == Ok(".opd")),
-        ppc64_local_entry: local_entry_offset(obj, &sym),
+        ppc64_local_entry: if extern_addr.is_some() {
+            0
+        } else {
+            local_entry_offset(obj, &sym)
+        },
     })
 }
 

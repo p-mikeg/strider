@@ -46,7 +46,7 @@ LLVM_OBJCOPY := llvm-objcopy-14
 IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips64le_got_lib.elf mips64le_got.elf \
           x64_ifunc_pie.elf x64_ifunc_lib.elf x86_ifunc_pie.elf x64_ifunc.o \
-          x64_ifunc_nopic.o x64_ifunc_static.elf \
+          x64_ifunc_nopic.o x64_ifunc_static.elf ppc64be_ifunc.o ppc64le_ifunc.o \
           x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o \
           ppc64le_local_entry.elf ppc64le_local_entry_stripped.elf \
           x64_nodynsym.elf mips32be_micromips.elf x64_abs32.o \
@@ -92,6 +92,12 @@ $(OUTDIR)/x64_ifunc_static.elf: src/ifunc.c | $(OUTDIR)
 # as a kernel's do.
 $(OUTDIR)/x64_ifunc_nopic.o: src/ifunc.c | $(OUTDIR)
 	$(X64) $(filter-out -Wl% -nostdlib -fPIC,$(CFLAGS)) -fno-pic -c $< -o $@
+# `bl f; nop`: an ELFv1 call names f's `.opd` symbol, an ELFv2 one its
+# global entry.
+$(OUTDIR)/ppc64be_ifunc.o: src/ifunc.c | $(OUTDIR)
+	$(PPC64) $(filter-out -Wl% -nostdlib,$(CFLAGS)) -mabi=elfv1 -c $< -o $@
+$(OUTDIR)/ppc64le_ifunc.o: src/ifunc.c | $(OUTDIR)
+	$(PPC64LE) $(filter-out -Wl% -nostdlib,$(CFLAGS)) -c $< -o $@
 
 # The same calls through a GOT register and through the slot's own address.
 $(OUTDIR)/x86_got_call_pic.o: src/got_call.c | $(OUTDIR)
