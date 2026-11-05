@@ -267,12 +267,12 @@ fn an_et_rel_got_slot_for_a_defined_ifunc_is_unmapped() {
     );
 }
 
-/// In code a relocation against a defined IFUNC keeps the symbol's address,
-/// as a FreeBSD kernel's `call memcpy` does: a hole there stops the decoder,
-/// and the symbol is how the image names the function it calls. A data word
-/// holding the IFUNC is still not computed, in the default view too.
+/// A relocation against an unlinked object's defined IFUNC names a
+/// synthetic unmapped address, as an undefined symbol's does, never the
+/// resolver `st_value` points at. A data word holding the IFUNC is not
+/// computed, in the default view too.
 #[test]
-fn an_instruction_relocated_against_a_defined_ifunc_names_the_symbol() {
+fn an_instruction_relocated_against_a_defined_ifunc_names_an_extern_address() {
     let elf = open("x64_ifunc_nopic.o");
     let reader =
         ElfFileMemReader::new(&elf, RelocationMode::Applied { got_is_rom: false }).unwrap();
@@ -280,7 +280,12 @@ fn an_instruction_relocated_against_a_defined_ifunc_names_the_symbol() {
     let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
     let text = layout.section_base(&obj.section_by_name(".text").expect(".text"));
     let at = |name: &str| text + obj.symbol_by_name(name).expect(name).address();
-    let f = at("f");
+    let f = layout
+        .extern_address(obj.symbol_by_name("f").expect("f").index().0)
+        .expect("f has an extern address");
+    assert_ne!(f, at("resolve_f"), "f is not its resolver");
+    let err = rom_word(&reader, f, 1, true).expect_err("f's address must be unmapped");
+    assert!(err.contains("not mapped"), "{err}");
     // `jmp f`: endbr64, then e9 and the rel32.
     let field = at("call_f") + 5;
     let rel32 = fetch_word(&reader, field, 4, true) as u32 as i32;
