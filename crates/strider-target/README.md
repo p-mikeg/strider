@@ -47,16 +47,16 @@ Each step is checked: leaving one out fails a test.
   `CALLING_CONVENTIONS` with its `ghidra` pairing
   (`every_calling_convention_preset_agrees_with_its_ghidra_cspec`); a line in
   `named()` in `tests/cc_roster.rs`; a line in `forall_preset!` in
-  `crates/strider-py/src/cc.rs` and in `strider/sleigh.pyi`. Draft one from a
-  cspec with `CSPEC=RISCV/data/languages/riscv64-fp.cspec cargo test -p
-  strider-target --test ghidra_oracle -- --ignored draft_preset_from_cspec
-  --nocapture`.
+  `crates/strider-py/src/cc.rs` and in
+  `crates/strider-py/strider/sleigh.pyi`. Draft one from a cspec with
+  `CSPEC=RISCV/data/languages/riscv64-fp.cspec cargo test -p strider-target
+  --test ghidra_oracle -- --ignored draft_preset_from_cspec --nocapture`.
 - **Preset in an existing family**: an `arch_presets!` row with its Ghidra id;
   its line in the tables of `src/arch/tests.rs`, `tests/arch_smoke.rs` and
   `src/arch/names.rs`; new sla / pspec files in `tests/ghidra_oracle.rs`; a
   `tests/snapshots/call_other/<name>.txt`, blessed as above; an `arches` entry
   in a `CcPreset`; its constructor in `crates/strider-py/src/arch.rs` and
-  `strider/sleigh.pyi`.
+  `crates/strider-py/strider/sleigh.pyi`.
 - **Family**: `family/<name>.rs` exporting a `Family`, registered in
   `FAMILIES` in `family/mod.rs`; its `arch_presets!` rows; its name, ldefs,
   volatile registers and ISA mode in `src/arch/tests.rs`; its committed
