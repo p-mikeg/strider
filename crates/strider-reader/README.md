@@ -18,7 +18,8 @@ source (`rsleigh::MemReader`), and the runtime-immutable mappings as
   `got_is_rom` also `.got` / `.data.rel.ro` as ROM.
 - Under `elf::`: `RegionSource`, `ElfSectionLayout` (an ET_REL's section
   placement and each undefined symbol's `extern_address`), `OpdTable` (ppc64
-  ELFv1 descriptors) and `mapping_symbol_data_ranges` (ARM / AArch64 `$d`).
+  ELFv1 descriptors) and `mapping_symbol_data_ranges` / `mapping_symbol_kind` (ARM / AArch64
+  `$a`, `$d`, `$t`, `$x`).
 
 ## Loading is lazy
 

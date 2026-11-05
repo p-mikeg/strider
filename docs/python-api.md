@@ -24,7 +24,8 @@ prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
 # Architecture and calling convention come from the ELF header (a PowerPC
 # kernel is detected by e_entry >= KERNELBASE). Override with
 #   load_elf(path, arch=sleigh.SleighArch.x86_64(), cc=sleigh.CallingConvention.x86_64_systemv())
-# from_segments=True (default) walks PT_LOAD; False uses sections.
+# from_segments=True (default) walks PT_LOAD; False uses sections, writable
+# where their PT_LOAD is.
 # apply_relocations=True (default) patches relocations; False also drops
 # writable, non-executable mappings.
 # relocated_got_is_rom=True (needs apply_relocations=True) also serves .got
@@ -264,7 +265,7 @@ prog.is_arm_be8                # EF_ARM_BE8 set; False off ARM
 prog.entry_point()             # ELF entry address
 list(prog.functions())         # one Symbol per function address, address order
 list(prog.iter_symbols())      # every Symbol, lazily (a SymbolIter)
-prog.symbols()                 # {name: Symbol}
+prog.symbols()                 # {name: Symbol}, no ARM / AArch64 mapping symbols
 
 prog.symbol("f")               # Symbol; raises if nothing has that name
 prog.symbol_opt("f")           # ... or None
@@ -838,7 +839,8 @@ lft.call_other_abi("rdtsc")            # how one is classified, or None
 (`x86_64_systemv()`, ..., also `CallingConvention.preset(name)` over
 `sleigh.CC_PRESETS`) describe argument passing; `CallingConvention.custom(arch,
 ...)` builds one from register names, and `.preserves_all()` /
-`.preserves_regs()` derive a variant for a per-address override. `CallOtherAbi`
+`.preserves_regs()` derive a variant for a per-address override, named
+`<base>.preserves_all` / `<base>.preserves_regs`. `CallOtherAbi`
 describes one user-op. `crates/strider-py/examples/python/17_custom_abis.py`
 builds a custom convention and user-op ABI.
 
@@ -1008,7 +1010,8 @@ Analysis failures are `strider.StriderError`, as is an address, node id or
 operand index outside its unsigned range. A wrongly typed argument raises the
 usual builtin (`TypeError`, a `bool` address or index and a `str` `entry`
 outside `ElfLifter.analyze` included, or `OverflowError` for another
-out-of-range int). `load_elf` raises
+out-of-range int, such as a fixed-width constant or a stack offset; an integer
+constant wider than 512 bits is a `StriderError`). `load_elf` raises
 `FileNotFoundError` for a missing path, `ValueError` for a non-ELF file or an
 unsupported arch or ABI (microMIPS included, as does `add_elf`), and
 `StriderError` for a malformed ELF. Range-checked constructor arguments

@@ -29,9 +29,21 @@ These change an answer without an error:
   `analyze` of it raises.
 - `asm_fingerprint` of a constant a compare or integer binary op reads
   through a register no longer includes that instruction's address.
+- `symbols()`, `iter_symbols()` and `symbol_at` leave out ARM / AArch64
+  mapping symbols (`$a`, `$d`, `$t`, `$x`, `$d.N`).
+- `CallingConvention.name()` of a `preserves_all()` / `preserves_regs()`
+  variant is `"<base>.preserves_all"` / `"<base>.preserves_regs"`.
+- `load_elf(from_segments=False)` serves no section of a writable PT_LOAD
+  as ROM.
+- A carry after `cmn` / `adds` / x86 `add` becomes one unsigned `Less`, so
+  HI / LS / `ja` / `jbe` sites match an unsigned-compare pattern.
 
 These raise:
 
+- An out-of-range int for a fixed-width argument (`int_const_any_width`,
+  `float_const`, `stack_offset`, `source_stack`, `function_arg_stack`,
+  `custom()`'s stack fields) raises `OverflowError`, where it raised
+  `TypeError` or `StriderError`.
 - `entry()` / `region()` as a value operand raise at query time; they
   returned `[]`.
 - `find_unique_value` raises `StriderError` for a capture no pattern binds;
@@ -119,6 +131,8 @@ replaced the rest.
 
 ### Added, Python
 
+- Integer arguments take any `__index__` object (`BoundCapture`, numpy
+  ints); `to_dot` / `to_html` take an `os.PathLike` path.
 - `Capture("any_")` is an ordinary name; only `"_"` stays reserved.
 - `CfgOptions(fragment_ranges=[(start, end)])`: ranges that also belong to
   the function (`ElfLifter` fills it from `.cold` symbols).
@@ -215,6 +229,15 @@ Matching and rewriting:
 
 Analysis:
 
+- A ppc64 `rldicl` switch (`switch (x >> 28)`) bounds its table by the
+  guard on the truncated rotate; it read past the table.
+- The ppc64 Linux-kernel conventions clobber r13 (the per-CPU `paca`)
+  across a call.
+- x86 `wrmsr` writes `FS_OFFSET` / `GS_OFFSET`.
+- A folded `popcount` / `lzcount` wraps to its output width.
+- The ppc64 `*16_HIGHER34` relocations hole only their halfword.
+- Call stack-argument collection and table classification are no longer
+  quadratic in calls behind merges and in table sites over one index.
 - Jump tables: index known bits, equality guards, phis of constants, bit
   fields, `rlwinm` guards and byte indices bound the seated arms; a guard the
   range analysis cannot read, or an unproven Thumb byte-table index, defers
