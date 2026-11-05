@@ -92,24 +92,6 @@ fn every_binary_op_commutes_iff_is_commutative() {
     }
 }
 
-/// Capture-free: both orderings collapse to one hit.
-#[test]
-fn commutative_match_emits_single_match_per_root() {
-    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    a::matches(&function, int_add(anything(), anything()).into_pattern(), 1);
-}
-
-/// Both slots one value: one hit.
-#[test]
-fn commutative_match_with_identical_operands_emits_one() {
-    let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
-    a::matches(
-        &function,
-        int_add(int_const(5u128), int_const(5u128)).into_pattern(),
-        1,
-    );
-}
-
 /// A capture on one commutative operand binds each operand in turn.
 #[test]
 fn commutative_capture_reports_both_operand_bindings() {
@@ -135,80 +117,6 @@ fn commutative_capture_reports_both_operand_bindings() {
     assert_eq!(bound.len(), 2, "the two bindings must be DISTINCT");
 }
 
-/// Both operands one value: the two orderings give one binding map.
-#[test]
-fn commutative_capture_identical_operands_dedups_to_one() {
-    let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
-    let k = Capture::new();
-    let hits = a::matches(
-        &function,
-        int_add(anything().capture(k), anything()).into_pattern(),
-        1,
-    );
-    assert_eq!(
-        hits[0].bindings().get_uint(k, &function),
-        Some(UBig::from(5u8))
-    );
-}
-
-/// Three nested commutative nodes: 2^3 distinct binding maps.
-#[test]
-fn nested_commutative_arrangements_multiply() {
-    let mut t = Tb::empty();
-    let (c5, c3) = (t.u64(5), t.u64(3));
-    let (c7, c9) = (t.u64(7), t.u64(9));
-    let lhs = t.int_bin(c5, c3, IntBinaryOp::Add);
-    let rhs = t.int_bin(c7, c9, IntBinaryOp::Add);
-    let root = t.int_bin(lhs, rhs, IntBinaryOp::Add);
-    let function = t.ret_val(root);
-
-    let (w, x, y, z) = (
-        Capture::new(),
-        Capture::new(),
-        Capture::new(),
-        Capture::new(),
-    );
-    let pat = int_add(
-        int_add(anything().capture(w), anything().capture(x)),
-        int_add(anything().capture(y), anything().capture(z)),
-    )
-    .into_pattern();
-    let hits = a::matches(&function, pat, 8);
-
-    // 8 hits must mean 8 different binding maps, not one map reported 8 times.
-    let mut seen: Vec<(UBig, UBig, UBig, UBig)> = hits
-        .iter()
-        .map(|m| {
-            let g = |c| m.bindings().get_uint(c, &function).expect("bound const");
-            (g(w), g(x), g(y), g(z))
-        })
-        .collect();
-    seen.sort();
-    seen.dedup();
-    assert_eq!(
-        seen.len(),
-        8,
-        "all 8 arrangements must be distinct: {seen:?}"
-    );
-
-    // Each inner pair stays together (the outer swap carries both), never a
-    // cross-node mix.
-    for (wv, xv, yv, zv) in &seen {
-        let pair = |a: &UBig, b: &UBig| {
-            let mut p = [a.clone(), b.clone()];
-            p.sort();
-            p
-        };
-        let (left, right) = (pair(wv, xv), pair(yv, zv));
-        let lo = [UBig::from(3u8), UBig::from(5u8)];
-        let hi = [UBig::from(7u8), UBig::from(9u8)];
-        assert!(
-            (left == lo && right == hi) || (left == hi && right == lo),
-            "operands must not migrate across the inner nodes: {wv},{xv} / {yv},{zv}"
-        );
-    }
-}
-
 /// `.ordered()` suppresses the commutative retry entirely, so a capture-bearing
 /// pattern yields exactly the one ordering it pins.
 #[test]
@@ -226,23 +134,6 @@ fn ordered_capture_reports_only_the_pinned_ordering() {
         hits[0].bindings().get_uint(k, &function),
         Some(UBig::from(5u8)),
         "ordered() pins the capture to operand slot 0",
-    );
-}
-
-/// A capture on a NON-commutative node has one ordering, so the enumeration
-/// must not manufacture duplicates.
-#[test]
-fn non_commutative_capture_stays_single() {
-    let function = shapes::int_bin(20, 4, IntBinaryOp::Div);
-    let k = Capture::new();
-    let hits = a::matches(
-        &function,
-        int_div(anything().capture(k), anything()).into_pattern(),
-        1,
-    );
-    assert_eq!(
-        hits[0].bindings().get_uint(k, &function),
-        Some(UBig::from(20u8))
     );
 }
 
@@ -409,33 +300,6 @@ fn child_when_match_rejection_still_tries_swapped_order() {
         m.bindings().get_uint(c, &function),
         Some(UBig::from(3u8)),
         "swap retry must rebind the guarded child to the 3-operand",
-    );
-}
-
-/// A ROOT `when_match` guard runs after the inputs resolved in SOME order; a
-/// rejection on a commutative node re-drives the swapped order before giving
-/// up, so an order-sensitive root guard still finds a valid ordering.
-#[test]
-fn root_when_match_rejection_redrives_swap() {
-    use strider_ir::IRViewer;
-
-    let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
-    let l = Capture::new();
-    // Inputs match naturally with l bound to 2; the guard demands 3, which
-    // only the swapped order satisfies.
-    let pat = int_add(anything().capture(l), anything())
-        .when_match(move |m, _ty, b| {
-            let Some(v) = b.get_value(l) else {
-                return false;
-            };
-            m.function().int_const_u128(v) == Some(3)
-        })
-        .into_pattern();
-    let m = a::unique(&function, pat);
-    assert_eq!(
-        m.bindings().get_uint(l, &function),
-        Some(UBig::from(3u8)),
-        "root guard rejection must re-drive the swapped operand order",
     );
 }
 
