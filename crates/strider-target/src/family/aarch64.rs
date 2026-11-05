@@ -34,8 +34,9 @@ pub(crate) static AARCH64: Family = Family {
             "tmpZR",
         ],
         volatile_registers: &[],
-        // The kernel's `current`: only a context switch writes it, and a task
-        // resumes with its own, so two reads in one function are one value.
+        // The kernel's `current`: every writer a call can reach restores the
+        // caller's task before returning, so two reads in one function are
+        // one value.
         non_volatile_registers: &["sp_el0"],
     },
     rounding_ops: &["fpcrRoundingControl"],
