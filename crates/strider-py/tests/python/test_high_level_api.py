@@ -360,7 +360,7 @@ def test_standalone_strider_rejects_name_targets():
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded._elf.reader()
     s = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    with pytest.raises(strider.StriderError, match="ElfLifter"):
+    with pytest.raises(TypeError, match="ElfLifter"):
         # Deliberate: a plain Lifter takes an address, not a name.
         s.analyze("add", strider.sleigh.CallingConvention.x86_64_systemv())  # type: ignore[arg-type]
 
