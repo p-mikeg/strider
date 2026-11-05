@@ -279,7 +279,8 @@ impl Rule {
 }
 
 /// An ordered rule list tried first-fire-wins at a root, each kind seeing
-/// only the rules whose root admits it.
+/// only the rules whose root admits it. No rule roots at a kind naming a
+/// per-function entity.
 pub(crate) struct RuleTable {
     rules: Vec<Rule>,
     /// Per root kind, the indices of the rules it admits, in table order.
@@ -288,6 +289,10 @@ pub(crate) struct RuleTable {
 
 impl RuleTable {
     pub(crate) fn new(rules: Vec<Rule>) -> Self {
+        debug_assert!(
+            entity_samples().all(|kind| rules.iter().all(|rule| !rule.admits(&kind))),
+            "a rule roots at an entity kind"
+        );
         Self {
             rules,
             by_kind: std::cell::RefCell::default(),
@@ -296,10 +301,7 @@ impl RuleTable {
 
     /// Whether any rule's root admits `kind`.
     pub(crate) fn admits(&self, kind: &NodeKind) -> bool {
-        if names_an_entity(kind) {
-            return self.rules.iter().any(|rule| rule.admits(kind));
-        }
-        !self.admitted(*kind).is_empty()
+        !names_an_entity(kind) && !self.admitted(*kind).is_empty()
     }
 
     /// The indices of the rules `kind` admits, in table order.
@@ -313,29 +315,16 @@ impl RuleTable {
         })
     }
 
-    /// The output of the first rule to fire at `root`, or `None` if none does.
+    /// The output of the first rule to fire at `root`, whose kind
+    /// [`Self::admits`], or `None` if none does.
     pub(crate) fn first_match(
         &self,
         edit: &mut EditFunction<'_>,
         root: NodeId,
     ) -> Result<Option<ValueId>> {
         let kind = *edit.node_kind(root);
-        if names_an_entity(&kind) {
-            let admitted: Vec<usize> = (0..self.rules.len())
-                .filter(|&i| self.rules[i].admits(&kind))
-                .collect();
-            return self.first_of(&admitted, edit, root);
-        }
-        self.first_of(&self.admitted(kind), edit, root)
-    }
-
-    fn first_of(
-        &self,
-        admitted: &[usize],
-        edit: &mut EditFunction<'_>,
-        root: NodeId,
-    ) -> Result<Option<ValueId>> {
-        for &i in admitted {
+        debug_assert!(!names_an_entity(&kind), "{kind:?}");
+        for &i in self.admitted(kind).iter() {
             let fired = self.rules[i].run(edit, root)?;
             if fired.is_some() {
                 return Ok(fired);
@@ -343,6 +332,20 @@ impl RuleTable {
         }
         Ok(None)
     }
+}
+
+/// One kind per variant [`names_an_entity`] accepts.
+fn entity_samples() -> impl Iterator<Item = NodeKind> {
+    use strider_ir::node::{InitialVnId, IntConstId, SwitchTableId};
+    [
+        NodeKind::IntConst(IntConstId::from_u32(0)),
+        NodeKind::FloatConst(0),
+        NodeKind::InitialVar(InitialVnId::from_u32(0)),
+        NodeKind::Switch(SwitchTableId::from_u32(0)),
+        NodeKind::Call { cc: None },
+        NodeKind::CallOther { user_op_id: 0 },
+    ]
+    .into_iter()
 }
 
 /// Whether `kind`'s payload names a per-function entity, kept out of the
@@ -1230,6 +1233,15 @@ mod tests {
         assert_eq!(table.by_kind.borrow().len(), 0);
     }
 
+    /// A table refuses a rule rooted at a kind naming an entity.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a rule roots at an entity kind")]
+    fn rule_table_refuses_an_entity_root() {
+        use super::{Rule, RuleTable};
+        let _ = RuleTable::new(vec![Rule::rewrite(int_const(0u128), int_const(1u128))]);
+    }
+
     /// Once a rule fires, the rules after it must not even be tried.
     #[test]
     fn rule_table_stops_at_the_first_fire() {
@@ -1257,18 +1269,20 @@ mod tests {
         }
 
         let (mut function, _, sum, _) = add_then_mul_fn();
-        let any = |_: &strider_ir::node::NodeKind| true;
+        let binary = |k: &strider_ir::node::NodeKind| {
+            matches!(k, strider_ir::node::NodeKind::IntBinaryOp(_))
+        };
         let table = RuleTable::new(vec![
             Rule::Fold {
-                roots: any,
+                roots: binary,
                 fold: declines,
             },
             Rule::Fold {
-                roots: any,
+                roots: binary,
                 fold: fires,
             },
             Rule::Fold {
-                roots: any,
+                roots: binary,
                 fold: counts,
             },
         ]);
