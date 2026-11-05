@@ -15,7 +15,8 @@ fn cleared() -> PyErr {
 }
 
 /// Refuses a custom convention or user-op ABI built against another arch's
-/// register table. Presets sharing a table (`arm` / `arm_thumb`) pass.
+/// register table. Presets sharing a table (`arm`, `arm_thumb`,
+/// `arm_be_kernel`) pass.
 fn check_source_arch(
     source_arch: Option<strider_target::SleighArch>,
     target: strider_target::SleighArch,
