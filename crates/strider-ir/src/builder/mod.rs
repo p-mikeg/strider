@@ -195,12 +195,10 @@ fn address_step(kind: &NodeKind) -> Option<AddrStep> {
     }
 }
 
-/// The highest entry-SP offset among `values` derived from it through
-/// [`AddrStep`]s: `i128::MAX` when one has no constant offset, `None` when
-/// none is. Any other step is not a stack address, but added to one makes
-/// the offset unknown. A reloaded value is left out: storing it was already
-/// an escape. Solved optimistically, so a loop that restores the stack
-/// pointer keeps the offset.
+/// The highest entry-SP offset among `values` through [`AddrStep`]s:
+/// `i128::MAX` for one with no constant offset, `None` for none. A reloaded
+/// value is left out (storing it escaped). Optimistic, so a loop restoring
+/// SP keeps the offset.
 fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     use crate::IRViewer;
     let mut cone = Vec::new();
