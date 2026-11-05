@@ -121,3 +121,18 @@ def test_an_object_files_call_to_a_defined_ifunc_names_its_symbol(image):
     assert sym is not None and sym.name == "f"
     function = elf.analyze("call_f").function
     assert function.find_all(p.call().target(f.address)), function.to_text()
+
+
+def test_an_object_files_defined_ifunc_covers_only_its_own_extern_address():
+    """`f`'s extern address holds no bytes, so its symbol has no size and an
+    address inside `tab`, the next extern, does not name it."""
+    elf = strider.lift.load_elf(_image("x64_ifunc_extern.o"))
+    f = elf.symbol("f")
+    tab = elf.symbol("tab")
+    assert f.size is None
+    assert f.address < tab.address
+    sym = elf.symbol_at(f.address)
+    assert sym is not None and sym.name == "f"
+    assert elf.symbol_at(tab.address + 8) is None
+    function = elf.analyze("read_tab").function
+    assert function.find_all(p.call().target(f.address)), function.to_text()
