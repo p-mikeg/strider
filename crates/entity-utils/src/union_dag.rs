@@ -15,6 +15,8 @@ struct Node<V> {
     parents: EntityList<UnionId>,
 }
 
+/// Per-key value sets in which [`Self::union`] makes one key's set a live
+/// subset of another's.
 #[derive(Clone, Debug)]
 pub struct UnionDag<N: EntityRef, V: Copy + Eq + Hash> {
     /// `NONE` means the key has no set yet.
