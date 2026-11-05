@@ -49,26 +49,28 @@ strider.explore.shutdown(port)
 
 [CHANGELOG.md](CHANGELOG.md) has the details, breaking changes first.
 
-- **Inputs.** Unlinked `.o` files, ppc64 ELFv1 descriptors, symbols added to a
-  stripped image (`add_symbol_file`, `add_symbols`), and GCC `.cold` fragments
-  followed as part of their function.
-- **Completeness.** `cfg.incomplete` names every address the analysis cannot
-  vouch for, under one of seven reasons, including a return whose target is
-  not provably the caller's.
-- **Mixed ISAs.** ARM/Thumb and MIPS16 targets decode in the mode their edge
-  carries; `$d` literal pools are skipped.
-- **Your own answers.** `CfgOptions` takes branch targets, no-return callees,
-  data ranges and user-op ABIs; `SleighArch.preset`, `CallingConvention.preset`
-  and `custom` describe a target.
-- **Assumptions.** `AssumptionOptions` states the nine claims the analysis
-  cannot check (five on by default); `none()` is the sound floor.
-- **Queries.** `first_of` / `one_of` in any slot, `field`, `code_ptr`,
-  `phi().input_from`, `.output(slot)`, heap / non-stack filters on loads and
-  stores, stack-passed and float arguments, typed wildcards, `JoinPredicate`,
-  and constants of any width.
-- **Tooling.** `Function.optimize`, `Function.to_text`, `strider.template`'s
-  `int_ne` / `int_le` / `int_sle` / `float_ne` and `capture_typed`, a
-  background explorer, and handles usable from any thread.
+- **Inputs.** Unlinked `.o` files, ppc64 ELFv1, symbols for a stripped image
+  (`add_symbol_file`, `add_symbols`), GCC `.cold` fragments, and
+  `load_elf(relocated_got_is_rom=True)` to fold loads through the GOT and
+  `.data.rel.ro` (PIC jump tables need it).
+- **Completeness.** `cfg.incomplete`: every address the analysis cannot vouch
+  for, and why.
+- **Mixed ISAs.** ARM/Thumb and MIPS16 code decodes in the mode its edge
+  carries.
+- **Your own answers.** Branch targets, no-return callees, data ranges and
+  user-op ABIs (`CfgOptions`); per-callee conventions
+  (`LifterOptions(per_address_ccs=...)`, with `cc.preserves_all()` /
+  `preserves_regs()`), needed for a callee-cleanup `ret $imm16` or a PC thunk;
+  target presets (`SleighArch.preset`, `CallingConvention.preset`).
+- **Kernels.** `*_linux_kernel` calling conventions; `load_elf` picks the
+  PowerPC ones from the entry address.
+- **Assumptions.** `AssumptionOptions`: nine claims the analysis cannot check,
+  five on by default; `none()` is the sound floor.
+- **Queries.** `one_of` / `first_of` in any slot, `field`, `code_ptr`, joins
+  and `JoinPredicate`, heap / non-stack filters, float and stack arguments,
+  constants of any width.
+- **Tooling.** `Function.optimize`, `Function.to_text`, a background explorer,
+  and handles usable from any thread.
 
 ## Upgrading
 
@@ -129,51 +131,13 @@ uv run pyright            # type-check against the stubs
 After changing a case, rebuild it with `make -C fixtures ARCH=<arch>
 CASE=<case>`; [fixtures/README.md](fixtures/README.md) says what to re-bless.
 
-## Architecture
+## Crates
 
-A Rust workspace of sixteen crates. The ones you meet first:
-
-| Crate | Role |
-|-------|------|
-| `strider-reader` | Loads an ELF and serves its memory to the lifter. |
-| `strider-cfg` | Builds the control-flow graph of regions. |
-| `strider-lift` | Lifts the CFG into the IR, handling register aliasing. |
-| `strider-ir` | The sea-of-nodes IR. |
-| `strider-opt` | Optimization passes and the indirect-branch classifiers. |
-| `strider-pattern` | The pattern and rewrite engine. |
-| `strider-orchestrator` | Runs the lift / optimize / re-lift resolution loop. |
-| `strider-py` | The Python bindings, the primary query interface. |
-
-The rest are `strider-target` (arch and ABI descriptions),
-`strider-ir-test-utils` (a dev-dependency of the test suites), and six generic
-utility crates (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
-`strider-graph`, `vn-container`).
-
-## Rust API
-
-The crates work without the bindings:
-`strider_orchestrator::Strider::new(...)` builds a handle and
-`.analyze(entry, cc, &AnalyzeOptions, pipeline)` runs the whole pipeline.
-`strider_cfg::DecodeEngine` builds a CFG alone, and `strider_opt` has the
-passes, `rewrite_rule` and the branch classifiers (`classify_sites`).
+A Rust workspace of sixteen crates; [CLAUDE.md](CLAUDE.md) maps them. From
+Rust, `strider_orchestrator::Strider::analyze` runs the pipeline and
 [`orchestrator_demo.rs`](crates/strider-orchestrator/examples/orchestrator_demo.rs)
-drives the stages by hand (`Lifter::new`, `build_cfg`, `build_ir`,
-`pipeline.run`) over the committed fixtures and dumps each one (`cargo run -p
-strider-orchestrator --example orchestrator_demo`).
-
-## Build & test
-
-```bash
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all --check
-cargo test --workspace --release   # overflow-checks on, debug-assertions off
-RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
-cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
-```
-
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the full gate list.
+drives each stage by hand. `cargo test --workspace` runs the tests;
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) lists every gate.
 
 ## License
 
