@@ -140,18 +140,20 @@ impl SiteClassifier<'_> {
     /// rotate `(x<<2) | (x>>30)`, `x>>30` is tightest but does not dominate.
     fn decompose_index(&mut self, chain: &[ValueId], site: NodeId) -> Option<PinnedIndex> {
         let function = self.function();
-        let hits: Vec<(usize, PinnedIndex)> = chain
-            .iter()
-            .enumerate()
-            .filter_map(|(depth, &v)| self.bounded_index(site, v).map(|hit| (depth, hit)))
-            .collect();
-        let shallowest = *hits.first()?;
+        let first_hit = |this: &mut Self, from: usize| {
+            chain
+                .iter()
+                .enumerate()
+                .skip(from)
+                .find_map(|(depth, &v)| this.bounded_index(site, v).map(|hit| (depth, hit)))
+        };
+        let shallowest = first_hit(self, 0)?;
         // A candidate stripping to a masked cell of a foldable table bounds the
         // table DATA; the index is a bounded value below that load, in its
         // address.
         let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
             .and_then(|cell| chain.iter().position(|&v| v == cell))
-            .and_then(|at| hits.iter().copied().find(|&(depth, _)| depth > at))
+            .and_then(|at| first_hit(self, at + 1))
             .unwrap_or(shallowest);
         offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
     }
