@@ -127,8 +127,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.lift_int_cmp(insn, op, false, false)
     }
 
-    /// Compares two equal-width inputs. `negate` wraps the result in a
-    /// logical NOT; `swap` swaps the operands.
+    /// Compares two equal-width inputs, optionally swapped and/or negated.
     fn lift_int_cmp(
         &mut self,
         insn: &rsleigh::Insn,

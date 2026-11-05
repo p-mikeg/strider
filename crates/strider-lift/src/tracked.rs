@@ -4,8 +4,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{Lifter, pcode_consts};
 
 impl<R: rsleigh::MemReader> Lifter<R> {
-    /// [`Self::scanned_vns`] plus [`Self::convention_vns`]. Order is
-    /// irrelevant: `Function::new` dedups and sorts it.
+    /// [`Self::scanned_vns`] plus [`Self::convention_vns`].
     pub(crate) fn tracked_vns(
         &self,
         cfg: &strider_cfg::Cfg,
