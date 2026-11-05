@@ -824,7 +824,8 @@ fn collect_loadable_segments(
 
 /// One [`MemRegion`] per accepted file-backed section, at its
 /// [`ElfSectionLayout`] base, in index order, the first per base; the
-/// survivors are also [`LoadedImage::owners`].
+/// survivors are also [`LoadedImage::owners`]. A `PF_W` PT_LOAD is writable
+/// whatever the `sh_flags` of the sections it maps.
 fn collect_loadable_sections_dedup(
     obj: &object::File<'_>,
     bytes: &FileBytes,
@@ -832,6 +833,13 @@ fn collect_loadable_sections_dedup(
     layout: &ElfSectionLayout,
 ) -> Result<Walk> {
     let mut out = Walk::default();
+    for seg in obj.segments() {
+        if let object::SegmentFlags::Elf { p_flags } = seg.flags()
+            && p_flags & object::elf::PF_W != 0
+        {
+            out.note_writable(seg.address(), seg.size());
+        }
+    }
     let mut seen = BTreeSet::new();
     for sec in obj.sections() {
         let Some(flags) = sh_flags(&sec) else {

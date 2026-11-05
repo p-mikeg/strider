@@ -395,3 +395,30 @@ fn a_mapping_ending_at_the_top_of_the_address_space_loads_all_but_its_last_byte(
         assert_eq!(table.read(u64::MAX, &mut [0u8; 1]), None);
     }
 }
+
+/// The section walk serves no section a writable PT_LOAD maps, whatever its
+/// `sh_flags` say: a non-RELRO image's `.rodata` in an `RW` segment.
+#[test]
+fn the_section_walk_keeps_a_writable_segment_out_of_rom() {
+    use object::elf::{PF_R, PF_W};
+    let bytes = common::elf_fixture::build_loads_elf(&[(PF_R | PF_W, 0x1000, 0x20, 0xaa)]);
+    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
+    for relocate in [false, true] {
+        let rom = elf
+            .regions(
+                strider_reader::elf::RegionSource::Sections,
+                LoadFilter::ImmutableOnly,
+                relocate,
+            )
+            .expect("regions");
+        assert!(rom.is_empty(), "relocate={relocate}: {rom:?}");
+    }
+    let code = elf
+        .regions(
+            strider_reader::elf::RegionSource::Sections,
+            LoadFilter::CodeAndReadOnly,
+            false,
+        )
+        .expect("regions");
+    assert_eq!(code.len(), 1, "the executable section stays fetchable");
+}
