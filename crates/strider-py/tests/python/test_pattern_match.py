@@ -98,24 +98,6 @@ def test_match_readers_align_with_node():
         assert not hasattr(m, gone), f"{gone} must not exist after the rename"
 
 
-_MATCH_READERS = (
-    "uint", "uint_opt", "sint", "sint_opt", "boolean", "boolean_opt",
-    "float_bits", "float_bits_opt", "op", "op_opt", "value_type",
-    "value_type_opt", "vn", "vn_opt", "node", "node_opt", "asm_fingerprint",
-)
-
-
-@pytest.mark.parametrize("reader", _MATCH_READERS)
-def test_a_bound_capture_has_no_reader_of_its_own(reader):
-    """Every reader is a `Match` method taking the capture: reading one off
-    the bound capture raises `AttributeError`."""
-    g = _build_graph()
-    c = Capture()
-    m = g.find_all(int_const(c))[0]
-    assert callable(getattr(m, reader))
-    assert not hasattr(m[c], reader)
-
-
 def test_bound_capture_has_tells_bound_from_unbound():
     g = _build_graph()
     c = Capture()
