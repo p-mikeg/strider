@@ -104,7 +104,7 @@ pub(crate) fn py_big_int(ob: &Bound<'_, PyAny>) -> PyResult<Option<PyBigInt>> {
 }
 
 /// An address, node id or operand index. A `bool` raises `TypeError`, an int outside `T`
-/// `StriderError`.
+/// (or an `__index__` giving one) `StriderError`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Unsigned<T>(pub T);
 
@@ -118,13 +118,22 @@ impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for Unsigned<T> {
             ));
         }
         ob.extract().map(Self).map_err(|e| {
-            if ob.is_instance_of::<PyInt>() {
-                crate::errors::into_strider_err(anyhow::anyhow!(
-                    "{ob} is out of range: it must fit an unsigned {}-bit integer",
-                    8 * std::mem::size_of::<T>()
-                ))
+            let py = ob.py();
+            let value = if ob.is_instance_of::<PyInt>() {
+                Some(ob.clone())
+            } else if e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {
+                py.import_bound("operator")
+                    .and_then(|m| m.getattr("index")?.call1((ob,)))
+                    .ok()
             } else {
-                e
+                None
+            };
+            match value {
+                Some(v) => crate::errors::into_strider_err(anyhow::anyhow!(
+                    "{v} is out of range: it must fit an unsigned {}-bit integer",
+                    8 * std::mem::size_of::<T>()
+                )),
+                None => e,
             }
         })
     }
