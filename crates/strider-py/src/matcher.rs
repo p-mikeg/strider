@@ -180,9 +180,9 @@ impl PyMatch {
         self.read(py, |_| self.is_bound(cap))
     }
 
-    /// Sorted, deduped instruction addresses whose lift or later rewrite
-    /// contributed to the node bound to `key`; `[]` when unbound, and possibly
-    /// for a structural kind.
+    /// `Node.asm_fingerprint` of the node bound to `key`: a superset of the
+    /// instructions behind it. `[]` when unbound, and possibly for a
+    /// structural kind.
     fn asm_fingerprint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Vec<u64>> {
         match self.node_opt(py, key)? {
             Some(node) => node.asm_fingerprint(py),
@@ -356,7 +356,7 @@ impl PyBoundCapture {
         self.match_.get().node_opt(py, self.key(py))
     }
 
-    /// Instruction addresses behind the bound node; `[]` when unbound.
+    /// `Node.asm_fingerprint` of the bound node; `[]` when unbound.
     fn asm_fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.match_.get().asm_fingerprint(py, self.key(py))
     }

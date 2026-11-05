@@ -93,8 +93,9 @@ class Cfg:
         Five name a branch target:
 
         - `"isa_mode_conflict"`: reached in two ISA modes.
-        - `"interior_target"`: off every instruction boundary.
-        - `"unmapped_target"`: no byte of the image backs it.
+        - `"interior_target"`: off every instruction boundary, or a region
+          start a later decode stepped over.
+        - `"unmapped_target"`: the image does not back the instruction there.
         - `"undecodable_target"`: holds no instruction, or is in `data_ranges`.
         - `"past_function_end"`: past `function_max_size` or a
           `fragment_ranges` end.
