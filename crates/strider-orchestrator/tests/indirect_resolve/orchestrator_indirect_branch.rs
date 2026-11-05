@@ -561,7 +561,7 @@ fn resolution_off_skips_the_classifier_and_reports_the_site() {
         let calls = std::cell::Cell::new(0usize);
         let classify = |f: &strider_ir::Function,
                         _rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>|
-         -> anyhow::Result<strider_orchestrator::opt::ClassifiedSites> {
+         -> strider_orchestrator::opt::ClassifiedSites {
             calls.set(calls.get() + 1);
             let mut found = strider_orchestrator::opt::ClassifiedSites::unresolved(f);
             found.resolved = found
@@ -572,7 +572,7 @@ fn resolution_off_skips_the_classifier_and_reports_the_site() {
                     (site, strider_cfg::ResolvedTargets::Single(ret))
                 })
                 .collect();
-            Ok(found)
+            found
         };
         let (mut strider, cc) =
             common::strider_over_bytes(common::Arch::X64, bytes.clone(), BASE, None);

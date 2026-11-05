@@ -149,23 +149,22 @@ fn a_seat_refused_on_the_cap_round_is_not_published() {
     let calls = std::cell::Cell::new(0usize);
     // The 256th classification, the last one folded, also names an arm the
     // cap round cannot decode.
-    let classify = |f: &strider_ir::Function,
-                    rom: Option<&dyn ReadOnlyMemory>|
-     -> anyhow::Result<ClassifiedSites> {
-        let mut found = classify_sites(f, rom)?;
-        calls.set(calls.get() + 1);
-        if calls.get() == 256 {
-            for targets in found.resolved.values_mut() {
-                if targets.arms().iter().any(|t| t.addr == last) {
-                    *targets = ResolvedTargets::table(vec![
-                        ResolvedTarget::new(last, None),
-                        ResolvedTarget::new(UNMAPPED, None),
-                    ]);
+    let classify =
+        |f: &strider_ir::Function, rom: Option<&dyn ReadOnlyMemory>| -> ClassifiedSites {
+            let mut found = classify_sites(f, rom);
+            calls.set(calls.get() + 1);
+            if calls.get() == 256 {
+                for targets in found.resolved.values_mut() {
+                    if targets.arms().iter().any(|t| t.addr == last) {
+                        *targets = ResolvedTargets::table(vec![
+                            ResolvedTarget::new(last, None),
+                            ResolvedTarget::new(UNMAPPED, None),
+                        ]);
+                    }
                 }
             }
-        }
-        Ok(found)
-    };
+            found
+        };
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, chain(256), BASE, None);
     let result = strider
         .analyze_with_classifier(
@@ -206,22 +205,21 @@ fn a_table_still_growing_at_the_cap_is_reported() {
     let mut bytes = vec![0xc3u8; 0x200];
     bytes[..2].copy_from_slice(&[0xff, 0xe0]);
     let calls = std::cell::Cell::new(0u64);
-    let classify = |f: &strider_ir::Function,
-                    rom: Option<&dyn ReadOnlyMemory>|
-     -> anyhow::Result<ClassifiedSites> {
-        let mut found = classify_sites(f, rom)?;
-        calls.set(calls.get() + 1);
-        let arms: Vec<_> = (0..calls.get())
-            .map(|k| ResolvedTarget::new(BASE + 2 + k, None))
-            .collect();
-        let targets = ResolvedTargets::table(arms);
-        found.resolved = found
-            .sites
-            .iter()
-            .map(|&site| (site, targets.clone()))
-            .collect();
-        Ok(found)
-    };
+    let classify =
+        |f: &strider_ir::Function, rom: Option<&dyn ReadOnlyMemory>| -> ClassifiedSites {
+            let mut found = classify_sites(f, rom);
+            calls.set(calls.get() + 1);
+            let arms: Vec<_> = (0..calls.get())
+                .map(|k| ResolvedTarget::new(BASE + 2 + k, None))
+                .collect();
+            let targets = ResolvedTargets::table(arms);
+            found.resolved = found
+                .sites
+                .iter()
+                .map(|&site| (site, targets.clone()))
+                .collect();
+            found
+        };
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let result = strider
         .analyze_with_classifier(

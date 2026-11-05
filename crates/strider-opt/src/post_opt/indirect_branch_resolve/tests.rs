@@ -196,7 +196,7 @@ fn classify_sites_lists_nothing_on_a_site_free_function() {
     let (function, _target) =
         empty_graph_returning(|fb| fb.build_int_const(0x1234u64, ValueType::int(64)).unwrap());
     let unresolved = ClassifiedSites::unresolved(&function);
-    let classified = classify_sites(&function, None).expect("classify");
+    let classified = classify_sites(&function, None);
     for (name, found) in [("unresolved", unresolved), ("classified", classified)] {
         assert!(
             found.sites.is_empty() && found.resolved.is_empty(),
@@ -220,7 +220,7 @@ fn classify_sites_lists_a_site_it_cannot_resolve() {
     b.set_lift_addr(None);
     let function = b.build().expect("build");
 
-    let found = classify_sites(&function, None).expect("classify");
+    let found = classify_sites(&function, None);
     assert_eq!(found.sites, vec![branch]);
     assert!(found.resolved.is_empty());
 }
@@ -236,7 +236,7 @@ fn unresolved_lists_the_sites_classify_sites_resolves() {
     b.set_lift_addr(None);
     let function = b.build().expect("build");
 
-    let on = classify_sites(&function, None).expect("on");
+    let on = classify_sites(&function, None);
     assert_eq!(
         on.resolved.get(&branch),
         Some(&ResolvedTargets::Single(0x8000.into()))

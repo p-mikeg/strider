@@ -176,14 +176,14 @@ impl ClassifiedSites {
 }
 
 /// Classifies every live `IndirectBranch` and re-derives every live `Switch` of
-/// `f`, the optimized function. Never errs.
+/// `f`, the optimized function.
 pub fn classify_sites(
     f: &strider_ir::Function,
     rom: Option<&dyn ReadOnlyMemory>,
-) -> crate::Result<ClassifiedSites> {
+) -> ClassifiedSites {
     let mut out = ClassifiedSites::unresolved(f);
     if out.sites.is_empty() {
-        return Ok(out);
+        return out;
     }
     let mut classifier = SiteClassifier::new(f, rom);
     for &node in &out.sites {
@@ -191,5 +191,5 @@ pub fn classify_sites(
             out.resolved.insert(node, targets);
         }
     }
-    Ok(out)
+    out
 }
