@@ -159,9 +159,6 @@ passes, `rewrite_rule` and the branch classifiers (`classify_sites`).
 drives the stages by hand (`Lifter::new`, `build_cfg`, `build_ir`,
 `pipeline.run`) over the committed fixtures and dumps each one (`cargo run -p
 strider-orchestrator --example orchestrator_demo`).
-[`analyze_kernel.rs`](crates/strider-orchestrator/examples/analyze_kernel.rs)
-is the one-call form, a profiling harness: the image path is `argv[1]` (or
-`$STRIDER_KERNEL`); the symbol and architecture are hard-coded.
 
 ## Build & test
 
