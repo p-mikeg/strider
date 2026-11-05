@@ -1,7 +1,7 @@
 # `strider-py` examples
 
-Most run against the committed fixture ELFs in `fixtures/out/x86/`; 02, 07,
-08, 10, 11, 12, 15 and 17 supply bytes from Python.
+Most run against the committed fixture ELFs in `fixtures/out/x86/`; 02, 08,
+10, 11, 12, 15 and 17 supply code bytes from Python, 07 a ROM.
 
 ## Prerequisites
 

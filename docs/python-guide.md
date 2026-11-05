@@ -3,11 +3,6 @@
 A walkthrough of the Python interface, assuming the terms in
 [vocabulary.md](vocabulary.md).
 
-## Install
-
-See [Install](../README.md#install); then `import strider` works under
-`uv run python ...`.
-
 ## The handle: one object per binary
 
 Everything starts from a *lifter handle*. `load_elf` builds one for an ELF
@@ -57,10 +52,8 @@ cfg, function, unresolved = prog.analyze(addr, opts=opts)
 By name, the symbol's size bounds the lift and drops
 `allow_code_before_start_addr`; hence the address.
 
-The other options (unchecked claims, your own branch targets, no-return
-callees, per-callee conventions, a custom pipeline) are in
-[python-api.md](python-api.md#liftlifteroptions-per-call-tuning) and
-[§12](python-api.md#12-the-cfg-stridercfg).
+Other options:
+[LifterOptions](python-api.md#liftlifteroptions-per-call-tuning).
 
 **One handle analyzes many functions:**
 
@@ -79,17 +72,17 @@ for sym in prog.functions():
 A query is a pattern plus captures:
 
 ```python
-from strider.pattern import load, int_add, call, var, Capture
+from strider.pattern import load, int_add, int_const, call, var, Capture
 ```
 
 Captures are the holes you read back: `Capture("name")`, or `Capture()` for
 an anonymous one. Two `Capture("off")` are one variable.
 
 ```python
-# Every load of the form `base + offset`; read the offset back.
+# Every load of the form `base + constant`; read the offset back.
 base, off = Capture("base"), Capture("off")
-for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
-    print("offset =", hit.uint_opt(off))   # None if it is not constant
+for hit in function.find_all(load(addr=int_add(base, int_const(off))), ignore_casts=True):
+    print("offset =", hit.uint(off))   # 4 and 8
 ```
 
 `ignore_casts=True` (`CastMask.all()`) matches through extends, truncations,
@@ -109,7 +102,7 @@ hit.uint(off)                # unsigned integer constant (raises if not one)
 hit.uint_opt(off)            # ... or None instead of raising
 hit.sint(off)                # signed version
 hit.node(base)               # the matched Node, for deeper inspection
-hit.asm_fingerprint(base)    # machine addresses that produced it
+hit.asm_fingerprint(base)    # machine addresses recorded on it
 hit.op_opt(base)             # operation name, e.g. "Add", or None
 ```
 
