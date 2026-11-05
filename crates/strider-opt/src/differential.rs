@@ -897,6 +897,7 @@ fn reference_env(entry: &dyn Fn(EntryVar) -> UBig) -> interp::Env<'_> {
         seed: 0,
         step_budget: 20_000,
         private: None,
+        keeps: None,
     }
 }
 
