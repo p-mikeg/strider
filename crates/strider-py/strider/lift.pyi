@@ -61,24 +61,26 @@ class AssumptionOptions:
         ...
     @property
     def distinct_sp_bases_disjoint(self) -> bool:
-        """A store rooted at an SP base other than the entry SP (`sp & -16`) misses
-        the probed slot; read by incoming-argument detection."""
+        """A store rooted at an SP base other than the entry SP (e.g. `sp & -16`)
+        misses the probed slot. Default `False`; read by incoming-argument
+        detection."""
         ...
     @property
     def callee_preserves_stack_args(self) -> bool:
         """A callee leaves the outgoing-argument slots the caller wrote alone.
-        Inert without `escape_analysis` or `noalias_allocators`."""
+        Inert without `escape_analysis` or `noalias_allocators`. Default `False`."""
         ...
     @property
     def noalias_allocators(self) -> list[int]:
         """Callee addresses of pure `malloc`-like allocators, sorted. Each result
         overlaps no other allocation, stack slot or constant address, so an arena
-        allocator does not qualify."""
+        allocator does not qualify. Default empty."""
         ...
     @property
     def escape_analysis(self) -> bool:
         """When no stack address escapes to a callee, forward a spill load across
-        a call (and, under `stack_global_disjoint`, past an opaque store)."""
+        a call (and, under `stack_global_disjoint`, past an opaque store).
+        Default `False`."""
         ...
     @property
     def return_slots_survive_untracked_writes(self) -> bool:

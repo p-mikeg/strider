@@ -67,28 +67,24 @@ class ConstantFold:
     """Evaluates constant expressions and applies algebraic identities (`x+0`
     to `x`, `x^x` to `0`, AND-mask merging)."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class KnownBits:
     """Tracks which bits are known to be zero or one and simplifies operations
     whose result is fully determined."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class FlagCmpCanonicalize:
     """Folds an architecture's condition-flag tree into a single direct
     comparison node."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class IfCondInversion:
     """Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into
     a branch on the plain condition with its two arms swapped."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class PhiCollapse:
@@ -96,14 +92,12 @@ class PhiCollapse:
     of them, whose inputs other than themselves are one value is replaced by
     that value."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class RegionCollapse:
     """Collapses a `Region` with exactly one control input into that
     predecessor, replacing each phi over it with its lone value input."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class DeadBranchElimination:
@@ -111,7 +105,6 @@ class DeadBranchElimination:
     then strips the `Region` predecessors entry can no longer reach, with
     their `Phi` / `MemPhi` slots."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class LoadForward:
@@ -120,22 +113,18 @@ class LoadForward:
     load. A partial overlap, `InitialMemory`, a `MemPhi` whose arms
     disagree, or a call the assumptions cannot see through blocks it."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
-
 
 class FunctionArgDetect:
     """Records which values carry each incoming stack-passed argument. Register
     arguments are recorded at lift time."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class CallStackArgCollect:
     """Wires the stack slots written before a call in as that call's positional
     arguments."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
 
 class LoadReadOnly:
@@ -145,5 +134,4 @@ class LoadReadOnly:
     The fold ignores the load's memory chain, so the rom must map only
     runtime-immutable memory: code and `.rodata`, never `.data` / `.got`."""
     def __init__(self) -> None:
-        """Build the pass."""
         ...
