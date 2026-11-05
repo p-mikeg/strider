@@ -77,7 +77,13 @@ fn aarch64_sp_el0_reads_are_one_value() {
 #[test]
 fn aarch64_sp_el0_survives_a_call() {
     // mrs x19, sp_el0; bl +0x400; mrs x1, sp_el0; sub x0, x19, x1; ret
-    let words = [0xd538_4113, 0x9400_0100, 0xd538_4101, 0xcb01_0260, 0xd65f_03c0];
+    let words = [
+        0xd538_4113,
+        0x9400_0100,
+        0xd538_4101,
+        0xcb01_0260,
+        0xd65f_03c0,
+    ];
     for arch in AARCH64 {
         assert_difference_folds(arch, &words);
     }
