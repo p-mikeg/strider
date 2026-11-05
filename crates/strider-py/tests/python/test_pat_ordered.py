@@ -219,6 +219,32 @@ def test_ordered_pins_through_inputs_of_width(add_fn, ne_fn):
     assert [pinned[0].node(a), pinned[0].node(b)] == _ne_operands(ne_fn)
 
 
+def test_ordered_pins_a_builder_through_inputs_of_width(add_fn):
+    a, b = p.Capture("a"), p.Capture("b")
+    pat = p.inputs_of_width(64, p.int_binary("Add", p.var(a), p.var(b)))
+    assert len(add_fn.find_all(pat)) == 2
+    pinned = add_fn.find_all(pat.ordered())
+    assert len(pinned) == 1
+    assert pinned[0].node(a) == _add_operands(add_fn)[0]
+
+
+@pytest.mark.parametrize(
+    "pat",
+    [
+        p.inputs_of_width(32, p.float_binary("Add", p.anything(), p.anything())),
+        p.bool_inputs(p.bool_binary("And", p.anything(), p.anything())),
+        p.bool_inputs(p.int_binary("Xor", p.anything(), p.anything())),
+    ],
+)
+def test_ordered_accepts_every_binary_builder_through_inputs_of_width(pat):
+    pat.ordered()
+
+
+def test_ordered_still_refuses_a_unary_op_over_a_builder():
+    with pytest.raises(strider.StriderError, match=re.escape("int_neg()")):
+        p.int_neg(p.int_binary("Add", p.anything(), p.anything())).ordered()
+
+
 @pytest.fixture(scope="module")
 def float_ne_fn():
     """`floats.c::f64_compare` with each `a < b` grafted into `a != b`: the
