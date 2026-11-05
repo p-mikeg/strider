@@ -64,7 +64,7 @@ pub(crate) enum InputSlot {
 
 pub(crate) struct PatNode {
     pub(crate) kind: KindSpec,
-    /// Each binds the matched node (`Binding::Node`); for roots with no value output to capture.
+    /// Each binds the matched node (`Binding::Node`), for a node with no anchor output.
     pub(crate) captures: Vec<crate::capture::Capture>,
     /// Run before descending into inputs; all must hold.
     pub(crate) node_predicates: Vec<NodePredicate>,
@@ -97,7 +97,6 @@ impl PatNode {
         Self::from_kind(KindSpec::Exact(k))
     }
 
-    /// No constraints beyond the kind spec.
     pub(crate) fn from_kind(kind: KindSpec) -> Self {
         Self {
             kind,
@@ -155,7 +154,6 @@ pub(crate) struct PatValue {
 }
 
 impl PatValue {
-    /// Unconstrained but for the kind.
     fn of_kind(slot: usize, kind: OutputKindSpec) -> Self {
         Self {
             slot,
@@ -177,7 +175,6 @@ impl PatValue {
         Self::of_kind(slot, OutputKindSpec::Control)
     }
 
-    /// The IR's memory side channel.
     pub(crate) fn memory(slot: usize) -> Self {
         Self::of_kind(slot, OutputKindSpec::Memory)
     }

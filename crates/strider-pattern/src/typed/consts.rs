@@ -449,8 +449,8 @@ pub fn int_const<A: IntConstArg>(value: A) -> A::Pat {
     value.into_int_const()
 }
 
-/// A constant whose [`NodeKind`] is computed at rewrite time from the captured
-/// LHS [`Bindings`](crate::Bindings). [`TemplatePat`] only.
+/// A constant whose value is computed at rewrite time from the captured LHS
+/// [`Bindings`](crate::Bindings). [`TemplatePat`] only.
 pub struct ConstWith {
     kind: TemplateKind,
     ty: TemplateTy,

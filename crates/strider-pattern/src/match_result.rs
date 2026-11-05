@@ -54,7 +54,6 @@ impl Match {
         self.bindings.get_value(c)
     }
 
-    /// Whether the capture is bound.
     pub fn is_bound(&self, c: Capture) -> bool {
         self.bindings.is_bound(c)
     }
