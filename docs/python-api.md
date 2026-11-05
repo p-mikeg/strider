@@ -656,6 +656,7 @@ hit.asm_fingerprint(node)        # machine addresses (a list; [] if unbound)
 
 hit.uint("off")                  # by name, when the capture has one
 int(hit[off]); hit[off] == 8     # hit[c] converts and compares a numeric capture
+hit[off].uint(); hit[base].node() # each reader, on hit[c] without the key
 ```
 
 An anonymous capture suits a hole you read back once:
@@ -668,8 +669,9 @@ for hit in function.find_all(p.load(addr=p.int_add(p.anything(), p.int_const(off
 ```
 
 `pattern.CaptureKey` is a `Capture` or its name. `hit[c]` is a `BoundCapture`
-carrying `has`, `int()` and `==`; it has no truth value (`if hit[c]` raises
-`TypeError`), so test `hit[c].has` or `c in hit`.
+carrying `has`, `int()`, `==` and every reader above without the key. It
+has no truth value (`if hit[c]` raises `TypeError`), so test `hit[c].has` or
+`c in hit`.
 
 ## 7. Constraints (`strider.pattern.constraints`)
 
