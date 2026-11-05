@@ -52,6 +52,18 @@ impl PyBigInt {
         })
     }
 
+    /// The value as `T`, or `OverflowError` outside it.
+    pub(crate) fn to<T: TryFrom<IBig>>(self) -> PyResult<T> {
+        let ty = std::any::type_name::<T>();
+        let out_of_range = |v: String| {
+            pyo3::exceptions::PyOverflowError::new_err(format!("{v} is out of range for {ty}"))
+        };
+        match self.0 {
+            Ok(v) => T::try_from(v.clone()).map_err(|_| out_of_range(v.to_string())),
+            Err(bits) => Err(out_of_range(format!("an integer of {bits} bits"))),
+        }
+    }
+
     /// The value, or `None` past [`MAX_CONST_BITS`].
     pub(crate) fn in_range(self) -> Option<IBig> {
         self.0.ok()
@@ -69,7 +81,8 @@ impl<'py> FromPyObject<'py> for PyBigInt {
     }
 }
 
-/// `ob` as an integer, or `None` when it is not one.
+/// `ob`, or the `int` its `__index__` gives, as an integer; `None` when it is
+/// not one.
 pub(crate) fn py_big_int(ob: &Bound<'_, PyAny>) -> PyResult<Option<PyBigInt>> {
     let py = ob.py();
     // Only `TypeError` / `OverflowError` mean "not an integer"; any other
@@ -79,6 +92,18 @@ pub(crate) fn py_big_int(ob: &Bound<'_, PyAny>) -> PyResult<Option<PyBigInt>> {
         e.is_instance_of::<pyo3::exceptions::PyTypeError>(py)
             || e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py)
     };
+    if !ob.is_instance_of::<PyInt>() {
+        // Under abi3 a 128-bit extract shifts its operand, so an `__index__`
+        // object is read through the `int` it gives.
+        if !ob.hasattr(pyo3::intern!(py, "__index__"))? {
+            return Ok(None);
+        }
+        return match py.import_bound("operator")?.getattr("index")?.call1((ob,)) {
+            Ok(int) => py_big_int(&int),
+            Err(e) if wrong_kind(&e) => Ok(None),
+            Err(e) => Err(e),
+        };
+    }
     match ob.extract::<i128>() {
         Ok(v) => return Ok(Some(PyBigInt(Ok(IBig::from(v))))),
         Err(e) if !wrong_kind(&e) => return Err(e),
@@ -89,9 +114,6 @@ pub(crate) fn py_big_int(ob: &Bound<'_, PyAny>) -> PyResult<Option<PyBigInt>> {
         Err(e) if !wrong_kind(&e) => return Err(e),
         Err(_) => {}
     }
-    if !ob.is_instance_of::<PyInt>() {
-        return Ok(None);
-    }
     let bits: usize = ob.call_method0("bit_length")?.extract()?;
     if bits > MAX_CONST_BITS {
         return Ok(Some(PyBigInt(Err(bits))));
@@ -101,6 +123,16 @@ pub(crate) fn py_big_int(ob: &Bound<'_, PyAny>) -> PyResult<Option<PyBigInt>> {
     let bytes = ob.call_method("to_bytes", (bits / 8 + 1, "little"), Some(&kwargs))?;
     let bytes = bytes.downcast::<PyBytes>()?;
     Ok(Some(PyBigInt(Ok(IBig::from_le_bytes(bytes.as_bytes())))))
+}
+
+/// An `int`, or an `__index__` object, in `T`'s range: another type raises
+/// `TypeError`, an int outside `T` `OverflowError`.
+pub(crate) struct Ranged<T>(pub T);
+
+impl<'py, T: TryFrom<IBig>> FromPyObject<'py> for Ranged<T> {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        PyBigInt::extract_bound(ob)?.to().map(Self)
+    }
 }
 
 /// An address, node id or operand index. A `bool` raises `TypeError`, an int outside `T`

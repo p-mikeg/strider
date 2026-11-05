@@ -248,7 +248,9 @@ class CallingConvention:
         its arguments."""
         ...
     def name(self) -> str:
-        """The preset name, e.g. `"x86_64_systemv"`, or `"custom"`."""
+        """The preset name, e.g. `"x86_64_systemv"`, or `"custom"`; a
+        `preserves_all()` / `preserves_regs()` variant appends
+        `".preserves_all"` / `".preserves_regs"`."""
         ...
     def __eq__(self, other) -> bool:
         """Equal when built by the same constructor calls; a `custom` never

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Iterable, Literal, Mapping, Optional, Sequence, Union
 
 from .ir import Node
-from .lift import Lifter
+from .lift import Lifter, StrPath
 from .sleigh import CallOtherAbi
 
 __all__: list[str]
@@ -38,14 +38,14 @@ class Cfg:
 
     def to_dot(
         self,
-        path: Optional[str] = ...,
+        path: Optional[StrPath] = ...,
         style: Optional[DotStyle] = ...,
     ) -> Optional[str]:
         """Render to DOT: the string when `path` is `None`, else written to
         `path`. `style` is the theme (default `"dark_cfg"`)."""
         ...
     def to_html(
-        self, path: Optional[str] = ..., style: Optional[DotStyle] = ...
+        self, path: Optional[StrPath] = ..., style: Optional[DotStyle] = ...
     ) -> Optional[str]:
         """Render to a standalone HTML page: the string when `path` is
         `None`, else written to `path`. `style` is the theme (default

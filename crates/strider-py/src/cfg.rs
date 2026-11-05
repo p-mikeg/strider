@@ -68,7 +68,7 @@ impl PyCfg {
         &self,
         style: Option<&str>,
         html: bool,
-        path: Option<&str>,
+        path: Option<std::path::PathBuf>,
     ) -> PyResult<Option<String>> {
         let d = dot::GraphDot::new(
             self.inner.dot_dumper(self.arch.names()),
@@ -127,14 +127,22 @@ impl PyCfg {
     /// Render to DOT: the string when `path` is `None`, else written to
     /// `path`. `style` is the theme (default `"dark_cfg"`).
     #[pyo3(signature = (path=None, style=None))]
-    fn to_dot(&self, path: Option<&str>, style: Option<&str>) -> PyResult<Option<String>> {
+    fn to_dot(
+        &self,
+        path: Option<std::path::PathBuf>,
+        style: Option<&str>,
+    ) -> PyResult<Option<String>> {
         self.render_dot(style, false, path)
     }
 
     /// Render to a standalone HTML page: the string when `path` is `None`,
     /// else written to `path`. `style` is the theme (default `"dark_cfg"`).
     #[pyo3(signature = (path=None, style=None))]
-    fn to_html(&self, path: Option<&str>, style: Option<&str>) -> PyResult<Option<String>> {
+    fn to_html(
+        &self,
+        path: Option<std::path::PathBuf>,
+        style: Option<&str>,
+    ) -> PyResult<Option<String>> {
         self.render_dot(style, true, path)
     }
 
