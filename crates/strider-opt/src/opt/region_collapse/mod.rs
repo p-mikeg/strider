@@ -63,10 +63,6 @@ fn collapse_region_phis(edit: &mut crate::EditFunction<'_>, phi_token: ValueId) 
         .map(|(consumer, _)| consumer)
         .filter(|&consumer| edit.is_live(consumer))
         .collect();
-    let mut phi_set: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-    for &phi in &phis {
-        phi_set.insert(phi);
-    }
     let mut collapses: Vec<(ValueId, ValueId)> = Vec::with_capacity(phis.len());
     for &phi in &phis {
         let [phi_value] = edit
@@ -76,7 +72,7 @@ fn collapse_region_phis(edit: &mut crate::EditFunction<'_>, phi_token: ValueId) 
         let [sole] = data[..] else {
             return false;
         };
-        if phi_set.contains(edit.producer(sole)) {
+        if phis.contains(&edit.producer(sole)) {
             return false;
         }
         collapses.push((phi_value, sole));
