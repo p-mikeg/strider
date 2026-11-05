@@ -49,46 +49,26 @@ strider.explore.shutdown(port)
 
 [CHANGELOG.md](CHANGELOG.md) has the details, breaking changes first.
 
-- **More inputs.** Unlinked `.o` files with their relocations applied, ppc64
-  ELFv1 descriptors, `add_symbol_file` / `add_symbols` for stripped images,
-  `Symbol` records (`symbol_at`), `relocated_got_is_rom`, and GCC `.cold`
-  fragments followed as part of their function (`fragment_ranges`).
-- **Complete or says why.** `cfg.incomplete` lists each address the analysis
-  cannot vouch for, under one of seven reasons; empty means complete.
-- **Mixed instruction sets.** A resolved branch target decodes in the
-  ARM/Thumb or MIPS16 mode its edge carries; `$d`-marked literal pools and
-  `data_ranges` are not decoded.
-- **Your own answers.** `known_targets`, `no_return_targets`, `data_ranges`,
-  `call_other_abis`, `CallOtherAbi.custom` and
-  `resolve_indirect_branches=False`; `user_op_names` / `call_other_abi` show
-  what is in force, and `CallingConvention.preset(name)` builds one of
-  `CC_PRESETS`.
-- **Stated assumptions.** `AssumptionOptions` holds nine claims the analysis
-  cannot check (five on by default); `AssumptionOptions.none()` is the sound
-  floor, and `function.optimize(assumptions=...)` adds claims, never
-  withdrawing one.
-- **Floats.** Float conversions round and saturate as each ISA does, under
-  the modelled rounding mode.
-- **Targets.** `SleighArch.preset(name)` over `ARCH_PRESETS`,
-  `SleighArch.calling_conventions()` / `reg` / `reg_name`, and
-  `CallingConvention.custom(..., reg_args_adjoin_stack_args=,
-  entry_address=)`; new presets `arm_aapcs_soft` and the PowerPC
-  `*_linux_kernel` conventions.
-- **Queries.** `first_of`, `one_of` in any slot, `field`, `code_ptr`,
-  `find_unique_value`, `JoinPredicate`, constants of any width, and the
-  `hit.uint(c)` / `hit.sint(c)` readers.
-- **Memory and arguments.** `load()` / `store()` filter by base with
-  `heap_only()` / `non_stack()` (heap bases come from `noalias_allocators`);
-  `function_arg(i)` also reaches stack-passed arguments, and
-  `function_arg_float(i)` / `any_function_arg()` float and any-class ones.
-- **Typed matching.** `any_int` / `any_bool` / `any_float`, the `any_*_binary`
-  / `_cmp` / `_unary` families, `of_type` / `of_width`, and the op-name tuples
-  (`INT_BINARY_OPS`, ...).
-- **Rewrites.** `strider.template` builds every `int_*` op plus `int_ne`,
-  `int_le`, `int_sle`, `float_ne` and `capture_typed`.
-- **Tooling.** `function.to_text()`, `strider.explore.visualize(...,
-  background=True)`, `StriderError.backtrace`, and handles that work on any
-  thread.
+- **Inputs.** Unlinked `.o` files, ppc64 ELFv1 descriptors, symbols added to a
+  stripped image (`add_symbol_file`, `add_symbols`), and GCC `.cold` fragments
+  followed as part of their function.
+- **Completeness.** `cfg.incomplete` names every address the analysis cannot
+  vouch for, under one of seven reasons, including a return whose target is
+  not provably the caller's.
+- **Mixed ISAs.** ARM/Thumb and MIPS16 targets decode in the mode their edge
+  carries; `$d` literal pools are skipped.
+- **Your own answers.** `CfgOptions` takes branch targets, no-return callees,
+  data ranges and user-op ABIs; `SleighArch.preset`, `CallingConvention.preset`
+  and `custom` describe a target.
+- **Assumptions.** `AssumptionOptions` states the nine claims the analysis
+  cannot check (five on by default); `none()` is the sound floor.
+- **Queries.** `first_of` / `one_of` in any slot, `field`, `code_ptr`,
+  `phi().input_from`, `.output(slot)`, heap / non-stack filters on loads and
+  stores, stack-passed and float arguments, typed wildcards, `JoinPredicate`,
+  and constants of any width.
+- **Tooling.** `Function.optimize`, `Function.to_text`, `strider.template`'s
+  `int_ne` / `int_le` / `int_sle` / `float_ne` and `capture_typed`, a
+  background explorer, and handles usable from any thread.
 
 ## Upgrading
 
