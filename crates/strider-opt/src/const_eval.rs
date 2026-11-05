@@ -126,11 +126,17 @@ pub(crate) fn eval_node_const(
         }
         NodeKind::Popcount => {
             let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            eval::popcount(&resolve(ins[0])?, in_ty)
+            Some(eval::mask(
+                &eval::popcount(&resolve(ins[0])?, in_ty)?,
+                out_ty?,
+            ))
         }
         NodeKind::Lzcount => {
             let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            eval::lzcount(&resolve(ins[0])?, in_ty)
+            Some(eval::mask(
+                &eval::lzcount(&resolve(ins[0])?, in_ty)?,
+                out_ty?,
+            ))
         }
         NodeKind::IntCmpOp(op) => {
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
@@ -234,6 +240,34 @@ mod tests {
             eval_node_const(&function, wrapped, &outer, None),
             Some(UBig::ONE),
             "(2^256 - 1) + 2 wraps to 1 at I256"
+        );
+    }
+
+    /// A count of 256 bits into an `I8` is 0: the result is masked to the
+    /// output width, as interning a folded constant does.
+    #[test]
+    fn a_count_wider_than_its_output_wraps() {
+        use strider_ir_test_utils::make_empty_fn;
+        let (wide, i8t) = (ValueType::int(256), ValueType::int(8));
+        let mut counts = None;
+        let function = make_empty_fn(|b| {
+            let zero = b.build_int_const(0u8, wide)?;
+            let ones = b.build_int_const((UBig::ONE << 256usize) - UBig::ONE, wide)?;
+            let lz = b.build_lzcount(zero, i8t)?;
+            let pop = b.build_popcount(ones, i8t)?;
+            counts = Some((lz, pop));
+            Ok(lz)
+        })
+        .expect("make_empty_fn");
+        let (lz, pop) = counts.expect("counts set");
+        let resolve = |v| function.int_const(v).cloned();
+        assert_eq!(
+            eval_node_const(&function, lz, &resolve, None),
+            Some(UBig::ZERO)
+        );
+        assert_eq!(
+            eval_node_const(&function, pop, &resolve, None),
+            Some(UBig::ZERO)
         );
     }
 
