@@ -297,8 +297,8 @@ pub struct PySymbol {
     /// descriptor names.
     #[pyo3(get)]
     pub(crate) address: u64,
-    /// `st_size`; `None` when 0, or when a ppc64 ELFv1 function's `st_size`
-    /// measures its `.opd` descriptor.
+    /// `st_size`; `None` when 0, for an object file's defined IFUNC, or when
+    /// a ppc64 ELFv1 function's `st_size` measures its `.opd` descriptor.
     #[pyo3(get)]
     pub(crate) size: Option<u64>,
     is_function: bool,
@@ -307,7 +307,7 @@ pub struct PySymbol {
     /// `address` plus the ppc64 ELFv2 local-entry offset, else `address`.
     #[pyo3(get)]
     local_entry: u64,
-    region: Option<(u64, u64)>,
+    pub(crate) region: Option<(u64, u64)>,
 }
 
 impl PySymbol {
@@ -697,7 +697,11 @@ impl PyLoadedElf {
                     SymbolPlace::Import(addr) => addr,
                     SymbolPlace::Nowhere => continue,
                 };
-                let is_function = sym.kind() == object::SymbolKind::Text;
+                // A defined IFUNC at its extern address: no code there, and
+                // its `st_size` is the resolver's.
+                let ifunc_extern = matches!(place, SymbolPlace::Import(_))
+                    && matches!(sym.section(), object::SymbolSection::Section(_));
+                let is_function = sym.kind() == object::SymbolKind::Text && !ifunc_extern;
                 // On ppc64 ELFv1 an `STT_FUNC` `st_value` addresses an `.opd`
                 // descriptor. Its `st_size` is the code's unless a dot symbol
                 // names the code or the size is a descriptor's (16 or 24).
@@ -709,10 +713,6 @@ impl PyLoadedElf {
                     matches!(sym.size(), 16 | 24) || dot_names.contains(format!(".{name}").as_str())
                 };
                 let address = followed.unwrap_or(declared);
-                // A defined IFUNC's `st_size` is its resolver's, not its
-                // extern slot's.
-                let ifunc_extern = matches!(place, SymbolPlace::Import(_))
-                    && matches!(sym.section(), object::SymbolSection::Section(_));
                 let size =
                     (sym.size() != 0 && !ifunc_extern && !(followed.is_some() && measures_opd()))
                         .then(|| sym.size());

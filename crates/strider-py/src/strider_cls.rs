@@ -667,7 +667,14 @@ impl PyLifter {
         opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<PyObject> {
         let (addr, size) = if let Ok(name) = entry.downcast::<pyo3::types::PyString>() {
-            let sym = elf.symbol(&name.to_cow()?)?;
+            let name = name.to_cow()?;
+            let sym = elf.symbol(&name)?;
+            if sym.region.is_none() {
+                return Err(into_strider_err(anyhow::anyhow!(
+                    "symbol {name:?} has no code: {:#x} lies in no loaded region",
+                    sym.address
+                )));
+            }
             (sym.address, sym.size)
         } else {
             match entry_addr(entry) {

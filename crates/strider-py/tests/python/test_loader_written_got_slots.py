@@ -123,6 +123,24 @@ def test_an_object_files_call_to_a_defined_ifunc_names_its_symbol(image):
     assert function.find_all(p.call().target(f.address)), function.to_text()
 
 
+@pytest.mark.parametrize(
+    "image",
+    ["x64_ifunc_nopic.o", "ppc64be_ifunc.o", "ppc64le_ifunc.o"],
+)
+def test_an_object_files_defined_ifunc_is_no_function_to_analyze(image):
+    """At its extern address `f` holds no code: `functions()` lists its
+    resolver, not `f`, and `analyze("f")` says why it cannot lift it."""
+    elf = strider.lift.load_elf(_image(image))
+    f = elf.symbol("f")
+    assert f.size is None and f.region is None and not f.is_function
+    names = [s.name for s in elf.functions()]
+    assert "f" not in names and "resolve_f" in names, names
+    assert elf.symbol_at(f.address + 8) is None
+    with pytest.raises(strider.StriderError, match="no code") as raised:
+        elf.analyze("f")
+    assert "resolve_f" not in str(raised.value)
+
+
 def test_an_object_files_defined_ifunc_covers_only_its_own_extern_address():
     """`f`'s extern address holds no bytes, so its symbol has no size and an
     address inside `tab`, the next extern, does not name it."""
