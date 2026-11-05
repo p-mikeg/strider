@@ -305,7 +305,7 @@ const ET_REL_IMAGE_BASE: u64 = 0x1000_0000;
 /// unmapped page apart.
 const ET_REL_PAGE: u64 = 0x1000;
 
-/// Address space per undefined symbol in the extern range.
+/// Address space per undefined or defined-IFUNC symbol in the extern range.
 const EXTERN_STRIDE: u64 = 0x10;
 
 /// `.TOC.` sits this far past the start of the TOC it addresses, so a signed
