@@ -1,6 +1,6 @@
 //! A capture name interns to one `Capture` per process: `.capture("x")`,
-//! `m["x"]` and a rewrite RHS `"x"` name the same capture. `"_"` and `"any_"`
-//! are reserved.
+//! `m["x"]` and a rewrite RHS `"x"` name the same capture. `"_"` is
+//! reserved.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -33,8 +33,8 @@ pub struct PyCapture {
 impl PyCapture {
     /// A capture variable. `Capture()` is fresh and unique; `Capture("name")`
     /// interns the name, the same capture as a rewrite RHS `"name"`. A bare
-    /// string is not a match-pattern operand. Reserved names (`"_"`,
-    /// `"any_"`) raise.
+    /// string is not a match-pattern operand. The reserved name `"_"`
+    /// raises.
     #[new]
     #[pyo3(signature = (name=None))]
     fn new(name: Option<&str>) -> PyResult<Self> {
@@ -67,7 +67,7 @@ static NAMES: Mutex<Names> = Mutex::new(Names {
 });
 
 pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
-    if name == "_" || name == "any_" {
+    if name == "_" {
         return Err(into_strider_err(anyhow::anyhow!(
             "{name:?} is reserved; anything() is the wildcard"
         )));
