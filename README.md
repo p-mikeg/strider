@@ -7,8 +7,9 @@
 Strider answers precise questions about a compiled function, with no source
 and no debug symbols.
 
-It reads ELF images (and raw bytes) for x86 and x86-64, ARM/Thumb (little-endian, BE32, BE8),
-AArch64 (LE/BE), MIPS32/64 (LE/BE, MIPS16e) and PowerPC 32/64 (LE/BE).
+It reads ELF images (and raw bytes) for x86 and x86-64, ARM/Thumb
+(little-endian, BE32, BE8), AArch64 (LE/BE), MIPS32/64 (LE/BE, MIPS16e) and
+PowerPC 32/64 (LE/BE).
 
 ## What it does
 
