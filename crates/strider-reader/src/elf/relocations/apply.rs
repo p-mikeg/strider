@@ -6,6 +6,7 @@ use crate::MemRegion;
 use crate::elf::encodings::{
     Field, Half, Isa, Kind, Value, classify, encode, implicit_addend, sext,
 };
+use crate::elf::sections::is_ifunc;
 
 use super::implicit::note_copy;
 use super::walk::RelocInfo;
@@ -271,8 +272,8 @@ pub(super) fn compute_classified(
     {
         return None;
     }
-    // An IFUNC's `S` is its resolver: a data word holding it is not known,
-    // and only its GOT slot's address is. See `Ctx::in_code`.
+    // A data word holding an IFUNC is not known, and only its GOT slot's
+    // address is; in code, `S` names it.
     if target.is_some_and(|t| t.ifunc)
         && !value_kind_through_got(value_kind)
         && !ctx.in_code(p, field.width())
@@ -423,7 +424,8 @@ pub(super) struct Target {
     /// `STB_WEAK` and undefined: it may resolve to 0, so the synthetic extern
     /// address stands in only where it cannot be observed.
     weak_undefined: bool,
-    /// A defined `STT_GNU_IFUNC`: `S` is its resolver.
+    /// A defined `STT_GNU_IFUNC`: `S` is an ET_REL's synthetic extern
+    /// address, a linked image's resolver.
     ifunc: bool,
     /// MIPS `_gp_disp`.
     gp_disp: bool,
@@ -528,12 +530,4 @@ pub(super) fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u
     } else {
         0
     }
-}
-
-/// `STT_GNU_IFUNC`, from `st_info`'s low nibble.
-pub(super) fn is_ifunc<'d>(sym: &impl ObjectSymbol<'d>) -> bool {
-    matches!(
-        sym.flags(),
-        object::SymbolFlags::Elf { st_info, .. } if st_info & 0xf == object::elf::STT_GNU_IFUNC
-    )
 }

@@ -202,10 +202,7 @@ impl<'a> Ctx<'a, '_> {
         }
     }
 
-    /// Whether the field lies in an executable mapping, where an IFUNC's `S`
-    /// is its own address (so a `call` names it), not the resolver's result;
-    /// an address taken or a data word there gets it too, though it differs
-    /// at run time.
+    /// Whether the field lies in an executable mapping.
     fn in_code(&self, addr: u64, width: usize) -> bool {
         self.executable.touches(addr, width)
     }
