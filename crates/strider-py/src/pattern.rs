@@ -290,8 +290,7 @@ impl Repr {
 #[pyclass(name = "Pat", module = "strider.pattern", frozen)]
 pub struct PyPat {
     pub(crate) repr: Repr,
-    /// Links below this one in the `.capture()` / `.when()` / `.of_width()`
-    /// chain, bounded by `MAX_PATTERN_NESTING`.
+    /// Chained verbs below this one, bounded by `MAX_PATTERN_NESTING`.
     depth: u32,
 }
 
@@ -439,8 +438,6 @@ fn pat_rhs_message(repr: &Repr) -> String {
     }
 }
 
-/// Case-insensitive: `"i1"` / `"I64"` / `"f32"`.
-/// `n`, when some value type is `n` bits wide.
 /// A width `width_arg` accepts.
 pub(crate) struct Width {
     bits: u32,
@@ -452,6 +449,7 @@ impl<'py> FromPyObject<'py> for Width {
     }
 }
 
+/// `n`, when some value type is `n` bits wide.
 pub(crate) fn width_arg(n: u32) -> PyResult<u32> {
     let mut widths: Vec<usize> = T::SUPPORTED.iter().map(|ty| ty.bit_width()).collect();
     if widths.contains(&(n as usize)) {
@@ -466,6 +464,7 @@ pub(crate) fn width_arg(n: u32) -> PyResult<u32> {
     )))
 }
 
+/// Case-insensitive: `"i1"` / `"I64"` / `"f32"`.
 fn parse_value_ty(name: &str) -> PyResult<T> {
     name.to_ascii_lowercase()
         .parse()
@@ -1797,8 +1796,8 @@ macro_rules! node_builder {
                 slf.inner.borrow_mut().$name.push(RegionCall::StackOffset(k));
                 slf
             }
-            /// Keep only accesses whose address decomposes to a stack base,
-            /// keeping an offset an earlier `stack_offset` pinned.
+            /// Keep only accesses whose address decomposes to a stack base.
+            /// Keeps an earlier `stack_offset`; replaces any other filter.
             fn stack_only<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
                 slf.inner.borrow_mut().$name.push(RegionCall::StackOnly);
                 slf
