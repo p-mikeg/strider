@@ -100,10 +100,8 @@ mod tests {
         assert_eq!(none_budgeted.len(), 1);
         assert!(none_budgeted.contains(&entry));
 
-        // Exercises the Incoming half: the `ret` block is a confluence of the
-        // jne-taken edge and the nop fall-through, so centering there must pull
-        // in both predecessors.  Dropping `Incoming` would still pass every
-        // entry-centered check above, since `entry` has no predecessors.
+        // The `ret` block joins the jne-taken edge and the nop fall-through:
+        // centred there, `Incoming` pulls in both predecessors.
         let g = cfg.region_graph();
         let confluence = g
             .node_indices()
