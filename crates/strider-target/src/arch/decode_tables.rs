@@ -10,7 +10,7 @@ use crate::arch::SleighArch;
 pub enum FlowCommit {
     /// Confined to one address, so the pspec default is the erase target.
     NoFlow,
-    /// Painted forward to persist, so the predecessor's value is.
+    /// Painted forward, so the predecessor's value is the erase target.
     Flowing,
 }
 

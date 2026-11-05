@@ -101,7 +101,7 @@ impl From<CallOtherClass> for CallOtherOverride {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallOtherOverrides(rustc_hash::FxHashMap<String, CallOtherOverride>);
 
-/// No overrides, for a borrower with none to lend.
+/// The empty override table.
 pub static NO_OVERRIDES: CallOtherOverrides = CallOtherOverrides(
     rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
 );
