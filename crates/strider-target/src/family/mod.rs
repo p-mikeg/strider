@@ -44,13 +44,6 @@ pub(crate) struct Family {
     pub(crate) calling_conventions: &'static [CcPreset],
 }
 
-/// One family per name.
-impl PartialEq for Family {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
 /// What decoding and lifting know about one family, each field the answer of
 /// the [`SleighArch`](crate::SleighArch) method of the same name. No
 /// `Default`: a new family answers every field.
