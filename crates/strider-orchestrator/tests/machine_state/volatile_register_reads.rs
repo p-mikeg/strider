@@ -62,8 +62,8 @@ fn assert_difference_folds(arch: Arch, words: &[u32]) {
     assert_eq!(volatile_reads(&f), 0, "{arch:?}");
 }
 
-/// `sp_el0` is the kernel's `current`, which only a context switch writes,
-/// so two reads in one function are one value.
+/// `sp_el0` is the kernel's `current`, which every writer a call can reach
+/// restores before returning, so two reads in one function are one value.
 #[test]
 fn aarch64_sp_el0_reads_are_one_value() {
     // mrs x0, sp_el0; mrs x1, sp_el0; sub x0, x1, x0; ret
