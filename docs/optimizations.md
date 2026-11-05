@@ -159,7 +159,7 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 ## Known limits
 
 - Chained switches (a jump table whose arm holds another) are found one
-  re-lift round per level; past 256 tables the next site is reported
+  re-lift round per level; past 256 levels the next site is reported
   `"unresolved_branch"` and deeper levels are never decoded.
 - PowerPC float code lifts to far more p-code than other ISAs because the
   FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
