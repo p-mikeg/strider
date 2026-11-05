@@ -167,6 +167,10 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   1024-iteration cap, and the analysis raises. A chain whose guards each test
   a different stack slot, with stores between them, still costs quadratic
   settle work (about 2 s at 2000 guards).
+- Reloads of `n` distinct stack slots cost quadratic climb work past `n`
+  diamonds inside an irreducible loop, where the climb steps one dominator at
+  a time, and past `n` calls under `escape_analysis`, where every call is a
+  candidate for every slot (about 0.8 s and 0.4 s at `n` = 2000).
 - A pattern nesting commutative nodes `d` deep can cost up to 2^d match
   attempts, even when nothing matches; `.ordered()` pins the operand order.
 
