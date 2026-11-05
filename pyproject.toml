@@ -74,7 +74,6 @@ norecursedirs = [".git", ".venv", ".worktrees", "target", "__pycache__"]
 # and the `strider/` package via `python-source`.
 [tool.maturin]
 manifest-path = "crates/strider-py/Cargo.toml"
-features = ["pyo3/extension-module"]
 python-source = "crates/strider-py"
 module-name = "strider._strider"
 include = [
