@@ -31,7 +31,7 @@ fn set_isa_mode_is_noop_on_every_arch() {
     // `common.rs`).
     let arm32: Vec<_> = crate::ArchPreset::ALL
         .iter()
-        .filter(|p| *p.family() == crate::family::ARM32)
+        .filter(|p| p.family().name == crate::family::ARM32.name)
         .collect();
     assert_eq!(arm32.len(), 4, "the ARM32 presets: {arm32:?}");
     for arm in arm32 {
