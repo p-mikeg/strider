@@ -614,6 +614,16 @@ const PPC64_SCALAR_ARGS_F: &[&str] = &[
 ];
 const PPC_SCALAR_RET_F: &[&str] = &["f1", "f2", "f3", "f4"];
 
+/// `POWERPC64_ELF_BASE`'s callee-saved list without r13: the kernel's
+/// per-CPU `paca`, which a call that sleeps can return on another CPU.
+const PPC64_KERNEL_SAVED: &[&str] = &[
+    "r2", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24", "r25",
+    "r26", "r27", "r28", "r29", "r30", "r31", "LR", "f14", "f15", "f16", "f17", "f18", "f19",
+    "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31", "cr2",
+    "cr3", "cr4", "vs52", "vs53", "vs54", "vs55", "vs56", "vs57", "vs58", "vs59", "vs60", "vs61",
+    "vs62", "vs63",
+];
+
 /// Base for `powerpc64_elf_v1` and `powerpc64_elf_v2`, which differ in
 /// `stack_args`, `ret_val_regs_float` and `entry_address`.
 const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
@@ -626,9 +636,8 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
         "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
     ],
     callee_saved_regs: &[
-        // r13 (TLS, or the kernel's per-CPU `paca`) is listed since the
-        // call's memory clobber already cuts loads through it; r2 (TOC) since
-        // a caller reloads it, keeping TOC-relative loads resolvable.
+        // r13 is the thread pointer, which no call moves; r2 (TOC) is listed
+        // since a caller reloads it, keeping TOC-relative loads resolvable.
         "r2", "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23", "r24",
         "r25", "r26", "r27", "r28", "r29", "r30", "r31",
         // LR is volatile, but listed so `InitialVar(LR)` survives calls and
@@ -743,6 +752,7 @@ impl CallingConvention {
         CallingConvention {
             arg_passing_regs_float: PPC64_SCALAR_ARGS_F,
             ret_val_regs_float: PPC_SCALAR_RET_F,
+            callee_saved_regs: PPC64_KERNEL_SAVED,
             ..POWERPC64_ELF_BASE
         }
     }
@@ -753,6 +763,7 @@ impl CallingConvention {
         CallingConvention {
             arg_passing_regs_float: PPC64_SCALAR_ARGS_F,
             ret_val_regs_float: &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"],
+            callee_saved_regs: PPC64_KERNEL_SAVED,
             ..Self::powerpc64_elf_v2()
         }
     }

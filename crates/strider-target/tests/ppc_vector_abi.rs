@@ -101,8 +101,9 @@ fn only_the_userland_presets_name_a_vector_argument_or_return() {
     }
 }
 
-/// The two flavours differ in the vector windows alone: dropping them must
-/// move no float or integer position, which would renumber `arg(n)`.
+/// The two flavours differ in the vector windows and the 64-bit kernel's r13
+/// alone: dropping them must move no float or integer position, which would
+/// renumber `arg(n)`.
 #[test]
 fn the_kernel_presets_keep_every_non_vector_position() {
     for ((name, arch, user), (_, _, kernel)) in ppc_presets().into_iter().zip(ppc_kernel_presets())
@@ -129,8 +130,33 @@ fn the_kernel_presets_keep_every_non_vector_position() {
             scalars(&user.ret_val_regs_float),
             "{name}: float return positions",
         );
-        assert_eq!(kernel.callee_saved_regs, user.callee_saved_regs, "{name}");
+        let r13 = regs.name_to_vn("r13");
+        let but_r13 = |vns: &[rsleigh::Vn]| -> Vec<rsleigh::Vn> {
+            vns.iter().copied().filter(|&vn| Some(vn) != r13).collect()
+        };
+        assert_eq!(
+            but_r13(&kernel.callee_saved_regs),
+            but_r13(&user.callee_saved_regs),
+            "{name}"
+        );
         assert_eq!(kernel.stack_args, user.stack_args, "{name}");
+    }
+}
+
+/// r13 is the 64-bit kernel's per-CPU `paca`, which a call that sleeps can
+/// return on another CPU, and userland's thread pointer, which no call moves.
+#[test]
+fn only_the_ppc64_kernel_presets_clobber_r13() {
+    for ((name, arch, user), (_, _, kernel)) in ppc_presets().into_iter().zip(ppc_kernel_presets())
+    {
+        let regs = regs_for(arch);
+        let r13 = regs.name_to_vn("r13").expect("r13");
+        let saves = |cc: CallingConvention| {
+            let built = cc.build(&regs).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            built.callee_saved_regs.contains(&r13)
+        };
+        assert!(saves(user), "{name}");
+        assert_eq!(saves(kernel), !name.starts_with("ELF"), "{name} kernel");
     }
 }
 
