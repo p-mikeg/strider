@@ -111,8 +111,8 @@ class Function:
                               | AssumptionOptions.none(escape_analysis=True))
 
         Reads the producing `Lifter`'s `rom`, and raises `StriderError` while
-        that `Lifter` is in `analyze`, `build_cfg` or `add_elf`. Stales `Node` / `Match` handles and node
-        ids. Holds the GIL."""
+        that `Lifter` is in `analyze`, `build_cfg` or `add_elf`. Stales `Node`
+        / `Match` handles and node ids. Holds the GIL."""
         ...
     def to_dot(
         self,
@@ -207,8 +207,9 @@ class Function:
         A list of patterns joins on shared `Capture`s, one merged `Match` per
         row, and `constraints` filter the rows. Rows differing only in the
         root of a pattern whose captures are all shared with an earlier one
-        collapse to one. `ignore_root` keys dedup on captures alone. `ignore_casts` (`True`, or a `CastMask`) looks through
-        extend / truncate / bit-reinterpret casts.
+        collapse to one. `ignore_root` keys dedup on captures alone.
+        `ignore_casts` (`True`, or a `CastMask`) looks through extend /
+        truncate / bit-reinterpret casts.
         """
         ...
     def find_unique(
