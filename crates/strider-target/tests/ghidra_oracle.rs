@@ -107,10 +107,9 @@ const LEDGER: &[Divergence] = &[
                  Ghidra PowerPC prototype names a vector register",
     },
     Divergence {
-        presets: PPC64,
+        presets: &["powerpc64_elf_v1", "powerpc64_elf_v2"],
         items: &["callee-saved only in strider: r13"],
-        reason: "r13 is the thread pointer (the paca in the kernel), which a conforming callee \
-                 never writes",
+        reason: "r13 is the thread pointer, which a conforming callee never writes",
     },
     Divergence {
         presets: PPC64,
