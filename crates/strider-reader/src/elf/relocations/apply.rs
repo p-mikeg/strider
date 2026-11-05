@@ -192,6 +192,7 @@ pub(super) fn unknown_field_bytes(arch: A, r: &RelocInfo) -> usize {
             | 74..=77
             | 79..=106
             | 110..=115
+            | 136..=143
             | 240..=245
             | 249..=252 => 2,
             // UADDR64, PLT64, PLTREL64, ADDR64_LOCAL, the prefixed

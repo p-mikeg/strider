@@ -785,7 +785,8 @@ fn an_uncomputed_ppc_be_half16_holes_only_its_halfword() {
         elf::R_PPC_EMB_RELST_HA,
         elf::R_PPC_EMB_RELSDA,
     ];
-    // `R_PPC64_REL16_HIGH` .. `_HIGHESTA`, which `object` does not name.
+    // `R_PPC64_REL16_HIGH` .. `_HIGHESTA` and `R_PPC64_ADDR16_HIGHER34` ..
+    // `R_PPC64_REL16_HIGHESTA34`, which `object` does not name.
     let ppc64 = [
         elf::R_PPC64_TPREL16_LO,
         elf::R_PPC64_SECTOFF,
@@ -796,6 +797,7 @@ fn an_uncomputed_ppc_be_half16_holes_only_its_halfword() {
         elf::R_PPC64_SECTOFF_LO_DS,
     ]
     .into_iter()
+    .chain(136..=143)
     .chain(240..=245);
     for (arch, r_type) in ppc32
         .into_iter()
