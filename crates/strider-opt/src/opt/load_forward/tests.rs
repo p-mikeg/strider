@@ -1724,3 +1724,67 @@ fn a_merge_arm_from_a_loop_nothing_enters_is_never_taken() -> Result<()> {
     assert_eq!(outcome(&fg), Some(1));
     Ok(())
 }
+
+/// `X = 1; Y = 1; guard; mid = 2; guard; return X | Y << 8`, `mid` being `Y`
+/// or `X`, each guard a constant `If` whose untaken arm stores to both. The
+/// two reloads settle through the same memory phis but stop at different
+/// stores, so where one leaves its load says nothing about the other. Each
+/// `mid` misleads the reload swept second when the first is the other slot.
+///
+/// Mutation: key the settle memo by the memory value alone.
+fn reloads_of_two_slots_through_one_guard_chain(mid_on_y: bool) -> Result<Function> {
+    let sp = sp32_vn();
+    let ty = ValueType::int(32);
+    let mut b = sp_frame(sp).build_fn()?;
+    let [entry, taken1, untaken1, mid, taken2, untaken2, exit] =
+        [(); 7].map(|()| b.create_region_all());
+    let [entry, taken1, untaken1, mid, taken2, untaken2, exit] =
+        [entry?, taken1?, untaken1?, mid?, taken2?, untaken2?, exit?];
+    b.set_entry_region_all(entry)?;
+    let x = |b: &mut FunctionBuilder| b.build_int_const(0x1000u64, ty);
+    let y = |b: &mut FunctionBuilder| b.build_int_const(0x1010u64, ty);
+
+    b.set_region(entry);
+    for (slot, v) in [(x(&mut b)?, 1), (y(&mut b)?, 1)] {
+        store32(&mut b, slot, v)?;
+    }
+    let yes = b.build_boolean_const(true);
+    b.build_if(yes, taken1, untaken1)?;
+    for (taken, untaken, join) in [(taken1, untaken1, mid), (taken2, untaken2, exit)] {
+        b.set_region(taken);
+        b.build_branch(join)?;
+        b.set_region(untaken);
+        for slot in [x(&mut b)?, y(&mut b)?] {
+            store32(&mut b, slot, 99)?;
+        }
+        b.build_branch(join)?;
+        if join == mid {
+            b.set_region(mid);
+            let slot = if mid_on_y { y(&mut b)? } else { x(&mut b)? };
+            store32(&mut b, slot, 2)?;
+            let yes = b.build_boolean_const(true);
+            b.build_if(yes, taken2, untaken2)?;
+        }
+    }
+
+    b.set_region(exit);
+    let (xa, ya) = (x(&mut b)?, y(&mut b)?);
+    let lx = load32(&mut b, xa)?;
+    let ly = load32(&mut b, ya)?;
+    let ly = b.build_const_binop(8u64, ly, IntBinaryOp::ShiftLeft, ty)?;
+    let ret = b.build_int_binary_operation(lx, ly, IntBinaryOp::Or, ty)?;
+    b.build_return(Some(ret), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_passes(&mut fg, &[&PhiCollapse, &LoadForward, &crate::ConstantFold])?;
+    Ok(fg)
+}
+
+#[test]
+fn reloads_of_two_slots_settle_through_one_guard_chain_apart() -> Result<()> {
+    let fg = reloads_of_two_slots_through_one_guard_chain(true)?;
+    crate::test_support::assert_returns_const(&fg, 0x0201);
+    let fg = reloads_of_two_slots_through_one_guard_chain(false)?;
+    crate::test_support::assert_returns_const(&fg, 0x0102);
+    Ok(())
+}
