@@ -85,7 +85,7 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// Regions sealed onto a stub at non-code bytes, with the error
     /// [`Self::finish`] returns unless a call falls into it (`None`: marked
     /// data).
-    pub(super) nops_into_no_code: Vec<(NodeIndex, Option<anyhow::Error>)>,
+    pub(super) sealed_into_no_code: Vec<(NodeIndex, Option<anyhow::Error>)>,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
@@ -105,7 +105,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             work_queue: Vec::new(),
             seeded_queue: Vec::new(),
             refused_arms: Vec::new(),
-            nops_into_no_code: Vec::new(),
+            sealed_into_no_code: Vec::new(),
             report: crate::BuildReport::default(),
             non_boundary_seats: rustc_hash::FxHashMap::default(),
             interior_candidates: Vec::new(),
@@ -702,10 +702,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             }
         }
         let mut no_return = Vec::new();
-        for (nop, e) in std::mem::take(&mut self.nops_into_no_code) {
+        for (sealed, e) in std::mem::take(&mut self.sealed_into_no_code) {
             let preds: Vec<_> = self
                 .region_graph
-                .neighbors_directed(nop, petgraph::Incoming)
+                .neighbors_directed(sealed, petgraph::Incoming)
                 .collect();
             let calls = self.calls_falling_into(preds);
             if let Some(e) = e.filter(|_| calls.is_empty()) {

@@ -484,13 +484,13 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         || !self.builder.calls_falling_into(self.parent_edge).is_empty()
                     {
                         self.seal_and_report(cur_addr, reason)?;
-                        let nop = self
+                        let sealed = self
                             .builder
                             .index
                             .get(self.start_addr)
                             .expect("just sealed");
                         let fatal = (!marked_data).then_some(e);
-                        self.builder.nops_into_no_code.push((nop, fatal));
+                        self.builder.sealed_into_no_code.push((sealed, fatal));
                         return Ok(());
                     }
                     if marked_data && !off_arm {
