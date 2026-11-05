@@ -397,8 +397,38 @@ fn available_at(edit: &EditFunction<'_>, value: ValueId, replaced: ValueId) -> b
     at(replaced).is_none_or(|used| at(value).is_some_and(|def| tree.dominates(def, used)))
 }
 
+/// An RHS capture the LHS does not bind on every match.
+#[derive(Debug)]
+pub struct UnboundCapture {
+    pub capture: Capture,
+    /// Bound on some alternation arms only.
+    pub on_some_arms: bool,
+}
+
+impl UnboundCapture {
+    /// The message, naming the capture `name`.
+    pub fn message(&self, name: &str) -> String {
+        if self.on_some_arms {
+            format!(
+                "RHS references {name} that the LHS binds only on SOME alternation \
+                 arms; every arm must bind it, since only one arm fires per match"
+            )
+        } else {
+            format!("RHS references {name} that the LHS does not bind")
+        }
+    }
+}
+
+impl std::fmt::Display for UnboundCapture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message(&format!("{:?}", self.capture)))
+    }
+}
+
+impl std::error::Error for UnboundCapture {}
+
 /// Asserts both sides are unrefused and every capture the RHS references also
-/// appears in the LHS.
+/// appears in the LHS, erring with an [`UnboundCapture`] where not.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     rhs.root()?;
     // Only one alternation arm fires, so a capture must be bound on every arm,
@@ -406,21 +436,15 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     let lhs_caps = lhs.guaranteed_captures()?;
     let present: rustc_hash::FxHashSet<Capture> = lhs.bound_captures().collect();
     let optional: rustc_hash::FxHashSet<Capture> = rhs.optional_captures().collect();
-    for cap in rhs.referenced_captures() {
-        if !(lhs_caps.contains(&cap) || optional.contains(&cap) && present.contains(&cap)) {
-            return if present.contains(&cap) {
-                Err(anyhow::anyhow!(
-                    "RHS references Capture id={} that the LHS binds only on SOME \
-                     alternation arms; every arm must bind it, since only one arm \
-                     fires per match",
-                    cap.id()
-                ))
-            } else {
-                Err(anyhow::anyhow!(
-                    "RHS references Capture id={} that the LHS does not bind",
-                    cap.id()
-                ))
-            };
+    for capture in rhs.referenced_captures() {
+        if !(lhs_caps.contains(&capture)
+            || optional.contains(&capture) && present.contains(&capture))
+        {
+            return Err(UnboundCapture {
+                capture,
+                on_some_arms: present.contains(&capture),
+            }
+            .into());
         }
     }
     Ok(())
