@@ -1,8 +1,8 @@
 //! The defs of a [`MemLayout`] grouped by what they can clobber, so a climb
 //! finds the highest possible clobber in a position range without visiting
 //! it. Answers are supersets; [`super::walker::MemWalker`] decides each. A
-//! store is classified once; one whose address a rewrite can still change read
-//! a load, so it is an `Anchor`, a candidate for every location.
+//! store is classified once; an address a rewrite can still change reads a
+//! load, so it classifies as an `Anchor`, a candidate for every location.
 
 use std::collections::BTreeMap;
 
