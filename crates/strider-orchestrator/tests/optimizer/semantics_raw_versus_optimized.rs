@@ -81,6 +81,7 @@ fn environment<'a>(
         seed,
         step_budget: STEP_BUDGET,
         private: Some(STACK_BASE - FRAME_HALF_WIDTH..=STACK_BASE + FRAME_HALF_WIDTH),
+        keeps: None,
     }
 }
 

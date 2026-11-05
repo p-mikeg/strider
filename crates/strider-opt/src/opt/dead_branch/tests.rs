@@ -450,6 +450,7 @@ fn a_switch_constant_two_arms_list_takes_the_first() -> Result<()> {
         seed: 0,
         step_budget: 16,
         private: None,
+        keeps: None,
     };
     let Ok(interp::Outcome::Return { values, .. }) = interp::run(&fg, &env) else {
         panic!("the reference run returns");
