@@ -834,3 +834,38 @@ fn an_uncomputed_ppc_be_half16_holes_only_its_halfword() {
         );
     }
 }
+
+/// The ppc64 doubleword64 types `object` does not compute hole all eight
+/// bytes: neither word of the pointer is served from read-only data.
+#[test]
+fn an_uncomputed_ppc64_doubleword_holes_all_eight_bytes() {
+    // `R_PPC64_ADDR64_LOCAL` (117), which `object` does not name.
+    for r_type in [
+        elf::R_PPC64_UADDR64,
+        elf::R_PPC64_PLT64,
+        elf::R_PPC64_PLTREL64,
+        117,
+    ] {
+        let mut obj = Object::new(BinaryFormat::Elf, Architecture::PowerPc64, Endianness::Big);
+        let data = obj.add_section(Vec::new(), b".rodata".to_vec(), SectionKind::ReadOnlyData);
+        obj.append_section_data(data, &[0x11u8; 16], 8);
+        let ext = undefined(&mut obj, "ext_var");
+        reloc(&mut obj, data, 0, ext, 0, r_type);
+        let bytes = obj.write().expect("write");
+
+        let table = relocated(&bytes);
+        let base = common::section_base(&bytes, ".rodata");
+        let mut w = [0u8; 4];
+        assert_eq!(table.read(base, &mut w), None, "type {r_type}: high word");
+        assert_eq!(
+            table.read(base + 4, &mut w),
+            None,
+            "type {r_type}: low word"
+        );
+        assert_eq!(
+            table.read(base + 8, &mut w),
+            Some(4),
+            "type {r_type}: past it"
+        );
+    }
+}
