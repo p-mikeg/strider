@@ -317,7 +317,14 @@ impl PyFunction {
             .zip(templates)
             .map(|((lhs, _), rhs)| {
                 let lhs = crate::pattern::compile_rewrite_lhs(lhs)?;
-                strider_opt::rewrite_rule_runtime(lhs, rhs).map_err(into_strider_err)
+                strider_opt::rewrite_rule_runtime(lhs, rhs).map_err(|e| {
+                    into_strider_err(match e.downcast_ref::<strider_opt::UnboundCapture>() {
+                        Some(u) => anyhow::anyhow!(
+                            u.message(&crate::pattern::capture_display(u.capture.id()))
+                        ),
+                        None => e,
+                    })
+                })
             })
             .collect::<PyResult<_>>()?;
         self.edit(|f| {

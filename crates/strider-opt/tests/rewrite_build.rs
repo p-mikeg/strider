@@ -6,7 +6,7 @@ use strider_ir::node::{NodeKind, ValueType as T};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
-use strider_opt::{EditFunction, rewrite_rule, rewrite_rule_runtime};
+use strider_opt::{EditFunction, UnboundCapture, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
     Capture, MatchPat, Matcher, TemplatePat, int_add, int_const, int_const_with, one_of, template,
     var,
@@ -122,6 +122,9 @@ fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
         msg.contains("does not bind"),
         "expected unbound-capture error mentioning \"does not bind\", got: {msg}"
     );
+    let unbound = err.downcast_ref::<UnboundCapture>().expect("typed error");
+    assert_eq!(unbound.capture, c);
+    assert!(!unbound.on_some_arms);
 }
 
 /// A refused RHS fails the rule at construction, not on every firing.
@@ -158,6 +161,9 @@ fn rewrite_rule_runtime_rejects_capture_bound_on_only_some_arms() {
         msg.contains("only on SOME alternation arms"),
         "expected a partial-arm-binding error, got: {msg}"
     );
+    let unbound = err.downcast_ref::<UnboundCapture>().expect("typed error");
+    assert_eq!(unbound.capture, k);
+    assert!(unbound.on_some_arms);
 }
 
 /// The complement: a capture every arm binds is guaranteed, so the rule builds.

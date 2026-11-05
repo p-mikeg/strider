@@ -145,6 +145,29 @@ def test_the_wildcard_name_is_not_a_replacement(name):
         g.rewrite(find=int_add(var(x), int_const(0)), replace=name)
 
 
+def test_an_unbound_replacement_names_the_capture():
+    g = _build_graph()
+    x = Capture()
+    with pytest.raises(
+        strider.StriderError,
+        match="^"
+        + re.escape("RHS references Capture('rhs_only') that the LHS does not bind")
+        + "$",
+    ):
+        g.rewrite(find=int_add(var(x), int_const(0)), replace="rhs_only")
+
+
+def test_a_replacement_bound_on_some_arms_names_the_capture():
+    g = _build_graph()
+    x, k = Capture(), Capture("some_arms")
+    find = strider.pattern.one_of([int_add(var(x), int_const(k)), var(x)])
+    with pytest.raises(
+        strider.StriderError,
+        match=re.escape("RHS references Capture('some_arms') that the LHS binds only on SOME"),
+    ):
+        g.rewrite(find=find, replace=tpl.int_add(tpl.var(x), tpl.var(k)))
+
+
 @pytest.mark.parametrize("replace", [4, 1.5, None], ids=["int", "float", "none"])
 def test_a_non_template_replacement_names_what_is_accepted(replace):
     g = _build_graph()
