@@ -1068,6 +1068,7 @@ fn a_truncate_of_an_extend_is_one_cast() -> Result<()> {
                     seed: 0,
                     step_budget: 100,
                     private: None,
+                    keeps: None,
                 };
                 let want = interp::run(&raw, &env);
                 assert!(
@@ -1120,6 +1121,7 @@ fn a_sign_extend_of_a_widening_zero_extend_is_one_zero_extend() -> Result<()> {
                 seed: 0,
                 step_budget: 100,
                 private: None,
+                keeps: None,
             };
             assert_eq!(interp::run(&opt, &env), interp::run(&raw, &env), "x={x:#x}");
         }

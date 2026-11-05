@@ -8,12 +8,13 @@
 //!
 //! Call `k` of a run (from 1) is opaque: each register it clobbers becomes
 //! `hash(seed, k, target, varnode)`, and unless its convention preserves memory
-//! every non-ROM byte reads `hash(seed, k, address)`. The REGISTER space is a
-//! separate byte array: unbacked, noise when unwritten, clobbered with memory,
-//! and absent from `writes`.
+//! every non-ROM byte reads `hash(seed, k, address)`, less what
+//! [`Env::keeps`] keeps. The REGISTER space is a separate byte array:
+//! unbacked, noise when unwritten, clobbered with memory, and absent from
+//! `writes`.
 
 use std::collections::BTreeMap;
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 use std::rc::Rc;
 
 use cranelift_entity::{EntityRef, SecondaryMap};
@@ -47,7 +48,28 @@ pub struct Env<'a> {
     pub step_budget: usize,
     /// Addresses left out of every memory snapshot (the function's own frame).
     pub private: Option<RangeInclusive<u64>>,
+    /// The RAM a memory-clobbering call leaves as it found it; `None` keeps
+    /// nothing.
+    pub keeps: Option<&'a Keeps>,
 }
+
+/// The RAM a memory-clobbering call keeps.
+#[derive(Clone, Debug, Default)]
+pub struct Keeps {
+    /// The caller's frame: what lies here at or above the call's SP survives
+    /// an allocator call, and every call under [`Self::all_calls`]. An
+    /// unwritten byte here never changes.
+    pub frame: Option<Range<u64>>,
+    /// Allocator targets: such a call returns a fresh pointer in its first
+    /// output and keeps every earlier allocation's first
+    /// [`ALLOCATION_BYTES`]. An unwritten allocation byte never changes.
+    pub allocators: Vec<u128>,
+    /// Whether every call, not only an allocator, keeps the frame.
+    pub all_calls: bool,
+}
+
+/// The bytes from an allocator's pointer [`Keeps`] counts as the allocation.
+pub const ALLOCATION_BYTES: u64 = 256;
 
 /// Why a run cannot go on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -228,6 +250,8 @@ struct Machine<'a, 'e> {
     ints: SecondaryMap<ValueId, Option<Option<UBig>>>,
     mems: SecondaryMap<ValueId, Option<Rc<Mem>>>,
     calls: Vec<CallRecord>,
+    /// The pointers allocator calls returned so far.
+    allocations: std::collections::BTreeSet<u64>,
 }
 
 impl<'a, 'e> Machine<'a, 'e> {
@@ -241,7 +265,22 @@ impl<'a, 'e> Machine<'a, 'e> {
             ints: SecondaryMap::new(),
             mems: SecondaryMap::new(),
             calls: Vec::new(),
+            allocations: std::collections::BTreeSet::new(),
         }
+    }
+
+    fn in_frame(&self, addr: u64) -> bool {
+        self.env
+            .keeps
+            .and_then(|k| k.frame.as_ref())
+            .is_some_and(|frame| frame.contains(&addr))
+    }
+
+    fn in_allocation(&self, addr: u64) -> bool {
+        self.allocations
+            .range(..=addr)
+            .next_back()
+            .is_some_and(|&p| addr - p < ALLOCATION_BYTES)
     }
 
     /// The one live node `ctrl` flows into, and the input slot it lands in.
@@ -454,7 +493,12 @@ impl<'a, 'e> Machine<'a, 'e> {
                 return buf[0];
             }
         }
-        noise(self.env.seed, addr, mem.calls) as u8
+        let calls = if self.in_frame(addr) || self.in_allocation(addr) {
+            0
+        } else {
+            mem.calls
+        };
+        noise(self.env.seed, addr, calls) as u8
     }
 
     fn register_byte(&self, mem: &Mem, addr: u64) -> u8 {
@@ -514,11 +558,31 @@ impl<'a, 'e> Machine<'a, 'e> {
         });
         let k = self.calls.len() as u64;
         let outs = f.node_outputs(node);
+        let allocates = self
+            .env
+            .keeps
+            .is_some_and(|keeps| keeps.allocators.contains(&target));
         let after = if f.get_cc(node).preserves_memory {
             before
         } else {
+            let keeps_frame = allocates || self.env.keeps.is_some_and(|keeps| keeps.all_calls);
+            let call_sp = if keeps_frame {
+                self.int(ins[NodeKind::CALL_SP_SLOT])?.map(|v| low_u64(&v))
+            } else {
+                None
+            };
+            let written = before
+                .written
+                .iter()
+                .filter(|&(&addr, _)| {
+                    let frame =
+                        keeps_frame && self.in_frame(addr) && call_sp.is_some_and(|sp| addr >= sp);
+                    frame || (allocates && self.in_allocation(addr))
+                })
+                .map(|(&addr, &byte)| (addr, byte))
+                .collect();
             Rc::new(Mem {
-                written: BTreeMap::new(),
+                written,
                 register: BTreeMap::new(),
                 calls: k,
             })
@@ -540,7 +604,10 @@ impl<'a, 'e> Machine<'a, 'e> {
                 });
                 (out, value)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if allocates && let Some((_, Ok(Some(p)))) = ints.first() {
+            self.allocations.insert(low_u64(p));
+        }
         self.settle(ints, vec![(outs[NodeKind::CTRL_MEM_OUT_SLOT], Ok(after))]);
         Ok(())
     }
@@ -747,6 +814,7 @@ mod tests {
             seed: SEED,
             step_budget: 200,
             private: None,
+            keeps: None,
         }
     }
 
