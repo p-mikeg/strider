@@ -357,79 +357,36 @@ mod tests {
         assert_eq!(once, bytes(&regions));
     }
 
-    /// A field straddling an inner region's end reads back patched at every
-    /// width, whichever region serves it.
+    /// An 8-byte field near a region nested in another reads back patched
+    /// from either: straddling its end at every width, starting at its last
+    /// byte, and starting below it (a region keeps the patches up to
+    /// `MAX_PATCH_LEN - 1` bytes before it).
     #[test]
-    fn a_field_over_an_inner_regions_end_reads_back_patched_at_every_width() {
-        let field = 0x1084;
-        let value = 0xdead_beef_feed_face_u64;
-        let mut regions = vec![
-            MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
-            MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
-        ];
-        let all: Arc<[Patch]> = vec![Patch::new(field, value, 8, true)].into();
-        for region in &mut regions {
-            region.attach_patches(&all);
+    fn a_field_around_an_inner_region_reads_back_patched() {
+        let value = 0xdead_beef_feed_face_u64.to_le_bytes();
+        // (field, read at, bytes of `value` the read serves)
+        for (field, at, want) in [
+            (0x1084, 0x1084, 0..4),
+            (0x1084, 0x1084, 0..8),
+            (0x1087, 0x1087, 0..1),
+            (0x107c, 0x1080, 4..8),
+        ] {
+            let mut regions = vec![
+                MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
+                MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
+            ];
+            let all: Arc<[Patch]> =
+                vec![Patch::new(field, u64::from_le_bytes(value), 8, true)].into();
+            for region in &mut regions {
+                region.attach_patches(&all);
+            }
+            let table = crate::MemRegionsLookupTable::new(regions);
+            let mut got = vec![0u8; want.len()];
+            table
+                .read_exact(at, &mut got)
+                .unwrap_or_else(|e| panic!("{field:#x} at {at:#x}: {e:?}"));
+            assert_eq!(got, value[want], "{field:#x} at {at:#x}");
         }
-
-        let table = crate::MemRegionsLookupTable::new(regions);
-        let mut narrow = [0u8; 4];
-        table
-            .read_exact(field, &mut narrow)
-            .expect("the inner region");
-        let mut wide = [0u8; 8];
-        table
-            .read_exact(field, &mut wide)
-            .expect("the outer region");
-        assert_eq!(wide, value.to_le_bytes());
-        assert_eq!(narrow, wide[..4]);
-    }
-
-    /// A field starting at a region's last byte is that region's too: a
-    /// one-byte read there serves the field's first byte patched.
-    #[test]
-    fn a_field_at_an_inner_regions_last_byte_reads_back_patched() {
-        let field = 0x1087;
-        let value = 0xdead_beef_feed_face_u64;
-        let mut regions = vec![
-            MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
-            MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
-        ];
-        let all: Arc<[Patch]> = vec![Patch::new(field, value, 8, true)].into();
-        for region in &mut regions {
-            region.attach_patches(&all);
-        }
-
-        let table = crate::MemRegionsLookupTable::new(regions);
-        let mut last = [0u8; 1];
-        table
-            .read_exact(field, &mut last)
-            .expect("the inner region");
-        assert_eq!(last, value.to_le_bytes()[..1]);
-    }
-
-    /// A field starting below a region's start still lands in it: a region
-    /// keeps the patches up to `MAX_PATCH_LEN - 1` bytes before it, so the
-    /// inner region serves the field's tail patched.
-    #[test]
-    fn a_field_over_an_inner_regions_start_reads_back_patched() {
-        let field = 0x107c;
-        let value = 0xdead_beef_feed_face_u64;
-        let mut regions = vec![
-            MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
-            MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
-        ];
-        let all: Arc<[Patch]> = vec![Patch::new(field, value, 8, true)].into();
-        for region in &mut regions {
-            region.attach_patches(&all);
-        }
-
-        let table = crate::MemRegionsLookupTable::new(regions);
-        let mut tail = [0u8; 4];
-        table
-            .read_exact(0x1080, &mut tail)
-            .expect("the inner region");
-        assert_eq!(tail, value.to_le_bytes()[4..]);
     }
 
     /// A relocation the word domain builds: `r_type` against symbol 1 or
