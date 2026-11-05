@@ -11,7 +11,8 @@ use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 use super::ring::wrap_to_addr_width;
 use super::{MemExpr, MemKind};
 
-/// Memoised on the function for every node the walk passes.
+/// `value` as `base + offset`, or `None`. Memoised on the function for every
+/// node the walk passes.
 pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> {
     if let Some(verdict) = memoised(function, value) {
         return verdict;

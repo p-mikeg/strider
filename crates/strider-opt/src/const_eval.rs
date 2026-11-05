@@ -91,8 +91,7 @@ fn operands_carry(
 }
 
 /// The constant value of `value`, given `resolve` for its inputs' constants.
-/// `None` for anything not foldable to one integer constant. Does NOT handle
-/// `Phi` or any stack-relative address.
+/// `None` for anything not foldable to one integer constant, a `Phi` included.
 pub(crate) fn eval_node_const(
     function: &Function,
     value: ValueId,

@@ -17,8 +17,8 @@ pub(crate) trait PeepholePass {
     /// Per-sweep memo: built empty when a sweep starts, dropped when it ends.
     type Sweep: Default;
 
-    /// Re-enqueue a rewritten root's consumers in the same sweep, so cascading
-    /// folds fire now instead of in another fixed-point iteration.
+    /// Re-enqueue a rewritten root's consumers, so a cascading fold fires in
+    /// the same sweep.
     const PROPAGATE: bool = false;
 
     fn matches_kind(&self, kind: &NodeKind) -> bool;
