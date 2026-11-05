@@ -260,11 +260,34 @@ impl BuiltCallingConvention {
         )
     }
 
+    /// [`Self::validate`], plus a callee-saved link register: the tradeoff
+    /// that carries `InitialVar(lr)` through call sites, so a function's own
+    /// convention, unlike a per-address callee's, needs it.
+    ///
+    /// # Errors
+    /// As [`Self::validate`], or a link register missing from
+    /// `callee_saved_regs`.
+    pub fn validate_default(&self) -> Result<()> {
+        self.validate()?;
+        if let Some(lr) = self.link_register
+            && !self.callee_saved_regs.contains(&lr)
+        {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: link_register {lr:?} must also \
+                 be present in callee_saved_regs, the deliberate tradeoff \
+                 that makes InitialVar(lr) propagate through call sites; only \
+                 a per-address convention may clobber it",
+            ));
+        }
+        Ok(())
+    }
+
     /// Checks the ABI invariants: no return registers under
     /// `preserves_all_registers`; callee-saved bytes disjoint from argument and
     /// return registers, int from float within each, SP from every list; no
-    /// duplicates; a callee-saved link register; sane stack geometry.
-    /// Advisory, since every field is `pub`.
+    /// duplicates; sane stack geometry. A link register left out of
+    /// `callee_saved_regs` is clobbered by a call to this convention (the
+    /// ppc32 `-mbss-plt` GOT thunk). Advisory, since every field is `pub`.
     ///
     /// # Errors
     /// The first violation, naming the offending varnodes.
@@ -342,15 +365,6 @@ impl BuiltCallingConvention {
                     "BuiltCallingConvention: duplicate varnode {vn:?} in {list_name}",
                 ));
             }
-        }
-        if let Some(lr) = self.link_register
-            && !self.callee_saved_regs.contains(&lr)
-        {
-            return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: link_register {lr:?} must also \
-                 be present in callee_saved_regs, the deliberate tradeoff \
-                 that makes InitialVar(lr) propagate through call sites",
-            ));
         }
         if self.ret_stack_pop < 0 {
             return Err(anyhow::anyhow!(

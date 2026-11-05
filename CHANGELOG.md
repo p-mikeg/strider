@@ -105,6 +105,8 @@ replaced the rest.
 - `Lifter::build_ir_with` takes `entry_values`, registers bound to a known
   value on entry, which `AnalyzeOptions::entry_values` passes;
   `OpdTable::toc_at` reads an ELFv1 descriptor's TOC pointer.
+- `BuiltCallingConvention::validate` no longer requires a callee-saved
+  link register; `validate_default` does, for a function's own convention.
 
 ### Added, Python
 
@@ -154,6 +156,10 @@ replaced the rest.
 - `ElfLifter.analyze` enters a ppc64 ELFv1 function with `r2` holding its
   `.opd` descriptor's TOC pointer, so TOC-relative loads and jump tables
   resolve as they do on ELFv2.
+- `CallingConvention.custom` accepts a `link_register` missing from
+  `callee_saved_regs`: a call to such a `per_address_ccs` callee clobbers
+  it, as the ppc32 `-mbss-plt` GOT thunk needs. `analyze` raises for one as
+  the function's own convention.
 - `analyze` refuses a calling convention whose stack geometry belongs to
   another arch; `CallingConvention.custom` checks stack geometry at
   construction.
