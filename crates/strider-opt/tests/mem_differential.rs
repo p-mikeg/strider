@@ -80,7 +80,7 @@ fn build(
         .collect::<Result<_, _>>()
         .ok()?;
     b.set_entry_region_all(regions[0]).ok()?;
-    let widths = [8, 16, 24, 32, 64, 128].map(ValueType::int);
+    let widths = [1, 8, 16, 24, 32, 64, 128].map(ValueType::int);
     // Outside plain mode the function opens a 64-byte frame and closes it
     // before each return.
     let mut entry_sp = None;
@@ -98,7 +98,23 @@ fn build(
         for _ in 0..=rng.below(6) {
             let spv = b.read_variable(&sp).ok()?;
             let mut space = rsleigh::VnSpace::RAM;
-            let addr = match rng.below(14) {
+            let addr = match rng.below(18) {
+                14 => b
+                    .build_int_const(0xFFFF_FFFF_FFFF_FFF0u128 + rng.below(16) as u128, i64t)
+                    .ok()?,
+                15 => b.build_int_const(rng.below(8) as u128, i64t).ok()?,
+                16 => b
+                    .build_int_const(0x1000 + rng.below(24) as u128, ValueType::int(32))
+                    .ok()?,
+                17 => {
+                    let i32t = ValueType::int(32);
+                    let c = b
+                        .build_int_const(0xFFFF_FFF8u128 + rng.below(8) as u128, i32t)
+                        .ok()?;
+                    let k = b.build_int_const(rng.below(16) as u128, i32t).ok()?;
+                    b.build_int_binary_operation(c, k, IntBinaryOp::Add, i32t)
+                        .ok()?
+                }
                 10 => {
                     let m = b
                         .build_const_binop((-16i128) as u128, spv, IntBinaryOp::And, i64t)
@@ -221,7 +237,12 @@ fn build(
                 let ty = b.function().value_type_opt(vj)?;
                 let c = b.build_int_const(u128::from(rng.next_u64() % 5), ty).ok()?;
                 let op = [IntCmpOp::Equal, IntCmpOp::Less, IntCmpOp::Sless][rng.below(3)];
-                let cond = b.build_int_cmp_operation(vj, c, op, ty).ok()?;
+                let cond = if rng.chance(25) {
+                    b.build_int_const(rng.below(2) as u128, ValueType::I1)
+                        .ok()?
+                } else {
+                    b.build_int_cmp_operation(vj, c, op, ty).ok()?
+                };
                 let (t, e) = (regions[rng.below(nregions)], regions[rng.below(nregions)]);
                 if t == e {
                     b.build_branch(t).ok()?;
