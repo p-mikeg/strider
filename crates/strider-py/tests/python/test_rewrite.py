@@ -132,7 +132,7 @@ def test_a_bool_replacement_points_at_bool_const():
         g.rewrite(find=int_add(var(x), int_const(0)), replace=True)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("name", ["_", "any_"])
+@pytest.mark.parametrize("name", ["_"])
 def test_the_wildcard_name_is_not_a_replacement(name):
     g = _build_graph()
     x = Capture()

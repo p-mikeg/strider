@@ -36,14 +36,10 @@ def test_reader_error_on_unknown_symbol(x86_memory_elf):
 
 
 def test_pattern_error_on_reserved_capture_name():
-    """`"_"` and `"any_"` are reserved for the free constructors, so they
-    are rejected as `.capture(name)` strings."""
+    """`"_"` is reserved, so it is rejected as a `.capture(name)` string."""
     from strider.pattern import anything
-    p = anything()
     with pytest.raises(strider.StriderError):
-        p.capture("_")
-    with pytest.raises(strider.StriderError):
-        p.capture("any_")
+        anything().capture("_")
 
 
 def test_pattern_error_on_ordered_without_an_operand_pair():

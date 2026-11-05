@@ -576,7 +576,7 @@ p.int_add("base", off)         # a bare string is NOT a capture: this builds,
 ```
 
 Read a capture back by object or name (`hit.uint(off)`, `hit.uint("off")`).
-`"_"` and `"any_"` are reserved.
+`"_"` is reserved.
 
 ### Chaining methods
 

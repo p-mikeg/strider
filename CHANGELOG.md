@@ -104,6 +104,7 @@ replaced the rest.
 
 ### Added, Python
 
+- `Capture("any_")` is an ordinary name; only `"_"` stays reserved.
 - `CfgOptions(fragment_ranges=[(start, end)])`: address ranges that also
   belong to the function; `ElfLifter` fills it from `.cold` symbols.
 - `"past_function_end"` in `INCOMPLETE_REASONS`: code fell through past
