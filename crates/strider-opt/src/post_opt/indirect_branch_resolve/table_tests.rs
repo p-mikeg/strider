@@ -1930,7 +1930,7 @@ fn classify_sites_rederives_a_seated_switch_from_its_selector() {
     let g = b.build().unwrap();
 
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2000], 4);
-    let found = super::super::classify_sites(&g, Some(&rom)).expect("classify");
+    let found = super::super::classify_sites(&g, Some(&rom));
 
     assert_eq!(
         found.resolved.get(&switch),
@@ -1958,7 +1958,7 @@ fn classify_sites_seats_a_switch_selector_folded_to_a_constant() {
     b.set_lift_addr(None);
     let g = b.build().unwrap();
 
-    let found = super::super::classify_sites(&g, None).expect("classify");
+    let found = super::super::classify_sites(&g, None);
     assert_eq!(
         found.resolved.get(&switch),
         Some(&ResolvedTargets::Single(0x5000.into())),
@@ -2125,7 +2125,7 @@ fn rederive_seated_switch(mut g: Function, switch: NodeId) -> Option<ResolvedTar
     pipeline(&[&PhiCollapse, &ConstantFold, &RegionCollapse])
         .run(&mut g, &crate::OptCtx::new(Some(&rom)))
         .expect("prep");
-    let found = super::super::classify_sites(&g, Some(&rom)).expect("classify");
+    let found = super::super::classify_sites(&g, Some(&rom));
     assert!(
         found.sites.contains(&switch),
         "the seated switch is reported"
@@ -2193,7 +2193,6 @@ fn a_heap_verdict_opens_the_table_only_under_its_claim() {
         });
         run_passes(fg, FOLD).unwrap();
         super::super::classify_sites(fg, None)
-            .unwrap()
             .resolved
             .get(&site)
             .cloned()
@@ -2392,7 +2391,7 @@ fn sequential_field_switches_scan_guards_linearly() -> crate::Result<()> {
         |n| {
             let f = sequential_field_switches(n);
             crate::test_support::steps(&[&super::super::index_range::GUARD_SCANS], || {
-                let sites = super::super::classify_sites(&f, Some(&rom))?;
+                let sites = super::super::classify_sites(&f, Some(&rom));
                 assert_eq!(sites.resolved.len(), n, "every switch is seated");
                 Ok(())
             })
@@ -2412,7 +2411,7 @@ fn sequential_field_switches_weigh_tests_linearly() -> crate::Result<()> {
         |n| {
             let f = sequential_field_switches(n);
             crate::test_support::steps(&[&super::super::index_range::CELL_TEST_SCANS], || {
-                let sites = super::super::classify_sites(&f, Some(&rom))?;
+                let sites = super::super::classify_sites(&f, Some(&rom));
                 assert_eq!(sites.resolved.len(), n, "every switch is seated");
                 Ok(())
             })
@@ -2479,7 +2478,7 @@ fn equalities_on_a_shared_index_weigh_tests_linearly() -> crate::Result<()> {
         |n| {
             let f = sequential_equalities_on_one_index(n);
             crate::test_support::steps(&[&super::super::index_range::CELL_TEST_SCANS], || {
-                let sites = super::super::classify_sites(&f, Some(&rom))?;
+                let sites = super::super::classify_sites(&f, Some(&rom));
                 assert_eq!(sites.resolved.len(), n, "every switch is seated");
                 Ok(())
             })
@@ -2500,7 +2499,7 @@ fn equalities_on_a_shared_index_scan_linearly() -> crate::Result<()> {
         |n| {
             let f = sequential_equalities_on_one_index(n);
             crate::test_support::steps(&[&super::super::index_range::EQUALITY_SCANS], || {
-                let sites = super::super::classify_sites(&f, Some(&rom))?;
+                let sites = super::super::classify_sites(&f, Some(&rom));
                 assert_eq!(sites.resolved.len(), n, "every switch is seated");
                 Ok(())
             })

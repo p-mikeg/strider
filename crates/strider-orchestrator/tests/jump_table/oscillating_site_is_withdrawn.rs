@@ -27,27 +27,26 @@ const FLAPPING_ARM: u64 = 0x1020;
 /// an address. Returns the result and the rounds classified.
 fn analyze_flapping(bytes: Vec<u8>, opts: &AnalyzeOptions<'_>) -> (AnalyzeResult, usize) {
     let round = Cell::new(0usize);
-    let flapping = |f: &strider_ir::Function,
-                    rom: Option<&dyn ReadOnlyMemory>|
-     -> anyhow::Result<ClassifiedSites> {
-        let mut found = classify_sites(f, rom)?;
-        let n = round.get();
-        round.set(n + 1);
-        let targets = if n.is_multiple_of(2) {
-            ResolvedTargets::table(vec![
-                ResolvedTarget::new(STABLE_ARM, None),
-                ResolvedTarget::new(FLAPPING_ARM, None),
-            ])
-        } else {
-            ResolvedTargets::Single(ResolvedTarget::new(STABLE_ARM, None))
+    let flapping =
+        |f: &strider_ir::Function, rom: Option<&dyn ReadOnlyMemory>| -> ClassifiedSites {
+            let mut found = classify_sites(f, rom);
+            let n = round.get();
+            round.set(n + 1);
+            let targets = if n.is_multiple_of(2) {
+                ResolvedTargets::table(vec![
+                    ResolvedTarget::new(STABLE_ARM, None),
+                    ResolvedTarget::new(FLAPPING_ARM, None),
+                ])
+            } else {
+                ResolvedTargets::Single(ResolvedTarget::new(STABLE_ARM, None))
+            };
+            found.resolved = found
+                .sites
+                .iter()
+                .map(|&site| (site, targets.clone()))
+                .collect();
+            found
         };
-        found.resolved = found
-            .sites
-            .iter()
-            .map(|&site| (site, targets.clone()))
-            .collect();
-        Ok(found)
-    };
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let result = strider
         .analyze_with_classifier(BASE, &cc, opts, None, &flapping)
