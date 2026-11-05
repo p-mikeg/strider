@@ -34,7 +34,7 @@ impl Optimizer for RegionCollapse {
 
 fn try_collapse(edit: &mut crate::EditFunction<'_>, root: NodeId) {
     let inputs = edit.node_inputs(root);
-    // The entry Region has `Entry` as its one predecessor.
+    // The entry Region, fed by `Entry` alone, collapses too.
     if inputs.len() != 1 {
         return;
     }

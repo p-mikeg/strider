@@ -3,9 +3,7 @@ use strider_ir::node::ValueType;
 use strider_pattern::{Bindings, Capture};
 
 /// The bit width every capture in `caps` carries, or `None` when one is
-/// unbound, untyped or of another width. Moving a constant across an operator
-/// is an identity only at one width; a rewrite can mint a mixed-width node
-/// mid-pipeline.
+/// unbound, untyped or of another width.
 pub(crate) fn same_width(f: &Function, b: &Bindings, caps: &[Capture]) -> Option<usize> {
     let (&first, rest) = caps.split_first()?;
     let width = b.get_type(first, f)?.bit_width();

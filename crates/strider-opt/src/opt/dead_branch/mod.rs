@@ -52,7 +52,7 @@ impl PeepholePass for DeadBranchElimination {
 
     fn after_sweep(&self, edit: &mut crate::EditFunction<'_>, changed: bool) -> Result<()> {
         // A fold detaches its dead arm from control, which the incremental
-        // bookkeeping does not track, so resync even when nothing is stripped.
+        // bookkeeping does not track.
         if changed {
             edit.clean();
         }
@@ -63,13 +63,12 @@ impl PeepholePass for DeadBranchElimination {
     }
 }
 
-/// Strips every `Region` predecessor slot whose control producer entry no
-/// longer reaches, with the matching `Phi` / `MemPhi` slots; `true` if it
-/// stripped one. The caller resyncs the live set after a strip.
+/// Strips every `Region` predecessor slot whose producer entry does not
+/// reach, with the matching `Phi` / `MemPhi` slots; `true` if it stripped
+/// one. The caller resyncs the live set.
 fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     let entry = edit.entry();
-    // An edge is dead iff its producer is control-unreachable, but the joins
-    // iterated are all live ones: a data-only-reachable join can carry a dead
+    // Joins are the live ones: a data-only-reachable join can carry a dead
     // control slot.
     let reachable = cfg_reachable(edit.function().graph(), entry);
 
