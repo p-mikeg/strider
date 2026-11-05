@@ -58,7 +58,8 @@ class Symbol:
     def address(self) -> int:
         """`st_value`; for a ppc64 ELFv1 function, the code its `.opd`
         descriptor names. A Thumb function keeps the Thumb bit. An object
-        file's undefined symbol has an unmapped address past the image."""
+        file's undefined symbol or defined IFUNC has an unmapped address past
+        the image."""
         ...
     @property
     def size(self) -> Optional[int]:

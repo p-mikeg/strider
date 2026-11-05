@@ -323,7 +323,8 @@ class ElfLifter(Lifter):
     def symbol(self, name: str) -> "Symbol":
         """The `Symbol` named `name`: its definition in the first ELF that
         defines it, else an undefined symbol that still has an address (a PLT
-        stub, or an object file's extern). Raises `StriderError` when there is
+        stub, or an object file's extern). An object file's defined IFUNC is
+        such an extern, not its resolver. Raises `StriderError` when there is
         neither."""
         return self._elf.symbol(name)
 
