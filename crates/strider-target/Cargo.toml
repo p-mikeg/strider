@@ -17,7 +17,7 @@ vn-container.workspace = true
 
 [features]
 # `SleighArch::probe_regs`, a copy of `SleighArch::names`' register table,
-# and `ArchPreset::arch`.
+# and `ArchPreset::arch` / `ghidra_id`.
 test-util = []
 
 [dev-dependencies]
