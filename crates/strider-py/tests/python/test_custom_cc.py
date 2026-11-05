@@ -60,23 +60,63 @@ def test_custom_cc_rejects_unknown_register_name():
         )
 
 
-def test_custom_cc_rejects_invariant_violation_lr_not_in_callee_saved():
-    """A set `link_register` MUST also appear in `callee_saved_regs`."""
+def test_a_link_register_outside_callee_saved_is_a_callee_convention_only():
+    """A `link_register` missing from `callee_saved_regs` builds, for a
+    per-address callee that clobbers it, and is refused as the function's own
+    convention, whose returns go through it."""
     arch = strider.sleigh.SleighArch.aarch64()
-    with pytest.raises(strider.StriderError):
-        strider.sleigh.CallingConvention.custom(
-            sleigh=arch,
-            arg_passing_regs=["x0", "x1"],
-            callee_saved_regs=["x19", "x20"],  # the link register x30 belongs here
-            ret_val_regs=["x0"],
-            ret_val_regs_float=["q0"],
-            stack_pointer="sp",
-            stack_arg_base=None,
-            stack_arg_increment=8,
-            ret_stack_pop=0,
-            link_register="x30",
-            preserves_memory=False,
-        )
+    clobbers_lr = strider.sleigh.CallingConvention.custom(
+        sleigh=arch,
+        arg_passing_regs=["x0", "x1"],
+        callee_saved_regs=["x19", "x20"],
+        ret_val_regs=["x0"],
+        ret_val_regs_float=["q0"],
+        stack_pointer="sp",
+        stack_arg_base=None,
+        stack_arg_increment=8,
+        ret_stack_pop=0,
+        link_register="x30",
+        preserves_memory=False,
+    )
+    # ret
+    lift = strider.lift.lifter(arch, strider.reader.BufferReader(0x1000, b"\xc0\x03\x5f\xd6"))
+    with pytest.raises(strider.StriderError, match="callee_saved_regs"):
+        lift.analyze(0x1000, clobbers_lr)
+
+
+def test_the_ppc32_got_thunk_clobbers_only_lr():
+    """`bl _GLOBAL_OFFSET_TABLE_-4; mflr` (`-fpic -mbss-plt`): the word before
+    the GOT is `blrl`, which leaves LR at the GOT. Its convention keeps every
+    GPR and memory but not LR, so `mflr` after the call is not the `bl`'s
+    return address and the return through the saved LR still verifies."""
+    arch = strider.sleigh.SleighArch.ppc32be()
+    got_thunk = strider.sleigh.CallingConvention.custom(
+        arch,
+        arg_passing_regs=[],
+        callee_saved_regs=[f"r{i}" for i in range(32) if i != 1],
+        ret_val_regs=[],
+        ret_val_regs_float=[],
+        stack_pointer="r1",
+        stack_arg_base=None,
+        stack_arg_increment=4,
+        ret_stack_pop=0,
+        link_register="LR",
+        preserves_memory=True,
+    )
+    # mflr r0; bl 0x1104; mflr r3; mtlr r0; blr
+    code = bytes.fromhex("7c0802a6480001017c6802a67c0803a64e800020")
+    lift = strider.lift.lifter(arch, strider.reader.BufferReader(0x1000, code))
+    cc = strider.sleigh.CallingConvention.powerpc_sysv32()
+
+    def consts(result):
+        return {n.uint() for n in result.function.data_walk()} - {None}
+
+    preset = lift.analyze(0x1000, cc)
+    assert 0x1008 in consts(preset), "under the preset LR survives the call"
+    thunk = strider.lift.LifterOptions(per_address_ccs={0x1104: got_thunk})
+    result = lift.analyze(0x1000, cc, thunk)
+    assert result.unresolved == []
+    assert 0x1008 not in consts(result)
 
 
 def test_custom_cc_preserves_memory_chain():

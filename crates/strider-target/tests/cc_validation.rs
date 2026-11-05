@@ -37,11 +37,11 @@ fn validate_rejects_sp_in_arg_passing_regs() {
     );
 }
 
-/// The link register is in `callee_saved_regs` so `InitialVar(lr)` propagates
-/// through a call site; a `Some` `link_register` missing from that list is
-/// the one state the lifter cannot represent.
+/// A function's own link register is in `callee_saved_regs` so
+/// `InitialVar(lr)` propagates through a call site. A per-address callee's
+/// may be left out, so the call clobbers it.
 #[test]
-fn validate_rejects_a_link_register_outside_callee_saved() {
+fn only_a_default_convention_needs_its_link_register_callee_saved() {
     let lr = vn(0x58);
     let cc = BuiltCallingConvention {
         callee_saved_regs: vec![vn(0x20)],
@@ -49,8 +49,10 @@ fn validate_rejects_a_link_register_outside_callee_saved() {
         link_register: Some(lr),
         ..Default::default()
     };
+    cc.validate()
+        .expect("a callee may clobber its link register");
     let msg = cc
-        .validate()
+        .validate_default()
         .expect_err("a link register outside callee_saved_regs must be rejected")
         .to_string();
     assert!(
@@ -64,7 +66,7 @@ fn validate_rejects_a_link_register_outside_callee_saved() {
         link_register: Some(lr),
         ..Default::default()
     }
-    .validate()
+    .validate_default()
     .expect("a listed link register validates");
 }
 
