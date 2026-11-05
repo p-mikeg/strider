@@ -38,8 +38,8 @@ through A. A phi goes where the dominance of a region writing the value ends
 
 ## The IR
 
-**IR (intermediate representation).** Strider's representation of the
-function, between the CFG and your query. Every analysis runs on it.
+**IR (intermediate representation).** The graph Strider builds from the CFG;
+every analysis and query runs on it.
 
 **Sea of nodes.** The IR's shape: a graph, not an instruction list. Each
 operation is a **node**; **edges** carry values from producer to users. Order
@@ -64,10 +64,9 @@ of:
 
 **Value type.** Width and integer-or-float. Integers are `I1, I8, I16, I24,
 I32, I40, I48, I56, I64, I72, I80, I96, I112, I128, I256, I512`; floats are
-`F16, F32, F64, F80, F128`. A boolean is `I1`. The odd widths exist because
-some Sleigh register or temporary has that size
-(`crates/strider-ir/src/node/value_type.rs` names each source). In Python:
-`node.value_type()`.
+`F16, F32, F64, F80, F128`. A boolean is `I1`. Each odd width is the size of
+some Sleigh register or temporary (x86's 3-byte temporaries, the 80-bit x87
+registers). In Python: `node.value_type()`.
 
 **Walks (cfg, data, memory).** Traversals from the entry. A **cfg walk**
 follows control edges (`function.cfg_walk()`). A **data walk** (reachable walk)
@@ -103,10 +102,10 @@ removal, store-to-load forwarding, ...) before you query.
 matches all of them: `a - b` is always `a + (-b)`.
 [optimizations.md](optimizations.md) lists what each pass rewrites.
 
-**Assumption.** A claim about the code the IR cannot prove. Seven help the
-optimizer tell memory accesses apart (the stack and globals do not overlap, a
-named allocator returns fresh storage, ...); two are about the processor (an
-ARM register `msr` keeps the mode, float conversions round to nearest).
+**Assumption.** A claim about the code the IR cannot prove. Seven are about
+memory (the stack and globals do not overlap, a named allocator returns fresh
+storage, ...); two are about the processor (an ARM register `msr` keeps the
+mode, float conversions round to nearest).
 `AssumptionOptions` holds all nine; a wrong one makes the answer wrong, not
 imprecise. [python-api.md](python-api.md#2-analyzing-a-function) covers each.
 
