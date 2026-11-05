@@ -130,7 +130,8 @@ claims! {
         /// Lift-time only. Default on.
         pub msr_register_keeps_mode: bool = true,
         /// The dynamic rounding mode a float conversion reads is round-to-nearest-even.
-        /// Wrong after `fesetround` or under a mode a caller set. Lift-time only. Default on.
+        /// Wrong after `fesetround` or under a mode a caller set. Float arithmetic folds at
+        /// round-to-nearest-even either way. Lift-time only. Default on.
         pub fp_rounding_mode_is_nearest: bool = true,
     }
 
