@@ -294,7 +294,9 @@ pub struct PySymbol {
     #[pyo3(get)]
     name: String,
     /// `st_value`; for a ppc64 ELFv1 function, the code its `.opd`
-    /// descriptor names.
+    /// descriptor names. A Thumb function keeps the Thumb bit. An object
+    /// file's undefined, common or defined IFUNC symbol has an unmapped
+    /// address past the image.
     #[pyo3(get)]
     pub(crate) address: u64,
     /// `st_size`; `None` when 0, for an object file's defined IFUNC, or when
@@ -324,7 +326,9 @@ impl PySymbol {
 
 #[pymethods]
 impl PySymbol {
-    /// Whether the ELF types this `STT_FUNC` or `STT_GNU_IFUNC`.
+    /// Whether the ELF types this `STT_FUNC` or `STT_GNU_IFUNC`, but `False`
+    /// for an object file's defined IFUNC, which has no code at its extern
+    /// address.
     #[getter]
     fn is_function(&self) -> bool {
         self.is_function
@@ -828,7 +832,8 @@ impl PyLoadedElf {
         self.mem.clone()
     }
 
-    /// The `BufferReader` over code and read-only sections only.
+    /// The ROM `BufferReader`: non-writable mappings, an object file's
+    /// synthetic GOT, and `.got` / `.data.rel.ro` under `relocated_got_is_rom`.
     pub(crate) fn ro_reader(&self) -> PyBufferReader {
         self.rom.clone()
     }
