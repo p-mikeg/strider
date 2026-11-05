@@ -1,5 +1,6 @@
 //! Value-only DAG generator: a sequence of [`FunctionBuilder`] actions
-//! replayed against type-tagged operand buckets. No control flow.
+//! replayed against type-tagged operand buckets. Leaves are constants,
+//! entry reads of tracked registers and RAM loads. No control flow.
 
 use proptest::prelude::*;
 use strider_ir::node::ValueType;
@@ -16,15 +17,7 @@ fn int_ty() -> impl Strategy<Value = ValueType> {
 }
 
 fn binary_op() -> impl Strategy<Value = IntBinaryOp> {
-    prop_oneof![
-        Just(IntBinaryOp::Add),
-        Just(IntBinaryOp::Mul),
-        Just(IntBinaryOp::And),
-        Just(IntBinaryOp::Or),
-        Just(IntBinaryOp::Xor),
-        Just(IntBinaryOp::ShiftLeft),
-        Just(IntBinaryOp::ShiftRight),
-    ]
+    prop::sample::select(IntBinaryOp::ALL.to_vec())
 }
 
 fn unary_op() -> impl Strategy<Value = IntUnaryOp> {
@@ -32,15 +25,25 @@ fn unary_op() -> impl Strategy<Value = IntUnaryOp> {
 }
 
 fn cmp_op() -> impl Strategy<Value = IntCmpOp> {
-    prop_oneof![
-        Just(IntCmpOp::Equal),
-        Just(IntCmpOp::Less),
-        Just(IntCmpOp::Sless),
-    ]
+    prop::sample::select(IntCmpOp::ALL.to_vec())
 }
 
 fn extend_op() -> impl Strategy<Value = ExtendOp> {
     prop_oneof![Just(ExtendOp::ZeroExtend), Just(ExtendOp::SignExtend)]
+}
+
+/// Registers tracked per [`int_ty`] width, each its own container.
+const REGS_PER_WIDTH: u64 = 2;
+
+/// Register `idx` (mod [`REGS_PER_WIDTH`]) of `width`'s byte size.
+fn tracked_reg(width: ValueType, idx: u8) -> rsleigh::Vn {
+    let bytes = (width.bit_width() / 8) as u64;
+    let slot = bytes.trailing_zeros() as u64 * REGS_PER_WIDTH + u64::from(idx) % REGS_PER_WIDTH;
+    rsleigh::Vn {
+        addr_off: 0x100 + 0x10 * slot,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: bytes as u32,
+    }
 }
 
 /// Operand indices are taken modulo the bucket size at replay time, so no
@@ -50,6 +53,18 @@ pub enum Step {
     EmitIntConst {
         width: ValueType,
         value: u64,
+        lift_off: u16,
+    },
+    /// The entry value of a tracked register.
+    EmitEntryVar {
+        width: ValueType,
+        idx: u8,
+        lift_off: u16,
+    },
+    /// A RAM load through an I64 address.
+    EmitLoad {
+        width: ValueType,
+        addr_idx: u8,
         lift_off: u16,
     },
     EmitBinaryOp {
@@ -85,13 +100,24 @@ pub enum Step {
         src_idx: u8,
         lift_off: u16,
     },
+    EmitBitCount {
+        src_width: ValueType,
+        dst_width: ValueType,
+        lzcount: bool,
+        src_idx: u8,
+        lift_off: u16,
+    },
 }
 
 fn step_strategy() -> impl Strategy<Value = Step> {
     prop_oneof![
-        // Constants are weighted higher so the operand pool stays non-empty.
-        4 => (int_ty(), any::<u64>(), any::<u16>())
+        // Leaves are weighted higher so the operand pool stays non-empty.
+        2 => (int_ty(), any::<u64>(), any::<u16>())
             .prop_map(|(width, value, lift_off)| Step::EmitIntConst { width, value, lift_off }),
+        3 => (int_ty(), any::<u8>(), any::<u16>())
+            .prop_map(|(width, idx, lift_off)| Step::EmitEntryVar { width, idx, lift_off }),
+        1 => (int_ty(), any::<u8>(), any::<u16>())
+            .prop_map(|(width, addr_idx, lift_off)| Step::EmitLoad { width, addr_idx, lift_off }),
         2 => (int_ty(), binary_op(), any::<u8>(), any::<u8>(), any::<u16>())
             .prop_map(|(width, op, lhs_idx, rhs_idx, lift_off)|
                 Step::EmitBinaryOp { width, op, lhs_idx, rhs_idx, lift_off }),
@@ -107,6 +133,9 @@ fn step_strategy() -> impl Strategy<Value = Step> {
         1 => (int_ty(), int_ty(), extend_op(), any::<u8>(), any::<u16>())
             .prop_map(|(src_width, dst_width, op, src_idx, lift_off)|
                 Step::EmitExtend { src_width, dst_width, op, src_idx, lift_off }),
+        1 => (int_ty(), int_ty(), any::<bool>(), any::<u8>(), any::<u16>())
+            .prop_map(|(src_width, dst_width, lzcount, src_idx, lift_off)|
+                Step::EmitBitCount { src_width, dst_width, lzcount, src_idx, lift_off }),
     ]
 }
 
@@ -122,6 +151,8 @@ struct Pools {
     u32s: Vec<strider_ir::node::ValueId>,
     u64s: Vec<strider_ir::node::ValueId>,
     bools: Vec<strider_ir::node::ValueId>,
+    /// The latest value any step emitted: what the replay returns.
+    last: Option<strider_ir::node::ValueId>,
 }
 
 impl Pools {
@@ -160,23 +191,21 @@ impl Pools {
         }
     }
 
-    /// Any tracked value, so the replay always has something to return.
-    fn any_value(&self) -> Option<strider_ir::node::ValueId> {
-        for b in [&self.u64s, &self.u32s, &self.u16s, &self.u8s, &self.bools] {
-            if let Some(&v) = b.last() {
-                return Some(v);
-            }
-        }
-        None
+    fn push(&mut self, ty: ValueType, v: strider_ir::node::ValueId) {
+        self.bucket_mut(ty).push(v);
+        self.last = Some(v);
     }
 }
 
 /// `None` when the graph would be empty (nothing to return).
 pub fn replay(steps: &[Step]) -> Option<strider_ir::Function> {
-    let mut b = crate::empty_builder().ok()?;
-    let region = b.create_region_all().ok()?;
-    b.set_entry_region_all(region).ok()?;
-    b.set_region(region);
+    let mut regs = crate::RegisterSet::new();
+    for width in [8, 16, 32, 64] {
+        for idx in 0..REGS_PER_WIDTH as u8 {
+            regs = regs.tracked(tracked_reg(ValueType::int(width), idx));
+        }
+    }
+    let mut b = regs.build_fn_single_region().ok()?;
 
     let mut pools = Pools::default();
 
@@ -187,7 +216,7 @@ pub fn replay(steps: &[Step]) -> Option<strider_ir::Function> {
     }
     b.set_lift_addr(Some(crate::SENTINEL_LIFT_ADDR));
 
-    let ret_val = pools.any_value()?;
+    let ret_val = pools.last?;
     b.build_return(Some(ret_val), &[]).ok()?;
     b.set_lift_addr(None);
 
@@ -197,6 +226,9 @@ pub fn replay(steps: &[Step]) -> Option<strider_ir::Function> {
 fn step_lift_off(s: &Step) -> u16 {
     match s {
         Step::EmitIntConst { lift_off, .. }
+        | Step::EmitEntryVar { lift_off, .. }
+        | Step::EmitLoad { lift_off, .. }
+        | Step::EmitBitCount { lift_off, .. }
         | Step::EmitBinaryOp { lift_off, .. }
         | Step::EmitUnaryOp { lift_off, .. }
         | Step::EmitCmp { lift_off, .. }
@@ -209,7 +241,41 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
     match s {
         Step::EmitIntConst { width, value, .. } => {
             if let Ok(v) = b.build_int_const(*value as u128, *width) {
-                pools.bucket_mut(*width).push(v);
+                pools.push(*width, v);
+            }
+        }
+        Step::EmitEntryVar { width, idx, .. } => {
+            if let Ok(v) = b.read_variable(&tracked_reg(*width, *idx)) {
+                pools.push(*width, v);
+            }
+        }
+        Step::EmitLoad {
+            width, addr_idx, ..
+        } => {
+            let Some(addr) = pools.pick(ValueType::int(64), *addr_idx) else {
+                return;
+            };
+            if let Ok(v) = b.build_load(addr, rsleigh::VnSpace::RAM, *width) {
+                pools.push(*width, v);
+            }
+        }
+        Step::EmitBitCount {
+            src_width,
+            dst_width,
+            lzcount,
+            src_idx,
+            ..
+        } => {
+            let Some(src) = pools.pick(*src_width, *src_idx) else {
+                return;
+            };
+            let v = if *lzcount {
+                b.build_lzcount(src, *dst_width)
+            } else {
+                b.build_popcount(src, *dst_width)
+            };
+            if let Ok(v) = v {
+                pools.push(*dst_width, v);
             }
         }
         Step::EmitBinaryOp {
@@ -226,7 +292,7 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
                 return;
             };
             if let Ok(v) = b.build_int_binary_operation(lhs, rhs, *op, *width) {
-                pools.bucket_mut(*width).push(v);
+                pools.push(*width, v);
             }
         }
         Step::EmitUnaryOp {
@@ -236,7 +302,7 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
                 return;
             };
             if let Ok(v) = b.build_int_unary_operation(src, *op, *width) {
-                pools.bucket_mut(*width).push(v);
+                pools.push(*width, v);
             }
         }
         Step::EmitCmp {
@@ -253,7 +319,7 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
                 return;
             };
             if let Ok(v) = b.build_int_cmp_operation(lhs, rhs, *op, *width) {
-                pools.bucket_mut(ValueType::I1).push(v);
+                pools.push(ValueType::I1, v);
             }
         }
         Step::EmitTruncate {
@@ -270,7 +336,7 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
             if let Ok(v) = b.truncate_if_needed(src, *dst_width)
                 && v != src
             {
-                pools.bucket_mut(*dst_width).push(v);
+                pools.push(*dst_width, v);
             }
         }
         Step::EmitExtend {
@@ -286,7 +352,7 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
             if let Ok(v) = b.extend_if_needed(src, *dst_width, *op)
                 && v != src
             {
-                pools.bucket_mut(*dst_width).push(v);
+                pools.push(*dst_width, v);
             }
         }
     }
