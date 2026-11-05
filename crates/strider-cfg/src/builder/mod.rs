@@ -82,9 +82,9 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// ISA mode. Keyed on the site, since another site decodes the same
     /// address in another context.
     pub(super) refused_arms: Vec<(NodeIndex, PcodeInsnAddr)>,
-    /// Regions sealed onto a stub at non-code bytes, each empty (zero-pcode-op)
-    /// or past one, with the error [`Self::finish`] returns when no call falls
-    /// into it.
+    /// Regions sealed onto a stub at non-code bytes, with the error
+    /// [`Self::finish`] returns unless a call falls into it (`None`: marked
+    /// data).
     pub(super) nops_into_no_code: Vec<(NodeIndex, Option<anyhow::Error>)>,
 }
 
@@ -400,8 +400,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             && self.same_core_ops(full.insns.iter(), tail.insns.iter())
     }
 
-    /// Skipped on an arch with an ISA-mode var or committed flow vars, so a
-    /// throwaway decode leaks no mode and no context [`Self::enqueue`] reads.
+    /// Whether a prefix re-entry may be checked: not with an ISA-mode var or
+    /// committed flow vars, where a throwaway decode would leak a mode or a
+    /// context [`Self::enqueue`] reads.
     pub(super) fn may_reenter_prefix(&self) -> bool {
         self.engine.arch.isa_mode_var().is_none() && self.engine.tables.flow_commit.is_empty()
     }
@@ -553,8 +554,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
     }
 
-    /// The regions in `from` or falling into them through empty regions of
-    /// zero-pcode-op instructions whose last instruction is a call.
+    /// The `Unconditional` regions ending in a call among `from` and the
+    /// predecessors reached from `from` through empty regions.
     pub(super) fn calls_falling_into(
         &self,
         from: impl IntoIterator<Item = NodeIndex>,
