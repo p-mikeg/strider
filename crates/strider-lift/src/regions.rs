@@ -37,7 +37,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // Writing a variable needs a current region.
         self.builder.set_region(entry_ir);
         self.record_register_arg_carriers()?;
-        self.bind_entry_address_register()?;
+        self.bind_entry_registers()?;
         Ok(region_map)
     }
     /// Lifts every region's instructions, then its special terminator (whose

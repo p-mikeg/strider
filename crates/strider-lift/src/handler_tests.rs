@@ -131,6 +131,7 @@ fn with_test_lifter_arch_cc(
         all_vns.into_iter().chain(conventions).collect(),
         per_address_ccs,
         &cfg_opts,
+        &[],
     )
     .expect("driver");
     driver.builder.set_lift_addr(None);
@@ -1383,6 +1384,7 @@ pub(super) fn lift_bytes_with_opts(
             &opts,
             &rustc_hash::FxHashMap::default(),
             &strider_ir::AssumptionOptions::none(),
+            &[],
         )?
         .function)
 }

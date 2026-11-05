@@ -81,6 +81,7 @@ fn a_dropped_arm_region_is_removed_and_the_function_lifts() {
             &opts,
             &rustc_hash::FxHashMap::default(),
             &strider_ir::AssumptionOptions::none(),
+            &[],
         )
         .expect("the function lifts");
 }

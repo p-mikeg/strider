@@ -38,9 +38,13 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// across instructions, so only these need phis.
     pub(crate) fn collect_def_sites(&self) -> Result<(DefSites, FxHashSet<InitialVnId>)> {
         let mut scan = DefScan::default();
-        // Mirrors `bind_entry_address_register`, whose write no pcode names.
-        if let Some(vn) = self.builder.function().default_cc().entry_address {
-            self.add_def(&vn, self.cfg.entry(), &mut scan);
+        // Mirrors `bind_entry_registers`, whose writes no pcode names.
+        let entry_address = self.builder.function().default_cc().entry_address;
+        for vn in entry_address
+            .iter()
+            .chain(self.entry_values.iter().map(|(vn, _)| vn))
+        {
+            self.add_def(vn, self.cfg.entry(), &mut scan);
         }
         for r in self.cfg.region_ids() {
             let region = &self.cfg.region_graph()[r];

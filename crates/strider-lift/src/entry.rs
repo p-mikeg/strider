@@ -4,13 +4,22 @@ use crate::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Binds [`strider_target::BuiltCallingConvention::entry_address`] to
-    /// the entry address, so a TOC / GOT prologue folds; at a loop-header
-    /// entry, only the phi's entry-edge operand.
-    pub(crate) fn bind_entry_address_register(&mut self) -> Result<()> {
+    /// the entry address, so a TOC / GOT prologue folds, then each
+    /// `entry_values` register to its value; at a loop-header entry, only
+    /// the phi's entry-edge operand.
+    pub(crate) fn bind_entry_registers(&mut self) -> Result<()> {
+        let entry = self.entry_machine_addr();
+        if let Some(vn) = self.builder.function().default_cc().entry_address {
+            self.bind_entry_register(vn, entry)?;
+        }
+        for &(vn, value) in self.entry_values {
+            self.bind_entry_register(vn, value)?;
+        }
+        Ok(())
+    }
+
+    fn bind_entry_register(&mut self, vn: rsleigh::Vn, value: u64) -> Result<()> {
         use strider_ir::{IRBuilderExt as _, IRViewer as _, VnTypeExt as _};
-        let Some(vn) = self.builder.function().default_cc().entry_address else {
-            return Ok(());
-        };
         let container = self.container_map.container_of(&vn);
         // Untracked means the function never names it, so nothing reads it.
         if self.builder.function().vn_id_of(&container).is_none() {
@@ -30,7 +39,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let addr = self.entry_machine_addr();
         let ty = vn.int_type()?;
         self.with_lift_addr(Some(addr), |s| {
-            let value = s.builder.build_int_const(u128::from(addr), ty)?;
+            let value = s.builder.build_int_const(u128::from(value), ty)?;
             s.write_vn(&vn, value)
         })?;
         if let Some(phi) = phi {

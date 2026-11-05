@@ -201,20 +201,24 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             &strider_cfg::CfgOptions::default(),
             &rustc_hash::FxHashMap::default(),
             &strider_ir::AssumptionOptions::none(),
+            &[],
         )
     }
 
     /// Lifts `cfg`, built with `cfg_opts`, under default convention `cc`; a
     /// direct call to a `per_address_ccs` key uses its override. The function
     /// holds `claims`, of which the lift reads `msr_register_keeps_mode` and
-    /// `fp_rounding_mode_is_nearest`. Incompleteness is not an error. `cc` and
-    /// every override must be built against this engine's registers.
+    /// `fp_rounding_mode_is_nearest`. Each `entry_values` register holds its
+    /// value at entry (ppc64 ELFv1 `r2`, the descriptor's TOC), after
+    /// `cc.entry_address`. Incompleteness is not an error. `cc` and every
+    /// override must be built against this engine's registers.
     ///
     /// # Errors
     ///
     /// Among others, when a convention it uses fails
     /// [`strider_target::BuiltCallingConvention::validate`] or `check_addr_size`
-    /// for this arch.
+    /// for this arch, or an `entry_values` varnode is not a register or its
+    /// value does not fit it.
     pub fn build_ir_with(
         &self,
         cfg: &strider_cfg::Cfg,
@@ -222,12 +226,29 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         cfg_opts: &strider_cfg::CfgOptions,
         per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
         claims: &strider_ir::AssumptionOptions,
+        entry_values: &[(rsleigh::Vn, u64)],
     ) -> Result<LiftOutcome> {
         self.check_cfg_space_ids(cfg)?;
         self.check_cc(&cc)
             .map_err(|e| anyhow!("default convention: {e}"))?;
+        for &(vn, value) in entry_values {
+            let fits = vn.size >= 8 || value >> (8 * vn.size) == 0;
+            if vn.addr_space != rsleigh::VnSpace::REGISTER || vn.size == 0 || !fits {
+                return Err(anyhow!(
+                    "entry value {value:#x} for {vn:?}: not a register it fits"
+                ));
+            }
+        }
         let tracked = self.tracked_vns(cfg, &cc, cfg_opts, per_address_ccs, claims)?;
-        let mut driver = FunctionLifter::new(self, cc, cfg, tracked, per_address_ccs, cfg_opts)?;
+        let mut driver = FunctionLifter::new(
+            self,
+            cc,
+            cfg,
+            tracked,
+            per_address_ccs,
+            cfg_opts,
+            entry_values,
+        )?;
         driver.builder.function_mut().assume(claims);
 
         // Semi-pruned SSA: phis at the iterated dominance frontier of each

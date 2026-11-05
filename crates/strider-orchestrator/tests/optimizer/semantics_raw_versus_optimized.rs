@@ -508,6 +508,7 @@ fn sweep_fixture(fixture: &Fixture, rom: Rom, tally: &mut Tally) {
                 &opts.cfg,
                 opts.per_address_ccs,
                 &opts.assumptions,
+                &[],
             )
             .unwrap_or_else(|e| panic!("{at}: lifting the analysed cfg: {e:#}"))
             .function;

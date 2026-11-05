@@ -47,6 +47,7 @@ fn build_ir_with_applies_per_address_override() {
             &strider_cfg::CfgOptions::default(),
             &built,
             &strider_ir::AssumptionOptions::none(),
+            &[],
         )
         .unwrap();
     let bfg = outcome.function;

@@ -9,7 +9,8 @@ machine register modelled as an SSA variable.
 - `Lifter<R>`: wraps a `strider_cfg::DecodeEngine<R>`, reused across functions
   and rebuild rounds. `build_cfg(entry, cfg_opts)` decodes;
   `build_ir(cfg, cc)` / `build_ir_with(cfg, cc, cfg_opts, per_address_ccs,
-  claims)` lift.
+  claims, entry_values)` lift; `entry_values` binds registers to known
+  entry values (ppc64 ELFv1 `r2`).
 - `LiftOutcome`: the `Function` and its `LiftSites` (`unresolved_branches`,
   `switch_anchors`, `return_sites`).
 
