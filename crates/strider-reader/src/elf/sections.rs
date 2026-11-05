@@ -22,9 +22,9 @@ pub enum LoadFilter {
     /// Executable or non-writable mappings: what an instruction fetch may
     /// reference.
     CodeAndReadOnly,
-    /// Immutable mappings only. `LoadReadOnly` folds a constant-address load
-    /// past the memory chain, so a writable mapping here would fold a
-    /// store-then-reload to its file-initial value.
+    /// Immutable mappings only: a constant-address load from one folds to its
+    /// bytes, so a writable one would fold a store-then-reload to its
+    /// file-initial value.
     ImmutableOnly,
     /// [`ImmutableOnly`](Self::ImmutableOnly) plus relocated `.got`, `.got2`
     /// and `.data.rel.ro`, as under `got_is_rom`; a slot only the loader
@@ -329,16 +329,15 @@ impl ElfSectionLayout {
             // `sh_size`: SHT_NOBITS occupies address space too.
             let size = sec.size();
             let addr = sec.address();
-            // A section declaring an address below the watermark is rebased
-            // anyway; toolchains emit 0 for every ET_REL section. An empty
-            // one is seated too, without moving the watermark.
+            // An address below the watermark is rebased; an empty section is
+            // seated too, without moving the watermark.
             let base = if !alloc || addr >= watermark {
                 addr
             } else {
                 align_up(watermark, sec.align())
             };
-            // An overflowing `sh_size` (only SHT_NOBITS gets this far
-            // unchecked) leaves the watermark put and the section unseated.
+            // An overflowing `sh_size` leaves the watermark put and the
+            // section unseated.
             if alloc && size != 0 {
                 match base.checked_add(size) {
                     Some(end) => watermark = end,
@@ -353,7 +352,7 @@ impl ElfSectionLayout {
             bases.insert(sec.index().0, base);
         }
 
-        // Past the image: the undefined and common symbols, then the GOT.
+        // Past the image: the extern symbols, then the GOT.
         let past = |end: u64| align_up(end, ET_REL_PAGE).saturating_add(ET_REL_PAGE);
         let word = if obj.is_64() { 8 } else { 4 };
         let arch = obj.architecture();
@@ -405,8 +404,9 @@ impl ElfSectionLayout {
     }
 
     /// The synthetic address of an ET_REL undefined, `SHN_COMMON` or defined
-    /// `STT_GNU_IFUNC` symbol, in an unmapped range past the image; `.TOC.` is the PowerPC64 TOC
-    /// pointer, `_GLOBAL_OFFSET_TABLE_` the GOT's start. `None` otherwise.
+    /// `STT_GNU_IFUNC` symbol, in an unmapped range past the image. On
+    /// PowerPC64 `.TOC.` and `_GLOBAL_OFFSET_TABLE_` are the TOC pointer,
+    /// elsewhere `_GLOBAL_OFFSET_TABLE_` is the GOT's start. `None` otherwise.
     pub fn extern_address(&self, symbol_index: usize) -> Option<u64> {
         self.0.as_ref()?.externs.get(&symbol_index).copied()
     }
@@ -803,7 +803,7 @@ fn collect_loadable_segments(
     for (i, seg) in accepted.iter().enumerate() {
         widest
             .entry(seg.addr)
-            // First of a tie, so an image with no collisions is untouched.
+            // First of a tie.
             .and_modify(|w| {
                 if accepted[*w].file_range.1 < seg.file_range.1 {
                     *w = i;
