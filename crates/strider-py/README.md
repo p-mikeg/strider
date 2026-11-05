@@ -17,20 +17,20 @@ Then:
 
 ```python
 import strider
-from strider.pattern import load, int_add, Capture
+from strider.pattern import load, int_add, int_const, Capture
 
 prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 cfg, function, unresolved = prog.analyze("array_sum")
 
 base, off = Capture("base"), Capture("off")
-for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
-    print("offset =", hit.uint_opt(off))   # None if it is not a constant
+for hit in function.find_all(load(addr=int_add(base, int_const(off))), ignore_casts=True):
+    print("offset =", hit.uint(off))   # 4 and 8
 ```
 
 ## The module layout
 
-Every class and function lives in a domain submodule; `StriderError` is the
-only top-level class.
+`StriderError` is the only top-level class; everything else lives in a
+submodule.
 
 | Module | Main names |
 |---|---|
