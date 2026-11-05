@@ -96,7 +96,8 @@ pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item =
         .map(|(succ, _use_idx)| succ)
 }
 
-/// A dead CFG input still shows up while a live node uses it.
+/// Every input's producer and every CFG successor; a dead CFG input shows up
+/// while a live node uses it.
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
