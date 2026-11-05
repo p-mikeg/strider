@@ -7,7 +7,7 @@
 Strider answers precise questions about a compiled function, with no source
 and no debug symbols.
 
-It reads ELF images for x86 and x86-64, ARM/Thumb (little-endian, BE32, BE8),
+It reads ELF images (and raw bytes) for x86 and x86-64, ARM/Thumb (little-endian, BE32, BE8),
 AArch64 (LE/BE), MIPS32/64 (LE/BE, MIPS16e) and PowerPC 32/64 (LE/BE).
 
 ## What it does
@@ -39,8 +39,7 @@ pattern = load(addr=int_add(base, int_const(off)))
 for hit in function.find_all(pattern, ignore_casts=True):
     print("offset =", hit.uint(off))   # 4 and 8: the two stack arguments
 
-# A pannable graph explorer at a local URL; whole=False opens on the entry's
-# neighborhood (for large functions). background=True returns the port:
+# An interactive graph explorer at a local URL; background=True returns its port.
 port = strider.explore.visualize(function, background=True)
 strider.explore.shutdown(port)
 ```
@@ -123,6 +122,7 @@ Strider needs Rust 1.91 or newer and Python 3.9 or newer, and uses
 uv sync --group dev       # virtualenv and dev dependencies
 uv run maturin develop    # build the Rust extension
 uv run pytest             # run the test suite
+uv run pyright            # type-check against the stubs
 ```
 
 After changing a case, rebuild it with `make -C fixtures ARCH=<arch>
@@ -173,12 +173,6 @@ cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
 ```
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the full gate list.
-
-The Python side, from the repository root:
-
-```bash
-uv run maturin develop && uv run pyright && uv run pytest
-```
 
 ## License
 
