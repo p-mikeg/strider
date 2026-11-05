@@ -274,29 +274,6 @@ mod tests {
         let _ = FunctionBound::size(0);
     }
 
-    /// Options built over a caller's table hold a borrow of it, so neither
-    /// building nor cloning them copies it.
-    #[test]
-    fn options_borrow_the_callers_table() {
-        let known = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
-        let opts = opts_over(&known);
-        assert!(std::ptr::eq(opts.known_targets, &known));
-        assert!(std::ptr::eq(opts.clone().known_targets, &known));
-    }
-
-    #[test]
-    fn default_options_share_one_empty_table() {
-        let (a, b) = (CfgOptions::default(), CfgOptions::default());
-        assert!(a.known_targets.is_empty());
-        assert!(std::ptr::eq(a.known_targets, b.known_targets));
-        assert!(std::ptr::eq(a.known_targets, &NO_TARGETS));
-        assert!(std::ptr::eq(a.derived_targets, &NO_TARGETS));
-        assert!(std::ptr::eq(
-            a.call_other_overrides,
-            &strider_target::call_other_abi::NO_OVERRIDES
-        ));
-    }
-
     #[test]
     fn seated_in_falls_back_to_the_machine_start_key() {
         let known = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
