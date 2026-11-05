@@ -1,4 +1,4 @@
-"""Type stubs for strider.template: the build side of a rewrite.
+"""The build side of a rewrite.
 
 `Function.rewrite(find, replace)` and `rewrite_all` take as `replace` a
 `Template`, a `Capture` or a capture's name; a `Pat` is refused, nested or

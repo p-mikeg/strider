@@ -1,4 +1,4 @@
-"""Type stubs for strider.pattern.constraints: relational join constraints.
+"""Relational join constraints.
 
 A constraint is a relational predicate over the captures patterns bind,
 evaluated after the join and passed as `find_all(..., constraints=[...])`.

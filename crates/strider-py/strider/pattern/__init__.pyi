@@ -1,4 +1,4 @@
-"""Type stubs for strider.pattern: the match-side pattern DSL.
+"""The match-side pattern DSL.
 
 `Pat` is the left-hand side of a `find` or `rewrite` query. A rewrite
 right-hand side (`replace=`) is a `strider.template.Template`: a `Pat` there
