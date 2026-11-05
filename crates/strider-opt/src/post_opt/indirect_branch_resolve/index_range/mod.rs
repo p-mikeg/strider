@@ -27,8 +27,8 @@ pub(crate) use trust::{CELL_TEST_SCANS, EQUALITY_SCANS};
 use bit_field::{BitField, MaskOperands, bit_field};
 pub(crate) use interval::width_mask;
 
-/// Cast hops [`RangeMap::dominating_guard`] and [`RangeMap::edge_bound_on`]
-/// walk before giving up.
+/// Operand hops [`RangeMap::dominating_guard`], [`RangeMap::edge_bound_on`]
+/// and [`cast_chain`] take before giving up.
 const MAX_GUARD_LADDER: u32 = 8;
 
 /// Deepest chain of `(value, region)` resolutions [`RangeMap::range_of`]
@@ -56,9 +56,8 @@ pub(crate) struct RangeMap<'f> {
     kb_bounds: SecondaryMap<ValueId, Option<Interval>>,
     /// Resolved intervals, with `InProgress` cutting resolution cycles.
     memo: FxHashMap<(ValueId, NodeId), MemoSlot>,
-    /// Per `If`-controlled edge, what taking it proves and about which value.
-    /// Unlike `guard_forests`, this covers edges landing on a merge, where the
-    /// fact holds only for the phi arm arriving on that edge.
+    /// Per `If`-controlled edge, what taking it proves and about which value,
+    /// including edges into a merge, where it holds only for that edge's arm.
     edge_guards: FxHashMap<ValueId, (ValueId, Interval)>,
     /// The edges into a merge whose guards the merge's recovered guard joins.
     merged_edges: FxHashSet<ValueId>,
@@ -78,7 +77,7 @@ pub(crate) struct RangeMap<'f> {
     cut: bool,
     /// Every `If`, by the loads its condition reads.
     cell_tests: trust::CellTests,
-    /// The KnownBits facts the bounds above are built from.
+    /// KnownBits facts per value.
     known: KnownBitsMap,
     /// Per `(value, k)`, where each `If(y == k)` false edge holds, `y` being
     /// `value` or a zero-extend of it.
