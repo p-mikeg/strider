@@ -3,10 +3,11 @@
 //! consistency oracle: a misconception the interpreter shares with a pass is
 //! invisible here.
 //!
-//! The generators emit integer arithmetic, compares, shifts, casts,
-//! popcount/lzcount, phis and `If` / `Return` / `Unreachable` control only: no
-//! memory, call, `Switch` or float node. The DAG generator draws every width
-//! of [`TYPES`]; the CFG generator draws `I8`, `I32` and `I256`.
+//! The generators emit integer arithmetic (`I1` included), compares, shifts
+//! (counts of any width), casts, popcount/lzcount, phis and `If` / `Return` /
+//! `Unreachable` control only: no memory, call, `Switch` or float node. The
+//! DAG generator draws every width of [`TYPES`]; the CFG generator draws `I8`,
+//! `I32` and `I256`.
 //!
 //! Environment: `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS`
 //! nodes per DAG, and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone.
@@ -131,10 +132,29 @@ impl Gen<'_> {
         match self.rng.below(40) {
             0..=11 => {
                 let op = IntBinaryOp::ALL[self.rng.below(IntBinaryOp::ALL.len())];
+                let ty = if self.rng.chance(30) {
+                    ValueType::I1
+                } else {
+                    ty
+                };
                 let x = self.var_or_val(b, ty);
-                let y = self.val(b, ty);
-                let v = b.build_int_binary_operation(x, y, op, ty).unwrap();
+                let v = if op.is_shift() && self.rng.chance(50) {
+                    self.shift_by_any_width(b, op, x, ty)
+                } else {
+                    let y = self.val(b, ty);
+                    b.build_int_binary_operation(x, y, op, ty).unwrap()
+                };
                 self.push(v, ty);
+                if op.is_shift() && self.rng.chance(30) {
+                    let shifts = [
+                        IntBinaryOp::ShiftLeft,
+                        IntBinaryOp::ShiftRight,
+                        IntBinaryOp::SShiftRight,
+                    ];
+                    let op = shifts[self.rng.below(shifts.len())];
+                    let v = self.shift_by_any_width(b, op, v, ty);
+                    self.push(v, ty);
+                }
             }
             12 => {
                 let x = self.var_or_val(b, ty);
@@ -230,6 +250,23 @@ impl Gen<'_> {
                 self.push(v, ty);
             }
         }
+    }
+
+    /// `x <op> c`, the count `c` of a random width from `I1` to `I512`.
+    fn shift_by_any_width(
+        &mut self,
+        b: &mut FunctionBuilder,
+        op: IntBinaryOp,
+        x: ValueId,
+        ty: ValueType,
+    ) -> ValueId {
+        let count_ty = if self.rng.chance(10) {
+            ValueType::I1
+        } else {
+            TYPES[self.rng.below(TYPES.len())].1
+        };
+        let c = self.val(b, count_ty);
+        b.build_single_output_pure(NodeKind::IntBinaryOp(op), [x, c], ty)
     }
 
     fn not(&mut self, b: &mut FunctionBuilder, x: ValueId) -> ValueId {
