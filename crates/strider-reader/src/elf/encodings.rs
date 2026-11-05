@@ -391,8 +391,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             let word = if arch == A::Mips64 { 8 } else { 4 };
             match r_type {
                 elf::R_MIPS_GLOB_DAT | elf::R_MIPS_JUMP_SLOT => C(V::Slot, data(word, false)),
-                // MIPS64 linkers compose it with `R_MIPS_64` for the 64-bit
-                // pointer slot glibc's `ld.so` patches as one word.
+                // MIPS64 composes it with `R_MIPS_64` into one 64-bit word.
                 elf::R_MIPS_REL32 => C(
                     if r.sym.is_none() {
                         V::ImageRelative
