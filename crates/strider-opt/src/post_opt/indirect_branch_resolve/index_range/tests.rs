@@ -2874,3 +2874,75 @@ fn a_capped_meet_keeps_the_wider_stride() {
     assert_eq!(m, wide.intersect(narrow));
     assert!(m.contains(9118));
 }
+
+/// `p = phi(arm(b, 0xA000), arm(b, 0xA010))` at `I64`, then
+/// `if (6 < trunc32(p)) exit else dispatch`. Returns the function, `p` and
+/// the dispatch edge's consumer.
+fn phi_under_a_truncated_guard(
+    arm: impl Fn(&mut FunctionBuilder, u64) -> ValueId,
+) -> (Function, ValueId, NodeId) {
+    let idx_vn = reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    let [entry, path_a, path_b, join, dispatch, exit] =
+        std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    let sel = opaque(&mut b, 0xF000);
+    guard_if(&mut b, sel, 1, path_a, path_b);
+    for (region, addr) in [(path_a, 0xA000), (path_b, 0xA010)] {
+        b.set_region(region);
+        let v = arm(&mut b, addr);
+        b.write_variable(&idx_vn, v).unwrap();
+        b.build_branch(join).unwrap();
+    }
+    b.set_region(join);
+    let p = b.read_variable(&idx_vn).unwrap();
+    let t = b.build_single_output_pure(NodeKind::Truncate, [p], ValueType::int(32));
+    let over = c_less(&mut b, 6, t);
+    b.build_if(over, exit, dispatch).unwrap();
+    for region in [dispatch, exit] {
+        b.set_region(region);
+        b.build_return(Some(p), &[]).unwrap();
+    }
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    let guard = f
+        .walk()
+        .find(|&n| {
+            matches!(f.node_kind(n), NodeKind::If)
+                && f.producer_inputs_exact::<2>(f.graph().nth_input(n, 1).unwrap())
+                    .is_ok_and(|[_, t]| matches!(f.kind_of_value(t), NodeKind::Truncate))
+        })
+        .expect("the If on the truncation");
+    let (p, _) = join_phi(&f, 2);
+    let dispatch = edge_consumer(&f, guard, 1);
+    (f, p, dispatch)
+}
+
+/// A phi whose arms fit 32 bits takes a guard on its truncation to 32 bits.
+#[test]
+fn a_phi_within_a_guarded_truncation_takes_its_guard() {
+    let (f, p, dispatch) = phi_under_a_truncated_guard(|b, addr| {
+        let x = opaque(b, addr);
+        b.build_single_output_pure(
+            NodeKind::Extend(ExtendOp::ZeroExtend),
+            [x],
+            ValueType::int(64),
+        )
+    });
+    let iv = range_at(&f, p, dispatch);
+    assert_eq!((iv.lo, iv.hi), (0, 6), "{iv:?}");
+}
+
+/// A phi with an arm past 32 bits keeps its high bits: `trunc32(p) <= 6`
+/// does not bound it.
+#[test]
+fn a_phi_past_a_guarded_truncation_ignores_its_guard() {
+    let (f, p, dispatch) = phi_under_a_truncated_guard(|b, addr| {
+        let a = b.build_int_const(addr, ValueType::int(64)).unwrap();
+        b.build_load(a, VnSpace::RAM, ValueType::int(64)).unwrap()
+    });
+    let iv = range_at(&f, p, dispatch);
+    assert!(iv.is_top(u128::from(u64::MAX)), "{iv:?}");
+}

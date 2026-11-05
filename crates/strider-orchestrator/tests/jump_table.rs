@@ -42,6 +42,9 @@ mod jump_table_sibling_extend_guard;
 #[path = "jump_table/jump_table_truncated_byte.rs"]
 mod jump_table_truncated_byte;
 
+#[path = "jump_table/loop_carried_switch_truncated_guard.rs"]
+mod loop_carried_switch_truncated_guard;
+
 #[path = "jump_table/masked_scaled_narrow_index.rs"]
 mod masked_scaled_narrow_index;
 
