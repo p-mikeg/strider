@@ -10,7 +10,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// `write_vn` would silently truncate or zero-extend.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
-        super::arithmetic::require_same_size(nth_input_or_err(insn, 0)?, out_vn, "unary op")?;
+        super::arithmetic::require_same_size(nth_input_or_err(insn, 0)?, out_vn, "COPY")?;
         let value = self.read_input(insn, 0)?;
         self.write_vn(out_vn, value)
     }
