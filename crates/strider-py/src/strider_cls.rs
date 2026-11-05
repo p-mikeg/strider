@@ -877,6 +877,7 @@ impl PyLifter {
             resolve_indirect_branches: opts.resolve_indirect_branches,
             assumptions: opts.assumptions.get().inner.clone(),
             compact: opts.compact,
+            entry_values: &[],
         };
         // A Python reader keeps the GIL so finalisation waits for the analysis.
         let result = with_pending_control_flow(|| {

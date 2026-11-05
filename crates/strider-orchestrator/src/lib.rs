@@ -41,6 +41,10 @@ pub struct AnalyzeOptions<'a> {
     pub assumptions: AssumptionOptions,
     /// Drops unreachable nodes once the loop settles.
     pub compact: bool,
+    /// Registers holding a known value on entry, as
+    /// [`Lifter::build_ir_with`]'s `entry_values`: ppc64 ELFv1 `r2` is the
+    /// TOC word of the `.opd` descriptor the function is entered through.
+    pub entry_values: &'a [(rsleigh::Vn, u64)],
 }
 
 impl Default for AnalyzeOptions<'_> {
@@ -51,6 +55,7 @@ impl Default for AnalyzeOptions<'_> {
             resolve_indirect_branches: true,
             assumptions: AssumptionOptions::default(),
             compact: true,
+            entry_values: &[],
         }
     }
 }
