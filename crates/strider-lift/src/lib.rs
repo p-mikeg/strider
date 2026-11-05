@@ -217,8 +217,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// Among others, when a convention it uses fails
     /// [`strider_target::BuiltCallingConvention::validate`] or `check_addr_size`
-    /// for this arch, `cc` fails `validate_default`, or an `entry_values` varnode is not a register or its
-    /// value does not fit it.
+    /// for this arch, `cc` fails `validate_default`, or an `entry_values`
+    /// varnode is not a register or its value does not fit it.
     pub fn build_ir_with(
         &self,
         cfg: &strider_cfg::Cfg,
