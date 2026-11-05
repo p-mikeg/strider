@@ -330,8 +330,9 @@ impl ElfSectionLayout {
             let size = sec.size();
             let addr = sec.address();
             // A section declaring an address below the watermark is rebased
-            // anyway; toolchains emit 0 for every ET_REL section.
-            let base = if !alloc || size == 0 || addr >= watermark {
+            // anyway; toolchains emit 0 for every ET_REL section. An empty
+            // one is seated too, without moving the watermark.
+            let base = if !alloc || addr >= watermark {
                 addr
             } else {
                 align_up(watermark, sec.align())

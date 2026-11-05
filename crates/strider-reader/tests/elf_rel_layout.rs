@@ -586,3 +586,55 @@ fn a_section_overrunning_the_address_space_seats_none_of_its_symbols() {
         "a writable .bss symbol must not read back the .text"
     );
 }
+
+/// A symbol in an empty allocated section is seated at the watermark, as
+/// `ld` seats it, so a pointer to it is not null.
+#[test]
+fn a_symbol_in_an_empty_section_is_not_null() {
+    use object::write::{Object as WObject, Relocation, StandardSegment, Symbol, SymbolSection};
+    use object::{
+        Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
+    };
+    let mut obj = WObject::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let data = obj.segment_name(StandardSegment::Data).to_vec();
+    let ro = obj.add_section(
+        data.clone(),
+        b".rodata.tab".to_vec(),
+        SectionKind::ReadOnlyData,
+    );
+    obj.append_section_data(ro, &[0u8; 8], 8);
+    let bss = obj.add_section(data, b".bss.e_obj".to_vec(), SectionKind::UninitializedData);
+    obj.append_section_bss(bss, 0, 1);
+    let sym = obj.add_symbol(Symbol {
+        name: b"e_obj".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Data,
+        scope: SymbolScope::Dynamic,
+        weak: false,
+        section: SymbolSection::Section(bss),
+        flags: SymbolFlags::None,
+    });
+    obj.add_relocation(
+        ro,
+        Relocation {
+            offset: 0,
+            symbol: sym,
+            addend: 0,
+            flags: object::RelocationFlags::Elf {
+                r_type: object::elf::R_X86_64_64,
+            },
+        },
+    )
+    .unwrap();
+    let elf = strider_reader::OwnedElf::parse(obj.write().unwrap()).unwrap();
+    let reader = strider_reader::ElfFileMemReader::new(
+        &elf,
+        elf::RelocationMode::Applied { got_is_rom: false },
+    )
+    .unwrap();
+    // `.rodata.tab` is the first rebased section.
+    let mut word = [0u8; 8];
+    reader.read(0x1000_0000, &mut word).unwrap();
+    assert_eq!(u64::from_le_bytes(word), 0x1000_0008, "&e_obj");
+}
