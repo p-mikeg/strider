@@ -500,7 +500,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 }
                 Err(e) => return Err(e),
             };
-            // Bounded by `lift_res.insns.len()`, a usize.
+            // A p-code index; fits a usize.
             #[allow(clippy::cast_possible_truncation)]
             let start_pcode_idx = cur_addr.insn_index as usize;
             let is_zero_op = lift_res.insns.len() <= start_pcode_idx;
