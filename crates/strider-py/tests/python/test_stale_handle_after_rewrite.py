@@ -96,3 +96,12 @@ def test_node_handle_stale_after_a_rewrite_that_raises():
         )
     with pytest.raises(strider.StriderError, match="stale"):
         handle.kind()
+
+
+def test_a_match_stale_after_optimize_names_optimize():
+    g = _build_graph()
+    x, y = Capture(), Capture()
+    stale_match = g.find_all(int_add(var(x), var(y)))[0]
+    g.optimize()
+    with pytest.raises(strider.StriderError, match="optimized"):
+        stale_match.uint(x)
