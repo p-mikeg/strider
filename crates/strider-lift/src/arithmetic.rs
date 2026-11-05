@@ -1,6 +1,5 @@
-//! Narrowing a 1-byte p-code boolean to `I1` assumes it is 0 or 1 (p-code's
-//! boolean ops act on the whole varnode, so `BOOL_OR(2, 0)` differs). Every
-//! vendored spec feeds them comparisons, carry flags or one-bit bitranges.
+//! BOOL ops read their input's low bit, truncating it to `I1` (p-code acts on
+//! the whole byte); every vendored spec feeds them 0/1.
 
 use strider_ir::node::ValueId;
 use strider_ir::{
