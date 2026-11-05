@@ -72,19 +72,11 @@ fn orchestrator_sparse_switch_is_if_chain_x64() {
 // lean on `KnownBits` for the index bound (the way `switch.c` does); it
 // must walk the compiler's `cmp; ja` range-check `If` via `value_range`.
 //
-// The dense (`dispatch_unmasked`) shape resolves on both x86 and x64. x64
-// only works because `clean()`'s incremental re-canonicalization merges
-// the duplicate `Truncate(rdi)` nodes a phi-collapse left behind, putting
-// the guard on the same `Truncate(rdi)` node the 64-bit index is
-// `ZeroExtend(..)`-wrapped from; the cone walk reaches that inner guarded
-// Truncate directly. `value_range` does not bound the outer `ZeroExtend`.
-//
 // The offset-base (`dispatch_offset`) cases (labels starting at a nonzero
 // base) lower to a compound range check
 // `If(Or(Less(k-K, N), Equal(k-last, 0)))` ("k-K is in the low range OR k
-// is the last case"). `FlagCmpCanonicalize` rule 15 recognises that
-// disjunction as `(k-K) <= N` and rewrites to the canonical `<=` shape,
-// which `value_range` then bounds.
+// is the last case"). `FlagCmpCanonicalize` rewrites that disjunction to
+// `(k-K) <= N`, which `value_range` bounds.
 
 #[test]
 fn orchestrator_resolves_jump_tables_x86() {
@@ -99,8 +91,9 @@ fn orchestrator_resolves_jump_tables_x64() {
 
 // The general clone+optimise classifier resolves the masked (`switch`),
 // value_range-bounded unmasked, and offset jump tables on every non-x86
-// arch too: addressing differs per compiler, but the optimiser folds it
-// once the index is pinned.
+// arch whose compiler emits a table: addressing differs per compiler, but
+// the optimiser folds it once the index is pinned.  gcc lowers all three to
+// compare chains on aarch64 little-endian.
 
 fn assert_table_resolves(arch: common::Arch, case: &str, fn_name: &str) {
     let function = run_orchestrator_on(arch, case, fn_name)
@@ -109,6 +102,12 @@ fn assert_table_resolves(arch: common::Arch, case: &str, fn_name: &str) {
         count_indirect_branch_placeholders(&function),
         0,
         "{arch:?}/{case}/{fn_name}: jump table must lower to concrete switch edges",
+    );
+    assert!(
+        function
+            .walk()
+            .any(|n| matches!(function.node_kind(n), strider_ir::node::NodeKind::Switch(_))),
+        "{arch:?}/{case}/{fn_name}: no Switch, so there was no table to resolve",
     );
 }
 
@@ -123,7 +122,6 @@ fn assert_all_table_shapes_resolve(arch: common::Arch) {
 
 #[test]
 fn orchestrator_resolves_jump_tables_aarch64() {
-    assert_all_table_shapes_resolve(common::Arch::Aarch64);
     assert_all_table_shapes_resolve(common::Arch::Aarch64Be);
 }
 
@@ -157,15 +155,11 @@ fn orchestrator_resolves_jump_tables_ppc32() {
 }
 
 // ppc64 reaches its table through the TOC, whose pointer the ELFv2 prologue
-// derives from the entry-address register (`r12`). With that register bound
-// the masked and value_range-unmasked shapes resolve; the offset shape
-// still defers on both endians.
+// derives from the entry-address register (`r12`).
 #[test]
 fn orchestrator_resolves_toc_relative_jump_tables_ppc64() {
-    for arch in [common::Arch::Ppc64be, common::Arch::Ppc64le] {
-        assert_table_resolves(arch, "switch", "dispatch_value");
-        assert_table_resolves(arch, "switch_value_range", "dispatch_unmasked");
-    }
+    assert_all_table_shapes_resolve(common::Arch::Ppc64be);
+    assert_all_table_shapes_resolve(common::Arch::Ppc64le);
 }
 
 // MIPS N64 accesses the jump table through the GOT relative to `gp` even
