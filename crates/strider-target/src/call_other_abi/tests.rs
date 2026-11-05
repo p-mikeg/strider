@@ -248,7 +248,12 @@ fn msr_and_segment_base_ops_classify_pure_or_pure_with_mem_edge() {
     // pcode chain, so the footprint is explicit.  The writes
     // carry a memory edge so opt passes cannot forward across them.
     let pure_ops = ["rdmsr", "readfsbase", "readgsbase"];
-    let edge_ops = ["wrmsr", "writefsbase", "writegsbase"];
+    let edge_ops = [
+        ("wrmsr", &[] as &[&str]),
+        ("writefsbase", &["FS_OFFSET"]),
+        ("writegsbase", &["GS_OFFSET"]),
+        ("swapgs", &["GS_OFFSET"]),
+    ];
     for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
         for n in pure_ops {
             let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
@@ -258,18 +263,18 @@ fn msr_and_segment_base_ops_classify_pure_or_pure_with_mem_edge() {
             assert_eq!(abi, empty_abi(), "{preset:?}/{n}");
             assert!(!abi.clobbers_memory, "{preset:?}/{n}");
         }
-        for n in edge_ops {
+        for (n, writes) in edge_ops {
             let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
             let CallOtherClass::Call(abi) = class else {
                 panic!("{preset:?}/{n}: expected Call")
             };
             assert_eq!(abi.implicit_reads, &[] as &[&str], "{preset:?}/{n}");
-            assert_eq!(abi.implicit_writes, &[] as &[&str], "{preset:?}/{n}");
+            assert_eq!(abi.implicit_writes, writes, "{preset:?}/{n}");
             assert!(abi.clobbers_memory, "{preset:?}/{n}");
         }
     }
     // The encoded instructions only exist on x86/x86_64.
-    for n in pure_ops.iter().chain(edge_ops.iter()) {
+    for n in pure_ops.into_iter().chain(edge_ops.map(|(n, _)| n)) {
         assert_eq!(
             classify(crate::ArchPreset::Aarch64, n),
             None,
