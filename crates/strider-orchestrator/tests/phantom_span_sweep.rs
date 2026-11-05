@@ -4,9 +4,7 @@
 //! an empty region nor takes the hole/round-down branch.  A violation panics,
 //! and every fixture function must build.
 //!
-//! `build_cfg` only: nothing here lifts, optimises, or resolves, so it makes no
-//! claim about `Strider::analyze`.  The orchestrator's own claims are covered
-//! by `orchestrator_indirect_*` and `isa_mode_resolved_branch`.
+//! `build_cfg` only: nothing here lifts, optimises, or resolves.
 //!
 //! ```text
 //! cargo test -p strider-orchestrator --test phantom_span_sweep -- --ignored --nocapture
