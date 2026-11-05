@@ -252,6 +252,32 @@ def test_a_wrong_typed_entry_raises_type_error_everywhere(entry):
             assert "ElfLifter.analyze" in str(raised.value)
 
 
+class _IndexFails(Exception):
+    pass
+
+
+class _BadIndex:
+    def __index__(self) -> int:
+        raise _IndexFails("from __index__")
+
+
+def test_an_entry_index_error_propagates_as_raised():
+    """Only a wrong type or an out-of-range int is `entry`'s own error."""
+    lifter = _x86_64(_STRAIGHT)
+    prog = strider.lift.load_elf(fixture_path("x64", "memory"))
+    calls = [
+        lambda: lifter.analyze(
+            _BadIndex(),  # type: ignore[arg-type]
+            CallingConvention.x86_64_systemv(),
+        ),
+        lambda: lifter.build_cfg(_BadIndex()),  # type: ignore[arg-type]
+        lambda: prog.build_cfg(_BadIndex()),  # type: ignore[arg-type]
+    ]
+    for call in calls:
+        with pytest.raises(_IndexFails):
+            call()
+
+
 def _analyzed_function():
     lifter = _x86_64(_STRAIGHT)
     return lifter.analyze(_BASE, CallingConvention.x86_64_systemv()).function
