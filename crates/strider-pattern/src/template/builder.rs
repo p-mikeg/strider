@@ -109,7 +109,6 @@ impl TemplateBuilder {
         self.add_value(node, TmplValue { slot, ty })
     }
 
-    /// A memory output.
     pub fn memory_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
         self.add_value(node, TmplValue { slot, ty: None })
     }

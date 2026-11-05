@@ -28,7 +28,6 @@ use crate::graph_ext::consumed_inputs;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
 
-/// The value is interned at the resolved output width.
 pub type TemplateKindFnIntConst =
     Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<strider_ir::UBig> + Send>;
 
@@ -50,7 +49,6 @@ pub(crate) enum TemplateTy {
     /// The width of the value a bound LHS capture matched
     /// (`Sless(x<<C, 0) -> Xor(Equal(And(x,mask),0),1)`: `And` is `x`-wide, not `I1`).
     InheritBinding(crate::Capture),
-    /// A fixed type.
     Fixed(ValueType),
 }
 
