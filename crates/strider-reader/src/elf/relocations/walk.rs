@@ -269,7 +269,7 @@ pub(super) fn without_repeated_tables_of<Elf: object::read::elf::FileHeader>(
 }
 
 /// For each `SHT_REL` `R_MIPS_HI16` in `relocs`, the offset of the next
-/// `R_MIPS_LO16` against the same symbol; empty unless there are any.
+/// `R_MIPS_LO16` against the same symbol; empty off MIPS.
 pub(super) fn mips_hi16_pairs(relocs: &[(u64, RelocInfo)], arch: A) -> Vec<Option<u64>> {
     if !matches!(arch, A::Mips | A::Mips64) {
         return Vec::new();

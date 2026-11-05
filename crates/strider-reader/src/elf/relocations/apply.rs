@@ -108,7 +108,7 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
     };
 
     let holder = ctx.holder_or_hole(site, field_addr, size_bytes, r.type_word());
-    // An `Absolute` target, an immediate with no symbol, has no `S` to add.
+    // No `S`: STN_UNDEF, or a symbol with no address.
     let Some(target) = r
         .sym
         .and_then(|idx| resolve_symbol_target(obj, ctx.layout, idx))
@@ -158,9 +158,8 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
 
 /// Field width of a relocation `object` does not size: 8 for a MIPS64
 /// composite with `R_MIPS_64`, a ppc64 doubleword64 or prefixed instruction,
-/// or an x86-64 64-bit word, 2 for a PowerPC half16
-/// (`r_offset` names the halfword), else an instruction word or x86
-/// displacement.
+/// or an x86-64 64-bit word; 2 for a PowerPC half16 (`r_offset` names the
+/// halfword); else 4.
 pub(super) fn unknown_field_bytes(arch: A, r: &RelocInfo) -> usize {
     match arch {
         A::Mips64 if [r.r_type, r.r_type2, r.r_type3].contains(&object::elf::R_MIPS_64) => 8,
@@ -287,8 +286,8 @@ pub(super) fn compute_classified(
     {
         return None;
     }
-    // A data word holding an IFUNC is not known, and only its GOT slot's
-    // address is; in code, `S` names it.
+    // Outside code an IFUNC's value is unknown; a GOT reference needs only
+    // its slot's address.
     if target.is_some_and(|t| t.ifunc)
         && !value_kind_through_got(value_kind)
         && !ctx.in_code(p, field.width())
@@ -404,7 +403,7 @@ pub(super) fn value_kind_through_got(value: Value) -> bool {
 /// Whether an i386 `GOT32` / `GOT32X` field at `p` is its slot's address
 /// rather than its GOT offset: lld's test, a preceding ModRM with `mod = 0,
 /// rm = 5`. `None` for a `lea` (`0x8d`), which GNU ld exempts. A field in its
-/// section's first two bytes is an offset.
+/// region's first two bytes is an offset.
 pub(super) fn i386_got_absolute(region: &MemRegion, p: u64) -> Option<bool> {
     let off = (p - region.start_addr()) as usize;
     if off < 2 || region.raw()[off - 1] & 0xc7 != 0x05 {

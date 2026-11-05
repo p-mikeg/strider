@@ -207,8 +207,9 @@ impl<'a> Ctx<'a, '_> {
         self.executable.touches(addr, width)
     }
 
-    /// A relocation whose value is not computed: a hole over the field, one
-    /// per patch-wide piece, skipping writable non-executable bytes.
+    /// A relocation whose value is not computed: when a region holds the
+    /// field, a hole over it per patch-wide piece, skipping writable
+    /// non-executable bytes.
     fn unmodelled(&mut self, holder: Option<&MemRegion>, addr: u64, width: usize, r_type: u32) {
         if holder.is_none() {
             return;
