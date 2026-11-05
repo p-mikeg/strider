@@ -103,7 +103,8 @@ fn reentrant_lifter_err() -> PyErr {
 }
 
 /// `entry` as an [`crate::bigint::Addr`]: `TypeError` for a non-int, a `str`
-/// naming the one method that takes a symbol.
+/// naming the one method that takes a symbol. Another error from `__index__`
+/// propagates as raised.
 fn entry_addr(entry: &Bound<'_, PyAny>) -> PyResult<u64> {
     if entry.is_instance_of::<pyo3::types::PyString>() {
         return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -116,11 +117,13 @@ fn entry_addr(entry: &Bound<'_, PyAny>) -> PyResult<u64> {
         .extract::<crate::bigint::Addr>()
         .map(|a| a.0)
         .map_err(|e| {
-            let msg = format!("`entry`: {}", e.value_bound(py));
+            let msg = || format!("`entry`: {}", e.value_bound(py));
             if e.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {
-                pyo3::exceptions::PyTypeError::new_err(msg)
+                pyo3::exceptions::PyTypeError::new_err(msg())
+            } else if e.is_instance_of::<crate::errors::StriderError>(py) {
+                into_strider_err(anyhow::anyhow!(msg()))
             } else {
-                into_strider_err(anyhow::anyhow!(msg))
+                e
             }
         })
 }
