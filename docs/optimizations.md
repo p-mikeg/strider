@@ -9,10 +9,10 @@ default set. When a pattern does not match, a pass has usually reshaped it.
 - **Rewriting passes** loop together to a fixed point. A pass whose last run
   changed nothing is skipped until another pass changes the graph. The loop is
   capped at 1024 iterations and raises if it has not settled.
-- **Post-passes** run once afterwards. Most record facts; `CallStackArgCollect`
-  adds a call's stack arguments as extra `Call` inputs, and `FunctionArgDetect`
-  moves argument loads' memory edges past definitions that cannot overwrite
-  them.
+- **Post-passes** run once afterwards: `CallStackArgCollect` adds a call's
+  stack arguments as extra `Call` inputs, and `FunctionArgDetect` records the
+  incoming stack arguments and moves their loads' memory edges past
+  definitions that cannot overwrite them.
 
 ## Rewriting passes
 
@@ -140,8 +140,8 @@ loop grows from; a site holding only your seed is listed as
   convention naming `t9` (the abicalls entry address) and
   `load_elf(relocated_got_is_rom=True)`. Local entries only; a global
   (imported-symbol) entry stays unmapped.
-- PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, whose table is
-  in `.data.rel.ro`: needs `load_elf(relocated_got_is_rom=True)`.
+- A label table in writable `.data.rel.ro` (PIC tables on AArch64, ARM, MIPS
+  and PowerPC): no ROM serves it without `load_elf(relocated_got_is_rom=True)`.
 - A dispatch in a loop whose arms call a function clobbering the table-base
   register: once the loop closes the selector no longer derives. Use
   `per_address_ccs={callee: cc.preserves_regs()}`.
@@ -155,6 +155,10 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   16-byte `str q0` writes two entries as one 128-bit constant.
 - An index with a constant offset that can go below zero, such as
   `(x & 7) - 2`.
+- A mask naming entries past the table (MIPS32 gcc: `& 7` over six entries).
+- An index or table entry read back from a stack slot through a memory phi or
+  at a variable index (clang -O0 on aarch64be and arm_be, arm_be8's two-slot
+  stack array).
 
 ## Known limits
 
