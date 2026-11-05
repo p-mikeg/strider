@@ -7,7 +7,8 @@ use pyo3::types::{PyBytes, PyDict, PyMemoryView};
 
 use crate::errors::into_strider_err;
 use strider_reader::elf::{
-    AddressSet, ElfSectionLayout, OpdTable, RegionSource, RelocationMode, without_ranges,
+    AddressSet, ElfSectionLayout, OpdTable, RegionSource, RelocationMode, mapping_symbol_kind,
+    without_ranges,
 };
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory, RegionIndex};
 
@@ -675,6 +676,11 @@ impl PyLoadedElf {
             };
             let layout = ElfSectionLayout::new(&file);
             let arm = file.architecture() == object::Architecture::Arm;
+            let marks_spans = arm
+                || matches!(
+                    file.architecture(),
+                    object::Architecture::Aarch64 | object::Architecture::Aarch64_Ilp32
+                );
             // `None` off ppc64 ELFv1.
             let opd = Opds::new(&file, &loaded);
             // ELFv1: `.f` names the code, `f` the descriptor.
@@ -692,7 +698,8 @@ impl PyLoadedElf {
                 std::collections::HashSet::new();
             for sym in file.symbols().chain(file.dynamic_symbols()) {
                 let Ok(name) = sym.name() else { continue };
-                if name.is_empty() {
+                // A mapping symbol marks a code or data span, not a symbol.
+                if name.is_empty() || (marks_spans && mapping_symbol_kind(name).is_some()) {
                     continue;
                 }
                 let place = symbol_place(&sym, &layout);
@@ -892,8 +899,8 @@ impl PyLoadedElf {
         }
     }
 
-    /// Every symbol as `dict[str, Symbol]`, keyed by the name it resolves
-    /// under.
+    /// Every symbol but ARM / AArch64 mapping symbols as `dict[str, Symbol]`,
+    /// keyed by the name it resolves under.
     fn symbols(&self) -> PyResult<HashMap<String, PySymbol>> {
         self.with_symbols(|t| {
             t.by_name

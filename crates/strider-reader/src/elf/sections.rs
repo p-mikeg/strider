@@ -466,6 +466,16 @@ pub(crate) fn is_ifunc<'d>(sym: &impl object::ObjectSymbol<'d>) -> bool {
     )
 }
 
+/// The kind letter of an ARM / AArch64 mapping symbol name: `$a`, `$d`, `$t`
+/// or `$x`, optionally suffixed `.<anything>`.
+pub fn mapping_symbol_kind(name: &str) -> Option<u8> {
+    match name.as_bytes() {
+        [b'$', k @ (b'a' | b'd' | b't' | b'x')]
+        | [b'$', k @ (b'a' | b'd' | b't' | b'x'), b'.', ..] => Some(*k),
+        _ => None,
+    }
+}
+
 /// The spans of executable sections that ARM / AArch64 mapping symbols mark as
 /// data (literal pools): each `$d` run to the next `$a` / `$t` / `$x` in its
 /// section, or the section's end. Sorted by start.
@@ -481,16 +491,10 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
         if sym.kind() == SymbolKind::Section {
             continue;
         }
-        // `$d`, `$a`, `$t`, `$x`, optionally suffixed `.<anything>`.
-        let kind = match name.as_bytes() {
-            [b'$', k] | [b'$', k, b'.', ..] => *k,
-            _ => continue,
+        let Some(kind) = mapping_symbol_kind(name) else {
+            continue;
         };
-        let is_data = match kind {
-            b'd' => true,
-            b'a' | b't' | b'x' => false,
-            _ => continue,
-        };
+        let is_data = kind == b'd';
         let Some(address) = layout.try_symbol_address(&sym) else {
             continue;
         };

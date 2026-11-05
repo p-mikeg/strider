@@ -78,3 +78,24 @@ fn a_run_of_data_marks_is_one_range() {
         vec![base + 0x10..base + 0x20, base + 0x30..base + 0x40]
     );
 }
+
+#[test]
+fn a_mapping_symbol_name_is_a_kind_letter_with_an_optional_suffix() {
+    use strider_reader::elf::mapping_symbol_kind as kind;
+    for (name, want) in [
+        ("$a", Some(b'a')),
+        ("$d", Some(b'd')),
+        ("$t", Some(b't')),
+        ("$x", Some(b'x')),
+        ("$d.1", Some(b'd')),
+        ("$x.foo", Some(b'x')),
+        ("$", None),
+        ("$b", None),
+        ("$dd", None),
+        ("$d1", None),
+        ("d", None),
+        ("main", None),
+    ] {
+        assert_eq!(kind(name), want, "{name}");
+    }
+}
