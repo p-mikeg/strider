@@ -886,8 +886,9 @@ fn an_uncomputed_eight_byte_field_holes_all_eight_bytes() {
     }
 }
 
-/// The PowerPC TLS markers name no field: the `bl __tls_get_addr` they mark
-/// is served as assembled, not holed.
+/// The PowerPC TLS markers name no field: the instruction they mark (the
+/// `bl __tls_get_addr` of a `TLSGD` / `TLSLD` sequence, the initial-exec
+/// `add` of a `TLS`) is served as assembled, not holed.
 #[test]
 fn a_ppc_tls_marker_leaves_its_instruction_served() {
     for (arch, r_type) in [
