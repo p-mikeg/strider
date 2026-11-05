@@ -15,7 +15,8 @@ impl RangeMap<'_> {
     /// overlap the bits varying within `iv` (`value`'s range at `region`,
     /// `narrowed` when tighter than KnownBits), in a way
     /// [`BitField::project`](super::bit_field::BitField::project) does not
-    /// carry to `value`. Such a guard may be the table's real, tighter bound.
+    /// carry to `value`, nor to its varying bits within `iv`. Such a guard may
+    /// be the table's real, tighter bound.
     pub(crate) fn guard_left_unconnected(
         &mut self,
         value: ValueId,
@@ -38,9 +39,10 @@ impl RangeMap<'_> {
             of.overlaps(varying)
                 && over.iter().any(|&guarded| {
                     guarded != value
-                        && self
-                            .guard_at(guarded, region)
-                            .is_some_and(|iv| of.project(field, iv).is_none())
+                        && self.guard_at(guarded, region).is_some_and(|giv| {
+                            of.project(field, giv).is_none()
+                                && !of.project(varying, giv).is_some_and(|b| b.covers(iv))
+                        })
                 })
         })
     }
