@@ -22,6 +22,12 @@ These change an answer without an error:
   `<name>.cold.N` fragments instead of ending at a tail call.
 - `BoundCapture`'s readers are methods: `m[c].uint` is a bound method, so
   `m[c].uint == 4` is `False`; call `m[c].uint()`.
+- An object file's defined IFUNC symbol sits at the unmapped extern address
+  a call to it targets, not at its resolver: its `Symbol.address` changes,
+  its `size` is `None`, it is not `is_function` and `functions()` leaves it
+  out; `analyze` of it raises.
+- `asm_fingerprint` of a constant a compare or integer binary op reads
+  through a register no longer includes that instruction's address.
 
 These raise:
 
@@ -112,8 +118,6 @@ replaced the rest.
 
 ### Added, Python
 
-- Every `Match` reader is a `BoundCapture` method without the key:
-  `m[c].uint()` is `m.uint(c)`, likewise `node`, `asm_fingerprint`, `_opt`.
 - `Capture("any_")` is an ordinary name; only `"_"` stays reserved.
 - `CfgOptions(fragment_ranges=[(start, end)])`: address ranges that also
   belong to the function (what `ElfLifter` fills from `.cold` symbols).
@@ -157,6 +161,8 @@ replaced the rest.
   and raise when a replacement would build nodes no instruction produced.
 - `ElfLifter.build_cfg` derives `data_ranges` and ppc64 local entries from
   the ELF as `analyze` does.
+- `ElfLifter.analyze` takes an `__index__` entry as an address, as
+  `Lifter.analyze` does.
 - `ElfLifter.analyze` enters a ppc64 ELFv1 function with `r2` holding its
   `.opd` descriptor's TOC pointer, so TOC-relative loads and jump tables
   resolve as they do on ELFv2.
@@ -305,7 +311,15 @@ Loading:
 - `load_elf` refuses a microMIPS image unless given both `arch=` and `cc=`,
   and a COFF or Mach-O file; a malformed ELF raises `StriderError`.
 - An uncomputed PowerPC half16 relocation holes only its halfword, and an
-  uncomputed MIPS64 `R_MIPS_64` composite its whole 8-byte field.
+  uncomputed 8-byte field (MIPS64 `R_MIPS_64` composite, x86-64 `GOTPLT64`
+  / `SIZE64`, ppc64 doubleword64 and prefixed fields) all eight bytes.
+- A symbol in an empty allocated `ET_REL` section sits at the section's
+  aligned base, where it read 0.
+- The PowerPC TLS markers (`R_PPC64_TLSGD` / `TLSLD`, ppc32 `R_PPC_TLS` /
+  `TLSGD` / `TLSLD`) leave the instruction they mark served, where they
+  holed it.
+- `add_symbol_file` of a ppc64 ELFv1 debug file names the code its `.opd`
+  descriptors point at, read from the loaded image, not the descriptors.
 - A ppc64 ELFv1 function's `Symbol.size` is its `st_size`; ppc64 ELFv2
   `no_return_targets` and `per_address_ccs` keyed by symbol also cover the
   local entry.
