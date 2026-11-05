@@ -1,7 +1,5 @@
-"""Relational join constraints.
-
-A constraint is a relational predicate over the captures patterns bind,
-evaluated after the join and passed as `find_all(..., constraints=[...])`.
+"""Relational join constraints: predicates over the captures patterns bind,
+evaluated after the join, passed as `find_all(..., constraints=[...])`.
 """
 
 from __future__ import annotations
@@ -56,8 +54,8 @@ def phi_input_from_edge(
 
 def negate(c: ConstraintLike) -> JoinConstraint:
     """The negation of `c`: a match survives only if `c` does not hold. A
-    tuple `c` cannot answer for (an unbound capture, a capture with no
-    dominator-tree position) drops here too."""
+    match `c` cannot judge (an unbound capture, a capture with no
+    dominator-tree position) is dropped here too."""
 
 def any_of(constraints: Sequence[ConstraintLike]) -> JoinConstraint:
     """Passes when any listed constraint passes; an empty list passes
