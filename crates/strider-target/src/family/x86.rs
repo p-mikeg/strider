@@ -39,7 +39,9 @@ const fn base_write(base: &'static [&'static str]) -> CallOtherClass {
 
 const CALL_OTHER: &[Row] = &[
     // `swi` is every INT vector (0x80, INT3, ...), so it names no registers:
-    // a stack address passed to `int 0x80` in EBX escapes unseen.
+    // a stack address passed to `int 0x80` in EBX escapes unseen. `int` is
+    // `swi` plus the sla's `call [intloc]`: a `Call` under the default
+    // convention, clobbering every register it does not keep.
     Row {
         names: &["swi"],
         only: None,
@@ -81,12 +83,12 @@ const CALL_OTHER: &[Row] = &[
         only: None,
         class: PURE,
     },
-    // WRMSR: operands explicit; an MSR (FSBASE, ...) can change what later
-    // loads read.
+    // WRMSR: operands explicit; ECX may name IA32_FS_BASE / IA32_GS_BASE, and
+    // any MSR can change what later loads read.
     Row {
         names: &["wrmsr"],
         only: None,
-        class: MEM_CLOBBER,
+        class: base_write(&["FS_OFFSET", "GS_OFFSET"]),
     },
     // RDFSBASE / RDGSBASE: the destination is the p-code output.
     Row {
@@ -474,9 +476,6 @@ impl CallingConvention {
     /// argument on the stack, to [`Self::x86_cdecl`] in `per_address_ccs`.
     #[must_use]
     pub const fn x86_linux_kernel() -> Self {
-        // `int 0x80` clobbers EAX/ECX/EDX through the sla's trailing
-        // `call [intloc]` (constructor `INT`), an ordinary `Call` under the
-        // function's default convention.
         CallingConvention {
             arg_passing_regs: &["EAX", "EDX", "ECX"],
             ..X86_CDECL_BASE

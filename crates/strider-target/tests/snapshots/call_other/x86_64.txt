@@ -1730,7 +1730,7 @@ writeToShadowStack UNCLASSIFIED
 writeToUserShadowStack UNCLASSIFIED
 writefsbase call reads=[] writes=["FS_OFFSET"] mem=true noret=false
 writegsbase call reads=[] writes=["GS_OFFSET"] mem=true noret=false
-wrmsr call reads=[] writes=[] mem=true noret=false
+wrmsr call reads=[] writes=["FS_OFFSET", "GS_OFFSET"] mem=true noret=false
 wrpkru UNCLASSIFIED
 x87Prem call reads=[] writes=[] mem=false noret=false
 x87Prem1 call reads=[] writes=[] mem=false noret=false

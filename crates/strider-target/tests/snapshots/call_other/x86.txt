@@ -1604,7 +1604,7 @@ vxorps_avx512dq UNCLASSIFIED
 vxorps_avx512vl UNCLASSIFIED
 writeToShadowStack UNCLASSIFIED
 writeToUserShadowStack UNCLASSIFIED
-wrmsr call reads=[] writes=[] mem=true noret=false
+wrmsr call reads=[] writes=["FS_OFFSET", "GS_OFFSET"] mem=true noret=false
 wrpkru UNCLASSIFIED
 x87Prem call reads=[] writes=[] mem=false noret=false
 x87Prem1 call reads=[] writes=[] mem=false noret=false
