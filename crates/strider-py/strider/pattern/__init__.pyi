@@ -213,8 +213,8 @@ class Capture:
     def __init__(self, name: Optional[str] = ...) -> None:
         """A capture variable. `Capture()` is fresh and unique;
         `Capture("name")` interns the name, the same capture as a rewrite RHS
-        `"name"`. A bare string is not a match-pattern operand. Reserved
-        names (`"_"`, `"any_"`) raise."""
+        `"name"`. A bare string is not a match-pattern operand. The reserved
+        name `"_"` raises."""
         ...
 
 #: A `Capture` or its name: a `Match` key and the argument to `.capture()`,
