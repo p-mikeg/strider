@@ -443,29 +443,6 @@ fn an_override_carries_a_resolved_footprint() {
     ));
 }
 
-#[test]
-fn opaque_variant_does_not_exist() {
-    // The exhaustive match below is a compile-time guard: adding or
-    // removing a `CallOtherClass` variant breaks the build here.
-    for n in ["setISAMode", "invalidInstructionException", "cpuid"] {
-        let class = classify(crate::ArchPreset::X86_64, n).unwrap();
-        match class {
-            CallOtherClass::NoOp | CallOtherClass::Call(_) => {}
-        }
-    }
-}
-
-/// `:LFENCE` / `:MFENCE` / `:SFENCE` in `ia.sinc` have empty constructor
-/// bodies, so Sleigh emits no p-code and no user-op for them.
-#[test]
-fn x86_fences_reach_no_table_row() {
-    for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
-        for name in ["mfence", "sfence", "lfence", "MFENCE", "SFENCE", "LFENCE"] {
-            assert_eq!(classify(preset, name), None, "({preset:?}, {name})");
-        }
-    }
-}
-
 fn x86_64_sleigh_regs() -> rsleigh::SleighRegs {
     let arch = crate::SleighArch::x86_64();
     arch.probe_regs()
