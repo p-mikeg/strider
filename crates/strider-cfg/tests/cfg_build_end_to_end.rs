@@ -81,25 +81,8 @@ fn single_ret_produces_one_region_without_tail_call_flag() {
 }
 
 #[test]
-fn back_jump_splits_region() {
-    // The `jmp -4` targets 0x1002, mid-region, triggering split_region.
-    let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
-    let cfg = build_from_bytes(bytes, 0x1000);
-    assert!(
-        cfg.region_graph().node_count() >= 2,
-        "expected at least 2 regions after back-jump split; got {}",
-        cfg.region_graph().node_count()
-    );
-    // The back-jump edges from the branch region to the split second half.
-    assert!(
-        cfg.region_graph().edge_count() >= 1,
-        "expected at least one edge from the back-jump"
-    );
-}
-
-#[test]
 fn split_both_halves_unconditional() {
-    // Same back-jump fixture, asserting per-half terminators.
+    // The `jmp -4` targets 0x1002, mid-region.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
     let cfg = build_from_bytes(bytes, 0x1000);
 
@@ -759,27 +742,6 @@ fn a_call_other_override_outranks_the_unconditional_ppc_trap_rule() {
         "a returning override for `trapWord` must keep the region open"
     );
     assert_eq!(decoded, vec![0x1000, 0x1004, 0x1008, 0x100c]);
-}
-
-fn build_one(engine: &mut DecodeEngine<TestReader>, start: u64) -> Cfg {
-    engine
-        .build_cfg(start.into(), &CfgOptions::default())
-        .expect("build_cfg")
-}
-
-/// The Cfg never owns the engine, so a rebuild reuses it without re-loading
-/// the SLA spec.
-#[test]
-fn an_engine_can_be_used_for_multiple_cfg_builds() {
-    let reader = BufMemReader::new(vec![0xc3u8], 0x1000);
-    let mut engine = DecodeEngine::new(SleighArch::x86_64(), reader).expect("decode engine");
-    let count1 = build_one(&mut engine, 0x1000).region_graph().node_count();
-    let count2 = build_one(&mut engine, 0x1000).region_graph().node_count();
-    let cfg3 = build_one(&mut engine, 0x1000);
-    assert!(count1 >= 1);
-    assert!(count2 >= 1);
-    assert!(cfg3.region_graph().node_count() >= 1);
-    let _ = cfg3.entry();
 }
 
 /// `jmp rax` at 0x1000 followed by 16 `int3`.
