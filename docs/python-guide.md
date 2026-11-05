@@ -103,6 +103,8 @@ Each accessor raises if the capture is unbound or has no value of that kind;
 the `_opt` form returns `None`. `hit.has("off")` tests for a capture.
 
 ```python
+hits = function.find_all(load(addr=int_add(base, off)), ignore_casts=True)
+hit = next(h for h in hits if h.uint_opt(off) is not None)   # a constant offset
 hit.uint(off)                # unsigned integer constant (raises if not one)
 hit.uint_opt(off)            # ... or None instead of raising
 hit.sint(off)                # signed version
