@@ -116,8 +116,10 @@ class LoadForward:
         ...
 
 class FunctionArgDetect:
-    """Records which values carry each incoming stack-passed argument. Register
-    arguments are recorded at lift time."""
+    """Numbers the incoming stack slots the entry-SP loads read, after the
+    register arguments: one ordinal per run of slots one load spans, stopping
+    at the first slot no load reads. An argument read in pieces takes one
+    ordinal per piece. Register arguments are recorded at lift time."""
     def __init__(self) -> None:
         ...
 

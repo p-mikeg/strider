@@ -643,8 +643,9 @@ impl PyLifter {
         Self::build_cfg_at(slf, py, entry, opts, Some(elf))
     }
 
-    /// Lift, optimise and resolve the function at address `entry`. Returns
-    /// even when incomplete: check `Cfg.incomplete`.
+    /// Lift, optimise and resolve the function at address `entry`. Incomplete
+    /// code is reported in `Cfg.incomplete`, not raised, except an unmapped
+    /// entry or a fall-through no call explains into bytes Sleigh rejects.
     #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
         slf: Py<Self>,
@@ -693,6 +694,10 @@ impl PyLifter {
 
     /// The p-code (ops joined `"; "`, empty for none) of the instruction at
     /// `addr`, decoding linearly from `entry`.
+    ///
+    /// A call with a new `entry`, or the first after an `analyze` or
+    /// `build_cfg`, clones the whole decoder; for per-function p-code,
+    /// `build_cfg(entry).pcode_at(addr)` is far cheaper.
     fn pcode_at(
         slf: &Bound<'_, Self>,
         entry: &Bound<'_, PyAny>,

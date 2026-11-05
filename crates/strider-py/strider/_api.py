@@ -229,7 +229,8 @@ def load_elf(
     unmapped. The flag is an unchecked claim that nothing rewrites a slot
     after loading and each symbol binds to its own definition (`LD_PRELOAD`
     or code writing its GOT makes it false). With `apply_relocations=False`
-    it raises `StriderError`.
+    it raises `StriderError`. An object file's synthetic GOT is read-only
+    either way: its synthetic link binds every symbol locally.
 
     Raises `FileNotFoundError` for a missing `path`, `ValueError` for a
     non-ELF or an unsupported architecture or ABI (microMIPS included), and

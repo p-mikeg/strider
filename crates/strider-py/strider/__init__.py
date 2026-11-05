@@ -115,28 +115,42 @@ class _NodePat(_t.Protocol):
     """A node-pattern builder: captures, guards, and seals into a `Pat`."""
 
     def capture(self: _S, c: "pattern.CaptureKey") -> _S:
-        """Capture the matched node under `c`, a `Capture` or a name."""
+        """Bind the matched node to `c`, a `Capture` or a name."""
         ...
 
     def when(self: _S, f: _t.Callable[["pattern.Match"], bool]) -> _S:
-        """Attach a Python predicate that runs after the match."""
+        """Keep a match only when `f` returns `True`; a rejected binding
+        backtracks. A non-`bool` return is a `TypeError`. Raising aborts the
+        query and re-raises out of `find_all` / `find_unique`. `f` may run on
+        a partial match, more than once, or not at all."""
         ...
 
     def into_pat(self) -> "pattern.Pat":
-        """Finalise into a `Pat`."""
+        """Finalise to a reusable `Pat`. A wrong-typed operand raises here; one
+        that can never match its slot raises at the first query. Rarely
+        needed: a builder auto-finalises where a pattern is expected."""
         ...
 
 
 @_t.runtime_checkable
 class _InputPat(_t.Protocol):
-    """A builder whose node kind has input slots."""
+    """A builder whose node kind exposes raw input slots."""
 
     def input(self: _S, idx: int, p: "pattern.PatLike") -> _S:
-        """Match `p` against raw input slot `idx`."""
+        """Match `p` against raw input slot `idx`: `Call` is `[ctrl, mem,
+        target, sp, arg0, ...]`, `Load` `[mem, addr]`, `If` `[ctrl, cond]`.
+
+        A typed value sub-pattern binds only a value edge; `var` /
+        `anything` any edge; a control producer (`entry()`, `region()`, ...)
+        its control edge; a `call()` / `call_other()` any of its outputs
+        (`.res()` keeps it to the value).
+        """
         ...
 
     def any_input(self: _S, p: "pattern.PatLike") -> _S:
-        """Require SOME input of the node to match `p`."""
+        """Require some input of the node to match `p`, without pinning a
+        slot; binding follows `input`. Repeatable, each call a distinct
+        slot."""
         ...
 
 
@@ -145,7 +159,8 @@ class _CtrlPat(_t.Protocol):
     """A builder whose node kind has a control-predecessor input."""
 
     def ctrl(self: _S, p: "pattern.PatLike") -> _S:
-        """Match `p` against the node's direct ctrl predecessor."""
+        """Match `p` against the node's direct ctrl predecessor
+        (`inputs[0]`)."""
         ...
 
 
@@ -153,21 +168,28 @@ class _CtrlPat(_t.Protocol):
 class _MemPat(_t.Protocol):
     """A builder whose node kind has a memory input."""
 
-    def mem(self: _S, p: "pattern.PatLike") -> _S:
-        """Match `p` against the node's memory predecessor."""
+    def mem(self: _S, p: "pattern.MemLike") -> _S:
+        """Match `p` against the node's memory predecessor; takes a memory
+        producer (`store` / `mem_phi` / `call` / `call_other`)."""
         ...
 
 
 @_t.runtime_checkable
 class _MemAccessPat(_t.Protocol):
-    """A builder for a node kind that addresses memory: `load` / `store`."""
+    """A builder whose node kind addresses memory: `load()` and `store()`.
 
-    def addr(self: _S, p: "pattern.PatLike") -> _S:
-        """Constrain the address operand."""
+    `stack_offset`, `stack_only`, `non_stack` and `heap_only` set one region
+    filter; the last one called wins, except that `stack_only` keeps an
+    offset an earlier `stack_offset` pinned.
+    """
+
+    def addr(self: _S, p: "pattern.ValueLike") -> _S:
+        """Constrain the address operand (`inputs[1]`)."""
         ...
 
     def bit_width(self: _S, n: int) -> _S:
-        """Filter by accessed-value width in bits."""
+        """Filter by accessed-value width in bits. A width no value type has
+        raises `StriderError`."""
         ...
 
     def space(self: _S, s: "sleigh.VnSpace") -> _S:
@@ -175,20 +197,23 @@ class _MemAccessPat(_t.Protocol):
         ...
 
     def stack_offset(self: _S, k: int) -> _S:
-        """Match only accesses whose address decomposes to exactly `sp + k`."""
+        """Match only accesses whose address decomposes to exactly
+        `sp + k`."""
         ...
 
     def stack_only(self: _S) -> _S:
-        """Keep only accesses whose address decomposes to a stack base."""
+        """Keep only accesses whose address decomposes to a stack base.
+        Keeps an earlier `stack_offset`; replaces any other filter."""
         ...
 
     def non_stack(self: _S) -> _S:
         """Keep only accesses whose address decomposes to a heap base or is
-        proven not memory-rooted."""
+        proven not memory-rooted; an undecided address is rejected."""
         ...
 
     def heap_only(self: _S) -> _S:
-        """Keep only accesses whose address decomposes to a heap base."""
+        """Keep only accesses whose address decomposes to a heap base (a
+        pure allocator's return pointer)."""
         ...
 
 
@@ -197,20 +222,24 @@ class _OrderedPat(_t.Protocol):
     """A pattern whose root takes an operand pair `ordered` can pin."""
 
     def ordered(self: _S) -> _S:
-        """Stop the matcher retrying this op with its operands swapped."""
+        """Stop the matcher retrying this op with its operands swapped. Pins
+        this node alone (for `int_ne` / `float_ne`, the `Equal` under the
+        `Xor`). On a `Pat` with no operands to order (a wildcard, a constant,
+        a `one_of`) it raises."""
         ...
 
 
 @_t.runtime_checkable
 class _OutputPat(_t.Protocol):
-    """A builder whose node kind has output slots."""
+    """A builder whose node kind exposes raw output slots."""
 
     def output(self, slot: int) -> "pattern.OutputSlotPat":
-        """Bind or constrain the value at raw output `slot`."""
+        """Bind or constrain the value at raw output `slot` (a `Call` is
+        `[ctrl, mem, result, ...clobbers]`, a `Load` `[value]`)."""
         ...
 
     def any_output(self) -> "pattern.OutputSlotPat":
-        """Some output rather than a fixed slot."""
+        """Like `output`, over some output rather than a fixed slot."""
         ...
 
 

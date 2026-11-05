@@ -195,8 +195,11 @@ opt_passes! {
     }
     post {
         "FunctionArgDetect" => PyFunctionArgDetect = strider_orchestrator::opt::FunctionArgDetect,
-            "Records which values carry each incoming stack-passed argument. \
-             Register arguments are recorded at lift time.";
+            "Numbers the incoming stack slots the entry-SP loads read, after the \
+             register arguments: one ordinal per run of slots one load spans, \
+             stopping at the first slot no load reads. An argument read in pieces \
+             takes one ordinal per piece. Register arguments are recorded at lift \
+             time.";
         "CallStackArgCollect" => PyCallStackArgCollect =
             strider_orchestrator::opt::CallStackArgCollect,
             "Wires the stack slots written before a call in as that call's \

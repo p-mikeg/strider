@@ -212,7 +212,9 @@ impl PyNode {
     }
 
     /// The machine-instruction addresses recorded on this node, sorted and
-    /// deduplicated.
+    /// deduplicated: its lift's, each lift that reused it, and those of nodes
+    /// folded into it. A superset of the instructions behind the value: a
+    /// shared constant carries every address that used it.
     pub(crate) fn asm_fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.with_node(py, |function, nid| {
             let mut addrs: Vec<u64> = function

@@ -263,10 +263,13 @@ class Lifter:
 
         `ElfLifter.analyze` also takes a symbol name and a default `cc`. A
         non-int `entry` raises `TypeError`, an out-of-range one
-        `StriderError`. Returns even when incomplete: check `Cfg.incomplete`
-        before trusting an absence ("no store to X").
+        `StriderError`. Incomplete code is reported in `Cfg.incomplete`
+        (check it before trusting an absence, "no store to X"), not raised,
+        except an unmapped entry or a fall-through no call explains into
+        bytes Sleigh rejects, which raise `StriderError`.
 
-        Releases the GIL unless `mem` or `rom` is a Python object. A daemon
+        Releases the GIL unless `mem` or `rom` is a Python reader (anything
+        but a `BufferReader`). A daemon
         thread inside this call at interpreter shutdown aborts the process;
         analyse on non-daemon threads and join them.
         """
@@ -280,6 +283,10 @@ class Lifter:
         sweep can carry over (sweep from a fresh `Lifter`). On ARM or MIPS
         `entry`'s low bit selects the ISA mode and the sweep starts at
         `entry & ~1`.
+
+        A call with a new `entry`, or the first after an `analyze` or
+        `build_cfg`, clones the whole decoder; for per-function p-code,
+        `build_cfg(entry).pcode_at(addr)` is far cheaper.
         """
         ...
 

@@ -169,10 +169,9 @@ class Match:
         """`vn`, or `None` instead of raising."""
         ...
     def asm_fingerprint(self, key: CaptureKey) -> list[int]:
-        """Sorted, deduped machine-instruction addresses whose lift or later
-        rewrite contributed to the node bound to `key`. `[]` when `key` is
-        unbound, and possibly for a structural kind (`Entry`, `Region`,
-        `Phi`, ...)."""
+        """`Node.asm_fingerprint` of the node bound to `key`: a superset of
+        the instructions behind it. `[]` when `key` is unbound, and possibly
+        for a structural kind (`Entry`, `Region`, `Phi`, ...)."""
         ...
     def node(self, key: CaptureKey) -> Node:
         """A `Node` handle on what `key` bound to. Raises when `key` is
@@ -193,8 +192,8 @@ class BoundCapture:
     signed or unsigned spelling (`int(m[c])`, `m[c] == 0x10`,
     `m[a] == m[b]`). Two non-integer captures are equal when they bound the
     same value of the same function; an unbound one equals nothing. Each
-    `Match` reader is also a method here, without the key: `m[c].uint()` is
-    `m.uint(c)`."""
+    other `Match` reader is a method here, without the key: `m[c].uint()` is
+    `m.uint(c)`, but `m[c].has` is a property."""
 
     @property
     def has(self) -> bool: ...

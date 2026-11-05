@@ -60,7 +60,9 @@ class Node:
         ...
     def asm_fingerprint(self) -> list[int]:
         """The machine-instruction addresses recorded on this node, sorted
-        and deduplicated."""
+        and deduplicated: its lift's, each lift that reused it, and those of
+        nodes folded into it. A superset of the instructions behind the
+        value: a shared constant carries every address that used it."""
         ...
     def outputs(self) -> list[Node]:
         """The consumers of this node's outputs, in output-slot then use order
