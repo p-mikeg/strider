@@ -456,7 +456,7 @@ impl FunctionAt {
         let now = function.graph().generation();
         if now != self.generation {
             return Err(into_strider_err(anyhow::anyhow!(
-                "{what} is stale: the function was compacted or rewritten after this \
+                "{what} is stale: the function was compacted, optimized or rewritten after this \
                  {what} was created (generation {} -> {now}); fetch it again from the \
                  function",
                 self.generation,
