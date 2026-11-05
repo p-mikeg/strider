@@ -20,7 +20,8 @@
 //! matched as `Equal(ZeroExtend(NG), ZeroExtend(OV))`.
 //!
 //! Bottom-up, `ZR` and the `GE` tree become `Equal(a, b)` and
-//! `Xor(Sless(a, b), 1)`, then each cond code's tree of those collapses.
+//! `Xor(Sless(a, b), 1)`, and a `cmn` / `adds` carry `Carry(a, N)` becomes
+//! `Xor(Less(a, -N), 1)`; then each cond code's tree of those collapses.
 //! `MI`/`PL` stays as lifted: `Sless(a-b, 0)` differs from `Sless(a, b)` on
 //! overflow.
 //!
@@ -33,9 +34,9 @@ use strider_ir::node::{
 };
 use strider_ir::{Function, IRViewer, UBig};
 use strider_pattern::{
-    Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_const,
-    int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_scarry, int_shl, int_slt, int_xor,
-    int_zero_extend, template, var,
+    Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_carry,
+    int_const, int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_scarry, int_shl, int_slt,
+    int_xor, int_zero_extend, template, var,
 };
 
 use crate::Result;
@@ -104,6 +105,11 @@ fn negation_fits(b: &Bindings, f: &Function, n: Capture, width_src: Capture) -> 
         return false;
     };
     eval::mask(&n, ty) != UBig::ONE << (ty.bit_width() - 1)
+}
+
+/// `N` is nonzero at `width_src`'s width.
+fn nonzero(b: &Bindings, f: &Function, n: Capture, width_src: Capture) -> bool {
+    uints(b, f, [n], width_src).is_some_and(|([n], ty)| eval::mask(&n, ty) != UBig::ZERO)
 }
 
 /// `M == minuend - subtrahend` at `width_src`'s width.
@@ -197,6 +203,21 @@ fn build_rules() -> Vec<Rule> {
             ),
         )),
     ));
+    // C after `cmn a, N` / `adds a, N`, `a + N >= 2^W` exactly when
+    // `a >= -N`:
+    //   Carry(a, N) -> Xor(Less(a, -N), 1)
+    // Guarded to `N != 0`: `Carry(a, 0)` is clear, `!(a <u 0)` is set.
+    rules.push(Rule::rewrite(
+        int_carry(var(a), int_const(n))
+            .when_match(move |edit, _ty, binds| nonzero(binds, edit.function(), n, a)),
+        template::bool_not(template::int_lt(
+            var(a),
+            capture_typed(
+                a,
+                int_const_with!([n: uint, ty] => negate(&n, ty).ok_or_else(strider_pattern::skip)?),
+            ),
+        )),
+    ));
     // Offset-base sibling, `cmp X, N` on `X = Add(b, C1)`, guarded to
     // `C2 == C1 - N`:
     //   Equal(ZeroExtend(Sless(Add(b, C2), 0)), ZeroExtend(Sborrow(X, N))) -> Xor(Sless(X, N), 1)
@@ -215,6 +236,9 @@ fn build_rules() -> Vec<Rule> {
     // The combiners, unsigned and signed alike, where `less` binds `a < b`:
     //   LS/LE:  Or(less, Equal(a, b))                  -> Xor(less(b, a), 1)
     //   HI/GT:  And(Xor(less, 1), Xor(Equal(a, b), 1)) -> less(b, a)
+    // the absorptions, as `Equal(a, b)` implies `!less` (x86 `add; jbe` / `ja`):
+    //           Or(Xor(less, 1), Equal(a, b))          -> Xor(less, 1)
+    //           And(less, Xor(Equal(a, b), 1))         -> less
     // and the offset-base form, `X = Add(b, C1)` against `N` with the Z term
     // solved to `Equal(b, C3)`, guarded to `C3 == N - C1`.
     let offset_guard = move |edit: &strider_pattern::Matcher, _ty, binds: &Bindings| {
@@ -233,6 +257,14 @@ fn build_rules() -> Vec<Rule> {
                         bool_not(int_eq(var(a), var(b))),
                     ),
                     template::$less(var(b), var(a)),
+                ),
+                Rule::rewrite(
+                    bool_or(bool_not($less(var(a), var(b))), int_eq(var(a), var(b))),
+                    template::bool_not(template::$less(var(a), var(b))),
+                ),
+                Rule::rewrite(
+                    bool_and($less(var(a), var(b)), bool_not(int_eq(var(a), var(b)))),
+                    template::$less(var(a), var(b)),
                 ),
                 Rule::rewrite(
                     bool_or(

@@ -1524,15 +1524,15 @@ fn offset_le_gt_rewrites_agree_at_8_bits() -> Result<()> {
     Ok(())
 }
 
-/// The pass seeds exactly the kinds some rule roots at: an `Equal` / `Sless`,
-/// an `And`/`Or`/`Xor`, or the CR-bit `Truncate`. No rule roots at an
-/// unsigned or overflow compare.
+/// The pass seeds exactly the kinds some rule roots at: an `Equal` /
+/// `Sless` / `Carry`, an `And`/`Or`/`Xor`, or the CR-bit `Truncate`. No rule
+/// roots at another unsigned or overflow compare.
 #[test]
 fn seeds_the_kinds_its_rules_root_at() {
     for kind in crate::test_support::sample_kinds() {
         let rooted = matches!(
             kind,
-            NodeKind::IntCmpOp(IntCmpOp::Equal | IntCmpOp::Sless)
+            NodeKind::IntCmpOp(IntCmpOp::Equal | IntCmpOp::Sless | IntCmpOp::Carry)
                 | NodeKind::Truncate
                 | NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
         );
@@ -1581,4 +1581,140 @@ fn a_cr_test_reading_a_constant_past_bit_127_does_not_fold() -> Result<()> {
         let eq = b.build_int_cmp_operation(o, zero, IntCmpOp::Equal, ty)?;
         bool_not(b, eq)
     })
+}
+
+/// The unsigned flag conditions after `cmn a, N` / `adds a, N` at `I8`:
+/// `C = Carry(a, N)` (either operand order) and `Z = Equal(Add(a, N), 0)`.
+#[derive(Clone, Copy, Debug)]
+enum CarryCond {
+    /// CS / CC.
+    C {
+        swapped: bool,
+    },
+    /// HI / LS: `C && !Z` / `!C || Z`.
+    Hi,
+    Ls,
+    /// x86 `ja` / `jbe` after `add`: `!C && !Z` / `C || Z`.
+    Above,
+    BelowOrEqual,
+}
+
+/// `(negated, lhs, rhs)` of `[Xor(]Less(lhs, rhs)[, 1)]`, a constant operand
+/// as its value and `a` as `None`.
+type LessForm = (bool, Option<u128>, Option<u128>);
+
+/// `If(cond)` for `cond` over `a` and `N`, then the pass; the rewritten
+/// condition as `(negated, lhs, rhs)` for `[Xor(]Less(lhs, rhs)[, 1)]`, the
+/// operands as constants (`None` for `a`), or `None` when the condition is
+/// not one `Less`.
+fn carry_rewrite(cond: CarryCond, n: u128) -> Result<Option<LessForm>> {
+    let ty = ValueType::int(8);
+    let a_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
+    let (mut fg, if_node, a) = RegisterSet::new()
+        .tracked(a_vn)
+        .build_if_then_else_returns(|fb| {
+            let a = fb.read_variable(&a_vn)?;
+            let n_const = fb.build_int_const(n, ty)?;
+            let (l, r) = match cond {
+                CarryCond::C { swapped: true } => (n_const, a),
+                _ => (a, n_const),
+            };
+            let c = fb.build_int_cmp_operation(l, r, IntCmpOp::Carry, ty)?;
+            let sum = fb.build_int_binary_operation(a, n_const, IntBinaryOp::Add, ty)?;
+            let zero = fb.build_int_const(0u128, ty)?;
+            let z = fb.build_int_cmp_operation(sum, zero, IntCmpOp::Equal, ty)?;
+            let cond = match cond {
+                CarryCond::C { .. } => c,
+                CarryCond::Hi => {
+                    let nz = bool_not(fb, z)?;
+                    fb.build_int_binary_operation(c, nz, IntBinaryOp::And, ValueType::I1)?
+                }
+                CarryCond::Ls => {
+                    let nc = bool_not(fb, c)?;
+                    fb.build_int_binary_operation(nc, z, IntBinaryOp::Or, ValueType::I1)?
+                }
+                CarryCond::Above => {
+                    let (nc, nz) = (bool_not(fb, c)?, bool_not(fb, z)?);
+                    fb.build_int_binary_operation(nc, nz, IntBinaryOp::And, ValueType::I1)?
+                }
+                CarryCond::BelowOrEqual => {
+                    fb.build_int_binary_operation(c, z, IntBinaryOp::Or, ValueType::I1)?
+                }
+            };
+            Ok((cond, a))
+        })?;
+    crate::pipeline::run_one(&FlagCmpCanonicalize, &mut fg, &crate::OptCtx::new(None))?;
+    let mut cmp = fg.producer(if_cond_output(fg.graph(), if_node));
+    let negated = is_bool_not(&fg, cmp);
+    if negated {
+        let [l, r] = fg.graph().node_inputs_exact::<2>(cmp).expect("Xor");
+        cmp = fg.producer(if fg.int_const_u128(r) == Some(1) {
+            l
+        } else {
+            r
+        });
+    }
+    if *fg.node_kind(cmp) != NodeKind::IntCmpOp(IntCmpOp::Less) {
+        return Ok(None);
+    }
+    let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(cmp).expect("Less");
+    let operand = |v: ValueId| {
+        if v == a {
+            Ok(None)
+        } else {
+            fg.int_const_u128(v)
+                .map(Some)
+                .ok_or_else(|| anyhow::anyhow!("an operand neither `a` nor a constant"))
+        }
+    };
+    Ok(Some((negated, operand(lhs)?, operand(rhs)?)))
+}
+
+/// Every `(a, N)` pair at 8 bits: a carry-based condition against a nonzero
+/// `N` becomes one unsigned `Less` against `-N` that agrees with the flag
+/// tree for every `a`; `Carry(a, 0)` is left alone.
+#[test]
+fn carry_conditions_are_one_unsigned_less_at_8_bits() -> Result<()> {
+    let conds = [
+        CarryCond::C { swapped: false },
+        CarryCond::C { swapped: true },
+        CarryCond::Hi,
+        CarryCond::Ls,
+        CarryCond::Above,
+        CarryCond::BelowOrEqual,
+    ];
+    for cond in conds {
+        for n in 0..=255u128 {
+            let got = carry_rewrite(cond, n)?;
+            if n == 0 {
+                assert_eq!(got, None, "{cond:?}: Carry(a, 0) is false, no Less");
+                continue;
+            }
+            let (negated, lhs, rhs) =
+                got.unwrap_or_else(|| panic!("{cond:?} N={n:#x}: not one Less"));
+            let k = n.wrapping_neg() & 0xff;
+            assert!(
+                [lhs, rhs] == [None, Some(k)] || [lhs, rhs] == [Some(k), None],
+                "{cond:?} N={n:#x}: compares against -N, got {lhs:?} {rhs:?}"
+            );
+            for a in 0..=255u128 {
+                let carry = a + n > 0xff;
+                let zero = (a + n) & 0xff == 0;
+                let tree = match cond {
+                    CarryCond::C { .. } => carry,
+                    CarryCond::Hi => carry && !zero,
+                    CarryCond::Ls => !carry || zero,
+                    CarryCond::Above => !carry && !zero,
+                    CarryCond::BelowOrEqual => carry || zero,
+                };
+                let (l, r) = (lhs.unwrap_or(a), rhs.unwrap_or(a));
+                assert_eq!(
+                    (l < r) != negated,
+                    tree,
+                    "{cond:?} N={n:#x} a={a:#x}: Less({l:#x}, {r:#x}) negated={negated}"
+                );
+            }
+        }
+    }
+    Ok(())
 }
