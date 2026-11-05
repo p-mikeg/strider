@@ -20,7 +20,7 @@ cfg
   0x21025c 14 ops goto -> [0x210278]
   0x21026c 5 ops goto -> [0x210278]
   0x210278 18 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1b00:1, u:0x1d00:1, u:0xae00:8, u:0xc000:8, u:0xc200:8, u:0xc700:8, u:0xcb00:8, u:0xda00:8, u:0xe300:8, u:0xef00:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x23e00:8, u:0x24000:8, u:0x24200:4, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b200:4, u:0x4b400:4, u:0x50400:4, u:0x77200:8, u:0x77300:8, u:0x77400:8, u:0x77500:4, u:0x7d900:4, u:0x7db00:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1b00:1, u:0x1d00:1, u:0xae00:8, u:0xc000:8, u:0xc200:8, u:0xc700:8, u:0xcb00:8, u:0xda00:8, u:0xe300:8, u:0xef00:8, u:0x22800:4, u:0x22a00:4, u:0x23000:8, u:0x23200:8, u:0x23a00:8, u:0x23c00:8, u:0x23e00:4, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x4ae00:4, u:0x4b000:4, u:0x50000:4, u:0x76e00:8, u:0x76f00:8, u:0x77000:8, u:0x77100:4, u:0x7d500:4, u:0x7d700:4]
 arg 0 [%v2]
 arg 1 [%v25]
 arg 2 [%v30]
@@ -142,7 +142,7 @@ return %v126, %v128, %v137, %v129, %v130, %v131, %v132, %v133
 == f @0x210288
 cfg
   0x210288 22 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x4b200:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0x22800:4, u:0x22a00:4, u:0x23000:8, u:0x23200:8, u:0x4ae00:4]
 arg 0 [%v5]
 arg 1 [%v11]
 float_arg 0 [%v12]
@@ -177,7 +177,7 @@ cfg
   0x2102dc 26 ops goto -> [0x2102fc]
   0x2102fc 13 ops goto -> [0x2102cc]
   0x21030c 18 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0xc000:8, u:0xc200:8, u:0xc700:8, u:0xc800:8, u:0xef00:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b200:4, u:0x77200:8, u:0x77300:8, u:0x77400:8, u:0x7d900:4, u:0x7db00:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0xc000:8, u:0xc200:8, u:0xc700:8, u:0xc800:8, u:0xef00:8, u:0x22800:4, u:0x22a00:4, u:0x23000:8, u:0x23200:8, u:0x23600:4, u:0x23800:4, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x4ae00:4, u:0x76e00:8, u:0x76f00:8, u:0x77000:8, u:0x7d500:4, u:0x7d700:4]
 frame_address_in_call_register reach=-24
 arg 1 [%v19]
 arg 3 [%v24]

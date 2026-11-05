@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == helper_a @0x430
 cfg
   0x430 9 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x22c00:4, u:0x22e00:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x22800:4, u:0x22a00:4]
 arg 0 [%v2]
 arg 1 [%v7]
 float_arg 0 [%v8]
@@ -30,7 +30,7 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 == helper_b @0x440
 cfg
   0x440 9 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x22c00:4, u:0x22e00:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x22800:4, u:0x22a00:4]
 arg 0 [%v2]
 arg 1 [%v7]
 float_arg 0 [%v8]
@@ -54,7 +54,7 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 == helper_c @0x450
 cfg
   0x450 9 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x22c00:4, u:0x22e00:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x22800:4, u:0x22a00:4]
 arg 0 [%v2]
 arg 1 [%v7]
 float_arg 0 [%v8]
@@ -78,7 +78,7 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 == helper_d @0x460
 cfg
   0x460 9 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x22c00:4, u:0x22e00:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x22800:4, u:0x22a00:4]
 arg 0 [%v2]
 arg 1 [%v7]
 float_arg 0 [%v8]
@@ -102,7 +102,7 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 == dispatch_via_table @0x470
 cfg
   0x470 29 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xae00:8, u:0xc200:8, u:0xda00:8, u:0xe300:8, u:0xf100:8, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x77200:8, u:0x77300:8, u:0x77400:8]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xae00:8, u:0xc200:8, u:0xda00:8, u:0xe300:8, u:0xf100:8, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x76e00:8, u:0x76f00:8, u:0x77000:8]
 arg 0 [%v13]
 arg 1 [%v19]
 arg 4 [%v22]
@@ -157,7 +157,7 @@ return %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41
 == compute_via_helper @0x4a0
 cfg
   0x4a0 18 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xf100:8, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x77200:8, u:0x77300:8, u:0x77400:8]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xf100:8, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x76e00:8, u:0x76f00:8, u:0x77000:8]
 arg 0 [%v12]
 arg 1 [%v13]
 arg 2 [%v14]
