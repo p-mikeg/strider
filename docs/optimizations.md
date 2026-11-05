@@ -173,6 +173,11 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   candidate for every slot (about 0.8 s and 0.4 s at `n` = 2000).
 - A pattern nesting commutative nodes `d` deep can cost up to 2^d match
   attempts, even when nothing matches; `.ordered()` pins the operand order.
+- Sibling KnownBits folds over one unfolded chain of depth `d` each copy the
+  chain's instruction addresses, quadratic in `d` (about 0.2 s at `d` = 2000).
+- A jump table whose arms fall into one another, explored lowest first,
+  re-splits one long region per arm, quadratic in the arm count (about 2.5 s
+  at 16000 arms).
 
 ## Using a different pipeline
 
