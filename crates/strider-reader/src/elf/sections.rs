@@ -330,7 +330,7 @@ impl ElfSectionLayout {
             let size = sec.size();
             let addr = sec.address();
             // An address below the watermark is rebased; an empty section is
-            // seated too, without moving the watermark.
+            // seated too, moving the watermark to its aligned base.
             let base = if !alloc || addr >= watermark {
                 addr
             } else {
@@ -338,7 +338,7 @@ impl ElfSectionLayout {
             };
             // An overflowing `sh_size` leaves the watermark put and the
             // section unseated.
-            if alloc && size != 0 {
+            if alloc {
                 match base.checked_add(size) {
                     Some(end) => watermark = end,
                     None => {
