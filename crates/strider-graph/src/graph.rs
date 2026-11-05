@@ -318,7 +318,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         indices: impl IntoIterator<Item = usize>,
     ) {
         let len = self.store.node_input_uses(node_id).len();
-        let mut drop_slot = vec![false; len];
+        let mut drop_slot: SmallVec<[bool; 8]> = smallvec::smallvec![false; len];
         let mut any = false;
         for idx in indices {
             if idx < len {

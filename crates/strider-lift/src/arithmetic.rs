@@ -15,13 +15,12 @@ use crate::pcode_util::{nth_input_or_err, require_output_vn};
 /// Errs unless `a` and `b` have equal widths, as the Sleigh compiler
 /// guarantees.
 pub(super) fn require_same_size(a: &rsleigh::Vn, b: &rsleigh::Vn, what: &str) -> Result<()> {
-    if a.size != b.size {
-        return Err(anyhow::anyhow!(
-            "p-code {what} width mismatch: {} against {} (Sleigh requires equal widths)",
-            a.size,
-            b.size,
-        ));
-    }
+    anyhow::ensure!(
+        a.size == b.size,
+        "p-code {what} width mismatch: {} against {} (Sleigh requires equal widths)",
+        a.size,
+        b.size,
+    );
     Ok(())
 }
 

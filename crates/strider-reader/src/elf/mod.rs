@@ -1,7 +1,7 @@
 pub(crate) mod dynamic;
 pub(crate) mod encodings;
-pub mod load;
-pub mod reader;
+mod load;
+mod reader;
 pub(crate) mod relocations;
 pub(crate) mod sections;
 

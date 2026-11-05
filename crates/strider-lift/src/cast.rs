@@ -19,13 +19,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
         let in0_size = nth_input_or_err(insn, 0)?.size;
-        if out_vn.size < in0_size {
-            return Err(anyhow::anyhow!(
-                "p-code extend width mismatch: input={} output={} (output must be >= input)",
-                in0_size,
-                out_vn.size,
-            ));
-        }
+        anyhow::ensure!(
+            out_vn.size >= in0_size,
+            "p-code extend width mismatch: input={} output={} (output must be >= input)",
+            in0_size,
+            out_vn.size,
+        );
         let value = self.read_input(insn, 0)?;
         let result = self
             .builder
