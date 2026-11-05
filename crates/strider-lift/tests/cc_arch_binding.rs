@@ -57,6 +57,7 @@ fn lift_over_built_at(
         &strider_cfg::CfgOptions::default(),
         &per_address_ccs,
         &strider_ir::AssumptionOptions::none(),
+        &[],
     )?;
     Ok(())
 }

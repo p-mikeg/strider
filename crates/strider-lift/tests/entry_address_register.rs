@@ -129,3 +129,87 @@ fn a_loop_header_entry_binds_t9_on_the_entry_edge() {
     assert_eq!(f.int_const_u128(operands[0]), Some(0x1000), "entry operand");
     assert_eq!(operands[1], sum, "back-edge operand");
 }
+
+fn r2(regs: &rsleigh::SleighRegs) -> rsleigh::Vn {
+    let vn = regs.name_to_vn("r2").expect("r2");
+    assert_eq!(vn.addr_off, R2_OFFSET);
+    vn
+}
+
+const R2_OFFSET: u64 = 0x10;
+
+/// `mr r3,r2; blr` under ELFv1, lifted with `entry_values` binding `r2`.
+fn lift_elfv1_mr_r3_r2(
+    entry_values: impl FnOnce(&rsleigh::SleighRegs) -> Vec<(rsleigh::Vn, u64)>,
+) -> anyhow::Result<strider_ir::Function> {
+    let mut lifter = strider_lift::Lifter::new(
+        strider_target::SleighArch::ppc64be(),
+        rsleigh::mem_readers::BufMemReader::new(
+            vec![0x7c, 0x43, 0x13, 0x78, 0x4e, 0x80, 0x00, 0x20],
+            0x1000,
+        ),
+    )?;
+    let cc = strider_target::CallingConvention::powerpc64_elf_v1().build(lifter.sleigh_regs())?;
+    let values = entry_values(lifter.sleigh_regs());
+    let cfg = lifter.build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())?;
+    Ok(lifter
+        .build_ir_with(
+            &cfg,
+            cc,
+            &strider_cfg::CfgOptions::default(),
+            &rustc_hash::FxHashMap::default(),
+            &strider_ir::AssumptionOptions::none(),
+            &values,
+        )?
+        .function)
+}
+
+/// The ELFv1 TOC word of the descriptor the caller entered through is `r2`
+/// on entry.
+#[test]
+fn an_entry_value_binds_its_register() {
+    let f = lift_elfv1_mr_r3_r2(|regs| vec![(r2(regs), 0x1000_8000)]).expect("lift");
+    let r2_initial = f
+        .walk_kind(|k| matches!(k, strider_ir::node::NodeKind::InitialVar(_)))
+        .any(|node| match f.node_kind(node) {
+            strider_ir::node::NodeKind::InitialVar(id) => f.initial_vn(*id).addr_off == R2_OFFSET,
+            _ => false,
+        });
+    assert!(!r2_initial, "r2 must not be read as a runtime input");
+    let literal = f
+        .walk_kind(|k| matches!(k, strider_ir::node::NodeKind::IntConst(_)))
+        .filter_map(|node| f.node_outputs(node).first().copied())
+        .any(|v| f.int_const_u128(v) == Some(0x1000_8000));
+    assert!(literal, "r2's value must be the TOC literal");
+}
+
+#[test]
+fn an_entry_value_must_fit_a_register() {
+    // The low word of big-endian `r2`.
+    let r2_low = |regs: &rsleigh::SleighRegs| rsleigh::Vn {
+        addr_off: r2(regs).addr_off + 4,
+        size: 4,
+        ..r2(regs)
+    };
+    let wide = lift_elfv1_mr_r3_r2(|regs| vec![(r2_low(regs), 1 << 32)])
+        .err()
+        .expect("too wide");
+    assert!(
+        wide.to_string().contains("not a register it fits"),
+        "{wide}"
+    );
+    let fits = lift_elfv1_mr_r3_r2(|regs| vec![(r2_low(regs), 0xffff_ffff)]);
+    assert!(fits.is_ok(), "{:?}", fits.err());
+    let ram = rsleigh::Vn {
+        addr_space: rsleigh::VnSpace::RAM,
+        addr_off: 0x2000,
+        size: 8,
+    };
+    let in_ram = lift_elfv1_mr_r3_r2(|_| vec![(ram, 0)])
+        .err()
+        .expect("not a register");
+    assert!(
+        in_ram.to_string().contains("not a register it fits"),
+        "{in_ram}"
+    );
+}

@@ -250,6 +250,7 @@ mod tests {
                 opts,
                 &rustc_hash::FxHashMap::default(),
                 &strider_ir::AssumptionOptions::none(),
+                &[],
             )?
             .function)
     }
@@ -403,6 +404,7 @@ mod tests {
                 opts,
                 &rustc_hash::FxHashMap::default(),
                 &strider_ir::AssumptionOptions::none(),
+                &[],
             )?
             .function)
     }
@@ -502,6 +504,7 @@ mod tests {
                     opts,
                     &no_ccs,
                     &strider_ir::AssumptionOptions::none(),
+                    &[],
                 )
                 .expect("lift")
                 .function;
@@ -557,6 +560,7 @@ mod tests {
                     lifted,
                     &no_ccs,
                     &strider_ir::AssumptionOptions::none(),
+                    &[],
                 )
                 .expect("a CallOther lifts as its cfg was built")
                 .function;
@@ -600,6 +604,7 @@ mod tests {
             &overriding(&noop),
             &no_ccs,
             &strider_ir::AssumptionOptions::none(),
+            &[],
         ) else {
             panic!("a CallOther the cfg ended must not lift as a NoOp");
         };
