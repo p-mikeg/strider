@@ -37,15 +37,24 @@ pub(super) fn apply_one_relocation(
     }
 }
 
-/// `st_size` of symbol `idx`, from the table [`resolve_symbol_target`]
-/// reads.
+/// `st_size` of symbol `idx`.
 pub(super) fn symbol_size(obj: &object::File<'_>, idx: object::SymbolIndex) -> Option<u64> {
-    let sym = if obj.kind() == object::ObjectKind::Relocatable {
+    Some(reloc_symbol(obj, idx)?.size())
+}
+
+/// The symbol a relocation's `r_sym` names: `.symtab`'s in an ET_REL,
+/// `.dynsym`'s in a linked image (`None` without one). `object`'s
+/// `dynamic_symbol_table` is any `SHT_DYNSYM`, even an ET_REL's.
+fn reloc_symbol<'d, 'f>(
+    obj: &'f object::File<'d>,
+    idx: object::SymbolIndex,
+) -> Option<object::Symbol<'d, 'f>> {
+    if obj.kind() == object::ObjectKind::Relocatable {
         obj.symbol_by_index(idx)
     } else {
         obj.dynamic_symbol_table()?.symbol_by_index(idx)
-    };
-    Some(sym.ok()?.size())
+    }
+    .ok()
 }
 
 /// A plain data field `object` describes: `Absolute` is `S + A`, `Relative`
@@ -450,15 +459,7 @@ pub(super) fn resolve_symbol_target(
     layout: &crate::elf::sections::ElfSectionLayout,
     idx: object::SymbolIndex,
 ) -> Option<Target> {
-    // `object`'s `dynamic_symbol_table` is any `SHT_DYNSYM`, even in an
-    // ET_REL, whose relocations index `.symtab`. A linked image without
-    // `.dynsym` has no table its indices name.
-    let sym = if obj.kind() == object::ObjectKind::Relocatable {
-        obj.symbol_by_index(idx)
-    } else {
-        obj.dynamic_symbol_table()?.symbol_by_index(idx)
-    }
-    .ok()?;
+    let sym = reloc_symbol(obj, idx)?;
     let addr = match layout.extern_address(idx.0) {
         Some(addr) => addr,
         None => {
