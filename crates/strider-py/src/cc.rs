@@ -59,6 +59,19 @@ impl PyCallingConvention {
         }
     }
 
+    /// `preserves_all` or `preserves_regs` for those variants.
+    fn variant(&self) -> Option<&'static str> {
+        let (all_regs, memory) = match &self.inner {
+            CcImpl::Preset(cc) => (cc.preserves_all_registers, cc.preserves_memory),
+            CcImpl::Custom(cc) => (cc.preserves_all_registers, cc.preserves_memory),
+        };
+        all_regs.then_some(if memory {
+            "preserves_all"
+        } else {
+            "preserves_regs"
+        })
+    }
+
     fn vn_name(&self, arch: strider_target::SleighArch, vn: rsleigh::Vn) -> PyResult<&'static str> {
         arch.names().regs().vn_to_name(vn).ok_or_else(|| {
             crate::errors::into_strider_err(anyhow::anyhow!(
@@ -125,9 +138,9 @@ impl PyCallingConvention {
         ret_val_regs: Vec<String>,
         ret_val_regs_float: Vec<String>,
         stack_pointer: String,
-        stack_arg_base: Option<i128>,
-        stack_arg_increment: i128,
-        ret_stack_pop: i64,
+        stack_arg_base: Option<crate::bigint::Ranged<i128>>,
+        stack_arg_increment: crate::bigint::Ranged<i128>,
+        ret_stack_pop: crate::bigint::Ranged<i64>,
         link_register: Option<String>,
         preserves_memory: bool,
         arg_passing_regs_float: Vec<String>,
@@ -161,9 +174,9 @@ impl PyCallingConvention {
             .as_deref()
             .map(|name| one("entry_address", name))
             .transpose()?;
-        let stack_args = stack_arg_base.map(|base_offset| strider_target::StackArgs {
-            base_offset,
-            increment: stack_arg_increment,
+        let stack_args = stack_arg_base.map(|base| strider_target::StackArgs {
+            base_offset: base.0,
+            increment: stack_arg_increment.0,
         });
         let built = strider_target::BuiltCallingConvention {
             arg_passing_regs: arg_vns,
@@ -173,7 +186,7 @@ impl PyCallingConvention {
             ret_val_regs_float: ret_float_vns,
             stack_ptr: sp_vn,
             stack_args,
-            ret_stack_pop,
+            ret_stack_pop: ret_stack_pop.0,
             link_register: lr_vn,
             preserves_memory,
             preserves_all_registers: false,
@@ -222,21 +235,17 @@ impl PyCallingConvention {
         }
     }
 
-    /// The preset name (e.g. `"x86_64_systemv"`), or `"custom"`.
-    fn name(&self) -> &'static str {
-        self.preset_name
+    /// The preset name (e.g. `"x86_64_systemv"`) or `"custom"`, suffixed
+    /// `.preserves_all` / `.preserves_regs` for those variants.
+    fn name(&self) -> String {
+        match self.variant() {
+            Some(v) => format!("{}.{v}", self.preset_name),
+            None => self.preset_name.to_string(),
+        }
     }
 
     fn __repr__(&self) -> String {
-        let (all_regs, memory) = match &self.inner {
-            CcImpl::Preset(cc) => (cc.preserves_all_registers, cc.preserves_memory),
-            CcImpl::Custom(cc) => (cc.preserves_all_registers, cc.preserves_memory),
-        };
-        let variant = match (all_regs, memory) {
-            (false, _) => "",
-            (true, true) => ".preserves_all()",
-            (true, false) => ".preserves_regs()",
-        };
+        let variant = self.variant().map_or(String::new(), |v| format!(".{v}()"));
         match self.source_arch {
             Some(arch) => format!(
                 "<CallingConvention custom{variant} for {}>",

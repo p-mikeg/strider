@@ -34,7 +34,7 @@ pub fn dot_style_for(name: &str) -> PyResult<dot::DotStyle> {
 pub fn render<G: dot::GraphDotDumper>(
     d: &dot::GraphDot<G>,
     html: bool,
-    path: Option<&str>,
+    path: Option<std::path::PathBuf>,
 ) -> PyResult<Option<String>> {
     match (html, path) {
         (true, Some(p)) => d.dump_as_html(p).map(|()| None),

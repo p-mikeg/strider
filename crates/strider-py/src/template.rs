@@ -88,8 +88,8 @@ pub fn bool_const(value: bool) -> PyTemplate {
 /// Build a float constant with the IEEE 754 bit pattern `bits`, at the width
 /// it is evaluated at; a set bit above that width refuses the rewrite.
 #[pyfunction]
-pub fn float_const(bits: u64) -> PyTemplate {
-    PyTemplate::from(crate::pattern::float_const_repr(bits))
+pub fn float_const(bits: crate::bigint::Ranged<u64>) -> PyTemplate {
+    PyTemplate::from(crate::pattern::float_const_repr(bits.0))
 }
 
 value_ops!(PyTemplate, "Build", template);
