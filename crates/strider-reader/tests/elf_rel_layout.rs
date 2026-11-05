@@ -638,3 +638,31 @@ fn a_symbol_in_an_empty_section_is_not_null() {
     reader.read(0x1000_0000, &mut word).unwrap();
     assert_eq!(u64::from_le_bytes(word), 0x1000_0008, "&e_obj");
 }
+
+/// An empty section's alignment moves the watermark, as `ld` advances `.`
+/// past it, so a later less-aligned section starts at or above it and its
+/// symbols alias no other section's bytes.
+#[test]
+fn an_over_aligned_empty_section_moves_the_watermark() {
+    use object::write::{Object as WObject, StandardSegment};
+    use object::{Architecture, BinaryFormat, Endianness, SectionKind};
+    let mut obj = WObject::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let data = obj.segment_name(StandardSegment::Data).to_vec();
+    let d = obj.add_section(data.clone(), b".data.d".to_vec(), SectionKind::Data);
+    obj.append_section_data(d, &[2u8; 8], 8);
+    let e = obj.add_section(
+        data.clone(),
+        b".bss.e_obj".to_vec(),
+        SectionKind::UninitializedData,
+    );
+    obj.append_section_bss(e, 0, 64);
+    let a = obj.add_section(data, b".data.a".to_vec(), SectionKind::Data);
+    obj.append_section_data(a, &[1u8; 8], 8);
+    let bytes = obj.write().unwrap();
+    let file = object::File::parse(&*bytes).unwrap();
+    let layout = ElfSectionLayout::new(&file);
+    let base = |name: &str| layout.section_base(&file.section_by_name(name).expect(name));
+    assert_eq!(base(".data.d"), 0x1000_0000);
+    assert_eq!(base(".bss.e_obj"), 0x1000_0040);
+    assert_eq!(base(".data.a"), 0x1000_0040, ".data.a starts past e_obj");
+}
