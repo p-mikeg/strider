@@ -35,7 +35,8 @@ type LazyRanges<'f> =
 
 /// One function's dispatch-site recogniser, with the memos its sites share.
 /// Every recogniser fails closed on a partial proof, never under-approximating
-/// the target set; a claim wrong for the input can still seat a wrong edge.
+/// the target set. A claim wrong for the input, or a guard the range analysis
+/// does not connect to the index, can over-approximate it.
 pub(crate) struct SiteClassifier<'f> {
     function: &'f strider_ir::Function,
     /// Built on the first table query.

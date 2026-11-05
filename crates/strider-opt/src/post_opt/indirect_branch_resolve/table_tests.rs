@@ -1540,6 +1540,61 @@ fn bits_1_to_3(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
     bits_of(b, w, 1)
 }
 
+/// ppc64 `rldicl r3,r3,36,32; cmplwi r3,10; bgt; rldic r3,r3,2,58`: the guard
+/// reads `trunc32(rot)` and the index `rot & 0xffffffff`, both of
+/// `rot = Or(w << 36, w >> 28)`, so the guard's 11 slots bound the table.
+/// Mutation: leave `Truncate(Or)` rooted at the `Or` (16 slots).
+#[test]
+fn classify_table_dispatch_bounds_a_masked_rotate_by_its_truncated_guard() {
+    let i64t = ValueType::int(64);
+    let w = reg_vn(0x20, 8);
+    let mut b = RegisterSet::new().tracked(w).arg(w).build_fn().unwrap();
+    let [entry, exit, next] = std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    let word = b.read_variable(&w).unwrap();
+    let hi = b
+        .build_const_binop(36u64, word, IntBinaryOp::ShiftLeft, i64t)
+        .unwrap();
+    let lo = b
+        .build_const_binop(28u64, word, IntBinaryOp::ShiftRight, i64t)
+        .unwrap();
+    let rot = b
+        .build_int_binary_operation(hi, lo, IntBinaryOp::Or, i64t)
+        .unwrap();
+    let low32 = b.truncate_if_needed(rot, ValueType::int(32)).unwrap();
+    let wide = b
+        .extend_if_needed(low32, i64t, ExtendOp::ZeroExtend)
+        .unwrap();
+    let cond = below(&mut b, wide, 11);
+    b.build_if(cond, next, exit).unwrap();
+    b.set_region(next);
+    let masked = b
+        .build_const_binop(0xffff_ffffu64, rot, IntBinaryOp::And, i64t)
+        .unwrap();
+    let idx = b
+        .build_const_binop(1u64, masked, IntBinaryOp::ShiftLeft, i64t)
+        .unwrap();
+    let idx = b
+        .build_const_binop(0x1eu64, idx, IntBinaryOp::And, i64t)
+        .unwrap();
+    let scaled = b
+        .build_const_binop(2u64, idx, IntBinaryOp::ShiftLeft, i64t)
+        .unwrap();
+    let addr = b
+        .build_const_binop(0x4000u64, scaled, IntBinaryOp::Add, i64t)
+        .unwrap();
+    let loaded = b.build_load(addr, VnSpace::RAM, i64t).unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    run_passes(&mut f, COLLAPSE).unwrap();
+    let rom = MockRom::strided(0x4000, 8, (0..64).map(|i| 0x5000 + 0x10 * i).collect(), 8);
+    assert_eq!(classify(&f, Some(&rom)), first_slots(11));
+}
+
 /// [`classify_guarded_dispatch`]'s arms for these slots.
 fn slots(of: &[u64]) -> Option<ResolvedTargets> {
     Some(ResolvedTargets::table(of.iter().map(|i| {
