@@ -151,8 +151,8 @@ enum Opds<'a, 'd> {
 }
 
 impl<'a, 'd> Opds<'a, 'd> {
-    /// `None` off ppc64 ELFv1, or for a `SHT_NOBITS` `.opd` no loaded ELF
-    /// backs.
+    /// `None` off ppc64 ELFv1, or for a `SHT_NOBITS` `.opd` with no loaded
+    /// ELFv1 image.
     fn new(file: &object::File<'d>, loaded: &'a [OpdTable<'d>]) -> Option<Self> {
         if let Some(own) = OpdTable::new(file) {
             return Some(Self::Own(own));
