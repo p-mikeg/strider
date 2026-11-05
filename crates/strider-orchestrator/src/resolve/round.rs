@@ -18,10 +18,8 @@ pub(super) type FlowingAnchor = (PcodeInsnAddr, NodeId, bool);
 pub(super) type Resolutions = FxHashMap<NodeId, ResolvedTargets>;
 
 /// A dispatch-site classifier, as [`strider_opt::classify_sites`].
-pub type Classifier<'c> = &'c dyn Fn(
-    &strider_ir::Function,
-    Option<&dyn ReadOnlyMemory>,
-) -> Result<strider_opt::ClassifiedSites>;
+pub type Classifier<'c> =
+    &'c dyn Fn(&strider_ir::Function, Option<&dyn ReadOnlyMemory>) -> strider_opt::ClassifiedSites;
 
 /// One round's cfg, the function lifted and optimised from it, and its sites.
 pub(super) struct Round {
@@ -122,7 +120,7 @@ where
         pipeline.run(&mut function, &OptCtx::new(rom_ref))?;
         // Before `settle_return_sites` truncates the `Return`s.
         let strider_opt::ClassifiedSites { sites, resolved } = if opts.resolve_indirect_branches {
-            classify(&function, rom_ref)?
+            classify(&function, rom_ref)
         } else {
             strider_opt::ClassifiedSites::unresolved(&function)
         };

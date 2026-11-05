@@ -216,7 +216,6 @@ mod tests {
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let live: FxHashSet<NodeId> = strider_opt::classify_sites(&function, None)
-            .expect("classify")
             .sites
             .into_iter()
             .collect();
@@ -240,7 +239,6 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Entry))
             .expect("entry node");
         let live: FxHashSet<NodeId> = strider_opt::classify_sites(&function, None)
-            .expect("classify")
             .sites
             .into_iter()
             .collect();
