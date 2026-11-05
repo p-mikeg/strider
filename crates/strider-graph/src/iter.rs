@@ -46,8 +46,9 @@ impl<'a, N, V, C: NodeCacheable<N, V>> Inputs<'a, N, V, C> {
     }
 
     pub fn get(&self, index: usize) -> Option<&ValueId> {
+        let id = *self.use_list.get(index)?;
         count_edge_read();
-        Some(&self.graph.store.inputs[*self.use_list.get(index)?].value_id)
+        Some(&self.graph.store.inputs[id].value_id)
     }
 
     /// Same yield as `into_iter()`, borrowing instead of consuming.
@@ -102,8 +103,9 @@ impl<N, V, C: NodeCacheable<N, V>> Iterator for InputIter<'_, N, V, C> {
     type Item = ValueId;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let id = *self.iter.next()?;
         count_edge_read();
-        Some(self.graph.store.inputs[*self.iter.next()?].value_id)
+        Some(self.graph.store.inputs[id].value_id)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -112,7 +114,8 @@ impl<N, V, C: NodeCacheable<N, V>> Iterator for InputIter<'_, N, V, C> {
 
     /// The default walks `n` edges one at a time; the use-list is a slice.
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        let id = *self.iter.nth(n)?;
         count_edge_read();
-        Some(self.graph.store.inputs[*self.iter.nth(n)?].value_id)
+        Some(self.graph.store.inputs[id].value_id)
     }
 }

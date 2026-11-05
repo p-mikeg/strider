@@ -1246,3 +1246,30 @@ fn value_kind_mut_rewrites_one_output() {
     assert_eq!(*g.value_kind_ref(other), TestVal::Ctrl);
     assert_eq!(*g.value_kind_ref(g.node_outputs(before)[0]), TestVal::Ctrl);
 }
+
+/// Each counted input read is one edge actually read: a lookup past the last
+/// input counts nothing.
+#[test]
+fn an_input_lookup_that_misses_counts_no_edge_read() {
+    use strider_graph::NeverCacheable;
+    let mut g: Graph<u8, u8, NeverCacheable> = Graph::new();
+    let a = g.create_node(1u8, [], [9u8]);
+    let v = g.node_outputs(a)[0];
+    let n = g.create_node(2u8, [v, v], [9u8]);
+    let reads = |f: &dyn Fn()| {
+        let before = strider_graph::edge_reads();
+        f();
+        strider_graph::edge_reads() - before
+    };
+    assert_eq!(
+        reads(&|| assert_eq!(g.node_inputs(n).into_iter().count(), 2)),
+        2
+    );
+    assert_eq!(reads(&|| assert_eq!(g.node_inputs(n).get(2), None)), 0);
+    assert_eq!(
+        reads(&|| assert_eq!(g.node_inputs(n).into_iter().nth(2), None)),
+        0
+    );
+    assert_eq!(reads(&|| assert_eq!(g.nth_input(n, 2), None)), 0);
+    assert_eq!(reads(&|| assert_eq!(g.nth_input(n, 1), Some(v))), 1);
+}
