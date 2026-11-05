@@ -100,7 +100,6 @@ fn detect_stack_args(
         *reach = (*reach).max(end_slot);
         loads.push((*edit.node_kind(node_id), load_value));
     }
-    // A slot with no clean load ends the prefix.
     let mut cursor = 0usize;
     let mut ordinal = first_stack_arg as u32;
     while let Some(&(reach, _)) = groups.get(&cursor) {

@@ -347,7 +347,7 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
         };
         let mut has_var_input = false;
         for p in inputs {
-            // An SP-rooted base is skipped like a const, or `sp` would be a
+            // A decomposed base is skipped like a const, or it would be a
             // second root the index does not dominate.
             if is_base_operand(function, p) {
                 continue;
@@ -386,8 +386,9 @@ fn foldable_cell_load(function: &strider_ir::Function, v: ValueId) -> Option<Val
 /// Whether the constant offsets applied to `index` on its way to the address
 /// keep `range` a contiguous unsigned interval.
 ///
-/// `shallower` is the dominator chain above `index`, target-rooted. An offset
-/// wrapping `range` past zero (`(x & 7) - 2`) names slots below the table.
+/// `shallower` is the dominator chain between the target and `index`, nearest
+/// the target first. An offset wrapping `range` past zero (`(x & 7) - 2`)
+/// names slots below the table.
 fn offsets_keep_range(
     function: &strider_ir::Function,
     shallower: &[ValueId],
@@ -426,8 +427,8 @@ fn offsets_keep_range(
     true
 }
 
-/// The address of a load whose address is a const or SP-rooted base, or has
-/// one as an operand of its producer; `None` otherwise.
+/// The address of a load whose address is a [base operand](is_base_operand)
+/// or has one as an operand of its producer.
 ///
 /// Operand-level, since a stack table's `(sp+base) + idx*stride` decomposes
 /// only in part; it also passes loads the evaluator then fails to fold.
@@ -440,8 +441,9 @@ fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Opti
     foldable.then_some(addr)
 }
 
-/// The two bases the evaluator can fold a `Load` through: a const rodata base
-/// or an SP-rooted stack base.
+/// A constant, or an address [`decompose`](crate::mem_analysis::decompose)
+/// roots at a stack or heap base. The evaluator folds a `Load` only through a
+/// constant or the stack.
 fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
     function.int_const_u128(v).is_some() || crate::mem_analysis::decompose(function, v).is_some()
 }
