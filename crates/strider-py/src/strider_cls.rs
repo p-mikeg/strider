@@ -669,13 +669,17 @@ impl PyLifter {
         let (addr, size) = if let Ok(name) = entry.downcast::<pyo3::types::PyString>() {
             let sym = elf.symbol(&name.to_cow()?)?;
             (sym.address, sym.size)
-        } else if entry.is_instance_of::<pyo3::types::PyInt>() {
-            (entry_addr(entry)?, None)
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "`entry` must be a symbol name (str) or address (int), got {}",
-                entry.get_type().getattr("__name__")?
-            )));
+            match entry_addr(entry) {
+                Ok(addr) => (addr, None),
+                Err(e) if e.is_instance_of::<pyo3::exceptions::PyTypeError>(py) => {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "`entry` must be a symbol name (str) or address (int), got {}",
+                        entry.get_type().getattr("__name__")?
+                    )));
+                }
+                Err(e) => return Err(e),
+            }
         };
         Self::analyze_at(slf, py, addr, Some(cc), opts, Some((elf, size)))
     }

@@ -430,9 +430,10 @@ class ElfLifter(Lifter):
         ELFv1 function's code entry, `r2` holds the TOC pointer of the `.opd`
         descriptor its symbol names.
 
+        A non-`str` entry is an address, read as `operator.index` reads it.
         Raises `TypeError` when `entry` is a `bool` or neither `str` nor
-        `int`, and `StriderError` when the binary changed on disk since
-        loading.
+        `int`, and `StriderError` when it is out of range or the binary
+        changed on disk since loading.
         """
         return self._analyze_elf(self._elf, entry, self._cc if cc is None else cc, opts)
 

@@ -272,10 +272,30 @@ def test_an_entry_index_error_propagates_as_raised():
         ),
         lambda: lifter.build_cfg(_BadIndex()),  # type: ignore[arg-type]
         lambda: prog.build_cfg(_BadIndex()),  # type: ignore[arg-type]
+        lambda: prog.analyze(_BadIndex()),  # type: ignore[arg-type]
     ]
     for call in calls:
         with pytest.raises(_IndexFails):
             call()
+
+
+class _Index:
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __index__(self) -> int:
+        return self.value
+
+
+def test_elf_lifter_analyze_takes_an_index_entry_as_an_address():
+    prog = strider.lift.load_elf(fixture_path("x64", "memory"))
+    main = prog.symbol("main").address
+    assert (
+        prog.analyze(_Index(main)).function.to_text()  # type: ignore[arg-type]
+        == prog.analyze(main).function.to_text()
+    )
+    with pytest.raises(TypeError, match="`entry`"):
+        prog.analyze(True)
 
 
 def _analyzed_function():
