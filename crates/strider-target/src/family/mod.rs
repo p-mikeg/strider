@@ -34,8 +34,8 @@ pub(crate) struct Family {
     /// `(op, register)`: the input-less rounding op and the register it is,
     /// per [`crate::call_other_abi::rounding_mode_register`].
     pub(crate) rounding_register: Option<(&'static str, &'static str)>,
-    /// Exact rows, the first whose `only` admits the preset winning; ahead of
-    /// every stem ([`crate::call_other_abi::classify`]).
+    /// Exact rows, the first whose `only` admits the preset winning; consulted
+    /// before the common rows and the stems ([`crate::call_other_abi::classify`]).
     pub(crate) call_other: &'static [Row],
     pub(crate) call_other_prefixes: &'static [Prefix],
     /// Classification by rule, for a family whose names no stem separates.
@@ -44,9 +44,9 @@ pub(crate) struct Family {
     pub(crate) calling_conventions: &'static [CcPreset],
 }
 
-/// What decoding and lifting know about one family, each field the answer of
-/// the [`SleighArch`](crate::SleighArch) method of the same name. No
-/// `Default`: a new family answers every field.
+/// What decoding and lifting know about one family, each undocumented field
+/// the answer of the [`SleighArch`](crate::SleighArch) method of the same
+/// name. No `Default`: a new family answers every field.
 pub(crate) struct DecodeFacts {
     pub(crate) isa_mode_var: Option<&'static str>,
     pub(crate) flow_commit_vars: &'static [&'static str],

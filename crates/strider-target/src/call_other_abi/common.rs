@@ -61,7 +61,7 @@ pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
     ("ClearExclusiveLocal", PURE),
     ("ExclusiveAccess", PURE),
     ("hasExclusiveAccess", PURE),
-    // ARM preload hints and YIELD, kept as markers patterns can find.
+    // ARM hints, events and arithmetic helpers.
     ("HintPreloadData", PURE),
     ("HintPreloadDataForWrite", PURE),
     ("HintPreloadInstruction", PURE),
