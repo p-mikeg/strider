@@ -68,7 +68,8 @@ lft = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)      # rom=... option
 source, `rom` the optional read-only memory for constant folding.
 `BufferReader(base_addr, data)` takes `bytes`, a `bytearray` or a sequence of
 ints. No preset decodes microMIPS (a MIPS preset reads an odd address as
-MIPS16e); `load_elf` refuses a microMIPS image, a raw `lifter` cannot tell.
+MIPS16e); `load_elf` refuses a microMIPS image unless given both `arch=` and
+`cc=`, and a raw `lifter` cannot tell.
 See the guide's [Beyond ELF](python-guide.md#beyond-elf-custom-code-and-data).
 
 ### Custom memory: `reader.MemReader` / `reader.ReadOnlyMemory`
@@ -294,7 +295,8 @@ carries keeps its ELF answer.
 
 A `Symbol` carries `name`, `address`, `size`, `end`, `is_function`, `is_thumb`,
 `local_entry` and `region`. `size` and `end` are `None` when the ELF records no
-extent. `region` is the `(start, end)` of the loaded region it maps into. A
+extent (or, on ppc64 ELFv1, only the descriptor's). `region` is the
+`(start, end)` of the loaded region it maps into, or `None`. A
 Thumb function's `address` keeps the ISA bit (so `analyze` enters in Thumb);
 `end`, `region` and `symbol_at` measure from `address & ~1`. `local_entry` is
 the ppc64 ELFv2 local entry (`address` plus the `st_other` offset), and
@@ -392,8 +394,9 @@ p.value_of_width(32)           # any value exactly 32 bits wide
 A raw int operand is `int_const(that int)`: `p.int_add(c, 8)` is
 `p.int_add(c, p.int_const(8))`. Pin a width with `.of_width(32)`.
 
-`int_const_any_width(v)` matches a constant whose zero or sign extension is
-`v`, so `0x1234` never matches `0x34` at `I8`.
+`int_const_any_width(v)` matches `v` held at a width it fits, zero- or
+sign-extended to the constant's width: `-1` matches `0xff:I32`, and `0x1234`
+never matches `0x34` at `I8`.
 
 ### Operators
 
@@ -469,9 +472,9 @@ If slots: `.cond(p)`, `.ctrl(p)`, `.capture_true(c)` / `.capture_false(c)`.
 To match what an edge leads to, join on the edge:
 `fn.find_all([if_else().capture_true(t), region().any_input(t)])`.
 
-A pattern of more than 256 nodes (a shared sub-pattern counts once per slot;
-an alternation as its deepest arm), or nested deeper than the thread's stack
-allows, raises `StriderError`.
+A pattern of more than 256 nodes (every alternation arm counts; a shared
+sub-pattern counts once per slot that reaches it), or nested deeper than the
+thread's stack allows, raises `StriderError`.
 
 ### The shared builder vocabulary
 
@@ -615,7 +618,8 @@ cast level that matches, settling in pattern order as `first_of` does.
 
 `find_unique` fails on two structurally distinct matches even when they bind
 the same value. `find_unique_value(pat, capture, signed=False)` dedups by the
-captured constant: `None` for no match, the value when all agree,
+captured constant: `None` when no match binds it to a constant, the value
+when all agree,
 `StriderError` for two distinct values or a capture no pattern binds. A list
 `pat` and `constraints=` work as in `find_all`.
 
@@ -778,7 +782,8 @@ zooms about the pointer, `+` / `-` about the centre, `f` fits, `0` returns to
 `visualize(depth=...)`), **hub cap** (nodes with more consumers are not
 expanded), **max nodes**, **+prod** (count inputs toward the hub cap),
 **pretty** (inlined constants, register names), **whole** and **reset**. The
-three limits start at `0`, no limit; **pretty** and **whole** start on.
+three limits start at `0`, no limit; **pretty** and **whole** start on. A
+`Cfg` shows only **whole**, **depth** and **max nodes**.
 
 `visualize()` binds `host='127.0.0.1'`, `port=0` (a free port), both keyword
 only. A non-loopback `host` serves the graph and the bytes behind it to anyone
@@ -811,7 +816,7 @@ arch.reg("RAX")                        # the Vn for a register name, or None;
 arch.reg_name(vn)                      # the name for a Vn, or None
 
 lft.pcode_at(entry, addr)              # one instruction's p-code as text; an odd
-                                       # entry decodes as Thumb, as in analyze
+                                       # entry is Thumb / MIPS16e, as in analyze
 
 lft.user_op_names()                    # every Sleigh user-op name this arch emits
 lft.call_other_abi("rdtsc")            # how one is classified, or None
@@ -824,7 +829,7 @@ lft.call_other_abi("rdtsc")            # how one is classified, or None
 ...)` builds one from register names, and `.preserves_all()` /
 `.preserves_regs()` derive a variant for a per-address override. `CallOtherAbi`
 describes one user-op. `crates/strider-py/examples/python/17_custom_abis.py`
-uses each.
+builds a custom convention and user-op ABI.
 
 A call is modelled by its target's calling convention, never by reading the
 callee. On 32-bit x86 three kinds of callee need their own convention in
@@ -909,8 +914,9 @@ cfg.incomplete                         # [(address, reason)], empty when complet
 `cfg.incomplete` lists every machine address the CFG cannot vouch for, with
 one of seven reasons (`strider.cfg.INCOMPLETE_REASONS`):
 
-- `"unresolved_branch"`: an indirect branch with no complete answer (lost a
-  successor, oscillated or narrowed, still growing at the iteration cap), or a
+- `"unresolved_branch"`: an indirect branch with no complete answer (stopped
+  deriving, lost a successor, narrowed, withdrawn, still growing at the
+  iteration cap), or a
   return whose target is not provably the caller's (`push rsi; ret`) that you
   did not seed `"return"`. `analyze`'s `unresolved` holds exactly these.
 - `"unverified_seed"`: a site settled only by your `known_targets` (including
@@ -923,11 +929,13 @@ one of seven reasons (`strider.cfg.INCOMPLETE_REASONS`):
   MIPS presets only).
 - `"interior_target"`: a branch target off every instruction boundary, or a
   region start a later decode stepped over (overlapping code).
-- `"unmapped_target"`: a target or fall-through no image byte backs, seated as
-  an empty tail-call stub.
-- `"undecodable_target"`: a target or post-call fall-through that holds no
-  instruction (bytes Sleigh rejects, or `data_ranges`). A branch there leaves
-  through an empty stub; a call there ends as no-return.
+- `"unmapped_target"`: a target or fall-through no image byte backs. A branch
+  there leaves through an empty tail-call stub; a call falling into it ends as
+  no-return. An unmapped entry raises.
+- `"undecodable_target"`: no liftable instruction (bytes Sleigh rejects or has
+  no p-code for, or `data_ranges`). A branch there, or a fall-through into
+  `data_ranges`, leaves through an empty stub; a call falling into it ends as
+  no-return; any other fall-through into rejected bytes raises.
 - `"past_function_end"`: where code falls through past `function_max_size`
   or a `fragment_ranges` end (sequentially, on a not-taken branch, or a
   conditional instruction skipping itself), at the first address after the
@@ -999,7 +1007,7 @@ unsupported arch or ABI (microMIPS included, as does `add_elf`), and
 raise `ValueError`: `CfgOptions(function_max_size=0)`, a size with
 `allow_code_before_start_addr=True`, a `known_targets` string other than
 `"return"`, a string `call_other_abis` value, an empty
-`data_ranges` range, a `BufferReader` region past the address space. Every
+`data_ranges` or `fragment_ranges` range, a `BufferReader` region past the address space. Every
 other bad value is a `StriderError`: `add_elf` / `add_symbol_file` on a bad
 path, an unknown `style=`, a reserved capture name, an unknown node id, an
 unbound capture read without `_opt`, and a `Match` read after `compact`,
