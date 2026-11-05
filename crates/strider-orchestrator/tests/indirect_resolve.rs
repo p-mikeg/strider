@@ -9,9 +9,6 @@ mod common;
 #[path = "indirect_resolve/indirect_branch.rs"]
 mod indirect_branch;
 
-#[path = "indirect_resolve/indirect_branch_lift_placeholder.rs"]
-mod indirect_branch_lift_placeholder;
-
 #[path = "indirect_resolve/indirect_resolve_classify.rs"]
 mod indirect_resolve_classify;
 

@@ -1,27 +1,28 @@
-//! strider lifts a `RegionTerminator::UnresolvedIndirectBranch` region by
-//! emitting a placeholder `IndirectBranch(target_value)` that targets the
-//! dispatch varnode, for the indirect-branch resolver to consume later.
-//!
-//! Drives a synthetic x86-64 `jmp rax` CFG (RAX is a function-entry value,
-//! and the cfg builder defers the site via `UnresolvedIndirectBranch`).
-//! `build_ir` yields an IR with exactly one IndirectBranch node whose single
-//! value-input is `target_vn`'s value at the BranchIndirect site.
-//!
-//! Bypasses the per-arch fixture suite (which runs the full optimizer
-//! pipeline against a real ELF) in favor of a direct `Builder +
-//! Lifter::new + build_ir` call sequence, since this is a per-region
-//! lifting concern only.
+//! `Lifter::build_ir` lifts an `UnresolvedIndirectBranch` region to an
+//! `IndirectBranch` over the dispatch varnode.
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::Lifter;
+use strider_lift::Lifter;
 
-use crate::common;
+/// An x86-64 lifter over `reader`, and the System V convention built
+/// against its registers.
+fn driver_for_reader(
+    reader: BufMemReader<Vec<u8>>,
+) -> (
+    Lifter<BufMemReader<Vec<u8>>>,
+    strider_target::BuiltCallingConvention,
+) {
+    let driver = Lifter::new(strider_target::SleighArch::x86_64(), reader).expect("Lifter::new");
+    let cc = strider_target::CallingConvention::x86_64_systemv()
+        .build(driver.sleigh_regs())
+        .expect("build cc against driver regs");
+    (driver, cc)
+}
 
-/// `0xff 0xe0` (`jmp rax`) with RAX the function-entry value: the
-/// cfg-time resolver can't classify it (no LR set, no constant write to
-/// RAX), so the builder defers with `UnresolvedIndirectBranch`.
+/// `0xff 0xe0` (`jmp rax`) with RAX the function-entry value: no seeded
+/// target, so the builder defers with `UnresolvedIndirectBranch`.
 ///
 /// Returns `(driver, cfg, cc)`; the driver OWNS the Sleigh used to build
 /// `cfg`, so it must also be the one that lifts it.
@@ -36,7 +37,7 @@ fn make_unresolved_indirect_branch_cfg() -> (
     // No link register on x86-64 (cdecl-family conventions push the return
     // address onto the stack), so the LinkRegister classifier arm can't
     // classify this either.
-    let (mut driver, cc) = common::driver_for_reader(common::Arch::X64, reader);
+    let (mut driver, cc) = driver_for_reader(reader);
     let cfg = driver
         .build_cfg(
             MachineInsnAddr::from(base),
@@ -52,7 +53,7 @@ fn make_unresolved_indirect_branch_cfg() -> (
 /// `handle_sleigh_return` instead yields an ABI Return whose inputs are the
 /// convention's `ret_val_regs`, dropping the dispatch varnode.
 #[test]
-fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
+fn unresolvable_branch_indirect_lifts_as_indirect_branch_placeholder() {
     let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
     let function = strider
         .build_ir(&cfg, cc)
@@ -116,7 +117,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
     // The driver OWNS the Sleigh and rebuilds the CFG across both passes.
-    let (mut strider, cc) = common::driver_for_reader(common::Arch::X64, reader);
+    let (mut strider, cc) = driver_for_reader(reader);
 
     let unresolved_addr = {
         let cfg_opts = strider_cfg::CfgOptions {
@@ -219,7 +220,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
 
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
-    let (mut strider, cc) = common::driver_for_reader(common::Arch::X64, reader);
+    let (mut strider, cc) = driver_for_reader(reader);
 
     let unresolved_addr = {
         let cfg_opts = strider_cfg::CfgOptions {
