@@ -148,6 +148,44 @@ fn a_zero_pcode_op_run_between_a_call_and_bad_bytes_still_ends_the_call() {
     assert!(!decoded_addrs(&cfg).contains(&0x1006));
 }
 
+/// Code decoded past the zero-pcode-op run (a literal pool's words) does not
+/// hide the call either.
+#[test]
+fn code_past_a_zero_pcode_op_run_after_a_call_still_ends_the_call() {
+    // 0x1000 call 0x2000 ; 0x1005 nop ; 0x1006 inc eax (ff c0) ; 0x1008 bad.
+    let x86 = vec![
+        0xe8, 0xfb, 0x0f, 0x00, 0x00, 0x90, 0xff, 0xc0, 0x06, 0x06, 0x06, 0x06,
+    ];
+    // armhf glibc `dlsym` tail: 0x58d7a bl 0xbdf24 ; 0x58d7e nop ;
+    // 0x58d80 literal pool, decoding until 0x58d94.
+    let hex = "65f0d3f800bf0c530c008c000000e8000000f6520c0078010000a9ffffffba520c00a0520c00";
+    let thumb = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    for (arch, bytes, base, entry, bad) in [
+        (SleighArch::x86_64(), x86, 0x1000, 0x1000, 0x1008),
+        (SleighArch::arm(), thumb, 0x58d7a, 0x58d7b, 0x58d94),
+    ] {
+        let cfg = DecodeEngine::new(arch, BufMemReader::new(bytes, base))
+            .expect("decode engine")
+            .build_cfg(u64::into(entry), &CfgOptions::default())
+            .unwrap_or_else(|e| panic!("{base:#x}: {e:#}"));
+        assert_eq!(
+            cfg.region_graph()[cfg.entry()].terminator,
+            RegionTerminator::NoReturn,
+            "{base:#x}"
+        );
+        assert_eq!(
+            cfg.incomplete()
+                .of(strider_cfg::Reason::UndecodableTarget)
+                .collect::<Vec<_>>(),
+            &[at(bad)]
+        );
+        assert_eq!(decoded_addrs(&cfg), &[base], "{base:#x}");
+    }
+}
+
 /// A branch landing on one of those zero-pcode-op instructions still has a
 /// successor: the run keeps its regions, sealed onto the stub at the bytes.
 #[test]
