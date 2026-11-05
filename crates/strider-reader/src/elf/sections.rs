@@ -874,81 +874,40 @@ mod tests {
         );
     }
 
-    /// An RWX PT_LOAD is the whole image on firmware / bare-metal / `ld -N`
-    /// binaries. Excluding it leaves the instruction-fetch reader with no
-    /// regions, reported as "address is not mapped" on the first decode.
+    /// Each filter over every write / exec combination, the segment and
+    /// section walks agreeing. `CodeAndReadOnly` keeps an RWX mapping, the
+    /// whole image of firmware or an `ld -N` binary. A section needs
+    /// `SHF_ALLOC`, which ET_REL relocation siting relies on, and no
+    /// `SHF_TLS`, which `ElfSectionLayout::new` would leave at VMA 0.
     #[test]
-    fn code_and_read_only_keeps_an_executable_writable_segment() {
-        let f = LoadFilter::CodeAndReadOnly;
-        assert!(f.segment_accepts(PF_R | PF_W | PF_X), "RWX is still code");
-        assert!(f.segment_accepts(PF_R | PF_X), "RX");
-        assert!(f.segment_accepts(PF_R), "RO");
-        assert!(
-            !f.segment_accepts(PF_R | PF_W),
-            "RW data stays out of the ROM"
-        );
-    }
-
-    /// The segment and section filters must agree on the exec-over-write rule,
-    /// since the same `LoadFilter` serves both walks.
-    #[test]
-    fn segment_and_section_filters_agree_on_exec_over_write() {
-        let f = LoadFilter::CodeAndReadOnly;
+    fn each_filter_accepts_by_write_and_exec() {
         let alloc = u64::from(object::elf::SHF_ALLOC);
-        let write = u64::from(object::elf::SHF_WRITE);
-        let exec = u64::from(object::elf::SHF_EXECINSTR);
-        assert_eq!(
-            f.segment_accepts(PF_R | PF_W | PF_X),
-            f.section_accepts(alloc | write | exec)
-        );
-        assert_eq!(
-            f.segment_accepts(PF_R | PF_W),
-            f.section_accepts(alloc | write)
-        );
-    }
-
-    #[test]
-    fn all_allocatable_takes_everything() {
-        let f = LoadFilter::AllAllocatable;
-        assert!(f.segment_accepts(PF_R | PF_W));
-        assert!(f.section_accepts(u64::from(object::elf::SHF_ALLOC)));
-    }
-
-    /// "Allocatable" is the floor for every section filter, so membership in
-    /// [`LoadedImage::owners`] already implies `SHF_ALLOC`. ET_REL relocation
-    /// siting relies on that to avoid a second alloc check.
-    #[test]
-    fn every_section_filter_requires_alloc() {
-        let write = u64::from(object::elf::SHF_WRITE);
-        let exec = u64::from(object::elf::SHF_EXECINSTR);
-        for f in [
-            LoadFilter::CodeAndReadOnly,
-            LoadFilter::ImmutableOnly,
-            LoadFilter::ImmutableAndRelocatedGot,
-            LoadFilter::AllAllocatable,
-        ] {
-            assert!(!f.section_accepts(0), "no flags at all");
-            assert!(!f.section_accepts(write | exec), "SHF_ALLOC absent");
-        }
-    }
-
-    /// [`ElfSectionLayout::new`] leaves a `SHF_TLS` section at its `sh_addr`,
-    /// so a filter that loaded one would seat `.tdata` at VMA 0 on top of
-    /// `.text`. Every filter must reject it, `AllAllocatable` included.
-    #[test]
-    fn no_section_filter_accepts_a_tls_section() {
-        let alloc = u64::from(object::elf::SHF_ALLOC);
-        let write = u64::from(object::elf::SHF_WRITE);
         let tls = u64::from(object::elf::SHF_TLS);
-        for f in [
-            LoadFilter::CodeAndReadOnly,
-            LoadFilter::ImmutableOnly,
-            LoadFilter::ImmutableAndRelocatedGot,
-            LoadFilter::AllAllocatable,
+        // (writable, executable)
+        let combos = [(false, false), (false, true), (true, false), (true, true)];
+        for (f, want) in [
+            (LoadFilter::CodeAndReadOnly, [true, true, false, true]),
+            (LoadFilter::ImmutableOnly, [true, true, false, false]),
+            (LoadFilter::ImmutableAndRelocatedGot, [true; 4]),
+            (LoadFilter::AllAllocatable, [true; 4]),
         ] {
-            assert!(!f.section_accepts(alloc | write | tls), ".tdata");
-            assert!(!f.section_accepts(alloc | tls), "SHF_TLS without SHF_WRITE");
-            assert!(f.section_accepts(alloc), "a plain allocatable section");
+            for ((w, x), want) in combos.into_iter().zip(want) {
+                let p_flags = PF_R | if w { PF_W } else { 0 } | if x { PF_X } else { 0 };
+                let sh_flags = if w {
+                    u64::from(object::elf::SHF_WRITE)
+                } else {
+                    0
+                } | if x {
+                    u64::from(object::elf::SHF_EXECINSTR)
+                } else {
+                    0
+                };
+                let at = format!("{f:?} w={w} x={x}");
+                assert_eq!(f.segment_accepts(p_flags), want, "{at}: segment");
+                assert_eq!(f.section_accepts(alloc | sh_flags), want, "{at}: section");
+                assert!(!f.section_accepts(sh_flags), "{at}: no SHF_ALLOC");
+                assert!(!f.section_accepts(alloc | tls | sh_flags), "{at}: SHF_TLS");
+            }
         }
     }
 }
