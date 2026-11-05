@@ -137,8 +137,7 @@ replaced the rest.
   `BOOL_BINARY_OPS`, `FLOAT_BINARY_OPS` and `EXTEND_OPS`.
 - A `Lifter` takes weak references, so a reader can point back at its
   handle without a cycle.
-- `.ordered()` on `inputs_of_width` / `bool_inputs` over an op function
-  (`int_add`, `int_eq`, `bool_and`, ...).
+- `.ordered()` on `inputs_of_width` and `bool_inputs`.
 - `Function.to_text()` prints `assumptions` and
   `frame_address_in_call_register` lines, and a REGISTER-space byte order
   that differs from the data order.

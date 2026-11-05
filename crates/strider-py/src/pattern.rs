@@ -1013,10 +1013,18 @@ impl PyPat {
     /// node alone (for `int_ne` / `float_ne`, the `Equal` under the `Xor`). A
     /// shape with no operands to order raises. Match-only.
     fn ordered(slf: &Bound<'_, Self>) -> PyResult<PyPat> {
-        let r = slf.get().repr.under(slf.py(), |r| {
-            matches!(r.op, Op::Wrap(_)) || r.kind == Kind::Through
-        });
-        if !matches!(r.op, Op::Bin(_)) && r.kind != Kind::Pair {
+        let py = slf.py();
+        let through = |r: &Repr| matches!(r.op, Op::Wrap(_)) || r.kind == Kind::Through;
+        let r = slf.get().repr.under(py, through);
+        // `under` stops at a binary builder, which is no `PyPat`.
+        let through_builder = through(r)
+            && r.args.first().is_some_and(|a| {
+                let a = a.bind(py);
+                a.is_instance_of::<PyIntBinaryPat>()
+                    || a.is_instance_of::<PyFloatBinaryPat>()
+                    || a.is_instance_of::<PyBoolBinaryPat>()
+            });
+        if !matches!(r.op, Op::Bin(_)) && r.kind != Kind::Pair && !through_builder {
             return Err(into_strider_err(anyhow::anyhow!(
                 "ordered() pins the operand order of a binary op; got {}",
                 r.name
