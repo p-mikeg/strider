@@ -377,7 +377,7 @@ fn arm32_smc_and_hvc_clobber_the_smccc_result_registers() {
 #[test]
 fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
     let pure = ["rdtsc", "rdtscp", "rdmsr", "readfsbase", "readgsbase"];
-    let mem_clobber = ["swi", "wrmsr"];
+    let mem_clobber = ["swi"];
     for preset in [ArchPreset::X86, ArchPreset::X86_64] {
         for name in pure {
             assert_eq!(
@@ -394,7 +394,7 @@ fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
             );
         }
     }
-    for name in pure.iter().chain(mem_clobber.iter()) {
+    for name in pure.iter().chain(&mem_clobber).chain(&["wrmsr"]) {
         for preset in [ArchPreset::Arm, ArchPreset::Aarch64, ArchPreset::MipsBe32] {
             assert_eq!(classify(preset, name), None, "{preset:?}/{name}");
         }
