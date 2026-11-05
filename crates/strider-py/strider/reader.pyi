@@ -63,8 +63,9 @@ class Symbol:
         ...
     @property
     def size(self) -> Optional[int]:
-        """`st_size`; `None` when 0, or when a ppc64 ELFv1 function's
-        `st_size` measures its `.opd` descriptor."""
+        """`st_size`; `None` when 0, for an object file's defined IFUNC, or
+        when a ppc64 ELFv1 function's `st_size` measures its `.opd`
+        descriptor."""
         ...
 
     @property
