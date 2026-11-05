@@ -18,6 +18,9 @@ mod semantics_x87_extended_precision;
 #[path = "arch_x86/sse_rounding_control.rs"]
 mod sse_rounding_control;
 
+#[path = "arch_x86/x86_64_segment_base_writes.rs"]
+mod x86_64_segment_base_writes;
+
 #[path = "arch_x86/x86_64_shadow_stack_pointer.rs"]
 mod x86_64_shadow_stack_pointer;
 

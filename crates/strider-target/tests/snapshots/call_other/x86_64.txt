@@ -276,7 +276,7 @@ sqrtpd UNCLASSIFIED
 sqrtps UNCLASSIFIED
 stgi UNCLASSIFIED
 swap_bytes UNCLASSIFIED
-swapgs call reads=[] writes=[] mem=true noret=false
+swapgs call reads=[] writes=["GS_OFFSET"] mem=true noret=false
 swi call reads=[] writes=[] mem=true noret=false
 syscall call reads=["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"] writes=["RAX", "RCX", "R11"] mem=true noret=false
 sysenter UNCLASSIFIED
@@ -1728,8 +1728,8 @@ vxorps_avx512dq UNCLASSIFIED
 vxorps_avx512vl UNCLASSIFIED
 writeToShadowStack UNCLASSIFIED
 writeToUserShadowStack UNCLASSIFIED
-writefsbase call reads=[] writes=[] mem=true noret=false
-writegsbase call reads=[] writes=[] mem=true noret=false
+writefsbase call reads=[] writes=["FS_OFFSET"] mem=true noret=false
+writegsbase call reads=[] writes=["GS_OFFSET"] mem=true noret=false
 wrmsr call reads=[] writes=[] mem=true noret=false
 wrpkru UNCLASSIFIED
 x87Prem call reads=[] writes=[] mem=false noret=false

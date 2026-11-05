@@ -228,7 +228,7 @@ sqrtpd UNCLASSIFIED
 sqrtps UNCLASSIFIED
 stgi UNCLASSIFIED
 swap_bytes UNCLASSIFIED
-swapgs call reads=[] writes=[] mem=true noret=false
+swapgs call reads=[] writes=["GS_OFFSET"] mem=true noret=false
 swi call reads=[] writes=[] mem=true noret=false
 syscall UNCLASSIFIED
 sysenter UNCLASSIFIED

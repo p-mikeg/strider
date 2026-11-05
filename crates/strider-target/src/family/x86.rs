@@ -27,6 +27,16 @@ pub(crate) static X86: Family = Family {
     calling_conventions: CALLING_CONVENTIONS,
 };
 
+/// Writes a segment base; memory is clobbered so no access forwards across it.
+const fn base_write(base: &'static [&'static str]) -> CallOtherClass {
+    CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: base,
+        clobbers_memory: true,
+        no_return: false,
+    })
+}
+
 const CALL_OTHER: &[Row] = &[
     // `swi` is every INT vector (0x80, INT3, ...), so it names no registers:
     // a stack address passed to `int 0x80` in EBX escapes unseen.
@@ -84,11 +94,16 @@ const CALL_OTHER: &[Row] = &[
         only: None,
         class: PURE,
     },
-    // WRFSBASE / WRGSBASE: later FS:/GS: loads depend on the new base.
+    // WRFSBASE / WRGSBASE: `FS:` / `GS:` addresses read FS_OFFSET / GS_OFFSET.
     Row {
-        names: &["writefsbase", "writegsbase"],
+        names: &["writefsbase"],
         only: None,
-        class: MEM_CLOBBER,
+        class: base_write(&["FS_OFFSET"]),
+    },
+    Row {
+        names: &["writegsbase"],
+        only: None,
+        class: base_write(&["GS_OFFSET"]),
     },
     // MONITOR / MONITORX: `monitor()` has no operands; RAX = address,
     // ECX = extensions, EDX = hints.
@@ -141,7 +156,7 @@ const CALL_OTHER: &[Row] = &[
     Row {
         names: &["swapgs"],
         only: None,
-        class: MEM_CLOBBER,
+        class: base_write(&["GS_OFFSET"]),
     },
     // Register-to-register SIMD / crypto / x87 ops: every operand is listed,
     // and an `m128` / `m256` / `m512` operand is a dynamic varnode, so its
