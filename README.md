@@ -195,6 +195,8 @@ RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-dep
 cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
 ```
 
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the full gate list.
+
 The Python side, from the repository root:
 
 ```bash
