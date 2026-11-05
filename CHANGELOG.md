@@ -112,7 +112,7 @@ replaced the rest.
 
 - `Capture("any_")` is an ordinary name; only `"_"` stays reserved.
 - `CfgOptions(fragment_ranges=[(start, end)])`: address ranges that also
-  belong to the function; `ElfLifter` fills it from `.cold` symbols.
+  belong to the function (what `ElfLifter` fills from `.cold` symbols).
 - `"past_function_end"` in `INCOMPLETE_REASONS`: code fell through past
   `function_max_size` or a `fragment_ranges` end, now a tail call where it
   was an error.
@@ -134,7 +134,8 @@ replaced the rest.
   `BOOL_BINARY_OPS`, `FLOAT_BINARY_OPS` and `EXTEND_OPS`.
 - A `Lifter` takes weak references, so a reader can point back at its
   handle without a cycle.
-- `.ordered()` on `inputs_of_width` and `bool_inputs`.
+- `.ordered()` on `inputs_of_width` / `bool_inputs` over an op function
+  (`int_add`, `int_eq`, `bool_and`, ...).
 - `Function.to_text()` prints `assumptions` and
   `frame_address_in_call_register` lines, and a REGISTER-space byte order
   that differs from the data order.
@@ -211,7 +212,8 @@ Analysis:
 - Jump tables: index known bits, equality guards, phis of constants, bit
   fields, `rlwinm` guards and byte indices bound the seated arms; guards the
   range analysis cannot read defer the site rather than seating cells past the
-  table; a `cmov; jmp *reg` phi of labels resolves.
+  table, as does a Thumb byte table whose index range is not proven; a
+  `cmov; jmp *reg` phi of labels resolves.
 - Seeds: a one-target `known_targets` seed outside the function is a tail
   call; a `"return"` seed over a p-code `RETURN` is `"unverified_seed"`;
   a seeded arm that is unmapped, undecodable or past the function's end is
@@ -237,7 +239,7 @@ Analysis:
 - N constant `if (flag)` guards over one local (gcc -O0) settle in a bounded
   number of optimizer iterations, where they took N.
 
-Lifting (vendored Sleigh):
+Lifting and decoding (most in the vendored Sleigh):
 
 - Float-to-integer and narrowing conversions round by the dynamic rounding
   mode and saturate as the ISA does on x86 (SSE, VEX, x87), ARM, AArch64,
@@ -278,8 +280,6 @@ Lifting (vendored Sleigh):
   (`lock cmpxchg`, `rep movs`) edges to its first op, not its last p-code
   slice, and is still `"interior_target"`; glibc's `je 0f; lock; 0:`
   re-entry is not reported whichever edge decodes first.
-- A Thumb byte table whose index range is not proven defers instead of
-  resolving to every byte value.
 
 Loading:
 
@@ -291,9 +291,10 @@ Loading:
 - `relocated_got_is_rom=True` leaves unmapped what only the loader computes:
   IFUNC slots, MIPS global GOT entries, lazy-binding header words, TLS slots
   and `R_*_COPY` objects; it serves PPC32 `.got2`.
-- `add_elf` refuses an image of another architecture, class or byte order.
-- `load_elf` refuses a microMIPS image, and a COFF or Mach-O file; a
-  malformed ELF raises `StriderError`.
+- `add_elf` refuses an image of another architecture, class, byte order or
+  `EF_ARM_BE8` (`StriderError`), and a microMIPS image (`ValueError`).
+- `load_elf` refuses a microMIPS image unless given both `arch=` and `cc=`,
+  and a COFF or Mach-O file; a malformed ELF raises `StriderError`.
 - An uncomputed PowerPC half16 relocation holes only its halfword, and an
   uncomputed MIPS64 `R_MIPS_64` composite its whole 8-byte field.
 - A ppc64 ELFv1 function's `Symbol.size` is its `st_size`; ppc64 ELFv2
