@@ -100,8 +100,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// `None` if `idx` is past the input count.
     #[inline]
     pub fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
-        crate::iter::count_edge_read();
         let use_id = *self.store.node_input_uses(node).get(idx)?;
+        crate::iter::count_edge_read();
         Some(self.store.inputs[use_id].value_id)
     }
 

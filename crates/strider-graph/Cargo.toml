@@ -26,8 +26,8 @@ edge-read-count = []
 # `acyclic_postorder`, the order the invariant tests check against.
 graph-algorithms = { workspace = true, features = ["test-util"] }
 proptest.workspace = true
-# Gives `tests/` the feature `cfg(test)` cannot reach.
-strider-graph = { path = ".", features = ["test-injectors"] }
+# Gives `tests/` the features `cfg(test)` cannot reach.
+strider-graph = { path = ".", features = ["test-injectors", "edge-read-count"] }
 
 [lints]
 workspace = true
