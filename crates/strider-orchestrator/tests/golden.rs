@@ -131,7 +131,8 @@ fn split_shared(text: &str) -> (String, String) {
 /// `(token, n)`: at least `n` of `token` in a function's section, none if
 /// `n` is 0. A token is an IR op as printed (`call`, `load`, `iconst[0x61]`),
 /// `a|b` summing both; `cfg.back_edge` counts the CFG's DFS back edges and
-/// `cfg.return_path` sums each `return` region's in-edges, at least one each.
+/// `cfg.return_path` sums each `return` region's in-edges, at least one each;
+/// `cfg.switch` counts the CFG's seated `switch@` regions.
 type Need = (&'static str, usize);
 
 /// What each function must show on every arch: `(case, function, any)`, met
@@ -216,8 +217,8 @@ const INTENT: &[(&str, &str, &[&[Need]])] = &[
     ("switch_value_range", "dispatch_unmasked", RESOLVES),
 ];
 
-/// Every indirect branch resolves.
-const RESOLVES: &[&[Need]] = &[&[("unresolved_branch", 0)]];
+/// Every indirect branch resolves, and a table is seated.
+const RESOLVES: &[&[Need]] = &[&[("unresolved_branch", 0), ("cfg.switch", 1)]];
 
 /// Known unresolved dispatches: `(case, function, arches, why)`. On those
 /// arches the row must instead report `unresolved_branch`, so a fix fails
@@ -237,23 +238,42 @@ const GAPS: &[(&str, &str, &[&str], &str)] = &[
     ("switch_value_range", "dispatch_unmasked", MIPS64, GOT),
 ];
 
+/// `RESOLVES` rows a compiler lowers to a compare chain on the named arches:
+/// `(case, function, arches, why)`. There the row must show no table and no
+/// unresolved branch, so a rebuilt fixture that emits a table fails here
+/// until its entry is dropped.
+#[rustfmt::skip]
+const CHAINS: &[(&str, &str, &[&str], &str)] = &[
+    ("switch", "dispatch_value", &["aarch64"], COMPARE_CHAIN),
+    ("switch_masked_loop", "masked_loop_switch", &["aarch64"], COMPARE_CHAIN),
+    ("switch_value_range", "dispatch_offset", &["aarch64"], COMPARE_CHAIN),
+    ("switch_value_range", "dispatch_unmasked", &["aarch64"], COMPARE_CHAIN),
+];
+
+const COMPARE_CHAIN: &str = "gcc emits a compare chain, no table";
 const MIPS64: &[&str] = &["mips64be", "mips64le"];
 const GOT: &str = "the table base is a GOT slot, unrelocated in the default ROM";
 const DATA_REL_RO: &str = "the label table is in writable .data.rel.ro, which no ROM serves";
 
-/// `function`'s row on `arch`, and the gap it stands in for.
+/// `function`'s row on `arch`, and the gap or chain it stands in for.
 fn intent_on(
     arch: &str,
     case: &str,
     function: &str,
     any: &'static [&'static [Need]],
 ) -> (&'static [&'static [Need]], Option<&'static str>) {
-    match GAPS
-        .iter()
-        .find(|g| g.0 == case && g.1 == function && g.2.contains(&arch))
-    {
-        Some(gap) => (&[&[("unresolved_branch", 1)]], Some(gap.3)),
-        None => (any, None),
+    let on = |g: &&(&str, &str, &[&str], &'static str)| {
+        g.0 == case && g.1 == function && g.2.contains(&arch)
+    };
+    if let Some(gap) = GAPS.iter().find(on) {
+        (&[&[("unresolved_branch", 1)]], Some(gap.3))
+    } else if let Some(chain) = CHAINS.iter().find(on) {
+        (
+            &[&[("cfg.switch", 0), ("unresolved_branch", 0)]],
+            Some(chain.3),
+        )
+    } else {
+        (any, None)
     }
 }
 
@@ -357,6 +377,10 @@ fn count(section: &str, token: &str) -> usize {
     match token {
         "cfg.back_edge" => cfg_counts(section).0,
         "cfg.return_path" => cfg_counts(section).1,
+        "cfg.switch" => section
+            .lines()
+            .filter(|line| line.starts_with("  ") && line.contains(" switch@"))
+            .count(),
         _ => section
             .lines()
             .skip(1)
@@ -670,10 +694,26 @@ fn an_analyze_error_breaks_every_intent_row() {
     );
 }
 
+/// A function with no indirect branch left breaks a `RESOLVES` row.
+#[test]
+fn a_resolves_row_needs_a_seated_switch() {
+    let section = |terminator: &str| {
+        format!("header\n== dispatch_value @0x1000\ncfg\n  0x1000 4 ops {terminator} -> []\n")
+    };
+    let broken = |text: &str| {
+        broken_intents("x64", "switch", text)
+            .iter()
+            .filter(|b| b.starts_with("dispatch_value"))
+            .count()
+    };
+    assert_eq!(broken(&section("return")), 1);
+    assert_eq!(broken(&section("switch@0x1000 [0x1010, 0x1020]")), 0);
+}
+
 #[test]
 fn every_gap_is_an_intent_row_on_roster_arches() {
     let roster = roster_dirs();
-    for &(case, function, arches, _) in GAPS {
+    for &(case, function, arches, _) in GAPS.iter().chain(CHAINS) {
         assert!(
             INTENT.iter().any(|i| i.0 == case && i.1 == function),
             "{case}::{function} has no INTENT row"
