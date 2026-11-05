@@ -107,7 +107,7 @@ where
             cfg_opts,
             opts.per_address_ccs,
             &opts.assumptions,
-            &[],
+            opts.entry_values,
         )?;
 
         // A `Return` consumes no target, so the pipeline would drop the value

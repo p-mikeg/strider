@@ -173,3 +173,41 @@ fn add7_lifts_at_its_entry_and_returns_r3_plus_7() {
         "the other is the incoming r3"
     );
 }
+
+/// `addi r3,r2,-32768; blr` analysed under ELFv1, `r2` bound or not.
+fn toc_relative_r3(
+    entry_values: impl FnOnce(&rsleigh::SleighRegs) -> Vec<(rsleigh::Vn, u64)>,
+) -> Option<u128> {
+    let code = [0x3862_8000u32, 0x4e80_0020];
+    let bytes: Vec<u8> = code.iter().flat_map(|w| w.to_be_bytes()).collect();
+    let mut strider = strider_orchestrator::Strider::new(
+        SleighArch::ppc64be(),
+        rsleigh::mem_readers::BufMemReader::new(bytes, ADD7_ENTRY),
+        None,
+    )
+    .expect("strider");
+    let cc = CallingConvention::powerpc64_elf_v1()
+        .build(strider.sleigh_regs())
+        .expect("cc");
+    let values = entry_values(strider.sleigh_regs());
+    let opts = strider_orchestrator::AnalyzeOptions {
+        entry_values: &values,
+        ..Default::default()
+    };
+    let f = strider
+        .analyze(ADD7_ENTRY, &cc, &opts, None)
+        .expect("analyze")
+        .function;
+    f.int_const_u128(common::returned(&f)[0])
+}
+
+#[test]
+fn a_bound_toc_folds_a_toc_relative_address() {
+    let r2 = |regs: &rsleigh::SleighRegs| vec![(regs.name_to_vn("r2").expect("r2"), 0x1000_8000)];
+    assert_eq!(toc_relative_r3(r2), Some(0x1000_0000));
+    assert_eq!(
+        toc_relative_r3(|_| Vec::new()),
+        None,
+        "unbound r2 is a runtime input"
+    );
+}
