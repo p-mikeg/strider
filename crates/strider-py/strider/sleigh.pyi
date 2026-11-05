@@ -214,8 +214,13 @@ class CallingConvention:
         arguments (ARM AAPCS, MIPS, PowerPC64 ELF). `entry_address` holds the
         function's own address on entry (PPC64 ELFv2 `r12`, MIPS `t9`).
 
+        A `link_register` missing from `callee_saved_regs` is clobbered by a
+        call to this convention, so it suits only a `per_address_ccs` callee
+        (the ppc32 `-mbss-plt` GOT thunk); `analyze` raises `StriderError`
+        for it as the function's own convention.
+
         Raises `StriderError` for an unknown name or a broken ABI invariant,
-        such as a `link_register` missing from `callee_saved_regs`, a `stack_pointer`
+        such as a `stack_pointer`
         (or, with `stack_arg_base`, a `stack_arg_increment`) not address-wide,
         a negative `ret_stack_pop`, or, without a `link_register`, one below
         the address size in bytes. Usable only with a `Lifter` sharing

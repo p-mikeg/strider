@@ -841,7 +841,18 @@ callee. On 32-bit x86 three kinds of callee need their own convention in
   takes every argument on the stack and needs `x86_cdecl()`; otherwise its
   first argument reads as `arg(3)`.
 
-`CallingConvention.custom` states the first two, a preset the third:
+On 32-bit PowerPC, `-fpic -mbss-plt` code finds its GOT with
+`bl _GLOBAL_OFFSET_TABLE_-4; mflr r30`: the word before the GOT is `blrl`,
+which returns at once with LR pointing at the GOT. Under `powerpc_sysv32()`
+LR survives the call, so `mflr` reads the `bl`'s own return address and
+every GOT load after it is wrong. Key that word in `per_address_ccs` with a
+convention that leaves `LR` out of `callee_saved_regs`: LR is then unknown
+after the call (strider does not model the `blrl`), so the GOT loads stay
+unresolved rather than wrong. A convention clobbering its link register is
+refused as the function's own.
+
+`CallingConvention.custom` states the first two and the PowerPC thunk, a
+preset the third:
 
 ```python
 x86 = sleigh.SleighArch.x86()
@@ -860,6 +871,20 @@ opts32 = strider.lift.LifterOptions(per_address_ccs={0x1010: pops_8})
 kernel = strider.lift.LifterOptions(
     per_address_ccs={printk_addr: sleigh.CallingConvention.x86_cdecl()}
 )
+got_thunk = sleigh.CallingConvention.custom(          # ppc32 bss-plt GOT thunk
+    sleigh.SleighArch.ppc32be(),
+    arg_passing_regs=[],
+    callee_saved_regs=[f"r{i}" for i in range(32) if i != 1],  # no "LR"
+    ret_val_regs=[],
+    ret_val_regs_float=[],
+    stack_pointer="r1",
+    stack_arg_base=None,
+    stack_arg_increment=4,
+    ret_stack_pop=0,
+    link_register="LR",
+    preserves_memory=True,
+)
+ppc = strider.lift.LifterOptions(per_address_ccs={got - 4: got_thunk})
 ```
 
 ARM32 hard-float: the convention names the double carriers `d0..d7`, so for
