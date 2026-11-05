@@ -76,6 +76,8 @@ These raise:
 - An address, node id or operand index outside the unsigned range raises
   `StriderError`, not `OverflowError`; a `bool` there, `entry` included,
   raises `TypeError` where it read as 0 or 1.
+- A non-int `entry` to `Lifter.analyze`, `build_cfg` or `pcode_at` (and
+  `ElfLifter.build_cfg`) raises `TypeError`, not `StriderError`.
 - `of_width`, `value_of_width`, `inputs_of_width` and the `load()` /
   `store()` `bit_width` raise `StriderError` for a width no value type has;
   they matched nothing.

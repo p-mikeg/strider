@@ -114,7 +114,7 @@ def _arm():
 
 @pytest.mark.parametrize(
     ("entry", "says"),
-    [(-1, "out of range"), (2**64, "out of range"), ("main", "must be an address")],
+    [(-1, "out of range"), (2**64, "out of range")],
 )
 def test_pcode_at_names_a_bad_entry_as_analyze_does(entry, says):
     """`pcode_at` takes its `entry` as `analyze` and `build_cfg` do."""
@@ -216,7 +216,7 @@ def test_re_merging_a_loaded_image_does_nothing():
 # --- the exception contract -------------------------------------------------
 
 
-@pytest.mark.parametrize("entry", [-1, 2**64, "add"])
+@pytest.mark.parametrize("entry", [-1, 2**64])
 def test_analyze_and_build_cfg_answer_the_same_for_a_bad_entry(entry):
     """Both raise the `StriderError` naming the real cause, not a bare
     `OverflowError`."""
@@ -226,6 +226,30 @@ def test_analyze_and_build_cfg_answer_the_same_for_a_bad_entry(entry):
     with pytest.raises(strider.StriderError, match="`entry`") as built:
         lifter.build_cfg(entry)
     assert str(built.value) == str(analyzed.value)
+
+
+@pytest.mark.parametrize("entry", ["add", 1.0, None], ids=["str", "float", "none"])
+def test_a_wrong_typed_entry_raises_type_error_everywhere(entry):
+    """Every entry point takes `entry` alike; only `ElfLifter.analyze` takes a
+    symbol name, and no message sends an `ElfLifter` to `load_elf`."""
+    lifter = _x86_64(_STRAIGHT)
+    prog = strider.lift.load_elf(fixture_path("x64", "memory"))
+    calls = [
+        lambda: lifter.analyze(entry, CallingConvention.x86_64_systemv()),
+        lambda: lifter.build_cfg(entry),
+        lambda: lifter.pcode_at(entry, _BASE),
+        lambda: prog.build_cfg(entry),
+        lambda: prog.pcode_at(entry, _BASE),
+    ]
+    if not isinstance(entry, str):
+        calls.append(lambda: prog.analyze(entry))
+    for call in calls:
+        with pytest.raises(TypeError, match="`entry`") as raised:
+            call()
+        assert not isinstance(raised.value, strider.StriderError)
+        assert "load_elf" not in str(raised.value)
+        if isinstance(entry, str):
+            assert "ElfLifter.analyze" in str(raised.value)
 
 
 def _analyzed_function():
