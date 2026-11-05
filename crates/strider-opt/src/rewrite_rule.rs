@@ -672,6 +672,38 @@ mod tests {
         assert!(matches!(r, Ok(None)), "{r:?}");
     }
 
+    /// `xor(add:I32(a, b), a)` at an `I64` root: the outer node's width
+    /// mismatch declines before the inner one is built.
+    #[test]
+    fn a_width_decline_builds_no_node() {
+        use strider_pattern::template::TemplateBuilder;
+        use strider_pattern::{int_const as int_const_match, int_mul};
+
+        let (mut function, _, add) = widened_square_fn();
+        let (a, bcap) = (Capture::new(), Capture::new());
+        let lhs = int_add(int_mul(var(a), var(bcap)), int_const_match(0u64))
+            .into_pattern()
+            .ignore_casts();
+        let mut tb = TemplateBuilder::new();
+        let (ta, tbv) = (tb.capture(a), tb.capture(bcap));
+        let inner = tb.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        tb.input(inner, 0, ta);
+        tb.input(inner, 1, tbv);
+        let sum = tb.value_output(inner, 0);
+        tb.set_value_ty(sum, ValueType::int(32));
+        let outer = tb.node(NodeKind::IntBinaryOp(IntBinaryOp::Xor));
+        tb.input(outer, 0, sum);
+        tb.input(outer, 1, ta);
+        tb.value_output(outer, 0);
+        let rule = super::rewrite_rule_runtime(lhs, tb.finish()).unwrap();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        let before = edit.function().graph().all_node_ids().count();
+        let r = rule(&mut edit, add);
+        assert!(matches!(r, Ok(None)), "{r:?}");
+        assert_eq!(edit.function().graph().all_node_ids().count(), before);
+    }
+
     /// A root nothing reads is no site: neither a bare capture nor a build
     /// for it may attribute or create anything. Mutation: drop the use check.
     #[test]

@@ -61,7 +61,8 @@ pub(crate) enum TemplateTy {
 /// # Errors
 ///
 /// If the template is malformed, a capture is unbound, a closure errors, or no width reaches a
-/// node. A signature or wiring refusal comes mid-build, leaving dead nodes in `builder`.
+/// node, or a node's inputs or outputs refuse its signature. Every refusal comes before
+/// the first node is built.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
@@ -113,7 +114,7 @@ pub fn instantiate_guarded<B: IRBuilder>(
     let mut materialised: Vec<Option<ValueId>> = vec![None; value_tys.by_vertex.len()];
     let mut root_value: Option<ValueId> = None;
 
-    // Plan first, so a skip or an unbound capture declines before any node exists.
+    // Plan and check first, so every refusal comes before any node exists.
     let mut plan: Vec<(NodeId, NodeKind)> = Vec::with_capacity(order.len());
     let mut unbound = None;
     for vtx in order {
@@ -197,9 +198,8 @@ pub fn instantiate_guarded<B: IRBuilder>(
         before_build(builder.function())?;
     }
 
+    let mut checked = Vec::with_capacity(plan.len());
     for (vtx, kind) in plan {
-        let inputs = collect_inputs(template, vtx, &materialised)?;
-
         let outputs = output_kinds_for(template, vtx, &value_tys)?;
         for (slot, got) in outputs.iter().enumerate() {
             let want = kind.expected_output_kind(slot).ok_or_else(|| {
@@ -215,9 +215,14 @@ pub fn instantiate_guarded<B: IRBuilder>(
                 );
             }
         }
+        let input_kinds =
+            input_kinds(template, vtx, &materialised, &value_tys, builder.function())?;
+        check_operand_types(&kind, &input_kinds, &outputs)?;
+        checked.push((vtx, kind, outputs));
+    }
 
-        check_operand_types(&kind, &inputs, &outputs, builder.function())?;
-
+    for (vtx, kind, outputs) in checked {
+        let inputs = collect_inputs(template, vtx, &materialised)?;
         let node = builder.create_node_attributed(kind, inputs, outputs, proof_nodes);
 
         let ir_outputs = builder.function().node_outputs(node);
@@ -534,6 +539,37 @@ fn collect_inputs(
     densify(inputs_by_slot, "input")
 }
 
+/// The kinds of the node's inputs in slot order: a capture's binding, else
+/// the producing template output. A gapped or duplicate slot errors.
+fn input_kinds(
+    template: &Template,
+    node_vtx: NodeId,
+    materialised: &[Option<ValueId>],
+    value_tys: &ValueTys,
+    function: &Function,
+) -> anyhow::Result<Vec<ValueKind>> {
+    let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
+    for (slot, out_vtx) in consumed_inputs(&template.graph, node_vtx) {
+        let kind = match materialised[idx(out_vtx)] {
+            Some(value) => function.value_kind(value),
+            None => template
+                .graph
+                .value_kind_ref(out_vtx)
+                .ty
+                .map_or(ValueKind::Memory, |_| {
+                    ValueKind::Typed(value_tys.of(out_vtx))
+                }),
+        };
+        if by_slot.insert(slot, kind).is_some() {
+            anyhow::bail!(
+                "template node wires two producers into input slot {slot} \
+                 (raw-builder mis-wire)"
+            );
+        }
+    }
+    densify(by_slot, "input")
+}
+
 /// The values in slot order; the keys must be exactly `0..len`.
 fn densify<T>(by_slot: BTreeMap<usize, T>, what: &str) -> anyhow::Result<Vec<T>> {
     if by_slot.keys().enumerate().any(|(i, &slot)| i != slot) {
@@ -556,9 +592,8 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, value_tys: &ValueTys) ->
 /// widths, as `strider_ir::validate` does.
 fn check_operand_types(
     kind: &NodeKind,
-    inputs: &[ValueId],
+    inputs: &[ValueKind],
     outputs: &[ValueKind],
-    function: &Function,
 ) -> anyhow::Result<()> {
     let arity = kind.input_arity();
     if !arity.contains(&inputs.len()) {
@@ -574,8 +609,7 @@ fn check_operand_types(
     }
     let out_ty = outputs.first().and_then(|k| k.as_value());
     let mut first_ty = None;
-    for (slot, &value) in inputs.iter().enumerate() {
-        let got = function.value_kind(value);
+    for (slot, &got) in inputs.iter().enumerate() {
         let class = kind
             .expected_input_kind(slot)
             .expect("a slot within the arity checked above");
