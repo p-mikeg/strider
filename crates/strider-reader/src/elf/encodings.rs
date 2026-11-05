@@ -336,9 +336,15 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             let ppc64 = arch == A::PowerPc64;
             let word = if ppc64 { 8 } else { 4 };
             match r_type {
-                elf::R_PPC_NONE => Marker,
+                // `R_PPC_TLS` is `R_PPC64_TLS`.
+                elf::R_PPC_NONE | elf::R_PPC_TLS => Marker,
                 elf::R_PPC_COPY => Kind::Copy,
-                elf::R_PPC64_TLS | elf::R_PPC64_TOCSAVE | R_PPC64_ENTRY if ppc64 => Marker,
+                elf::R_PPC64_TLSGD | elf::R_PPC64_TLSLD | elf::R_PPC64_TOCSAVE | R_PPC64_ENTRY
+                    if ppc64 =>
+                {
+                    Marker
+                }
+                elf::R_PPC_TLSGD | elf::R_PPC_TLSLD if !ppc64 => Marker,
                 // `R_PPC64_*` shares these numbers with `R_PPC_*`.
                 elf::R_PPC_RELATIVE => C(V::ImageRelative, data(word, false)),
                 elf::R_PPC_IRELATIVE => C(V::Indirect, data(word, false)),
