@@ -8,9 +8,9 @@ use super::round::Anchors;
 use super::sites::SiteTable;
 use super::visit;
 
-/// Sites whose seated `Switch` holds fewer arms than their seat asked for:
-/// the cfg drops an arm off every instruction boundary, which the fold,
-/// comparing rounds, would read as convergence.
+/// Sites whose seated `Switch` lacks an arm their seat asked for: the cfg
+/// drops an arm off an instruction boundary, which the fold, comparing
+/// rounds, would read as convergence.
 pub(super) fn seated_arm_losses(cfg: &Cfg, sites: &SiteTable<'_>) -> Vec<PcodeInsnAddr> {
     let mut out = Vec::new();
     for region in cfg.regions() {
