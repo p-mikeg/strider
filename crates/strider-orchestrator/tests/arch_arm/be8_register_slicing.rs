@@ -1,5 +1,5 @@
 //! The Sleigh register space's byte order is fixed by the sla's compile-time
-//! `ENDIAN`, not by the data endianness.  `arm_be_kernel` is BE8: a
+//! `ENDIAN`, not by the data endianness. `arm_be_kernel` is BE8: a
 //! little-endian sla (LE instruction encoding) paired with big-endian data,
 //! matching GHIDRA's `ARM:LEBE:32`, so its register block took the
 //! little-endian branch of `ARM.sinc`:
@@ -11,13 +11,8 @@
 //!   define register offset=0x0300 size=8 [ d31 d30 ... d0 ];  # reversed
 //! ```
 //!
-//! `Endianness::slice_shift_bits` must therefore key the shift off the
-//! sla's register endianness: keying it off `arch.endianness()` puts `s0` at
-//! bit 32 of `d0` instead of bit 0, reading and writing the wrong half of
-//! every VFP/NEON sub-register.  `arm()` and `arm_be_kernel()` share one
-//! register layout (`ARM8_be8` differs from `ARM8_le` only in its data
-//! transfers), so the same bytes must slice registers identically; only the
-//! data byte order differs.
+//! So `Endianness::slice_shift_bits` keys off the sla's register endianness,
+//! and `arm()` and `arm_be_kernel()` slice the same bytes identically.
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, MachineInsnAddr};

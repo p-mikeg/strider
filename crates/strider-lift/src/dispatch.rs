@@ -64,11 +64,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::FloatSub => self.handle_float_sub(insn)?,
             Opcode::FloatNotEqual => self.handle_float_not_equal(insn)?,
             Opcode::FloatLessEqual => self.handle_float_less_equal(insn)?,
-            // `Xor(FloatEqual(x, x), 1):I1`: NaN != NaN.
             Opcode::FloatNan => self.handle_float_nan(insn)?,
-            // Bitwise complement: `Xor(x, all_ones)`.
             Opcode::IntNeg => self.handle_int_neg_as_xor(insn)?,
-            // `Xor(x, IntConst(1)):I1`.
             Opcode::BoolNeg => self.process_bool_unary_op(insn)?,
             Opcode::FloatInt2Float => self.handle_float_int_to_float(insn)?,
             Opcode::FloatFloat2Float => self.handle_float_float_to_float(insn)?,

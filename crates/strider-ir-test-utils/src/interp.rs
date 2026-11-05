@@ -40,7 +40,8 @@ pub struct EntryVar {
 pub struct Env<'a> {
     /// Each entry register's value; the interpreter masks it to the width.
     pub entry: &'a dyn Fn(EntryVar) -> UBig,
-    /// What an unwritten byte reads, before and after any call.
+    /// What an unwritten byte reads, before and after any call. Read a byte at
+    /// a time, so only a byte-addressed ROM answers as a wide folded load does.
     pub rom: Option<&'a dyn ReadOnlyMemory>,
     /// Varies the noise unwritten bytes and callee results are drawn from.
     pub seed: u64,
@@ -112,14 +113,14 @@ pub struct CallRecord {
     /// The callee's address, the low 128 bits of the target value.
     pub target: u128,
     pub args: Vec<Slot>,
-    /// Bytes written since the previous call that clobbers memory, outside
-    /// [`Env::private`].
+    /// Bytes written since the previous memory-clobbering call, plus the bytes
+    /// [`Keeps`] carried across it, outside [`Env::private`].
     pub writes: BTreeMap<u64, u8>,
 }
 
-/// How a run ended. `writes` holds the bytes written since the last call that
-/// clobbers memory, outside [`Env::private`]; earlier ones are in that call's
-/// record.
+/// How a run ended. `writes` holds the bytes written since the last
+/// memory-clobbering call, plus the bytes [`Keeps`] carried across it, outside
+/// [`Env::private`]; earlier ones are in that call's record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Return {

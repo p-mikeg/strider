@@ -39,7 +39,8 @@ ET_EXEC / ET_DYN load from PT_LOAD headers, everything else from sections.
 
 Relocating an ET_REL stands in for the link: an undefined or `SHN_COMMON`
 symbol gets an address in an unmapped range past the image, and a GOT
-reference loads from a synthetic slot. An undefined weak symbol's address is
+reference loads from a synthetic slot. The synthetic link binds every symbol
+locally, so those slots are ROM whatever `got_is_rom` says. An undefined weak symbol's address is
 computed only where it cannot be observed (a branch displacement, a GOT slot
 left unmapped), so `if (&w)` folds neither way. Encodings are applied for x86,
 ARM, AArch64, MIPS and PowerPC. A relocation that cannot be computed (TLS,

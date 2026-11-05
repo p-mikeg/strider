@@ -9,8 +9,8 @@ IR from a `Cfg`.
 - `DecodeEngine::new(arch, reader)?.build_cfg(entry, &opts)` -> `Cfg`. Every
   build decodes as on a fresh engine. On an arch with an ISA mode the entry's
   low bit selects it (Thumb, MIPS16e).
-- `Region`: maximal straight-line p-code entered only at `start_addr`, ending
-  at its `RegionTerminator`. It can end mid-instruction.
+- `Region`: a straight-line run of p-code from `start_addr`, ending at its
+  `RegionTerminator`, not necessarily maximal. It can end mid-instruction.
 - `CfgOptions<'a>`: the function `bound` and `fragment_ranges`, borrowed
   target tables (`known_targets`, `derived_targets`, `no_return_targets`,
   `call_other_overrides`, `local_entries`) and `data_ranges`, never decoded.
