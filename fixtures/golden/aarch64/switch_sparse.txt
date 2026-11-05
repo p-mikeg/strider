@@ -18,7 +18,7 @@ cfg
   0x680.2 1 ops goto -> [0x680.3]
   0x680.3 2 ops goto -> [0x654]
   0x688 8 ops goto -> [0x654]
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0x1400:1, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0x2d00:1, u:0x8800:8, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0xf000:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x23e00:8, u:0x24000:8, u:0x38900:4, u:0x38b00:4, u:0x38f00:8, u:0x39100:8, u:0x3b100:4, u:0x3c400:4, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b200:4, u:0x4b400:4, u:0x77200:8, u:0x77300:8, u:0x77400:8]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0x1400:1, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0x2d00:1, u:0x8800:8, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0xf000:8, u:0x22800:4, u:0x22a00:4, u:0x23000:8, u:0x23200:8, u:0x23600:4, u:0x23800:4, u:0x23a00:8, u:0x23c00:8, u:0x38500:4, u:0x38700:4, u:0x38b00:8, u:0x38d00:8, u:0x3ad00:4, u:0x3c000:4, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x4ae00:4, u:0x4b000:4, u:0x76e00:8, u:0x76f00:8, u:0x77000:8]
 float_arg 0 [%v79]
 float_arg 1 [%v80]
 float_arg 2 [%v81]
@@ -67,7 +67,7 @@ float_arg 3 [%v82]
 %v44:i32 = int.add %v53, %v49
 
 %v45:ctrl, %v46:token = region %v42, %v43
-%v47:i32<u:0x3b100:4> = phi %v46, %v44, %v59
+%v47:i32<u:0x3ad00:4> = phi %v46, %v44, %v59
 %v48:i64 = extend.zero %v47
 %v49:i32 = iconst[0x3]
 %v50:i1 = icmp.equal %v29, %v49
@@ -82,7 +82,7 @@ float_arg 3 [%v82]
 %v61:i32 = int.add %v53, %v60
 
 %v62:ctrl, %v63:token = region %v58, %v57
-%v64:i32<u:0x3c400:4> = phi %v63, %v59, %v61
+%v64:i32<u:0x3c000:4> = phi %v63, %v59, %v61
 %v65:i64 = extend.zero %v64
 
 %v66:ctrl, %v67:token = region %v51, %v62, %v45, %v32
@@ -109,7 +109,7 @@ cfg
   0x6c4 27 ops cbranch 0x704 -> [0x700, 0x704]
   0x700 1 ops tailcall 0x5e0 -> []
   0x704 2 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23400:8, u:0x23600:8, u:0x31500:1]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23000:8, u:0x23200:8, u:0x31100:1]
 frame_address_in_call_register reach=8
 arg 0 [%v10]
 arg 7 [%v11]
@@ -159,7 +159,7 @@ cfg
   0x6f4 5 ops cbranch 0x704 -> [0x700, 0x704]
   0x700 1 ops tailcall 0x5e0 -> []
   0x704 2 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x31500:1]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x31100:1]
 arg 1 [%v8]
 arg 2 [%v15]
 arg 3 [%v16]
@@ -216,7 +216,7 @@ cfg
   0x814.3 1 ops goto -> [0x814.4]
   0x814.4 3 ops return -> []
   0x81c 9 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0x22c00:4, u:0x22e00:4, u:0x38900:4, u:0x38b00:4, u:0x3cb00:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0x22800:4, u:0x22a00:4, u:0x38500:4, u:0x38700:4, u:0x3c700:4]
 arg 0 [%v1]
 arg 1 [%v8]
 float_arg 0 [%v13]
@@ -248,7 +248,7 @@ return %v5, %v7, %v12, %v8, %v13, %v14, %v15, %v16
 %v24:i32 = iconst[0xffffffff]
 
 %v25:ctrl, %v26:token = region %v22, %v23
-%v27:i32<u:0x3cb00:4> = phi %v26, %v30, %v24
+%v27:i32<u:0x3c700:4> = phi %v26, %v30, %v24
 %v28:i64 = extend.zero %v27
 %v29:i32 = iconst[0x4]
 %v30:i32 = int.add %v9, %v29
@@ -266,7 +266,7 @@ return %v25, %v7, %v28, %v31, %v13, %v14, %v15, %v16
 %v43:i32 = int.add %v9, %v42
 
 %v44:ctrl, %v45:token = region %v40, %v41
-%v46:i32<u:0x3cb00:4> = phi %v45, %v43, %v24
+%v46:i32<u:0x3c700:4> = phi %v45, %v43, %v24
 %v47:i64 = extend.zero %v46
 
 %v48:ctrl, %v49:token = region %v33, %v44

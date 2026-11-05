@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == is_thread_group_empty @0x2101a8
 cfg
   0x2101a8 28 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x23400:8, u:0x23600:8, u:0x7eb00:8, u:0x7ed00:8]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x23000:8, u:0x23200:8, u:0x7e700:8, u:0x7e900:8]
 arg 0 [%v5]
 arg 1 [%v12]
 float_arg 0 [%v13]
@@ -37,7 +37,7 @@ cfg
   0x2101c8 19 ops goto -> [0x2101dc]
   0x2101dc 0 ops goto -> [0x2101e0]
   0x2101e0 39 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b400:4, u:0x77200:8, u:0x77300:8, u:0x77400:8, u:0x77500:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0xcb00:8, u:0xef00:8, u:0x23000:8, u:0x23200:8, u:0x23600:4, u:0x23800:4, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x4b000:4, u:0x76e00:8, u:0x76f00:8, u:0x77000:8, u:0x77100:4]
 arg 0 [%v13]
 arg 1 [%v18]
 arg 2 [%v26]

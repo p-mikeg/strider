@@ -15,7 +15,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x600
 cfg
   0x600 130 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0xc000:8, u:0xf100:8, u:0x3fd00:4, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b200:4, u:0x56a00:4, u:0x77200:8, u:0x77300:8, u:0x77400:8]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0xc000:8, u:0xf100:8, u:0x3f900:4, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x4ae00:4, u:0x56600:4, u:0x76e00:8, u:0x76f00:8, u:0x77000:8]
 arg 2 [%v18]
 arg 3 [%v19]
 arg 4 [%v20]
@@ -149,7 +149,7 @@ cfg
   0x744 27 ops cbranch 0x784 -> [0x780, 0x784]
   0x780 1 ops tailcall 0x5e0 -> []
   0x784 2 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23400:8, u:0x23600:8, u:0x31500:1]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23000:8, u:0x23200:8, u:0x31100:1]
 frame_address_in_call_register reach=8
 arg 0 [%v10]
 arg 7 [%v11]
@@ -199,7 +199,7 @@ cfg
   0x774 5 ops cbranch 0x784 -> [0x780, 0x784]
   0x780 1 ops tailcall 0x5e0 -> []
   0x784 2 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x31500:1]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x31100:1]
 arg 1 [%v8]
 arg 2 [%v15]
 arg 3 [%v16]
@@ -248,7 +248,7 @@ cfg
   0x860 13 ops cbranch 0x864.4 -> [0x864.3, 0x864.4]
   0x864.3 1 ops goto -> [0x864.4]
   0x864.4 3 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x5600:1, u:0x38900:4, u:0x38b00:4, u:0x39b00:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x5600:1, u:0x38500:4, u:0x38700:4, u:0x39700:4]
 arg 0 [%v1]
 arg 1 [%v13]
 float_arg 0 [%v14]
@@ -264,7 +264,7 @@ float_arg 3 [%v17]
 %v7:i32 = int.neg %v2
 
 %v8:ctrl, %v9:token = region %v5, %v6
-%v10:i32<u:0x39b00:4> = phi %v9, %v7, %v2
+%v10:i32<u:0x39700:4> = phi %v9, %v7, %v2
 %v11:mem = initial_memory
 %v12:i64 = extend.zero %v10
 %v13:i64 = initial_var[x1]
@@ -279,7 +279,7 @@ cfg
   0x870 12 ops cbranch 0x874.4 -> [0x874.3, 0x874.4]
   0x874.3 1 ops goto -> [0x874.4]
   0x874.4 3 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x3b00:1, u:0x39600:4, u:0x3b100:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x3b00:1, u:0x39200:4, u:0x3ad00:4]
 arg 0 [%v1]
 arg 1 [%v3]
 float_arg 0 [%v13]
@@ -295,7 +295,7 @@ float_arg 3 [%v16]
 %v6:ctrl, %v7:ctrl = if %v0, %v5
 
 %v8:ctrl, %v9:token = region %v7, %v6
-%v10:i32<u:0x3b100:4> = phi %v9, %v2, %v4
+%v10:i32<u:0x3ad00:4> = phi %v9, %v2, %v4
 %v11:mem = initial_memory
 %v12:i64 = extend.zero %v10
 %v13:i128 = initial_var[q0]
@@ -311,7 +311,7 @@ cfg
   0x88c.4 1 ops goto -> [0x88c.5]
   0x88c.5 3 ops return -> []
   0x894 3 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x2400:1, u:0x4200:1, u:0x4400:1, u:0x39600:4, u:0x3b100:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x2400:1, u:0x4200:1, u:0x4400:1, u:0x39200:4, u:0x3ad00:4]
 arg 0 [%v1]
 arg 1 [%v3]
 arg 2 [%v14]
@@ -339,7 +339,7 @@ return %v6, %v8, %v9, %v3, %v10, %v11, %v12, %v13
 %v17:ctrl, %v18:ctrl = if %v7, %v16
 
 %v19:ctrl, %v20:token = region %v18, %v17
-%v21:i32<u:0x3b100:4> = phi %v20, %v2, %v15
+%v21:i32<u:0x3ad00:4> = phi %v20, %v2, %v15
 %v22:i64 = extend.zero %v21
 return %v19, %v8, %v22, %v3, %v10, %v11, %v12, %v13
 
@@ -350,7 +350,7 @@ cfg
   0x8ac.3 1 ops goto -> [0x8ac.4]
   0x8ac.4 3 ops return -> []
   0x8b4 3 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x2d00:1, u:0x31400:1, u:0x38900:4, u:0x38b00:4, u:0x3b100:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x2d00:1, u:0x31000:1, u:0x38500:4, u:0x38700:4, u:0x3ad00:4]
 arg 0 [%v8]
 arg 1 [%v11]
 arg 2 [%v20]
@@ -383,7 +383,7 @@ return %v5, %v7, %v10, %v11, %v12, %v13, %v14, %v15
 %v22:i32 = truncate %v11
 
 %v23:ctrl, %v24:token = region %v19, %v18
-%v25:i32<u:0x3b100:4> = phi %v24, %v21, %v22
+%v25:i32<u:0x3ad00:4> = phi %v24, %v21, %v22
 %v26:i64 = extend.zero %v25
 return %v23, %v7, %v26, %v11, %v12, %v13, %v14, %v15
 
@@ -394,7 +394,7 @@ cfg
   0x8d0 25 ops cbranch 0x8d0 -> [0x8d0, 0x8e0]
   0x8e0 2 ops return -> []
   0x8e4 3 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x22c00:4, u:0x22e00:4, u:0x23a00:4, u:0x23c00:4, u:0x30800:4, u:0x30900:4, u:0x30b00:1, u:0x39600:4, u:0x81500:1]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x22800:4, u:0x22a00:4, u:0x23600:4, u:0x23800:4, u:0x30400:4, u:0x30500:4, u:0x30700:1, u:0x39200:4, u:0x81100:1]
 arg 0 [%v1]
 arg 1 [%v30]
 float_arg 0 [%v26]
@@ -441,7 +441,7 @@ cfg
   0x908 20 ops cbranch 0x908 -> [0x908, 0x918]
   0x918 2 ops return -> []
   0x91c 3 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0x22c00:4, u:0x22e00:4, u:0x38900:4, u:0x38b00:4, u:0x39600:4, u:0x59100:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0x22800:4, u:0x22a00:4, u:0x38500:4, u:0x38700:4, u:0x39200:4, u:0x58d00:4]
 arg 0 [%v2]
 arg 1 [%v28]
 float_arg 0 [%v24]
@@ -483,7 +483,7 @@ cfg
   0x924 4 ops cbranch 0x940 -> [0x930, 0x940]
   0x930 13 ops cbranch 0x930 -> [0x930, 0x940]
   0x940 2 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x23a00:4, u:0x23c00:4, u:0x24200:4, u:0x31200:1, u:0x31400:1, u:0x53f00:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x23600:4, u:0x23800:4, u:0x23e00:4, u:0x30e00:1, u:0x31000:1, u:0x53b00:4]
 arg 0 [%v1]
 float_arg 0 [%v29]
 float_arg 1 [%v30]
@@ -529,7 +529,7 @@ cfg
   0x968 32 ops cbranch 0x968 -> [0x968, 0x97c]
   0x97c 18 ops cbranch 0x958 -> [0x958, 0x988]
   0x988 2 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0x22c00:4, u:0x22e00:4, u:0x23a00:4, u:0x23c00:4, u:0x38900:4, u:0x38b00:4, u:0x39600:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0x22800:4, u:0x22a00:4, u:0x23600:4, u:0x23800:4, u:0x38500:4, u:0x38700:4, u:0x39200:4]
 arg 0 [%v2]
 arg 1 [%v11]
 float_arg 0 [%v48]
@@ -594,7 +594,7 @@ cfg
   0x9ac 12 ops cbranch 0x9a0 -> [0x9a0, 0x9b4]
   0x9b4 3 ops return -> []
   0x9bc 4 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0x22c00:4, u:0x22e00:4, u:0x38900:4, u:0x38b00:4, u:0x39600:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0x22800:4, u:0x22a00:4, u:0x38500:4, u:0x38700:4, u:0x39200:4]
 arg 0 [%v2]
 float_arg 0 [%v23]
 float_arg 1 [%v24]
