@@ -77,8 +77,9 @@ These raise:
 - An address, node id or operand index outside the unsigned range raises
   `StriderError`, not `OverflowError`; a `bool` there, `entry` included,
   raises `TypeError` where it read as 0 or 1.
-- A non-int `entry` to `Lifter.analyze`, `build_cfg` or `pcode_at` (and
-  `ElfLifter.build_cfg`) raises `TypeError`, not `StriderError`.
+- A non-int `entry` to `Lifter.analyze` / `build_cfg` (and
+  `ElfLifter.build_cfg`) raises `TypeError`, not `StriderError`; `pcode_at`
+  takes `entry` the same way.
 - `of_width`, `value_of_width`, `inputs_of_width` and the `load()` /
   `store()` `bit_width` raise `StriderError` for a width no value type has;
   they matched nothing.
@@ -235,6 +236,8 @@ Analysis:
 - `hlt` falls through and clobbers memory (`halt` `call_other`); volatile
   system registers and timers read a fresh value each time
   (`read_volatile`).
+- x86 `swapgs` and `wr{fs,gs}base` update the segment base a later `fs:` /
+  `gs:` access reads; `aapcs64` keeps `sp_el0` across a call.
 - Address offsets compare on the address ring.
 - A jump-table target found in its other ISA mode as well no longer counts
   as a narrowing, which could withdraw the site.
@@ -248,8 +251,8 @@ Lifting and decoding (most in the vendored Sleigh):
   PowerPC and MIPS; `fcvt*`, `vcvt`, `fctid*`, `fcfidu`, `friz`, `frsp`,
   `fist*` and `frndint` were wrong.
 - x86: `fprem`, `fxam`, `fcom`, `rcl` / `rcr` OF, `lock hlt`, 66/F2/F3
-  conversion prefixes, `0x67` `rep` and `lea`, and the upstream Ghidra
-  b16f1556d2 fixes.
+  conversion prefixes, `0x67` memory operands, `rep` and `lea`, and the
+  upstream Ghidra b16f1556d2 fixes.
 - x86: VEX.256 FMA writes all 256 bits; `rdtscp` writes EDX:EAX and ECX;
   `0x90` under a REX prefix without B is a `nop`; `pushf` and `syscall`'s
   R11 set reserved RFLAGS bit 1.
@@ -268,14 +271,18 @@ Lifting and decoding (most in the vendored Sleigh):
   word), `stlrb` / `stlrh` and `ldar` W (access width), LSE atomics and
   `ldlar` into W (upper half), byte and half `ld{s,u}{max,min}` (compare
   width); by-element `sdot`, `udot`, `usdot`, `sudot`, `bfdot`, `fcmla` and
-  `sm3tt*` lift where they failed as unclassified.
+  `sm3tt*` lift where they failed as unclassified; 64-bit `bfdot`, `sudot`
+  and `usdot` zero bytes 8-15.
 - ARM: `vrintr`, `vld3/4`, `vst3/4`, BE8/BE32 `vld1` / `vst1`, `msr` flags,
   NEON `vcvt` f16 vectors, modified immediates with imm8 0, `sdiv` / `udiv`
-  by 0; BE8 decodes with its own `ARM8_be8` sla.
+  by 0, `rfeia` / `rfeib` (PC from the lower word); BE8 decodes with its own
+  `ARM8_be8` sla.
 - The fixes Ghidra master made after the fork's base, listed in
   `externals/rsleigh/sleigh/FORK.md`.
 - ppc64 ELFv1 and ppc32 SysV conventions return floats in `f1`-`f4`.
-- CFG decoding of a run of `nop`s is deterministic.
+- CFG decoding of a run of `nop`s is deterministic. A call followed by a
+  `nop` and decodable non-code (Thumb `bl __stack_chk_fail; nop` before a
+  literal pool) ends `NoReturn` where it failed the build.
 - `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb), as `analyze`
   does, and keeps the Thumb mode after many builds on one handle.
 - A branch into the middle of an instruction with internal p-code branches
