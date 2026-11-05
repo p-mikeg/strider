@@ -155,12 +155,8 @@ fn relocation_mode(
         (true, got_is_rom) => Ok(RelocationMode::Applied { got_is_rom }),
         (false, false) => Ok(RelocationMode::Unapplied),
         (false, true) => Err(into_strider_err(anyhow::anyhow!(
-            "relocated_got_is_rom=True claims the loader has already relocated \
-             `.got` / `.data.rel.ro`, and apply_relocations=False says it has not. \
-             Served unrelocated, those slots read as their on-disk bytes, which is 0 \
-             on a PIE (the address lives in the relocation addend), and a dispatch \
-             through one folds to address 0 with nothing reported unresolved. Pass \
-             apply_relocations=True, or relocated_got_is_rom=False"
+            "relocated_got_is_rom=True needs apply_relocations=True: unrelocated GOT \
+             slots serve their on-disk bytes (0 on a PIE)"
         ))),
     }
 }
