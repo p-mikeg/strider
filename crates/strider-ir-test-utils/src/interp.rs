@@ -57,12 +57,12 @@ pub struct Env<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct Keeps {
     /// The caller's frame: what lies here at or above the call's SP survives
-    /// an allocator call, and every call under [`Self::all_calls`]. An
-    /// unwritten byte here never changes.
+    /// an allocator call, and every call under [`Self::all_calls`], written
+    /// or not.
     pub frame: Option<Range<u64>>,
     /// Allocator targets: such a call returns a fresh pointer in its first
     /// output and keeps every earlier allocation's first
-    /// [`ALLOCATION_BYTES`]. An unwritten allocation byte never changes.
+    /// [`ALLOCATION_BYTES`], written or not.
     pub allocators: Vec<u128>,
     /// Whether every call, not only an allocator, keeps the frame.
     pub all_calls: bool,
@@ -237,6 +237,18 @@ struct Mem {
     register: BTreeMap<u64, u8>,
     /// Calls before this point; 0 is the entry state.
     calls: u64,
+    /// The latest call that clobbered part of the kept frame.
+    frame_clobber: Option<Rc<FrameClobber>>,
+    /// The latest call that clobbered the allocations; 0 is none.
+    allocation_clobber: u64,
+}
+
+/// A call that clobbered the kept frame below `below`, or all of it.
+#[derive(Debug)]
+struct FrameClobber {
+    call: u64,
+    below: Option<u64>,
+    prev: Option<Rc<FrameClobber>>,
 }
 
 struct Machine<'a, 'e> {
@@ -493,8 +505,13 @@ impl<'a, 'e> Machine<'a, 'e> {
                 return buf[0];
             }
         }
-        let calls = if self.in_frame(addr) || self.in_allocation(addr) {
-            0
+        // Keyed by the latest call that clobbered it.
+        let calls = if self.in_frame(addr) {
+            std::iter::successors(mem.frame_clobber.as_deref(), |c| c.prev.as_deref())
+                .find(|c| c.below.is_none_or(|sp| addr < sp))
+                .map_or(0, |c| c.call)
+        } else if self.in_allocation(addr) {
+            mem.allocation_clobber
         } else {
             mem.calls
         };
@@ -581,10 +598,27 @@ impl<'a, 'e> Machine<'a, 'e> {
                 })
                 .map(|(&addr, &byte)| (addr, byte))
                 .collect();
+            let frame_clobber = self
+                .env
+                .keeps
+                .is_some_and(|keeps| keeps.frame.is_some())
+                .then(|| {
+                    Rc::new(FrameClobber {
+                        call: k,
+                        below: call_sp,
+                        prev: before.frame_clobber.clone(),
+                    })
+                });
             Rc::new(Mem {
                 written,
                 register: BTreeMap::new(),
                 calls: k,
+                frame_clobber,
+                allocation_clobber: if allocates {
+                    before.allocation_clobber
+                } else {
+                    k
+                },
             })
         };
         let seed = self.env.seed;
@@ -1060,6 +1094,85 @@ mod tests {
             }
             other => panic!("ended {other:?}"),
         }
+    }
+
+    /// `load(at); call; load(at)` xored, `at` an unwritten byte `off` past a
+    /// call SP of `FRAME_TOP - 64`, or past an allocation's pointer when
+    /// `in_allocation`. Zero when the call left the byte as it was.
+    fn unwritten_byte_across_a_call(keeps: &Keeps, off: i64, in_allocation: bool) -> Slot {
+        const FRAME_TOP: u64 = 0x7fff_0000;
+        let (sp, ret) = (crate::stack_vn_x86_64(), reg_vn(0x1000, 8));
+        let i64t = ValueType::int(64);
+        let mut b = RegisterSet::new()
+            .tracked(ret)
+            .ret(ret)
+            .stack_vn(sp)
+            .build_fn_single_region()
+            .unwrap();
+        let spv = b.read_variable(&sp).unwrap();
+        let low = b
+            .build_const_binop((-64i64) as u64, spv, IntBinaryOp::Add, i64t)
+            .unwrap();
+        b.write_variable(&sp, low).unwrap();
+        let base = if in_allocation {
+            let alloc = b.build_int_const(0x5000u64, i64t).unwrap();
+            b.build_call(alloc, &[], &[ret], 0).unwrap().1[0]
+        } else {
+            low
+        };
+        let at = b
+            .build_const_binop(off as u64, base, IntBinaryOp::Add, i64t)
+            .unwrap();
+        let before = b.build_load(at, rsleigh::VnSpace::RAM, i64t).unwrap();
+        let callee = b.build_int_const(0x9000u64, i64t).unwrap();
+        b.build_call(callee, &[], &[], 0).unwrap();
+        let after = b.build_load(at, rsleigh::VnSpace::RAM, i64t).unwrap();
+        let x = b
+            .build_int_binary_operation(before, after, IntBinaryOp::Xor, i64t)
+            .unwrap();
+        b.build_return(None, &[x]).unwrap();
+        let f = b.build().unwrap();
+        let env = Env {
+            keeps: Some(keeps),
+            ..env(&|_| UBig::from(FRAME_TOP), None)
+        };
+        returned(&f, &env).remove(0)
+    }
+
+    #[test]
+    fn a_call_keeps_an_unwritten_byte_only_where_it_keeps_a_written_one() {
+        let frame = Some(0x7ffe_0000..0x7fff_0000);
+        let all_calls = Keeps {
+            frame: frame.clone(),
+            allocators: vec![0x5000],
+            all_calls: true,
+        };
+        let allocators_only = Keeps {
+            all_calls: false,
+            ..all_calls.clone()
+        };
+        let other_callee = Keeps {
+            allocators: vec![0x5000, 0x9000],
+            ..allocators_only.clone()
+        };
+        // At or above the call SP of a call that keeps the frame.
+        assert_eq!(unwritten_byte_across_a_call(&all_calls, 8, false), known(0));
+        // Below that call SP.
+        assert_ne!(
+            unwritten_byte_across_a_call(&all_calls, -8, false),
+            known(0)
+        );
+        // A call that does not keep the frame.
+        assert_ne!(
+            unwritten_byte_across_a_call(&allocators_only, 8, false),
+            known(0)
+        );
+        // An allocation, across an allocator call and across any other.
+        assert_eq!(
+            unwritten_byte_across_a_call(&other_callee, 8, true),
+            known(0)
+        );
+        assert_ne!(unwritten_byte_across_a_call(&all_calls, 8, true), known(0));
     }
 
     fn two_way_switch() -> Function {
