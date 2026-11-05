@@ -471,6 +471,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// through another `Switch`.
     fn refuse_arms_reaching(&mut self, regions: impl Iterator<Item = NodeIndex>) {
         let mut stack: Vec<NodeIndex> = regions.collect();
+        if stack.is_empty() {
+            return;
+        }
         // A dispatch is discovered, bounding the walk, but does not reach.
         let mut reaching: rustc_hash::FxHashSet<NodeIndex> = stack.iter().copied().collect();
         let mut discovered = reaching.clone();
@@ -719,14 +722,14 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         self.refuse_arms_reaching(lost_successor.iter().map(|(region, _)| *region));
         self.drop_refused_switch_arms();
         let start_addr = PcodeInsnAddr::at_machine_start(self.start_addr);
-        let (starting_region, _) = self.find_region_containing_addr(start_addr).ok_or_else(
-            || {
-                anyhow!(
-                    "cfg build completed but no region contains the entry address {start_addr:?}; \
-                     check that the entry is decodable"
-                )
-            },
-        )?;
+        // A split keeps its first half at the old start, so a region starts
+        // exactly at the entry.
+        let starting_region = self.index.get(start_addr).ok_or_else(|| {
+            anyhow!(
+                "cfg build completed but no region starts at the entry address {start_addr:?}; \
+                 check that the entry is decodable"
+            )
+        })?;
         self.remove_unreachable_regions(starting_region);
         // Defence: every path to such a region runs through a refused arm.
         if let Some((_, e)) = lost_successor
