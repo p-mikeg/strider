@@ -20,6 +20,8 @@ These change an answer without an error:
   n-output call gives n matches, and `find_unique` raises there.
 - `ElfLifter.analyze` / `build_cfg` follow a function's GCC `<name>.cold` and
   `<name>.cold.N` fragments instead of ending at a tail call.
+- `BoundCapture`'s readers are methods: `m[c].uint` is a bound method, so
+  `m[c].uint == 4` is `False`; call `m[c].uint()`.
 
 These raise:
 
@@ -54,8 +56,7 @@ These raise:
   own name (`"Equal"`, `"ShiftLeft"`, `"Add"`, `"ZeroExtend"`).
 - A `strider.pattern` pattern is no longer a rewrite right-hand side: use
   `strider.template`.
-- `BoundCapture` loses its reader properties (`m[c].uint` is `m.uint(c)`)
-  and its truth value (`bool(m[c])` raises).
+- `BoundCapture` has no truth value (`bool(m[c])` raises).
 - `AssumptionOptions` is unhashable and compares by value; `SleighArch`,
   `CallingConvention` and `Symbol` compare and hash by value.
 - `bool(CastMask)` is whether it selects any cast.
@@ -110,6 +111,8 @@ replaced the rest.
 
 ### Added, Python
 
+- Every `Match` reader is a `BoundCapture` method without the key:
+  `m[c].uint()` is `m.uint(c)`, likewise `node`, `asm_fingerprint`, `_opt`.
 - `Capture("any_")` is an ordinary name; only `"_"` stays reserved.
 - `CfgOptions(fragment_ranges=[(start, end)])`: address ranges that also
   belong to the function (what `ElfLifter` fills from `.cold` symbols).

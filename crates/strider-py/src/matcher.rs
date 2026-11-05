@@ -209,7 +209,8 @@ impl PyMatch {
     }
 }
 
-/// Per row, a raising getter and its `_opt` twin over `PyNode::$acc`.
+/// Per row, a raising getter and its `_opt` twin over `PyNode::$acc`, on
+/// `Match` (taking the capture) and on `BoundCapture` (`m[c].uint()`).
 macro_rules! match_getters {
     ($(
         #[doc = $rdoc:literal] $rpy:literal $rname:ident,
@@ -236,6 +237,23 @@ macro_rules! match_getters {
                         Some(node) => node.$acc(py),
                         None => Ok(None),
                     }
+                }
+            )+
+        }
+
+        #[pymethods]
+        impl PyBoundCapture {
+            $(
+                #[doc = $rdoc]
+                #[pyo3(name = $rpy)]
+                fn $rname(&self, py: Python<'_>) -> PyResult<$ret> {
+                    self.match_.get().$rname(py, self.key(py))
+                }
+
+                #[doc = $odoc]
+                #[pyo3(name = $opy)]
+                fn $oname(&self, py: Python<'_>) -> PyResult<Option<$ret>> {
+                    self.match_.get().$oname(py, self.key(py))
                 }
             )+
         }
@@ -326,6 +344,21 @@ impl PyBoundCapture {
     #[getter]
     fn has(&self, py: Python<'_>) -> PyResult<bool> {
         self.match_.get().has(py, self.key(py))
+    }
+
+    /// The `Node` it bound. Raises when unbound.
+    fn node(&self, py: Python<'_>) -> PyResult<crate::node::PyNode> {
+        self.match_.get().node(py, self.key(py))
+    }
+
+    /// The `Node` it bound, or `None` when unbound.
+    fn node_opt(&self, py: Python<'_>) -> PyResult<Option<crate::node::PyNode>> {
+        self.match_.get().node_opt(py, self.key(py))
+    }
+
+    /// Instruction addresses behind the bound node; `[]` when unbound.
+    fn asm_fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
+        self.match_.get().asm_fingerprint(py, self.key(py))
     }
 
     fn __int__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
