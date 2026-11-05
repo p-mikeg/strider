@@ -304,6 +304,41 @@ fn an_instruction_relocated_against_a_defined_ifunc_names_an_extern_address() {
     );
 }
 
+/// A ppc64 `bl` to an unlinked object's defined IFUNC enters its extern
+/// address: not through `.opd` on ELFv1, and not past a local entry on
+/// ELFv2.
+#[test]
+fn a_ppc64_call_to_a_defined_ifunc_enters_its_extern_address() {
+    for (name, le) in [("ppc64be_ifunc.o", false), ("ppc64le_ifunc.o", true)] {
+        let elf = open(name);
+        let reader =
+            ElfFileMemReader::new(&elf, RelocationMode::Applied { got_is_rom: false }).unwrap();
+        let obj = elf.checked_file().unwrap();
+        let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
+        let f = obj.symbol_by_name("f").expect("f");
+        let extern_f = layout
+            .extern_address(f.index().0)
+            .expect("f's extern address");
+        let text = obj.section_by_name(".text").expect(".text");
+        let site = text
+            .relocations()
+            .find(|(_, r)| {
+                r.flags()
+                    == (RelocationFlags::Elf {
+                        r_type: object::elf::R_PPC64_REL24,
+                    })
+                    && r.target() == object::RelocationTarget::Symbol(f.index())
+            })
+            .map_or_else(
+                || panic!("{name}: bl f"),
+                |(off, _)| layout.section_base(&text) + off,
+            );
+        let insn = fetch_word(&reader, site, 4, le) as u32;
+        let disp = i64::from(((insn & 0x03ff_fffc) << 6) as i32 >> 6);
+        assert_eq!(site.wrapping_add_signed(disp), extern_f, "{name}");
+    }
+}
+
 /// An unstripped static executable links `.rela.plt` to `.symtab`, there
 /// being no `.dynsym`, and its IRELATIVE slots sit in `.got` under `-z now`:
 /// they are holes as a dynamic image's are.
