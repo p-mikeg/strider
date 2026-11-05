@@ -108,8 +108,8 @@ Strider:
 - `strider-pattern`: the pattern DSL (`Pattern` / `Capture` / `Matcher` /
   `Match` / builders). `Pat` is the Python class, not a Rust type. A pattern
   over `MAX_PATTERN_NODES` (256), past the 1 MiB lowering stack budget, or
-  cyclic is refused through `Pattern::root()`. `TemplatePat` is sealed and
-  implemented for `Captured<Var>` only.
+  cyclic is refused through `Pattern::root()`. `TemplatePat` is sealed; of
+  the `Captured<P>` forms only `Captured<Var>` implements it.
 - `strider-opt`: optimization passes, `OptimizerPipeline`, the `rewrite_rule`
   facade, and the indirect-branch classifiers (`classify_sites`). Pure graph
   -> graph. `classify_target`, `run_one`, `run_one_unvalidated` and
@@ -198,8 +198,8 @@ node 0: `Function::new` mints it first and `compact` keeps it first.
 
 Integer constants intern through the side tables' `const_interner` as a
 `dashu_int::UBig`, masked to the declared width (`eval::mask`) before dedup.
-Read them via `IRViewer::int_const_u128` / `int_const_i128` /
-`int_const_ibig`, never off the `UBig`. DOT labels are compared across builds,
+Read them via `IRViewer::int_const` (the masked `UBig`) or its `_u128` /
+`_i128` / `_ibig` forms, never through the `IntConstId`. DOT labels are compared across builds,
 so they spell the value (decimal raw, `const {v:#x}:<ty>` pretty), never a
 `Debug` form.
 
