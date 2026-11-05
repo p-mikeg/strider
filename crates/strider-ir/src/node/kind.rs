@@ -133,11 +133,12 @@ pub enum NodeKind {
     },
 
     /// Sleigh `CPoolRef` (Java constant pool; may load classes). Inputs:
-    /// `[refs...]`. Outputs: `[Typed]`.
+    /// `[refs...]`. Outputs: one integer.
     CPoolRef,
 
-    /// Sleigh `New` (Java allocation, distinct per occurrence). Inputs:
-    /// `[size, ...]`. Outputs: `[Typed]`, pointer-sized.
+    /// Sleigh `New` (Java allocation, distinct per occurrence). Inputs: the
+    /// p-code operands (class reference, optional count). Outputs: one
+    /// pointer-sized integer.
     New,
 }
 

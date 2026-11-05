@@ -16,6 +16,7 @@ use crate::node::{
     ValueId, ValueKind, ValueType,
 };
 
+/// The `build_*` vocabulary, blanket-implemented for every [`IRBuilder`].
 pub trait IRBuilderExt: IRBuilder {
     fn build_single_output_pure(
         &mut self,
@@ -27,7 +28,7 @@ pub trait IRBuilderExt: IRBuilder {
         self.function().node_outputs(node)[0]
     }
 
-    /// No-op at equal or narrower width.
+    /// No-op when `value_id` is no wider than `output_type`.
     fn truncate_if_needed(&mut self, value_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
@@ -42,7 +43,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::Truncate, [value_id], output_type))
     }
 
-    /// No-op at equal or wider width.
+    /// No-op when `value_id` is no narrower than `output_type`.
     fn extend_if_needed(
         &mut self,
         value_id: ValueId,
