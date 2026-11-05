@@ -75,7 +75,8 @@ is an error.
 
 All are exact but `FloatSub` on a NaN subtrahend, whose sign IEEE 754 leaves
 unspecified. A shift count wider than the output saturates rather than
-truncating (p-code compares the full count).
+truncating (p-code compares the full count). BOOL ops read their input's low
+bit (p-code: the whole byte); every vendored spec feeds them 0/1.
 
 ## Terminators
 
