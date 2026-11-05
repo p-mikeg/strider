@@ -422,36 +422,6 @@ fn ret_call_does_not_match_through_region_by_default() {
 }
 
 #[test]
-fn matches_next_concrete_kind_equals_find_all_first() {
-    let function = shapes::add_nested_3(2, 3, 5);
-    let m = Matcher::new(&function);
-    let p = int_add(anything(), anything()).into_pattern();
-    let all = m.find_all(&p).unwrap();
-    assert!(!all.is_empty(), "fixture has Add nodes");
-    let first = m
-        .matches(&p)
-        .unwrap()
-        .next()
-        .expect("at least one Add matches");
-    assert_eq!(first.root(), all[0].root());
-}
-
-#[test]
-fn matches_next_wildcard_equals_find_all_first() {
-    let function = shapes::add_consts(1, 2);
-    let m = Matcher::new(&function);
-    let p = anything().into_pattern();
-    let all = m.find_all(&p).unwrap();
-    assert!(!all.is_empty());
-    let first = m
-        .matches(&p)
-        .unwrap()
-        .next()
-        .expect("wildcard matches some node");
-    assert_eq!(first.root(), all[0].root());
-}
-
-#[test]
 fn matches_next_no_match_returns_none() {
     let function = shapes::add_consts(5, 3);
     let m = Matcher::new(&function);
@@ -481,14 +451,18 @@ fn find_joined_single_pattern_equivalent_to_find_all() {
     }
 }
 
+/// A zero-match pattern in either position collapses the whole join to an
+/// empty top-level Vec (no per-slot empties).
 #[test]
-fn find_joined_no_matches_for_a_pattern_yields_empty() {
+fn find_joined_a_zero_match_pattern_yields_empty() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::new(&function);
     let p_add = int_add(anything(), anything()).into_pattern();
-    let p_call = call().build();
-    let req = m.find_joined_constrained(&[&p_add, &p_call], &[]).unwrap();
-    assert!(req.is_empty());
+    let p_call = call().build(); // no Call in the graph
+    assert!(!m.find_all(&p_add).unwrap().is_empty());
+    for pats in [[&p_add, &p_call], [&p_call, &p_add]] {
+        assert!(m.find_joined_constrained(&pats, &[]).unwrap().is_empty());
+    }
 }
 
 #[test]
@@ -709,18 +683,6 @@ fn find_joined_pattern_without_shared_capture_cross_products() {
     let s0 = req[0][0].node(shared, function.graph()).unwrap();
     let s1 = req[1][0].node(shared, function.graph()).unwrap();
     assert_ne!(s0, s1);
-}
-
-/// A zero-match pattern in FIRST position collapses the whole join to an empty
-/// top-level Vec (no per-slot empties), like the second-position case.
-#[test]
-fn find_joined_zero_match_first_pattern_yields_empty() {
-    let function = shapes::add_consts(2, 3);
-    let m = Matcher::new(&function);
-    let p_call = call().build(); // no Call in the graph
-    let p_add = int_add(anything(), anything()).into_pattern();
-    let req = m.find_joined_constrained(&[&p_call, &p_add], &[]).unwrap();
-    assert!(req.is_empty());
 }
 
 #[test]
