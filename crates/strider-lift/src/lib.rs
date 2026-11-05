@@ -217,7 +217,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// Among others, when a convention it uses fails
     /// [`strider_target::BuiltCallingConvention::validate`] or `check_addr_size`
-    /// for this arch, or an `entry_values` varnode is not a register or its
+    /// for this arch, `cc` fails `validate_default`, or an `entry_values` varnode is not a register or its
     /// value does not fit it.
     pub fn build_ir_with(
         &self,
@@ -230,6 +230,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ) -> Result<LiftOutcome> {
         self.check_cfg_space_ids(cfg)?;
         self.check_cc(&cc)
+            .and_then(|()| cc.validate_default())
             .map_err(|e| anyhow!("default convention: {e}"))?;
         for &(vn, value) in entry_values {
             let fits = vn.size >= 8 || value >> (8 * vn.size) == 0;

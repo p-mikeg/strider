@@ -15,6 +15,9 @@ mod powerpc_popcntw;
 #[path = "arch_ppc/powerpc_user_op_results.rs"]
 mod powerpc_user_op_results;
 
+#[path = "arch_ppc/ppc32_got_thunk.rs"]
+mod ppc32_got_thunk;
+
 #[path = "arch_ppc/ppc32_isel.rs"]
 mod ppc32_isel;
 

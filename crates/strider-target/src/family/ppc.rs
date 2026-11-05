@@ -660,7 +660,10 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
 };
 
 impl CallingConvention {
-    /// Returns the PowerPC 32-bit System V ABI calling convention.
+    /// Returns the PowerPC 32-bit System V ABI calling convention. The
+    /// `-mbss-plt` GOT thunk (`bl _GLOBAL_OFFSET_TABLE_-4`, a `blrl` word)
+    /// needs a per-address convention leaving `LR` out of the callee-saved
+    /// registers, or `mflr` after it reads the `bl`'s return address.
     #[must_use]
     pub const fn powerpc_sysv32() -> Self {
         CallingConvention {
