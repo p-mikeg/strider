@@ -430,7 +430,8 @@ class MemAccessPat(Protocol):
         `sp + k`."""
         ...
     def stack_only(self: _S) -> _S:
-        """Keep only accesses whose address decomposes to a stack base."""
+        """Keep only accesses whose address decomposes to a stack base.
+        Keeps an earlier `stack_offset`; replaces any other filter."""
         ...
     def non_stack(self: _S) -> _S:
         """Keep only accesses whose address decomposes to a heap base or is
