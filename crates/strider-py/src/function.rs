@@ -87,7 +87,8 @@ impl PyFunction {
     }
 
     /// Run `pipeline` (default: the default pipeline) over this function in
-    /// place. Stales `Node` / `Match` handles and node ids.
+    /// place, first adding `assumptions`, which must include every claim in
+    /// force and no lift-time one. Stales `Node` / `Match` handles and node ids.
     #[pyo3(signature = (assumptions=None, pipeline=None))]
     fn optimize(
         &self,

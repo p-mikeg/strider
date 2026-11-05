@@ -460,21 +460,23 @@ assumption_fields! {
     /// pointer into them. Default `True`; read by incoming-argument detection.
     assume_incoming_args_survive_calls: bool,
 
-    /// A store rooted at an SP base other than the entry SP (`sp & -16`) misses
-    /// the probed slot; read by incoming-argument detection.
+    /// A store rooted at an SP base other than the entry SP (e.g. `sp & -16`)
+    /// misses the probed slot. Default `False`; read by incoming-argument
+    /// detection.
     distinct_sp_bases_disjoint: bool,
 
     /// A callee leaves the outgoing-argument slots the caller wrote alone.
-    /// Inert without `escape_analysis` or `noalias_allocators`.
+    /// Inert without `escape_analysis` or `noalias_allocators`. Default `False`.
     callee_preserves_stack_args: bool,
 
     /// Callee addresses of pure `malloc`-like allocators, sorted. Each result
     /// overlaps no other allocation, stack slot or constant address, so an arena
-    /// allocator does not qualify.
+    /// allocator does not qualify. Default empty.
     noalias_allocators: Vec<Addr>,
 
     /// When no stack address escapes to a callee, forward a spill load across
     /// a call (and, under `stack_global_disjoint`, past an opaque store).
+    /// Default `False`.
     escape_analysis: bool,
 
     /// Untracked stores, callees and user-ops leave the saved return address

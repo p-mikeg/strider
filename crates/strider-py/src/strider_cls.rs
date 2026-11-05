@@ -149,8 +149,8 @@ pub(crate) fn function_bound(
     Ok(strider_cfg::FunctionBound::Size(size))
 }
 
-/// None without `given`, else `given`, which must hold every claim in force
-/// and may not add a lift-read claim.
+/// `AssumptionOptions::none()` without `given`, else `given`, which must hold
+/// every claim in force and may not add a lift-read claim.
 fn claims_to_add(
     function: &PyFunction,
     given: Option<&crate::options::PyAssumptionOptions>,
