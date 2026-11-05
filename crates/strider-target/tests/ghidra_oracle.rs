@@ -138,8 +138,8 @@ const LEDGER: &[Divergence] = &[
     Divergence {
         presets: &["aarch64_aapcs64"],
         items: &["callee-saved only in strider: sp_el0"],
-        reason: "the kernel's `current`, which only a context switch writes; a callee \
-                 returns to the same task",
+        reason: "the kernel's `current`; every writer a call can reach restores the \
+                 caller's task before returning",
     },
     Divergence {
         presets: &["mips_o32"],
