@@ -142,3 +142,45 @@ fn an_et_rel_descriptor_resolves_through_its_relocation() {
     assert_eq!(opd.entry_at(descriptor), Some(code_base));
     assert_eq!(opd.entry_at(descriptor + 8), None, "the TOC word");
 }
+
+/// The descriptor's second word is the TOC pointer its caller loads into
+/// `r2`; a word that is not a descriptor's entry has none.
+#[test]
+fn a_descriptor_names_its_toc() {
+    let fx = build_ppc64_opd_elf(1);
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse");
+    let opd = OpdTable::new(&obj).expect("an ELFv1 image with an .opd");
+    assert_eq!(opd.toc_at(fx.descriptor_addr), Some(fx.toc_addr));
+    assert_eq!(opd.toc_at(fx.descriptor_addr + 4), None, "unaligned");
+    assert_eq!(opd.toc_at(fx.unrelocated_addr), None, "no entry");
+}
+
+/// An ET_REL descriptor's TOC word is the `R_PPC64_TOC` on it: the object's
+/// `.TOC.`, `0x8000` past its `.toc`.
+#[test]
+fn an_et_rel_descriptor_names_its_toc_through_its_relocation() {
+    use common::write_object::{defined, reloc};
+    use object::write::Object;
+    use object::{Architecture, BinaryFormat, Endianness, SectionKind};
+
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::PowerPc64, Endianness::Big);
+    let code = obj.add_section(Vec::new(), b".text.func".to_vec(), SectionKind::Text);
+    obj.append_section_data(code, &0x4e80_0020u32.to_be_bytes(), 4);
+    let toc = obj.add_section(Vec::new(), b".toc".to_vec(), SectionKind::Data);
+    obj.append_section_data(toc, &[0u8; 8], 8);
+    let opd_sec = obj.add_section(Vec::new(), b".opd".to_vec(), SectionKind::Data);
+    obj.append_section_data(opd_sec, &[0u8; 24], 8);
+    let entry = defined(&mut obj, ".L.func", code, 0);
+    defined(&mut obj, "func", opd_sec, 0);
+    reloc(&mut obj, opd_sec, 0, entry, 0, object::elf::R_PPC64_ADDR64);
+    reloc(&mut obj, opd_sec, 8, entry, 0, object::elf::R_PPC64_TOC);
+    let bytes = obj.write().expect("write");
+
+    let file = object::File::parse(&bytes[..]).expect("parse");
+    let descriptor = common::section_base(&bytes, ".opd");
+    let opd = OpdTable::new(&file).expect("an ELFv1 object with an .opd");
+    assert_eq!(
+        opd.toc_at(descriptor),
+        Some(common::section_base(&bytes, ".toc") + 0x8000)
+    );
+}

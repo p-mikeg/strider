@@ -570,6 +570,27 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
     out
 }
 
+/// The TOC pointer each ppc64 ELFv1 `.opd` descriptor of an ET_REL holds:
+/// the `TOC + A` of the `R_PPC64_TOC` on its second word, by descriptor.
+fn opd_tocs(obj: &object::File<'_>, layout: &ElfSectionLayout) -> BTreeMap<u64, u64> {
+    let (object::File::Elf64(f), Some(opd), Some(toc)) =
+        (obj, obj.section_by_name(".opd"), layout.toc_base())
+    else {
+        return BTreeMap::new();
+    };
+    let base = layout.section_base(&opd);
+    opd_relocations(f, opd.index().0)
+        .into_iter()
+        .filter(|&(offset, r_type, ..)| r_type == object::elf::R_PPC64_TOC && offset >= 8)
+        .map(|(offset, _, _, addend)| {
+            (
+                base.wrapping_add(offset - 8),
+                toc.wrapping_add(addend as u64),
+            )
+        })
+        .collect()
+}
+
 /// `(r_offset, r_type, r_sym, r_addend)` of every relocation against the
 /// section `target`.
 fn opd_relocations(
@@ -607,8 +628,12 @@ enum Descriptors<'d> {
         data: &'d [u8],
         endian_le: bool,
     },
-    /// An ET_REL's, from [`opd_entries`]: the section's own bytes are zeros.
-    Relocated(BTreeMap<u64, u64>),
+    /// An ET_REL's, from [`opd_entries`] and [`opd_tocs`]: the section's own
+    /// bytes are zeros.
+    Relocated {
+        entries: BTreeMap<u64, u64>,
+        tocs: BTreeMap<u64, u64>,
+    },
 }
 
 impl<'d> OpdTable<'d> {
@@ -627,9 +652,13 @@ impl<'d> OpdTable<'d> {
         }
         let opd = obj.section_by_name(".opd")?;
         if obj.kind() == ObjectKind::Relocatable {
-            let entries = opd_entries(obj, &ElfSectionLayout::new(obj));
-            return (!entries.is_empty()).then_some(Self {
-                descriptors: Descriptors::Relocated(entries),
+            let layout = ElfSectionLayout::new(obj);
+            let entries = opd_entries(obj, &layout);
+            return (!entries.is_empty()).then(|| Self {
+                descriptors: Descriptors::Relocated {
+                    entries,
+                    tocs: opd_tocs(obj, &layout),
+                },
             });
         }
         let data = opd.data().ok()?;
@@ -647,20 +676,38 @@ impl<'d> OpdTable<'d> {
     /// linked image any word counts (the 24- or 16-byte stride is unknown), so
     /// a TOC or environment word reads as an entry too.
     pub fn entry_at(&self, addr: u64) -> Option<u64> {
-        let (base, data, endian_le) = match &self.descriptors {
-            Descriptors::Relocated(entries) => return entries.get(&addr).copied(),
-            Descriptors::Bytes {
-                base,
-                data,
-                endian_le,
-            } => (*base, *data, *endian_le),
+        match &self.descriptors {
+            Descriptors::Relocated { entries, .. } => entries.get(&addr).copied(),
+            Descriptors::Bytes { .. } => self.word_at(addr),
+        }
+    }
+
+    /// The TOC pointer, and so `r2` on entry, of the descriptor at `addr`;
+    /// `None` where [`Self::entry_at`] is, or when the word is zero.
+    pub fn toc_at(&self, addr: u64) -> Option<u64> {
+        self.entry_at(addr)?;
+        match &self.descriptors {
+            Descriptors::Relocated { tocs, .. } => tocs.get(&addr).copied(),
+            Descriptors::Bytes { .. } => self.word_at(addr.checked_add(8)?),
+        }
+    }
+
+    /// A linked table's nonzero 8-byte-aligned word at `addr`.
+    fn word_at(&self, addr: u64) -> Option<u64> {
+        let Descriptors::Bytes {
+            base,
+            data,
+            endian_le,
+        } = self.descriptors
+        else {
+            return None;
         };
         let off = usize::try_from(addr.checked_sub(base)?).ok()?;
         if off % 8 != 0 {
             return None;
         }
-        let entry = crate::bytes::read_uint(data.get(off..off.checked_add(8)?)?, endian_le);
-        (entry != 0).then_some(entry)
+        let word = crate::bytes::read_uint(data.get(off..off.checked_add(8)?)?, endian_le);
+        (word != 0).then_some(word)
     }
 }
 
