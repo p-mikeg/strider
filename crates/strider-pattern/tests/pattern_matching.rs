@@ -76,3 +76,6 @@ mod memory_alternation;
 
 #[path = "pattern_matching/if_edge_joins.rs"]
 mod if_edge_joins;
+
+#[path = "pattern_matching/oracle.rs"]
+mod oracle;
