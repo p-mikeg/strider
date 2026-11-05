@@ -2,8 +2,8 @@ use super::{FunctionDotDumper, node_style};
 use crate::IRViewer;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
-/// A REGISTER varnode matching a named register renders as that name (`"RAX"`);
-/// anything else as `<space>[0x<off>]:<size>`, or `0x<off>:<size>` for CONST.
+/// `vn` as `ArchNames::vn` spells it: a register's name (`"RAX"`), else
+/// `<space>[0x<off>]:<size>`, or `0x<off>:<size>` for a constant.
 fn vn_to_display_name(names: &strider_target::ArchNames, vn: &rsleigh::Vn) -> String {
     names.vn(*vn).to_string()
 }
@@ -13,8 +13,7 @@ fn ty_str(ty: Option<ValueType>) -> String {
     ty.map_or_else(|| "?".to_owned(), |t| t.to_string())
 }
 
-/// `"<sep><ty>"`, or empty when there is none. `sep` is typically `":"`, `" "`,
-/// or `"\n-> "`.
+/// `"<sep><ty>"`, or empty when there is none.
 fn ty_suffix(ty: Option<ValueType>, sep: &str) -> String {
     ty.map_or_else(String::new, |t| format!("{sep}{t}"))
 }
@@ -38,9 +37,8 @@ impl FunctionDotDumper<'_> {
             .and_then(|o| self.function.value_type_opt(o))
     }
 
-    /// Appends a `base sp +/- K` line to a Store/Load label when the node has a
-    /// Stack-class `memory_offsets` entry. The base may be the entry SP
-    /// or a masked SP.
+    /// Appends a `base sp +/- K` line when the Store/Load has a stack offset;
+    /// the base may be the entry SP or a masked SP.
     fn with_sp_offset(&self, node: NodeId, label: String) -> String {
         match self.function.stack_offset(node) {
             Some((_, k)) if k < 0 => format!("{label}\nbase sp - {}", -k),
@@ -151,8 +149,7 @@ impl FunctionDotDumper<'_> {
         }
     }
 
-    /// `"{prefix}\n{from} -> {to}"`, from-type off input 0 and to-type off the
-    /// node's own value output.
+    /// `"{prefix}\n{from} -> {to}"`: input 0's type, then the output's.
     fn width_change_label(&self, node: NodeId, prefix: &str) -> String {
         format!(
             "{prefix}\n{} -> {}",
@@ -182,8 +179,7 @@ impl FunctionDotDumper<'_> {
     }
 
     /// Return inputs are `[ctrl, mem, ret_val_regs[0], ...]`, so slot `i + 2` is
-    /// `ret_val_regs[i]`. `None` when the slot is out of range of the stored
-    /// convention.
+    /// `ret_val_regs[i]`; `None` past the convention's registers.
     pub(super) fn return_ret_name(&self, input_slot: usize) -> Option<String> {
         let i = input_slot.checked_sub(2)?;
         let vn = *self.function.ret_val_regs().get(i)?;

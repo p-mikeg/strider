@@ -77,7 +77,7 @@ pub struct EditFunction<'g> {
 }
 
 impl<'g> EditFunction<'g> {
-    /// Does NOT cull pre-existing dead nodes; call [`Self::cull_dead`] for that.
+    /// Seeds the live set from an entry walk; culls nothing (see [`Self::cull_dead`]).
     pub fn new(function: &'g mut Function) -> Self {
         let state = FunctionState::populate(function);
         Self {
@@ -167,10 +167,9 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Recomputes live/roots from a fresh entry walk and culls the rest;
-    /// clears the queue and flags. O(graph). The incremental bookkeeping tracks
-    /// data orphaning only, so call this after a control edit detaches a
-    /// subgraph.
+    /// Recomputes live/roots from an entry walk, culls the rest and clears the
+    /// queue. O(graph). Incremental bookkeeping tracks data orphaning only, so
+    /// call this after a control edit detaches a subgraph.
     pub fn resync_live_set(&mut self) {
         self.live_entries += 1;
         self.state = FunctionState::populate(self.function);
@@ -281,8 +280,8 @@ impl<'g> EditFunction<'g> {
         // `live_nodes` is the seen set.
         let mut worklist = std::collections::VecDeque::from([producer]);
         while let Some(node) = worklist.pop_front() {
-            // A Store reached here must come live, or `cull_dead` would kill
-            // an in-use Store.
+            // Only control nodes stop here: a Store reached must come live, or
+            // `cull_dead` would kill it in use.
             if self.function.node_kind(node).has_control_flow() {
                 continue;
             }
@@ -333,7 +332,7 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Flag `node` as possibly a structural twin of an existing node.
+    /// Flags `node` as possibly a structural twin of an existing node.
     fn enqueue_for_recanon(&mut self, node: NodeId) {
         if self.state.live_nodes.contains(node) {
             self.state.flags[node].insert(NodeFlags::NEEDS_RECANON);
@@ -483,7 +482,7 @@ impl<'g> EditFunction<'g> {
         self.generation += 1;
     }
 
-    /// Append an input to a **non-cacheable** node.
+    /// Appends an input to a **non-cacheable** node.
     pub fn add_node_input(&mut self, node: NodeId, output_id: ValueId) {
         let was_input_less = self.node_inputs(node).is_empty();
         self.will_attach_value(output_id);

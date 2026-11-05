@@ -65,9 +65,8 @@ pub(super) fn role_color(role: SlotRole) -> &'static str {
     }
 }
 
-/// `(label, ordinal within a repeating tail, color)` for the edge into the
-/// `input_idx`-th slot of a `consumer` node, all three driven by its expected
-/// signature.
+/// `(label, ordinal within a repeating tail, color)` of the edge into slot
+/// `input_idx` of `consumer`, from its expected signature.
 pub(super) fn edge_style(
     consumer: &NodeKind,
     input_idx: usize,
@@ -97,8 +96,7 @@ pub struct FunctionDotDumper<'a> {
     names: &'a strider_target::ArchNames,
     /// Carrier node -> its arg tags, joined.
     arg_labels: FxHashMap<NodeId, String>,
-    /// A neighbourhood render; `None` renders everything reachable from the
-    /// function's entry.
+    /// A neighbourhood render; `None` renders everything reachable from entry.
     view: Option<::dot::View<NodeId>>,
 }
 

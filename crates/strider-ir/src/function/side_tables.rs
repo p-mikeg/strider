@@ -8,14 +8,12 @@ use crate::graph::{Graph, NodeIdRemap};
 use crate::node::IntConstId;
 use crate::node::{CcId, NodeId, NodeKind, SwitchTableId, ValueId};
 
-/// Values up to two limbs are held inline, so an interned `u64` constant
-/// costs no allocation.
+/// Up to two limbs (128 bits) are inline, so a small constant allocates nothing.
 const _: () = assert!(size_of::<UBig>() == 24);
 
-/// The ABI class a function argument was passed in; stack arguments continue
-/// the `Integer` index space after the register ones. Indices are positional
-/// within a class, gaps preserved: an unregistered carrier leaves its index
-/// empty rather than shifting the later ones down.
+/// The ABI class a function argument was passed in. Stack arguments continue
+/// the `Integer` index space after the register ones; indices are positional
+/// within a class, so an unregistered carrier leaves a gap.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum ArgClass {
     Integer,
@@ -30,8 +28,7 @@ enum ArgClass {
 /// [`Function::compact`]: crate::Function::compact
 #[derive(Clone)]
 pub struct FunctionSideTables {
-    /// Machine-instruction addresses whose lifting or rewrite contributed to
-    /// each node's value.
+    /// Instruction addresses that contributed to each node's value.
     asm_fingerprints: UnionDag<NodeId, u64>,
     /// The tracked varnode a value represents, at most one per value.
     pub(crate) value_vn: FxHashMap<ValueId, crate::node::InitialVnId>,
@@ -42,14 +39,12 @@ pub struct FunctionSideTables {
     /// validator re-checks reachable entries against the node's kind
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: SecondaryMap<crate::node::InitialVnId, Option<NodeId>>,
-    /// Integer-constant values of `IntConst(id)` nodes, deduped by value.
-    /// Unsigned; the width is the node's output type, applied by
-    /// `crate::eval::mask`.
+    /// Unsigned values of `IntConst(id)` nodes, deduped after
+    /// `crate::eval::mask` to the node's output width.
     pub(crate) const_interner: EntityInterner<IntConstId, UBig>,
     /// Case addresses of each `Switch(id)`, one per control output.
     switch_tables: PrimaryMap<SwitchTableId, Vec<u64>>,
-    /// Override conventions referenced by `Call { cc: Some(id) }`, deduped by
-    /// value.
+    /// Override conventions of `Call { cc: Some(id) }`, deduped by value.
     call_ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention>,
     /// Sleigh user-op name by `CallOther` `user_op_id`.
     call_other_names: FxHashMap<u64, String>,
@@ -256,8 +251,7 @@ impl FunctionSideTables {
         *call_ccs = ccs;
     }
 
-    /// Remaps every arena-id key / value after a compaction; an entry whose
-    /// node or value did not survive is dropped.
+    /// Remaps arena ids after a compaction, dropping entries that did not survive.
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
         // Exhaustive, so a new field must state what compaction does to it.
         let Self {
@@ -337,8 +331,7 @@ impl crate::Function {
         self.side_tables().vn_interner.keys()
     }
 
-    /// At most one vn per value, so the meaning of the tag follows from the
-    /// producing node's kind.
+    /// The tracked varnode `value` represents, if any.
     #[inline]
     pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
         self.side_tables()
@@ -439,8 +432,7 @@ impl crate::Function {
         self.side_tables().initial_var_index[sp_id]
     }
 
-    /// The entry value of `vn`'s `InitialVar` node; `None` when `vn` is
-    /// untracked.
+    /// The output of `vn`'s `InitialVar` node; `None` when `vn` is untracked.
     pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
         let id = self.vn_id_of(vn)?;
         let node = self.side_tables().initial_var_index[id]?;

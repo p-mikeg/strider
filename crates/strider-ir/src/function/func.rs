@@ -29,8 +29,7 @@ pub struct Function {
     byte_order: strider_target::ByteOrder,
     /// The union of every set [`Self::assume`] added.
     assumptions: crate::AssumptionOptions,
-    /// See [`Self::call_register_frame_reach`]. Set once by
-    /// `FunctionBuilder::build`.
+    /// [`Self::call_register_frame_reach`], set by `FunctionBuilder::build`.
     call_register_frame_reach: Option<i128>,
 
     side_tables: FunctionSideTables,
@@ -188,8 +187,8 @@ impl Function {
         )
     }
 
-    /// Retains only nodes reachable from [`Self::entry`], remapping every
-    /// overlay table and dropping entries whose node died. Invalidates every
+    /// Retains only nodes reachable from [`Self::entry`], remapping the side
+    /// tables and memos and dropping entries whose node died. Invalidates every
     /// earlier `NodeId` / `ValueId` / `UseId`; rewrite held ones through the
     /// returned [`NodeIdRemap`].
     pub fn compact(&mut self) -> NodeIdRemap {

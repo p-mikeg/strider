@@ -286,8 +286,7 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
     let _ = writeln!(out, "tracked {}", vn_list(f.all_vns(), vn_name));
     let cc_fields = cc_fields(f.default_cc(), vn_name);
     out.push_str("default_cc");
-    // The last field is left out unset: most conventions have no register
-    // homes.
+    // The last field prints only when set.
     let shown = cc_fields.len() - usize::from(!f.default_cc().reg_args_adjoin_stack_args);
     for (field, value) in &cc_fields[..shown] {
         let _ = write!(out, " {field}={value}");
@@ -671,7 +670,7 @@ fn cc_fields(
                 .as_ref()
                 .map_or_else(|| "none".to_owned(), vn_name),
         ),
-        // Last: the header leaves it out unset.
+        // Last, so the header can leave it out unset.
         (
             "reg_args_adjoin_stack_args",
             reg_args_adjoin_stack_args.to_string(),
