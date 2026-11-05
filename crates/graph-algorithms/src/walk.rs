@@ -99,9 +99,8 @@ impl<G: GraphRef> Iterator for PreOrder<G> {
     }
 }
 
-/// Yields each node exactly once, after every successor that is not a DFS
-/// ancestor of it. On a cycle the back edge's target is already on the stack,
-/// so it is yielded after the successor that closes the cycle.
+/// Yields each reached node once, after every successor that is not a DFS
+/// ancestor of it.
 pub struct PostOrder<G: GraphRef> {
     graph: G,
     visited: DenseEntitySet<G::NodeId>,
