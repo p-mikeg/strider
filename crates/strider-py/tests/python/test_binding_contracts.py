@@ -287,6 +287,31 @@ class _Index:
         return self.value
 
 
+@pytest.mark.parametrize("entry", [-1, 2**64])
+def test_an_out_of_range_index_entry_raises_as_the_int_does(entry):
+    """An `__index__` entry out of range is `entry`'s own `StriderError`,
+    worded as for the int it gives."""
+    lifter = _x86_64(_STRAIGHT)
+    prog = strider.lift.load_elf(fixture_path("x64", "memory"))
+    with pytest.raises(strider.StriderError, match="`entry`") as as_int:
+        lifter.build_cfg(entry)
+    calls = [
+        lambda: lifter.analyze(
+            _Index(entry),  # type: ignore[arg-type]
+            CallingConvention.x86_64_systemv(),
+        ),
+        lambda: lifter.build_cfg(_Index(entry)),  # type: ignore[arg-type]
+        lambda: prog.build_cfg(_Index(entry)),  # type: ignore[arg-type]
+        lambda: prog.analyze(_Index(entry)),  # type: ignore[arg-type]
+    ]
+    for call in calls:
+        with pytest.raises(strider.StriderError) as raised:
+            call()
+        assert str(raised.value) == str(as_int.value)
+    with pytest.raises(strider.StriderError, match="out of range"):
+        prog.pcode_at(_BASE, _Index(entry))  # type: ignore[arg-type]
+
+
 def test_elf_lifter_analyze_takes_an_index_entry_as_an_address():
     prog = strider.lift.load_elf(fixture_path("x64", "memory"))
     main = prog.symbol("main").address
