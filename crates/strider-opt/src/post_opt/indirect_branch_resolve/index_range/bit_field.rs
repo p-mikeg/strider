@@ -9,15 +9,40 @@ use crate::opt::known_bits::KnownBitsMap;
 use super::interval::Interval;
 use super::{Step, operand_step};
 
-/// The operands of the `And`s with a constant mask.
+/// The operands of the `And`s with a constant mask, and of the `Truncate`s
+/// of an `Or`.
 #[derive(Default)]
 pub(super) struct MaskOperands {
     /// Per `And(x, c)` output whose mask clears only bits KnownBits proves zero
     /// in `x`, that `x` (e.g. `slwi`'s `And(ShiftLeft(idx, k), ~(2^k - 1))`).
     pub(super) identity: SecondaryMap<ValueId, Option<ValueId>>,
     /// Per `And(Or(a, b), c)` output where `c` clears every bit `a` may set,
-    /// `b` (e.g. a PowerPC `rlwinm` rotate whose mask drops one arm).
+    /// `b` (e.g. a PowerPC `rlwinm` rotate whose mask drops one arm), and per
+    /// `Truncate(Or(a, b))` where the truncation drops every such bit.
     through_or: SecondaryMap<ValueId, Option<ValueId>>,
+}
+
+/// The arm of the `Or` `or` that alone sets its bits under `keep`: the other
+/// arm may set none of them (read at `ty_mask`).
+fn kept_or_arm(
+    function: &strider_ir::Function,
+    or: ValueId,
+    keep: u128,
+    ty_mask: u128,
+    known: &KnownBitsMap,
+) -> Option<ValueId> {
+    let NodeKind::IntBinaryOp(IntBinaryOp::Or) = *function.kind_of_value(or) else {
+        return None;
+    };
+    let [a, b] = function.producer_inputs_exact::<2>(or).ok()?;
+    let may_set = |v: ValueId| known[v].max_value(ty_mask);
+    if may_set(a) & keep == 0 {
+        Some(b)
+    } else if may_set(b) & keep == 0 {
+        Some(a)
+    } else {
+        None
+    }
 }
 
 impl MaskOperands {
@@ -27,6 +52,15 @@ impl MaskOperands {
         node: NodeId,
         known: &KnownBitsMap,
     ) -> Option<()> {
+        if let &[value] = function.node_outputs(node)
+            && let NodeKind::Truncate = *function.kind_of_value(value)
+        {
+            let keep = function.value_type_opt(value)?.int_mask_u128()?;
+            let [operand] = function.producer_inputs_exact::<1>(value).ok()?;
+            let ty_mask = function.value_type_opt(operand)?.int_mask_u128()?;
+            self.through_or[value] = kept_or_arm(function, operand, keep, ty_mask, known);
+            return Some(());
+        }
         let (operand, mask) = crate::const_eval::var_and_const_of(
             function,
             node,
@@ -40,15 +74,7 @@ impl MaskOperands {
         if may_set(operand) & !mask == 0 {
             self.identity[value] = Some(operand);
         }
-        if let NodeKind::IntBinaryOp(IntBinaryOp::Or) = *function.kind_of_value(operand)
-            && let Ok([a, b]) = function.producer_inputs_exact::<2>(operand)
-        {
-            if may_set(a) & mask == 0 {
-                self.through_or[value] = Some(b);
-            } else if may_set(b) & mask == 0 {
-                self.through_or[value] = Some(a);
-            }
-        }
+        self.through_or[value] = kept_or_arm(function, operand, mask, type_mask, known);
         Some(())
     }
 }
@@ -203,7 +229,7 @@ fn field_step(
     Some(match step {
         Step::ZeroExtend => (x, FieldOp::Same),
         Step::SignExtend => (x, FieldOp::SignExtend),
-        Step::Truncate => (x, FieldOp::Truncate),
+        Step::Truncate => (masks.through_or[value].unwrap_or(x), FieldOp::Truncate),
         Step::ShiftLeft(k) => (x, FieldOp::ShiftLeft(k)),
         Step::ShiftRight(k) => (x, FieldOp::ShiftRight(k)),
         Step::Mul(c) if c.is_power_of_two() => (x, FieldOp::ShiftLeft(c.trailing_zeros())),

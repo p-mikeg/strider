@@ -475,6 +475,39 @@ fn a_guard_on_another_extract_of_the_index_bits_sizes_the_table() {
     }
 }
 
+/// `switch_rotate_ppc64.S`: gcc guards `switch (x >> 28)` on the truncated
+/// `rldicl` rotate and indexes its 11-entry table with an `rldic` of the
+/// whole rotate.  The guard sizes the table; the index's own bits admit 16
+/// slots, whose last five are the code after the table.
+/// Mutation: root `Truncate(Or)` at the `Or` in `bit_field`.
+#[test]
+fn a_guard_on_the_truncated_rotate_sizes_the_table() {
+    for (arch, base) in [
+        (common::Arch::Ppc64le, 0x1000_0000),
+        (common::Arch::Ppc64be, 0x1001_00d0),
+    ] {
+        let arms: Vec<u64> = [0x1b0, 0x1e0]
+            .into_iter()
+            .chain((0x210..=0x290).step_by(0x10))
+            .map(|a| base + a)
+            .collect();
+        let result = analyze_with_opts(
+            arch,
+            "switch_rotate_ppc64",
+            "s_shift",
+            Default::default(),
+            true,
+        )
+        .unwrap_or_else(|e| panic!("{arch:?}: must converge: {e:#}"));
+        assert_eq!(switch_arms(&result.cfg), vec![arms], "{arch:?}");
+        assert!(
+            result.incomplete().is_empty(),
+            "{arch:?}: {}",
+            result.incomplete()
+        );
+    }
+}
+
 /// The switch arm sets of an analysis under the default claims, which must
 /// converge with nothing incomplete: an -O0 frame's `ret` is proven only
 /// with the incoming arguments surviving its calls.

@@ -4,10 +4,9 @@
 //! [`eval`](super::eval). Every value must fold, or the site defers: a
 //! `Multiple` missing a runtime target drops an edge.
 //!
-//! Known limit (hand-written asm only): a read guard's range is trusted as the
-//! table's bound even where an unread or lost test is tighter, and a test
-//! reading the cell through a phi reads no bits of it. Each seats cells the
-//! code rules out.
+//! Known limit: a read guard's range is trusted as the table's bound even
+//! where an unread or lost test is tighter, and a test reading the cell
+//! through a phi reads no bits of it. Each seats cells the code rules out.
 
 use super::index_range::{Interval, MAX_WALK, ScaleOp, Step, scale_of, strip_to_cell, width_mask};
 use super::{MAX_TABLE_ENTRIES, SiteClassifier};
