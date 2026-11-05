@@ -184,11 +184,19 @@ impl<'f> RangeMap<'f> {
             union = Some(union.map_or(arm_range, |acc| acc.union(arm_range)));
         }
 
-        match (union, self.dominating_guard(value, region)) {
-            (Some(union), Some(guard)) => union.intersect(guard),
-            (Some(union), None) => union,
-            (None, guard) => guard.unwrap_or(top),
-        }
+        let guard = self.dominating_guard(value, region);
+        let Some(union) = union else {
+            return guard.unwrap_or(top);
+        };
+        // Arms that fit a guarded truncation make the phi that truncation.
+        let narrowed = self.bit_field(value).filter(|f| f.exact).and_then(|whole| {
+            let fits = whole.below(union.hi).filter(|&f| f != whole)?;
+            self.field_guards(fits, value, region, None)
+        });
+        [guard, narrowed]
+            .into_iter()
+            .flatten()
+            .fold(union, Interval::intersect)
     }
 
     /// Intersection of every guard dominating `region` on `value` or on a
@@ -233,7 +241,18 @@ impl<'f> RangeMap<'f> {
         let Some(field) = self.bit_field(value).filter(|f| f.exact) else {
             return own;
         };
-        let mut met = own;
+        self.field_guards(field, value, region, own)
+    }
+
+    /// `met` met with the guards at `region` on every value other than
+    /// `value` whose field encloses `field`, each projected onto `field`.
+    fn field_guards(
+        &self,
+        field: BitField,
+        value: ValueId,
+        region: NodeId,
+        mut met: Option<Interval>,
+    ) -> Option<Interval> {
         for (of, over) in self.root_fields(field.root) {
             if !of.encloses(field) {
                 continue;
