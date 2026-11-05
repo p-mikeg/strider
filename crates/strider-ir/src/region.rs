@@ -87,8 +87,8 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Appends one operand per `region` phi, taken from `variables`; the i-th call
-    /// pairs with `region`'s i-th control predecessor. An absent entry reads as
+    /// Appends one operand per `region` phi from `variables`; the i-th call
+    /// pairs with the i-th control predecessor. An absent entry reads as
     /// `ValueId(0)`, so `variables` must be complete.
     pub(crate) fn link_region_variables(
         &mut self,
@@ -145,9 +145,8 @@ impl FunctionBuilder {
         self.seed_variables(region, self.regions[idom].variables.clone());
     }
 
-    /// Sets `region`'s current-value map to `base`, then points each
-    /// phi-carrying variable at its own `Phi` output: the value `base` holds
-    /// for it is one of the phi's operands, not the region's current value.
+    /// Sets `region`'s current-value map to `base`, with each phi-carrying
+    /// variable at its own `Phi` output.
     pub(crate) fn seed_variables(
         &mut self,
         region: RegionId,

@@ -87,8 +87,7 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
 
-/// Forward def-use successors, unrestricted by liveness: a post-order from
-/// some roots reaches every transitive consumer, dead ones included.
+/// Forward def-use successors, dead consumers included.
 pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     graph
         .node_outputs(node)
@@ -97,9 +96,7 @@ pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item =
         .map(|(succ, _use_idx)| succ)
 }
 
-/// Every input's producer (control inputs included) and every CFG successor
-/// (control edges forward). A dead CFG input still shows up while a live node
-/// uses it.
+/// A dead CFG input still shows up while a live node uses it.
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
@@ -132,8 +129,7 @@ pub(crate) fn live_def_use_succs<'a>(
 /// A walk's reachable set plus its input-less `roots`.
 #[derive(Debug, Clone)]
 pub struct GraphWalkInfo {
-    /// Input-less source nodes: `Entry`, constants, `InitialVar`,
-    /// `InitialMemory`.
+    /// The reached nodes with no inputs.
     pub roots: Vec<NodeId>,
     pub live_nodes: DenseEntitySet<NodeId>,
 }
@@ -163,9 +159,8 @@ impl GraphWalkInfo {
     }
 }
 
-/// The `InitialMemory` root plus every node that consumes and re-produces a
-/// `Memory` token. `Load` is the exception: it consumes but produces none, so
-/// it is always a leaf.
+/// `InitialMemory`, every kind that consumes and re-produces a `Memory` token,
+/// and `Load`, a leaf that only consumes one.
 fn is_memory_chain_kind(kind: &NodeKind) -> bool {
     matches!(
         kind,
