@@ -2,8 +2,8 @@
 
 ```python
 import strider
-lift = strider.lift.load_elf("path/to/file.elf")
-cfg, function, unresolved = lift.analyze("function_name")
+prog = strider.lift.load_elf("path/to/file.elf")
+cfg, function, unresolved = prog.analyze("function_name")
 matches = function.find_all(strider.pattern.call())
 ```
 
