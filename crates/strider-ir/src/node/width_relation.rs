@@ -12,7 +12,8 @@ pub enum WidthTie<T> {
     Free,
 }
 
-/// `out` is the node's first value output, `first` its first operand.
+/// [`NodeKind::operand_width`] of `slot`, given the node's first value output
+/// `out` and first operand `first`.
 #[must_use]
 pub fn width_tie<T>(kind: &NodeKind, slot: usize, out: Option<T>, first: Option<T>) -> WidthTie<T> {
     match kind.operand_width(slot) {

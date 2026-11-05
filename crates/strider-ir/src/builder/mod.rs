@@ -28,8 +28,8 @@ pub struct FunctionBuilder {
     pub(crate) cur_region: Option<crate::region::RegionId>,
     /// Stamped onto every node `create_node` produces while it is `Some`.
     lift_addr: Option<u64>,
-    /// What each `Call`'s clobbered registers held when it was built, at the
-    /// stack pointer's width.
+    /// What each `Call`'s callee-readable, SP-width output registers held
+    /// when it was built.
     call_register_values: Vec<ValueId>,
     /// Registers no callee reads, left out of `call_register_values`.
     internal_registers: &'static [rsleigh::Vn],
@@ -195,10 +195,10 @@ fn address_step(kind: &NodeKind) -> Option<AddrStep> {
     }
 }
 
-/// The highest entry-SP offset among `values` through [`AddrStep`]s:
-/// `i128::MAX` for one with no constant offset, `None` for none. A reloaded
-/// value is left out (storing it escaped). Optimistic, so a loop restoring
-/// SP keeps the offset.
+/// The highest entry-SP offset any of `values` holds through [`AddrStep`]s:
+/// `i128::MAX` when one holds SP at no constant offset, `None` when none
+/// holds SP. A loaded value is not followed (storing it escaped). Optimistic,
+/// so a loop restoring SP keeps the offset.
 fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     use crate::IRViewer;
     let mut cone = Vec::new();
