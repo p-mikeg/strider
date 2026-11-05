@@ -233,9 +233,9 @@ class Function:
         signed: bool = ...,
     ) -> Optional[int]:
         """The one constant `capture` binds across the matches of `pat`: `None`
-        when none binds one, `StriderError` for two distinct values.
-        `signed=True` reads it as two's-complement. Arguments as in
-        `find_all`."""
+        when none binds one, `StriderError` for two distinct values or a
+        capture no pattern binds. `signed=True` reads it as two's-complement.
+        Arguments as in `find_all`."""
         ...
     def rewrite(self, find: _PatLike, replace: _ReplaceLike) -> int:
         """Apply one `find` -> `replace` rewrite in one walk (not a fixed

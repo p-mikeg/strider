@@ -230,7 +230,7 @@ impl PyFunction {
         ignore_casts: IgnoreCasts,
         constraints: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
-        query(&slf, py, pat, &ignore_casts, constraints, ignore_root)
+        query(&slf, py, pat, &ignore_casts, constraints, ignore_root, None)
     }
 
     /// The single `Match` for `pat` after dedup, else `StriderError`.
@@ -243,7 +243,7 @@ impl PyFunction {
         ignore_casts: IgnoreCasts,
         constraints: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<crate::matcher::PyMatch> {
-        let mut matches = query(&slf, py, pat, &ignore_casts, constraints, ignore_root)?;
+        let mut matches = query(&slf, py, pat, &ignore_casts, constraints, ignore_root, None)?;
         match matches.len() {
             1 => Ok(matches.pop().unwrap()),
             0 => Err(crate::errors::into_strider_err(anyhow::anyhow!(
@@ -256,8 +256,8 @@ impl PyFunction {
     }
 
     /// The one constant `capture` binds across the matches of `pat`: `None`
-    /// when none binds one, `StriderError` for two distinct values.
-    /// `signed=True` reads it as two's-complement.
+    /// when none binds one, `StriderError` for two distinct values or a
+    /// capture no pattern binds. `signed=True` reads it as two's-complement.
     #[pyo3(signature = (pat, capture, ignore_casts=IgnoreCasts::Flag(false), constraints=None, signed=false))]
     fn find_unique_value(
         slf: Py<Self>,
@@ -269,7 +269,7 @@ impl PyFunction {
         signed: bool,
     ) -> PyResult<Option<PyObject>> {
         let cap = capture.resolve()?;
-        let matches = query(&slf, py, pat, &ignore_casts, constraints, true)?;
+        let matches = query(&slf, py, pat, &ignore_casts, constraints, true, Some(cap))?;
         if signed {
             unique_value(
                 py,
@@ -551,8 +551,9 @@ impl IgnoreCasts {
 }
 
 /// Every match of `pat` that survives `constraints`, keeping the first row
-/// per [`crate::matcher::dedup_key`]. The coerced constraints live only for
-/// this query, so need no GC visibility.
+/// per [`crate::matcher::dedup_key`]; `StriderError` when no pattern binds
+/// `bound`. The coerced constraints live only for this query, so need no GC
+/// visibility.
 fn query(
     slf: &Py<PyFunction>,
     py: Python<'_>,
@@ -560,6 +561,7 @@ fn query(
     ignore_casts: &IgnoreCasts,
     constraints: Option<Vec<Bound<'_, PyAny>>>,
     ignore_root: bool,
+    bound: Option<strider_pattern::Capture>,
 ) -> PyResult<Vec<crate::matcher::PyMatch>> {
     let constraints: Vec<_> = constraints
         .iter()
@@ -572,6 +574,16 @@ fn query(
         .into_iter()
         .map(|p| p.ignore_casts_mask(mask))
         .collect();
+    if let Some(cap) = bound
+        && !patterns
+            .iter()
+            .any(|p| p.bound_captures().any(|c| c == cap))
+    {
+        return Err(into_strider_err(anyhow::anyhow!(
+            "find_unique_value: no pattern binds {}",
+            crate::pattern::capture_display(cap.id())
+        )));
+    }
     let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
     let (raw, at) = run_query(slf, py, |matcher| {
         // Constraints apply only in the join.
