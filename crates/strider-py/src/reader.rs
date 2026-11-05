@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use object::{Object, ObjectSymbol};
+use object::{Object, ObjectSection, ObjectSymbol};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyMemoryView};
 
@@ -140,6 +140,42 @@ fn symbol_place<'d, S: ObjectSymbol<'d>>(sym: &S, layout: &ElfSectionLayout) -> 
             SymbolPlace::Import(sym.address())
         }
         _ => SymbolPlace::Nowhere,
+    }
+}
+
+/// One file's ppc64 ELFv1 descriptors: its own `.opd`, or, where that is
+/// `SHT_NOBITS` as a debug file's is, the loaded ELFs'.
+enum Opds<'a, 'd> {
+    Own(OpdTable<'d>),
+    Loaded(&'a [OpdTable<'d>]),
+}
+
+impl<'a, 'd> Opds<'a, 'd> {
+    /// `None` off ppc64 ELFv1, or for a `SHT_NOBITS` `.opd` no loaded ELF
+    /// backs.
+    fn new(file: &object::File<'d>, loaded: &'a [OpdTable<'d>]) -> Option<Self> {
+        if let Some(own) = OpdTable::new(file) {
+            return Some(Self::Own(own));
+        }
+        let nobits = file
+            .section_by_name(".opd")
+            .is_some_and(|s| s.kind() == object::SectionKind::UninitializedData);
+        (nobits && !loaded.is_empty()).then_some(Self::Loaded(loaded))
+    }
+
+    fn table(&self, descriptor: u64) -> Option<&OpdTable<'d>> {
+        match self {
+            Self::Own(t) => Some(t),
+            Self::Loaded(ts) => ts.iter().find(|t| t.entry_at(descriptor).is_some()),
+        }
+    }
+
+    fn entry_at(&self, descriptor: u64) -> Option<u64> {
+        self.table(descriptor)?.entry_at(descriptor)
+    }
+
+    fn toc_at(&self, descriptor: u64) -> Option<u64> {
+        self.table(descriptor)?.toc_at(descriptor)
     }
 }
 
@@ -548,9 +584,10 @@ impl PyLoadedElf {
             return Ok(tocs.get(&entry).copied().flatten());
         }
         let mut tocs: HashMap<u64, Option<u64>> = HashMap::new();
+        let loaded = self.loaded_opds();
         for obj in self.elfs.iter().chain(&self.symbol_elfs) {
             let file = obj.checked_file().map_err(into_strider_err)?;
-            let Some(opd) = OpdTable::new(&file) else {
+            let Some(opd) = Opds::new(&file, &loaded) else {
                 continue;
             };
             let layout = ElfSectionLayout::new(&file);
@@ -576,6 +613,18 @@ impl PyLoadedElf {
         }
         let tocs = self.memo.entry_tocs.get_or_init(|| tocs);
         Ok(tocs.get(&entry).copied().flatten())
+    }
+
+    /// The loaded ELFs' `.opd` tables, for a symbol file's descriptors; empty
+    /// without one.
+    fn loaded_opds(&self) -> Vec<OpdTable<'_>> {
+        if self.symbol_elfs.is_empty() {
+            return Vec::new();
+        }
+        self.elfs
+            .iter()
+            .filter_map(|o| OpdTable::new(&o.checked_file().ok()?))
+            .collect()
     }
 
     /// The local entries of every ELF and symbol file; empty off ppc64.
@@ -614,6 +663,7 @@ impl PyLoadedElf {
         let mut by_name: HashMap<String, usize> = HashMap::new();
         // Taken only for names no ELF defines.
         let mut imports: Vec<(String, usize)> = Vec::new();
+        let loaded = self.loaded_opds();
         for obj in self.elfs.iter().chain(&self.symbol_elfs) {
             // `with_symbols` already statted; a failure is a torn-read race.
             let Ok(file) = obj.checked_file() else {
@@ -621,8 +671,8 @@ impl PyLoadedElf {
             };
             let layout = ElfSectionLayout::new(&file);
             let arm = file.architecture() == object::Architecture::Arm;
-            // `None` but for a linked ppc64 ELFv1 image.
-            let opd = OpdTable::new(&file);
+            // `None` off ppc64 ELFv1.
+            let opd = Opds::new(&file, &loaded);
             // ELFv1: `.f` names the code, `f` the descriptor.
             let dot_names: std::collections::HashSet<&str> = if opd.is_some() {
                 file.symbols()
