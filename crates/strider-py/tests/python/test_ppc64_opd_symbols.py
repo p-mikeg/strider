@@ -30,9 +30,9 @@ _BASE = 0x10000000
 _EM_PPC64 = 21
 
 
-def _ppc64_elfv1(path, e_flags):
+def _ppc64_elfv1(path, e_flags, code=ADD_CODE, toc=0):
     """A linked big-endian ppc64 executable whose one function symbol names an
-    `.opd` descriptor pointing at `ADD_CODE`.
+    `.opd` descriptor pointing at `code`, with TOC word `toc`.
 
     One PT_LOAD maps the whole file at `_BASE`, so every virtual address is its
     file offset plus the base.
@@ -42,9 +42,9 @@ def _ppc64_elfv1(path, e_flags):
     text_addr, opd_addr = _BASE + text_off, _BASE + opd_off
 
     buf = bytearray(0x700)
-    buf[text_off : text_off + len(ADD_CODE)] = ADD_CODE
+    buf[text_off : text_off + len(code)] = code
     # {entry, TOC, env}; only the first doubleword is a code address.
-    buf[opd_off : opd_off + 24] = struct.pack(">QQQ", text_addr, 0, 0)
+    buf[opd_off : opd_off + 24] = struct.pack(">QQQ", text_addr, toc, 0)
 
     strtab = b"\0add\0"
     shstrtab = b"\0.text\0.opd\0.symtab\0.strtab\0.shstrtab\0"
@@ -74,7 +74,7 @@ def _ppc64_elfv1(path, e_flags):
     shdrs = b"".join(
         [
             shdr(b"", 0, 0, 0, 0, 0),
-            shdr(b".text\0", 1, 0x6, text_addr, text_off, len(ADD_CODE), align=4),
+            shdr(b".text\0", 1, 0x6, text_addr, text_off, len(code), align=4),
             shdr(b".opd\0", 1, 0x3, opd_addr, opd_off, 24, align=8),
             shdr(b".symtab\0", 2, 0, 0, sym_off, 48, link=4, info=1, align=8, ent=24),
             shdr(b".strtab\0", 3, 0, 0, str_off, len(strtab)),
@@ -151,6 +151,35 @@ def test_the_elf_entry_point_is_a_descriptor_too(elfv1):
     `entry_point()` has to go through the same table."""
     path, text_addr, _opd = elfv1
     assert strider.lift.load_elf(path).entry_point() == text_addr
+
+
+#: `addi r3,r2,-32768; blr`: the address 0x8000 below the TOC pointer.
+TOC_CODE = bytes.fromhex("386280004e800020")
+TOC = 0x10008000
+
+
+def _returns_toc_base(result):
+    return any(n.uint() == TOC - 0x8000 for n in result.function.data_walk())
+
+
+def test_analyze_binds_r2_to_the_descriptors_toc(tmp_path):
+    """The caller loads `r2` from the descriptor it calls through, so the TOC
+    word is `r2` on entry, by symbol name or by code address."""
+    path, text_addr, _opd = _ppc64_elfv1(
+        tmp_path / "toc.elf", e_flags=1, code=TOC_CODE, toc=TOC
+    )
+    lift = strider.lift.load_elf(path)
+    assert _returns_toc_base(lift.analyze("add"))
+    assert _returns_toc_base(lift.analyze(text_addr))
+
+
+def test_a_plain_lifter_leaves_r2_unbound():
+    """Only an `ElfLifter` knows the descriptor."""
+    plain = strider.lift.lifter(
+        strider.sleigh.SleighArch.ppc64be(), strider.reader.BufferReader(_BASE, TOC_CODE)
+    )
+    cc = strider.sleigh.CallingConvention.powerpc64_elf_v1()
+    assert not _returns_toc_base(plain.analyze(_BASE, cc))
 
 
 def test_elfv2_leaves_addresses_alone(tmp_path):

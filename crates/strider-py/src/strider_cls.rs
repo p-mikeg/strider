@@ -850,24 +850,29 @@ impl PyLifter {
             .pipeline
             .as_ref()
             .map(|p| p.borrow(py).build_pipeline());
+        let mut toc = None;
         let seat = elf
             .map(|(elf, size)| {
                 let keyed = opts
                     .per_address_ccs
                     .as_ref()
                     .is_some_and(|t| !t.py.is_empty());
+                toc = elf.entry_toc(entry)?;
                 ElfSeat::read(&elf, cfg, keyed, entry, size)
             })
             .transpose()?;
 
-        let (target, cc_built, per_address_built) = {
+        let (target, cc_built, per_address_built, entry_values) = {
             let lifter = try_borrow_lifter(slf.bind(py))?;
             crate::reader::check_mem_unchanged(py, &[&lifter.mem_obj, &lifter.rom_obj])?;
             let regs = lifter.strider()?.sleigh_regs();
             let target = lifter.target()?;
             let cc_built = build_cc(&cc, regs, target, None)?;
             let per_address_built = opts.built_per_address_ccs(regs, target)?;
-            (target, cc_built, per_address_built)
+            // The ELFv1 caller enters through the descriptor, loading its TOC.
+            let r2 = regs.name_to_vn("r2").filter(|vn| vn.size == 8);
+            let entry_values: Vec<_> = r2.zip(toc).into_iter().collect();
+            (target, cc_built, per_address_built, entry_values)
         };
 
         let overrides = cfg.call_other_overrides(target)?;
@@ -877,7 +882,7 @@ impl PyLifter {
             resolve_indirect_branches: opts.resolve_indirect_branches,
             assumptions: opts.assumptions.get().inner.clone(),
             compact: opts.compact,
-            entry_values: &[],
+            entry_values: &entry_values,
         };
         // A Python reader keeps the GIL so finalisation waits for the analysis.
         let result = with_pending_control_flow(|| {
