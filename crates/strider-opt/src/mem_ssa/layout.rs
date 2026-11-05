@@ -440,7 +440,7 @@ impl MemLayout {
     }
 
     /// Whether some entry arm of merge `phi`, from the `first`-th, has its
-    /// nearest clobber laid out above `phi`'s immediate dominator. `Err` names
+    /// nearest clobber laid out after `phi`'s immediate dominator. `Err` names
     /// the first arm whose answer is not known yet, with its index.
     fn arms_dirty(&self, phi: u32, first: usize, answers: &Answers) -> Result<bool, (usize, u32)> {
         let stop = self.idom[phi as usize];
