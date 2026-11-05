@@ -138,8 +138,9 @@ impl CallingConvention {
                 // x30 (LR) is volatile, but a callee restores it before
                 // returning, so it is listed to keep the return address.
                 "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
-                // Only the low 64 bits of v8-v15 are preserved.
-                "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
+                // sp_el0 is the kernel's `current`: a callee returns to the same
+                // task. Only the low 64 bits of v8-v15 are preserved.
+                "sp_el0", "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
             ],
             ret_val_regs: &["x0", "x1"],
             // v0..v3: a homogeneous float aggregate has up to four members.
