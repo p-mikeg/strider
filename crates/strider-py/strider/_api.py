@@ -319,7 +319,8 @@ class ElfLifter(Lifter):
         return self._elf.functions()
 
     def iter_symbols(self) -> SymbolIter:
-        """Every symbol. A cursor: `len()` is what is left to pull."""
+        """Every symbol but ARM / AArch64 mapping symbols (`$a`, `$d`, `$t`,
+        `$x`, `$d.<suffix>`). A cursor: `len()` is what is left to pull."""
         return self._elf.iter_symbols()
 
     def symbol(self, name: str) -> "Symbol":
@@ -338,11 +339,12 @@ class ElfLifter(Lifter):
         """The nearest symbol at or below `address` whose extent reaches it,
         or `None`. An unsized symbol covers only its own address. Aliases rank
         sized first, then code, so a sized data alias outranks an unsized
-        function."""
+        function. Never a mapping symbol."""
         return self._elf.symbol_at(address)
 
     def symbols(self) -> Mapping[str, "Symbol"]:
-        """Every symbol, keyed by the name it resolves under."""
+        """Every symbol but ARM / AArch64 mapping symbols, keyed by the name
+        it resolves under."""
         return self._elf.symbols()
 
     def entry_point(self) -> int:

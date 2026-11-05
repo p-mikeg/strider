@@ -176,3 +176,17 @@ def test_iter_symbols_does_not_repeat_a_symbol_in_both_tables():
     lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
     seen = [(s.name, s.address) for s in lift.iter_symbols()]
     assert len(seen) == len(set(seen))
+
+
+@pytest.mark.parametrize("arch", ["arm", "arm_thumb", "aarch64"])
+def test_mapping_symbols_are_not_symbols(arch):
+    """`$a` / `$t` / `$d` / `$x` (and `$d.N`) mark code and data spans; like
+    `nm`, the table leaves them out, and `symbol_at` never answers one."""
+    lift = strider.lift.load_elf(str(fixture_path(arch, "switch")))
+    names = list(lift.symbols())
+    assert names, arch
+    mapping = [n for n in names if n[:1] == "$" and n[1:2] in "adtx" and n[2:3] in ("", ".")]
+    assert mapping == []
+    for sym in lift.iter_symbols():
+        hit = lift.symbol_at(sym.address & ~1)
+        assert hit is None or not hit.name.startswith("$")

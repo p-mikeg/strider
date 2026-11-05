@@ -15,5 +15,5 @@ pub use relocations::local_entry_offset;
 pub use sections::LoadFilter;
 pub use sections::{
     AddressSet, ElfSectionLayout, OpdTable, RegionSource, mapping_symbol_data_ranges,
-    without_ranges,
+    mapping_symbol_kind, without_ranges,
 };
