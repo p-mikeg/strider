@@ -2,8 +2,8 @@
 //!
 //! A pat node's inputs are an injective assignment to IR input slots ([`match_assignments`]).
 //! [`try_match_at`] calls `k` per configuration, so a guard rejecting one re-drives the orderings
-//! below it; `k` returning `true` stops the search. Under a [`CastMask`](crate::matcher::CastMask)
-//! an operand is also tried through each masked cast, outermost first.
+//! below it; `k` returning `true` stops the search. Under a [`CastMask`] an operand is also
+//! tried through each masked cast, outermost first.
 
 use std::cell::{Cell, RefCell};
 
@@ -502,7 +502,8 @@ pub(crate) struct NodeInputs {
 
 /// One entry per pat node, indexed by [`PatNodeId::as_u32`], edges in [`Read`] order.
 ///
-/// `compare_operands` is off for a refused pattern, too deep for [`interchangeable`] to recurse.
+/// `compare_operands` is off for a pattern with no valid root, which may be too deep for
+/// [`interchangeable`] to recurse.
 pub(crate) fn collect_node_inputs(
     graph: &crate::matcher::graph::PatGraph,
     size: &[(usize, Option<Read>)],

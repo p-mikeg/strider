@@ -42,7 +42,6 @@ impl PhiPat {
     }
 }
 
-/// Any `Phi`.
 pub fn phi() -> PhiPat {
     PhiPat(Node::value(KindSpec::variant_of(&NodeKind::Phi), 0))
 }

@@ -42,7 +42,7 @@ impl Capture {
         }
     }
 
-    /// Counts up from 0, below 2^31; the top half is reserved for join-dedup sentinels.
+    /// Counts up from 0, below 2^31.
     pub fn id(self) -> u32 {
         self.id
     }

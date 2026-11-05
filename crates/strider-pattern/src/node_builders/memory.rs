@@ -8,8 +8,9 @@ use crate::matcher::{KindSpec, Pattern};
 use super::MemPat;
 use crate::expr::Node;
 
-/// A `Load`/`Store` address-region filter; the last builder call wins. Every
-/// arm but `Any` needs a decomposition verdict, so without one it matches nothing.
+/// A `Load`/`Store` address-region filter, set by the last builder call (`stack_only` keeps an
+/// earlier offset). Every arm but `Any` needs a decomposition verdict, so without one it
+/// matches nothing.
 #[derive(Default)]
 enum RegionFilter {
     #[default]

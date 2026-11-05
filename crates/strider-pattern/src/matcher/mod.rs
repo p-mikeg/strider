@@ -88,7 +88,7 @@ impl<'f> Matcher<'f> {
     /// `.ordered()` pins them.
     ///
     /// # Errors
-    /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
+    /// As [`Pattern::root`].
     pub fn matches<'p>(
         &'p self,
         pat: &'p Pattern,
@@ -115,7 +115,7 @@ impl<'f> Matcher<'f> {
     /// [`matches`](Self::matches)`.collect()`.
     ///
     /// # Errors
-    /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
+    /// As [`Pattern::root`].
     pub fn find_all(&self, pat: &Pattern) -> anyhow::Result<Vec<Match>> {
         Ok(self.matches(pat)?.collect())
     }
@@ -165,7 +165,8 @@ impl<'f> Matcher<'f> {
         // one match. Two `one_of` arms binding identically collapse too, the first one's
         // `matched_nodes` winning. Filled lazily, since most roots have one configuration.
         let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
-        // `true` stops the walk; `false` (match already banked) moves it to the next configuration.
+        // The callback's `true` stops the walk; `false` (match banked) moves it to the next
+        // configuration.
         let generation = self.function.graph().generation();
         walk::anchor(self, pat, root, node, scratch, None, &mut |b| {
             if first_only {
@@ -242,7 +243,7 @@ impl<'f> Matcher<'f> {
     /// [`find_all`](Self::find_all) root.
     ///
     /// # Errors
-    /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
+    /// As [`Pattern::root`].
     pub fn match_at(&self, node: NodeId, pat: &Pattern) -> anyhow::Result<Option<Match>> {
         let root = pat.root()?;
         if !walk::may_match_at(self, pat, root, node) {

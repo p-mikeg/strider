@@ -16,7 +16,7 @@ pub(crate) enum Binding {
 /// else fails the match; backtracking truncates back to a `mark`.
 #[derive(Clone, Default)]
 pub struct Bindings {
-    /// In production order, one entry per capture.
+    /// In bind order, one entry per capture.
     entries: Vec<(Capture, Binding)>,
     /// Every node the match covered; may hold duplicates.
     matched: Vec<NodeId>,
@@ -94,7 +94,6 @@ impl Bindings {
         sig
     }
 
-    /// Whether `c` is bound.
     pub fn is_bound(&self, c: Capture) -> bool {
         self.get_binding(c).is_some()
     }
@@ -115,7 +114,8 @@ impl Bindings {
             .map(|(c, b)| (*c, *b))
     }
 
-    // The extractors below return `None` when unbound, node-bound or the wrong kind.
+    // The extractors below return `None` when unbound or the wrong kind; the value ones also
+    // when node-bound.
 
     /// The bound `IntConst`'s value, at any width.
     pub fn get_uint(
