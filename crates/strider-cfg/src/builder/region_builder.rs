@@ -476,12 +476,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     if self.seal_at_call_not_returning(cur_addr, reason)? {
                         return Ok(());
                     }
-                    // A zero-pcode-op run loses no code. `Builder::finish`
-                    // settles whether a call falls into it and so whether `e`
+                    // A zero-pcode-op run loses no code, nor does code a call
+                    // falls into through one. `Builder::finish` settles
+                    // whether a call falls into the region and so whether `e`
                     // fails the function.
-                    if self.insns.is_empty()
-                        && (!off_arm
-                            || !self.builder.calls_falling_into(self.parent_edge).is_empty())
+                    if (self.insns.is_empty() && !off_arm)
+                        || !self.builder.calls_falling_into(self.parent_edge).is_empty()
                     {
                         self.seal_and_report(cur_addr, reason)?;
                         let nop = self
