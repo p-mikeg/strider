@@ -20,15 +20,16 @@ this file and that directory.
 
 ## GHIDRA Sleigh
 
-- Files: `externals/rsleigh/sleigh/src/`, `externals/rsleigh/sleigh/src_generated/`
-  and `externals/rsleigh/sleigh/processors/`, a git submodule.
+- Files: `externals/rsleigh/sleigh/src/` and
+  `externals/rsleigh/sleigh/processors/`, in a git submodule.
 - Upstream: <https://github.com/NationalSecurityAgency/ghidra>
 - Licence: Apache-2.0, full text in
   [`licenses/Apache-2.0.txt`](licenses/Apache-2.0.txt). The required notice is
   in [`licenses/NOTICE-ghidra.txt`](licenses/NOTICE-ghidra.txt).
-- Used for: decoding machine instructions to p-code. 221 of the 223 C++ sources
-  carry the `IP: GHIDRA` Apache header (the other two are Bison-generated); the
-  146 processor `.slaspec` specifications are GHIDRA's too.
+- Used for: decoding machine instructions to p-code. 222 of the 225 C++ sources
+  carry the `IP: GHIDRA` Apache header (the other three are Bison-generated).
+  146 of the 147 processor `.slaspec` specifications are GHIDRA's;
+  `ARM/data/languages/ARM8_be8.slaspec` is the fork's variant of `ARM8_le`.
 - Shipped as: `libsla.a`, statically linked into `strider/_strider.abi3.so`,
   plus the 15 compiled `.sla` images `SleighArch`'s constructors name, embedded
   in the module with `include_bytes!`. The sdist additionally carries the C++
@@ -42,8 +43,8 @@ sdist and the repository.
 
 ## rsleigh 4.1.0
 
-- Files: `externals/rsleigh/src/` and `externals/rsleigh/build.rs`, a git
-  submodule.
+- Files: `externals/rsleigh/src/`, `externals/rsleigh/build.rs` and
+  `externals/rsleigh/sleigh/bindings.cpp`, in a git submodule.
 - Upstream: <https://github.com/roeeshoshani/rsleigh>
 - Licence: MIT, declared by `Cargo.toml` (`license = "MIT"`). The repository
   ships no licence file, so there is no upstream copyright line to reproduce;
@@ -61,9 +62,8 @@ Sixty-four third-party crates in `strider-py`'s normal dependency closure are
 linked statically. Names, versions, SPDX expressions, licence texts and the
 regenerating command are in
 [`licenses/rust-crates.md`](licenses/rust-crates.md). None is copyleft; the
-licences are
-MIT, Apache-2.0 (three crates with the LLVM exception), Unicode-3.0, Zlib, 0BSD
-and Unlicense.
+licences are MIT, Apache-2.0 (three crates with the LLVM exception),
+Unicode-3.0, Zlib, 0BSD and Unlicense.
 
 Strider's crates are `publish = false`; only the wheel and sdist
 redistribute these.
