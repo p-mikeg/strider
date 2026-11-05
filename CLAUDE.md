@@ -24,11 +24,16 @@ cargo test --package <crate-name> <test_name>   # single test
 # What CI (.github/workflows/ci.yml) also gates on:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p strider-opt --lib -- -D warnings      # also -p strider-reader
 cargo clippy -p strider-py --all-targets --features test-hooks -- -D warnings
 cargo test --workspace --release   # overflow-checks on, debug-assertions off
-RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
+export RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links'
+cargo doc --workspace --no-deps --document-private-items
+cargo doc -p strider-opt --no-deps --features test-util --document-private-items
+cargo doc -p strider-reader --no-deps --features test-util --document-private-items
 cargo +1.91.0 check --workspace --all-targets   # MSRV
 cargo +1.91.0 check -p <crate> --all-targets    # every package on its own
+cargo +1.91.0 check -p strider-py --all-targets --features test-hooks
 
 # Demos; the tree must stay clean afterwards.
 # orchestrator_demo writes cfg / graph / graph-opt .html and .dot of
@@ -56,7 +61,8 @@ and `CfgOptions._call_other_override_builds`. CI enables it for
 `maturin develop`, never for `maturin build`.
 
 CI also runs every `crates/strider-py/examples/python/*.py` on Python 3.9 and
-3.13, `pytest` against `maturin develop --release`, and checks that a
+3.13 (the tree must stay clean afterwards), `pytest` against
+`maturin develop --release`, and checks that a
 `maturin build --release` wheel carries every `.pyi` stub, `py.typed` and
 `explore.html`.
 
