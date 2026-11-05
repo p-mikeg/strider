@@ -25,6 +25,8 @@ These raise:
 
 - `entry()` / `region()` as a value operand raise at query time; they
   returned `[]`.
+- `find_unique_value` raises `StriderError` for a capture no pattern binds;
+  it returned `None`.
 - `IfPat.true_branch` / `false_branch` are gone: join on the edge,
   `[if_else().capture_true(t), region().any_input(t)]`.
 - `Cfg.is_complete()` and the per-reason `Cfg` getters are gone:

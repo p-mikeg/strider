@@ -614,8 +614,8 @@ cast level that matches, settling in pattern order as `first_of` does.
 `find_unique` fails on two structurally distinct matches even when they bind
 the same value. `find_unique_value(pat, capture, signed=False)` dedups by the
 captured constant: `None` for no match, the value when all agree,
-`StriderError` for two distinct values. A list `pat` and `constraints=` work as
-in `find_all`.
+`StriderError` for two distinct values or a capture no pattern binds. A list
+`pat` and `constraints=` work as in `find_all`.
 
 ```python
 stride = p.Capture("stride")
