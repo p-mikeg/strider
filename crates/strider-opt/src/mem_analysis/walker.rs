@@ -34,7 +34,7 @@ impl ClobberProbe for MemWalker<'_> {
             .candidate(&self.loc, self.policy, lo, hi)
     }
 
-    /// Does `def` overlap the probed location?
+    /// Whether `def` may write the probed location.
     fn clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         #[cfg(test)]
         WALK_STEPS.with(|c| c.set(c.get() + 1));

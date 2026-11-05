@@ -12,10 +12,10 @@ use super::ring::{wrap_to_addr_width, wrapped_ranges};
 pub(crate) struct ArgPrefix {
     /// Ascending and non-overlapping.
     slots: Vec<ArgSlot>,
-    /// The slots before the first whose first byte the scan could not see.
+    /// How many slots precede the first one the scan was blinded at.
     window_len: usize,
-    /// The slot from which the callee keeps everything above, the scan having
-    /// been blinded there. `None` when the prefix ends at a visible
+    /// Start of the first slot the scan was blinded at; the callee owns
+    /// everything from it up. `None` when the prefix ends at a visible
     /// non-argument.
     blind_from: Option<i128>,
 }
