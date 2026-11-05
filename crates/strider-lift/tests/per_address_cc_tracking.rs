@@ -36,6 +36,7 @@ fn lift_sp_join(
             &opts,
             &per_address_ccs,
             &strider_ir::AssumptionOptions::none(),
+            &[],
         )?
         .function)
 }
@@ -152,6 +153,7 @@ fn per_address_cc_integer_arg_registers_are_seeded() {
             &opts,
             &per_address_ccs,
             &strider_ir::AssumptionOptions::none(),
+            &[],
         )
         .expect("an override's integer argument register must be tracked")
         .function;
@@ -197,6 +199,7 @@ fn an_override_this_function_never_calls_seeds_nothing() {
             &opts,
             &per_address_ccs,
             &strider_ir::AssumptionOptions::none(),
+            &[],
         )
         .expect("ir")
         .function;
@@ -251,6 +254,7 @@ fn a_tail_calls_override_argument_registers_are_seeded() {
             &opts,
             &per_address_ccs,
             &strider_ir::AssumptionOptions::none(),
+            &[],
         )
         .expect("a tail call's override argument register must be tracked")
         .function;

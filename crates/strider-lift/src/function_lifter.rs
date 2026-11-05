@@ -13,6 +13,8 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     /// The options `cfg` was built with.
     pub(crate) cfg_opts: &'a strider_cfg::CfgOptions<'a>,
+    /// Registers bound to a known value at entry.
+    pub(crate) entry_values: &'a [(rsleigh::Vn, u64)],
     /// Varnode to largest tracked container, for the raw varnodes and every CC
     /// register; other varnodes fall back to a scan.
     pub(crate) container_map: vn_container::ContainerMap,
@@ -53,6 +55,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         tracked: rustc_hash::FxHashSet<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
         cfg_opts: &'a strider_cfg::CfgOptions<'a>,
+        entry_values: &'a [(rsleigh::Vn, u64)],
     ) -> Result<Self> {
         let mut builder = strider_ir::FunctionBuilder::new(
             tracked.iter().copied().collect(),
@@ -93,6 +96,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             sites: super::LiftSites::default(),
             per_address_ccs,
             cfg_opts,
+            entry_values,
             container_map,
             pcode_consts: super::pcode_consts::PcodeConsts::default(),
             pending_isa_mode: None,
