@@ -54,8 +54,7 @@ impl Optimizer for PhiCollapse {
     }
 }
 
-/// Redirects every use of the phis in `scc` to `value`, then kills them, so
-/// `RegionCollapse` can detach their Region in the same iteration.
+/// Redirects every use of the phis in `scc` to `value`, then kills them.
 fn collapse(edit: &mut crate::EditFunction<'_>, scc: &[NodeId], value: ValueId) {
     for &phi in scc {
         let [out] = edit

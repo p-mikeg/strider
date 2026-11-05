@@ -2,7 +2,8 @@
 //! `v`, an arm reaching the `And` or the phi itself agreeing with any `v`.
 //!
 //! Arms peel through `And` / `Or` / `Xor` with a constant or known-zero
-//! operand, never a phi, at most [`PEEL_VISITS_PER_ARM`] steps per arm.
+//! operand, never a phi: at most [`PEEL_STEPS`] steps per peel, within
+//! [`PEEL_VISITS_PER_ARM`] per arm over all of a phi's masks.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp};
@@ -14,7 +15,7 @@ use crate::opt::known_bits::{KnownBitsFacts, const_only, node_known_bits};
 /// Nodes one arm of a masked phi is peeled through.
 pub(super) const PEEL_STEPS: usize = 8;
 
-/// Peel steps per arm of a phi in one run.
+/// Peel steps per arm of a phi, shared by all its masked uses.
 pub(super) const PEEL_VISITS_PER_ARM: usize = 2 * PEEL_STEPS;
 
 pub(super) fn fold_masked_uses(edit: &mut crate::EditFunction<'_>, phis: &[NodeId]) -> Result<()> {
