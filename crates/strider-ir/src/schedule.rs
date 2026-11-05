@@ -66,9 +66,8 @@ fn region_phis(graph: &Graph, cfg_node: NodeId) -> impl Iterator<Item = NodeId> 
         .map(|(phi, _slot)| phi)
 }
 
-/// [`ScheduleContext::live`]: seeded with every tree node and its reachable
-/// phis, closed over data inputs, a phi's input `i` followed only when its
-/// region's control input `i - 1` comes from a tree node.
+/// [`ScheduleContext::live`]: every tree node and its reachable phis, closed
+/// over data inputs and each phi's token and [`live_arms`].
 fn cfg_live(function: &Function, reachable: &NodeIdSet, tree: &DominatorTree<NodeId>) -> NodeIdSet {
     let graph = function.graph();
     let mut live = NodeIdSet::new();
@@ -117,7 +116,6 @@ pub(crate) fn data_producers(graph: &Graph, node: NodeId) -> impl Iterator<Item 
 /// after every floating producer of it that is not on a data cycle with it.
 pub(crate) fn schedule_early(ctx: &ScheduleContext<'_>, mut schedule: impl FnMut(NodeId)) {
     let (graph, live) = (ctx.function.graph(), &ctx.live);
-    // The live floating data producers of a node.
     let preds = move |node| {
         data_producers(graph, node).filter(move |&n| live.contains(n) && !is_pinned(graph, n))
     };
