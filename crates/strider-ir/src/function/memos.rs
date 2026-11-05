@@ -32,9 +32,8 @@ pub enum MemDecomp {
 /// recomputable from the graph alone.
 #[derive(Clone, Default)]
 pub(crate) struct FunctionMemos {
-    /// Address decomposition per analysed value. A [`MemDecomp::Stack`]
-    /// resolves through `memory_interner` to `(base, byte offset)`; two
-    /// accesses are the same slot iff they share both.
+    /// Address decomposition per analysed value. Two accesses are the same
+    /// slot iff their interned `(base, byte offset)` match.
     memory_offsets: SecondaryMap<ValueId, MemDecomp>,
     memory_interner: EntityInterner<MemoryId, (ValueId, i128)>,
     /// Whole-function frame-escape verdict, or `None` when not computed.
@@ -51,8 +50,8 @@ impl FunctionMemos {
             memory_interner,
             frame_escape,
         } = self;
-        // Both the slot key and its interned base are ValueIds, so the map and
-        // the interner have to be rebuilt together.
+        // The map key and the interned base are both `ValueId`s, so the two
+        // are rebuilt together.
         let mut new_interner: EntityInterner<MemoryId, (ValueId, i128)> = EntityInterner::new();
         let mut new_slots: SecondaryMap<ValueId, MemDecomp> = SecondaryMap::new();
         let mut rebase = |id: MemoryId| {
@@ -88,16 +87,14 @@ impl Function {
         self.memos.borrow().memory_offsets[value]
     }
 
-    /// `(base, byte offset from base)`. `None` when unknown or provably not
-    /// memory-rooted (neither stack- nor heap-rooted).
+    /// `(base, byte offset from base)`; `None` when unknown or not memory-rooted.
     #[inline]
     #[cfg(any(test, feature = "test-util"))]
     pub fn memory_slot_resolved(&self, value: ValueId) -> Option<(ValueId, i128)> {
         self.memory_decomp(value).1
     }
 
-    /// The region tag and the `(base, byte offset)` it resolves to, from one
-    /// lookup.
+    /// The region tag and the `(base, byte offset)` it resolves to.
     #[inline]
     pub fn memory_decomp(&self, value: ValueId) -> (MemDecomp, Option<(ValueId, i128)>) {
         let memos = self.memos.borrow();
@@ -135,8 +132,7 @@ impl Function {
         memos.memory_offsets[value] = region(id);
     }
 
-    /// Negative memo entry: `value` is provably not memory-rooted (neither
-    /// stack- nor heap-rooted).
+    /// Records that `value` is provably neither stack- nor heap-rooted.
     #[inline]
     pub fn set_not_memory(&self, value: ValueId) {
         self.memos.borrow_mut().memory_offsets[value] = MemDecomp::NotMemory;

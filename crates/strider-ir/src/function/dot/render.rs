@@ -54,7 +54,7 @@ impl FunctionDotDumper<'_> {
 
         let cur_id = self.dot_id(state, node);
 
-        // Arg carrier nodes get an "[arg N]" prefix and a double border.
+        // An arg carrier gets its arg tags as a prefix and a double border.
         let base_label = self.pretty_label(node);
         let tags = self.arg_labels.get(&node);
         let label = match tags {
@@ -123,8 +123,8 @@ impl FunctionDotDumper<'_> {
         }
     }
 
-    /// One edge from an input's producer to the `kind` node drawn as
-    /// `cur_id`, materialising whatever producer-side helper it needs.
+    /// The edge from input `idx`'s producer to `cur_id`, creating any
+    /// producer-side virtual it needs.
     fn emit_input_edge(
         &self,
         cur_id: &str,
@@ -179,8 +179,8 @@ impl FunctionDotDumper<'_> {
         let (label, tail_idx, color) = edge_style(&kind, idx);
 
         // A repeating input is `<slot name><ordinal>`, except a `Return`'s
-        // tail (named by return register) and a `Region`'s arms (by ordinal,
-        // pairing each with its `Phi` input).
+        // tail (named by return register) and the arms of a `Region` or phi
+        // (`pred<ordinal>`, pairing the two).
         let owned_label: Option<String> = match tail_idx {
             Some(_) if matches!(kind, NodeKind::Return) => self.return_ret_name(idx),
             Some(n) if matches!(kind, NodeKind::Region | NodeKind::Phi | NodeKind::MemPhi) => {

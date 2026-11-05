@@ -40,7 +40,7 @@ impl<'a> RawFunctionDumper<'a> {
         }
     }
 
-    /// id + kind + output kinds + every side-table entry recorded for the node.
+    /// Id, kind, output kinds and every side-table entry for the node.
     fn node_label(&self, node: NodeId) -> String {
         let f = self.function;
         let kind = f.node_kind(node);
@@ -190,7 +190,8 @@ impl Function {
         self.raw_graph_dot().as_dot()
     }
 
-    /// Raw counterpart to the pretty explorer view; needs no Sleigh.
+    /// `FunctionDotDumper::neighborhood_dot` over the raw renderer; needs no
+    /// `ArchNames`.
     ///
     /// # Errors
     ///
