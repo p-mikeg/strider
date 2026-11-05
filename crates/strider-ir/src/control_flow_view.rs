@@ -56,8 +56,7 @@ impl<K: EntityRef + Hash> DominatorTree<K> {
     }
 
     /// True when every path from the root to `b` passes through `a`. Reflexive
-    /// for every vertex, one absent from the tree included; otherwise `false`
-    /// when either vertex is absent.
+    /// even outside the tree; otherwise `false` when either vertex is outside.
     pub fn dominates(&self, a: K, b: K) -> bool {
         let ((a_pre, a_post), (b_pre, b_post)) = (self.span[a], self.span[b]);
         a == b || (a_pre != 0 && b_pre != 0 && a_pre <= b_pre && b_post <= a_post)
@@ -116,11 +115,9 @@ impl EntityRef for CtrlKey {
 /// resumes from it.
 fn split_succs(graph: &Graph, a: CtrlKey) -> SmallVec<[CtrlKey; 2]> {
     match a {
-        // Stage 1, stopping at the output.
         CtrlKey::Node(node) => crate::walk::cfg_outputs(graph, node)
             .map(CtrlKey::Edge)
             .collect(),
-        // Stage 2, resuming from the output.
         CtrlKey::Edge(value) => {
             let succs: SmallVec<[CtrlKey; 2]> = graph
                 .value_uses(value)
