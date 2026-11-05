@@ -68,11 +68,12 @@ fn collapse_region_phis(edit: &mut crate::EditFunction<'_>, phi_token: ValueId) 
         let [phi_value] = edit
             .node_outputs_exact::<1>(phi)
             .expect("a phi has one output");
-        let data: Vec<ValueId> = edit.phi_data_inputs(phi).collect();
-        let [sole] = data[..] else {
+        let mut data = edit.phi_data_inputs(phi);
+        let (Some(sole), None) = (data.next(), data.next()) else {
             return false;
         };
-        if phis.contains(&edit.producer(sole)) {
+        // A phi over this token reads it at slot 0.
+        if edit.nth_input(edit.producer(sole), 0) == Some(phi_token) {
             return false;
         }
         collapses.push((phi_value, sole));

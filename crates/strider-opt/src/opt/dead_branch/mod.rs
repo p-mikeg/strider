@@ -7,7 +7,6 @@
 //! slots.
 
 use entity_utils::DenseEntitySet;
-use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::walk::cfg_reachable;
 use strider_ir::{IRViewer, IRWalker};
@@ -92,13 +91,23 @@ fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     stripped
 }
 
-/// The control output a constant-selector branch takes, and the ones it
-/// never takes.
+/// The control output a constant-selector branch takes.
 struct Selection {
+    branch: NodeId,
     /// The constant the branch tests.
     selector: ValueId,
     live: ValueId,
-    dead: SmallVec<[ValueId; 2]>,
+}
+
+impl Selection {
+    /// The control outputs the branch never takes.
+    fn dead<'a>(&self, edit: &'a crate::EditFunction<'_>) -> impl Iterator<Item = ValueId> + 'a {
+        let live = self.live;
+        edit.node_outputs(self.branch)
+            .iter()
+            .copied()
+            .filter(move |&out| out != live)
+    }
 }
 
 /// The selection of an `If` or `Switch` with a constant selector; `None`
@@ -121,16 +130,10 @@ fn constant_selection(edit: &crate::EditFunction<'_>, node: NodeId) -> Option<Se
         }
         _ => return None,
     };
-    let outputs = edit.node_outputs(node);
     Some(Selection {
+        branch: node,
         selector,
-        live: outputs[live],
-        dead: outputs
-            .iter()
-            .enumerate()
-            .filter(|&(i, _)| i != live)
-            .map(|(_, &out)| out)
-            .collect(),
+        live: edit.node_outputs(node)[live],
     })
 }
 
@@ -173,7 +176,7 @@ fn escaping_nodes(edit: &crate::EditFunction<'_>) -> DenseEntitySet<NodeId> {
     let nodes: Vec<NodeId> = edit.walk().collect();
     for &node in &nodes {
         if let Some(selection) = constant_selection(edit, node) {
-            for arm in selection.dead {
+            for arm in selection.dead(edit) {
                 dead_arms.insert(arm);
             }
         }

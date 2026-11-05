@@ -1,7 +1,7 @@
 //! Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`.
 
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind, UseId, ValueId};
 
 use crate::Result;
 use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
@@ -52,18 +52,14 @@ pub(crate) fn bool_not_operand(function: &strider_ir::Function, value: ValueId) 
 /// `update_input` rewrites the use-list.
 fn input_use_ids(
     edit: &crate::EditFunction<'_>,
-    value: strider_ir::node::ValueId,
-) -> Result<smallvec::SmallVec<[strider_ir::node::UseId; 4]>> {
+    value: ValueId,
+) -> Result<smallvec::SmallVec<[UseId; 4]>> {
     edit.value_uses(value)
         .map(|(consumer, idx)| edit.node_input_id_at(consumer, idx as usize))
         .collect()
 }
 
-fn invert(
-    edit: &mut crate::EditFunction<'_>,
-    if_node: NodeId,
-    inner: strider_ir::node::ValueId,
-) -> Result<()> {
+fn invert(edit: &mut crate::EditFunction<'_>, if_node: NodeId, inner: ValueId) -> Result<()> {
     // `redirect_input` absorbs the Xor's fingerprint only when this leaves it
     // dead; a still-live Xor computes its own value.
     let cond_use_id = edit.node_input_id_at(if_node, NodeKind::IF_COND_SLOT)?;

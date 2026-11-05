@@ -78,11 +78,11 @@ fn uints<const N: usize>(
     caps: [Capture; N],
     width_src: Capture,
 ) -> Option<([UBig; N], ValueType)> {
-    let mut vals: Vec<UBig> = Vec::with_capacity(N);
-    for cap in caps {
-        vals.push(b.get_uint(cap, f)?);
+    let mut vals = [const { UBig::ZERO }; N];
+    for (val, cap) in vals.iter_mut().zip(caps) {
+        *val = b.get_uint(cap, f)?;
     }
-    Some((vals.try_into().ok()?, int_type(f, b, width_src)?))
+    Some((vals, int_type(f, b, width_src)?))
 }
 
 /// `-v` at the integer `ty`; `None` for a float.
