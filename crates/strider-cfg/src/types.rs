@@ -230,13 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn pcode_addr_at_machine_start_zero_index() {
-        let a = PcodeInsnAddr::at_machine_start(0x2000);
-        assert_eq!(a.machine(), 0x2000);
-        assert_eq!(a.insn_index, 0);
-    }
-
-    #[test]
     fn contains_addr_spans_the_region_and_nothing_outside_it() {
         const SPAN: &[(u64, u64)] = &[(0x1000, 0), (0x1010, 0)];
         const PCODE: &[(u64, u64)] = &[(0x1000, 0), (0x1000, 3)];

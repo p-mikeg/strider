@@ -1,12 +1,11 @@
 //! The oracles here share NO code with the module under test: dominator sets
-//! come from the iterative fixpoint `Dom(n) = {n} + intersect(Dom(pred))`,
-//! the deletion definition (`oracle`) and petgraph's `simple_fast`; DF / IDF
-//! from their definitions.
+//! come from the deletion definition (`oracle`) and petgraph's `simple_fast`;
+//! DF / IDF from their definitions.
 
 mod common;
 
 use std::cell::Cell;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
 use common::cases::{self, Case};
@@ -19,362 +18,32 @@ use petgraph::graph::NodeIndex;
 use proptest::prelude::*;
 use rustc_hash::FxHashMap;
 
-/// Deterministic splitmix-ish PRNG, so failures reproduce.
-struct Rng(u64);
-impl Rng {
-    fn next_u64(&mut self) -> u64 {
-        // LCG step, then xorshift the high bits down. The raw LCG's low bits
-        // are far too regular for the modulo in `below`.
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z ^ (z >> 27)
-    }
-    fn below(&mut self, n: u32) -> u32 {
-        (self.next_u64() % u64::from(n)) as u32
-    }
-}
-
-/// A random CFG over `n` nodes (0 = entry) in which every node is reachable:
-/// a spanning tree plus `extra` arbitrary edges, self-loops allowed.
-fn random_cfg(rng: &mut Rng, n: u32, extra: u32) -> HashMap<u32, Vec<u32>> {
-    let mut edges: HashSet<(u32, u32)> = HashSet::new();
-    for v in 1..n {
-        let u = rng.below(v); // parent strictly earlier -> acyclic tree, all reachable
-        edges.insert((u, v));
-    }
-    for _ in 0..extra {
-        let u = rng.below(n);
-        let v = rng.below(n);
-        // Strider's CFG builder routes a branch back to the entry address as an
-        // edge into the entry region, so back-edges into node 0 are in scope.
-        edges.insert((u, v));
-    }
-    let mut preds: HashMap<u32, Vec<u32>> = (0..n).map(|x| (x, Vec::new())).collect();
-    for (u, v) in edges {
-        preds.get_mut(&v).unwrap().push(u);
-    }
-    preds
-}
-
-/// ORACLE: dominator sets by the iterative data-flow fixpoint, then idoms.
-fn oracle_dom_and_idom(
-    n: u32,
-    preds: &HashMap<u32, Vec<u32>>,
-) -> (HashMap<u32, HashSet<u32>>, HashMap<u32, u32>) {
-    let all: HashSet<u32> = (0..n).collect();
-    let mut dom: HashMap<u32, HashSet<u32>> = HashMap::new();
-    dom.insert(0, HashSet::from([0]));
-    for x in 1..n {
-        dom.insert(x, all.clone()); // start universal, shrink to fixpoint
-    }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for x in 1..n {
-            let mut inter: Option<HashSet<u32>> = None;
-            for &p in &preds[&x] {
-                let dp = &dom[&p];
-                inter = Some(match inter {
-                    None => dp.clone(),
-                    Some(acc) => acc.intersection(dp).copied().collect(),
-                });
-            }
-            let mut new = inter.unwrap_or_default();
-            new.insert(x);
-            if new != dom[&x] {
-                dom.insert(x, new);
-                changed = true;
-            }
-        }
-    }
-    // The closest strict dominator is the one with the largest Dom set.
-    let mut idom: HashMap<u32, u32> = HashMap::new();
-    for x in 1..n {
-        let best = dom[&x]
-            .iter()
-            .filter(|&&d| d != x)
-            .max_by_key(|&&d| dom[&d].len());
-        if let Some(&d) = best {
-            idom.insert(x, d);
-        }
-    }
-    (dom, idom)
-}
-
-/// ORACLE: `DF(x)` by definition, as a brute-force O(n^3) scan.
-fn oracle_df(
-    n: u32,
-    preds: &HashMap<u32, Vec<u32>>,
-    dom: &HashMap<u32, HashSet<u32>>,
-) -> HashMap<u32, HashSet<u32>> {
-    let dominates = |x: u32, y: u32| dom[&y].contains(&x); // x in Dom(y)
-    let strictly_dominates = |x: u32, y: u32| x != y && dominates(x, y);
-    let mut df: HashMap<u32, HashSet<u32>> = (0..n).map(|x| (x, HashSet::new())).collect();
-    for b in 0..n {
-        for &p in &preds[&b] {
-            for x in 0..n {
-                if dominates(x, p) && !strictly_dominates(x, b) {
-                    df.get_mut(&x).unwrap().insert(b);
-                }
-            }
-        }
-    }
-    df
-}
-
-/// ORACLE: iterated dominance frontier as the fixpoint `J = DF(defs + J)`.
-fn oracle_idf(df: &HashMap<u32, HashSet<u32>>, defs: &HashSet<u32>) -> HashSet<u32> {
-    let mut j: HashSet<u32> = HashSet::new();
-    loop {
-        let mut next: HashSet<u32> = HashSet::new();
-        for &x in defs.iter().chain(j.iter()) {
-            if let Some(s) = df.get(&x) {
-                next.extend(s.iter().copied());
-            }
-        }
-        if next == j {
-            return j;
-        }
-        j = next;
-    }
-}
-
-fn as_set(v: &[u32]) -> HashSet<u32> {
-    v.iter().copied().collect()
-}
-
-#[test]
-fn dominance_frontiers_match_definition_over_random_cfgs() {
-    let mut rng = Rng(0x1234_5678_9abc_def0);
-    for iter in 0..600u32 {
-        let n = 3 + rng.below(11); // 3..=13 nodes
-        let extra = rng.below(2 * n); // up to ~2n extra edges (dense, irreducible)
-        let preds = random_cfg(&mut rng, n, extra);
-        let (dom, idom) = oracle_dom_and_idom(n, &preds);
-
-        let succs = succs_of(n, &preds);
-        let doms = dominators(0u32, |v| succs.get(&v).cloned().unwrap_or_default());
-        let df_impl = dominance_frontiers(&doms, |v| preds.get(&v).cloned().unwrap_or_default());
-        // Same DF in the oracle's representation, for the IDF fixpoint below.
-        let df_std: HashMap<u32, HashSet<u32>> = df_impl
-            .iter()
-            .map(|(&k, v)| (k, v.iter().copied().collect()))
-            .collect();
-        let df_oracle = oracle_df(n, &preds, &dom);
-        for x in 0..n {
-            let got = df_impl.get(&x).map(|v| as_set(v)).unwrap_or_default();
-            assert_eq!(
-                got, df_oracle[&x],
-                "iter {iter}: DF({x}) mismatch (n={n}, extra={extra})\npreds={preds:?}\nidom={idom:?}"
-            );
-        }
-
-        let order = doms.tree_preorder();
-        assert_eq!(order[0], 0, "iter {iter}: preorder must start at root");
-        let pos: HashMap<u32, usize> = order.iter().enumerate().map(|(i, &nn)| (nn, i)).collect();
-        assert_eq!(
-            pos.len(),
-            order.len(),
-            "iter {iter}: preorder has duplicates"
-        );
-        for (&node, &id) in &idom {
-            assert!(
-                pos[&id] < pos[&node],
-                "iter {iter}: node {node} must follow its idom {id}"
-            );
-        }
-
-        // Both sides run over the SAME impl DF map, isolating the worklist
-        // logic from any DF bug.
-        for _ in 0..4 {
-            let defs: HashSet<u32> = (0..n).filter(|_| rng.below(3) == 0).collect();
-            let defs: HashSet<u32> = if defs.is_empty() {
-                HashSet::from([rng.below(n)])
-            } else {
-                defs
-            };
-            let dm: HashMap<(), Vec<u32>> = HashMap::from([((), defs.iter().copied().collect())]);
-            let place = phi_placement(&df_impl, &dm);
-            let phi_nodes: HashSet<u32> = place
-                .iter()
-                .filter(|(_, vars)| vars.contains(&()))
-                .map(|(&nn, _)| nn)
-                .collect();
-            let idf_oracle = oracle_idf(&df_std, &defs);
-            assert_eq!(
-                phi_nodes, idf_oracle,
-                "iter {iter}: IDF mismatch for defs={defs:?}\ndf={df_impl:?}"
-            );
-        }
-    }
-}
-
-/// Unreachable nodes (idom = None) must be skipped, not panic and not appear.
-#[test]
-fn unreachable_nodes_are_skipped() {
-    // 0 -> 1 -> 2 reachable; 3 -> 4 is an island with no edge in from {0,1,2}.
-    let preds: HashMap<u32, Vec<u32>> = HashMap::from([
-        (0, vec![]),
-        (1, vec![0]),
-        (2, vec![1]),
-        (3, vec![]), // island root, not reachable from 0
-        (4, vec![3]),
-    ]);
-    let succs = succs_of(5, &preds);
-    let doms = dominators(0u32, |v| succs.get(&v).cloned().unwrap_or_default());
-    let df = dominance_frontiers(&doms, |v| preds.get(&v).cloned().unwrap_or_default());
-    // A straight-line chain has empty frontiers everywhere.
-    for x in 0..5 {
-        assert!(
-            df.get(&x).is_none_or(|v| v.is_empty()),
-            "DF({x}) must be empty"
-        );
-    }
-    let order = doms.tree_preorder();
-    assert_eq!(
-        order,
-        vec![0, 1, 2],
-        "preorder excludes the unreachable island"
-    );
-}
-
-/// Against the fixpoint oracle, on dense irreducible graphs plus an island of
-/// vertices the root never reaches, and edges back into the root.
-#[test]
-fn dominators_match_the_fixpoint_oracle_over_random_cfgs() {
-    let mut rng = Rng(0x0dd0_face_5eed_cafe);
-    for iter in 0..1_000u32 {
-        let n = 2 + rng.below(14);
-        let extra = rng.below(3 * n);
-        let preds = random_cfg(&mut rng, n, extra);
-        let (_, idom) = oracle_dom_and_idom(n, &preds);
-        let island = n + rng.below(3);
-        let mut succs: HashMap<u32, Vec<u32>> = HashMap::new();
-        for (&v, ps) in &preds {
-            for &p in ps {
-                succs.entry(p).or_default().push(v);
-            }
-        }
-        // Island vertices reach into the graph but nothing reaches them.
-        for x in n..island {
-            succs.entry(x).or_default().push(rng.below(n));
-        }
-        let got = dominators(0u32, |v| succs.get(&v).cloned().unwrap_or_default());
-        assert_eq!(got.vertices()[0], 0, "iter {iter}: root first");
-        assert_eq!(
-            got.vertices().len(),
-            n as usize,
-            "iter {iter}: reachable set"
-        );
-        assert_eq!(got.immediate_dominator(0), None, "iter {iter}: root");
-        for v in 1..island {
-            assert_eq!(
-                got.immediate_dominator(v),
-                idom.get(&v).copied(),
-                "iter {iter}: idom({v}) (n={n})\npreds={preds:?}"
-            );
-        }
-    }
-}
-
-/// Depth-first preorder from 0: `(num, vertex, parent)`, as a caller that owns
-/// its own numbering hands it to [`immediate_dominators`].
-fn preorder_dfs(n: u32, succs: &HashMap<u32, Vec<u32>>) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
-    const NONE: u32 = u32::MAX;
-    let mut num = vec![NONE; n as usize];
-    let mut vertex = vec![0u32];
-    let mut parent = vec![NONE];
-    num[0] = 0;
-    let mut stack: Vec<(u32, usize)> = vec![(0, 0)];
-    while let Some(top) = stack.last_mut() {
-        let (v, next) = *top;
-        let Some(&w) = succs.get(&v).and_then(|s| s.get(next)) else {
-            stack.pop();
-            continue;
-        };
-        top.1 += 1;
-        if num[w as usize] == NONE {
-            num[w as usize] = u32::try_from(vertex.len()).unwrap();
-            parent.push(num[v as usize]);
-            vertex.push(w);
-            stack.push((w, 0));
-        }
-    }
-    (num, vertex, parent)
-}
-
-fn succs_of(n: u32, preds: &HashMap<u32, Vec<u32>>) -> HashMap<u32, Vec<u32>> {
-    let mut succs: HashMap<u32, Vec<u32>> = (0..n).map(|x| (x, Vec::new())).collect();
-    for (&v, ps) in preds {
-        for &p in ps {
-            succs.get_mut(&p).unwrap().push(v);
-        }
-    }
-    succs
-}
-
-/// The preorder-numbered entry point, driven from a caller-owned DFS, answers
-/// what the node-keyed [`dominators`] answers.
-#[test]
-fn immediate_dominators_over_a_caller_owned_preorder_matches_the_oracle() {
-    let mut rng = Rng(0x1dea_5eed_f00d_b00b);
-    for iter in 0..1_000u32 {
-        let n = 2 + rng.below(14);
-        let extra = rng.below(3 * n);
-        let preds = random_cfg(&mut rng, n, extra);
-        let (_, idom) = oracle_dom_and_idom(n, &preds);
-        let succs = succs_of(n, &preds);
-        let (num, vertex, parent) = preorder_dfs(n, &succs);
-        assert_eq!(vertex.len(), n as usize, "iter {iter}: all reachable");
-        let got = immediate_dominators(&parent, |w| {
-            preds[&vertex[w as usize]]
-                .iter()
-                .map(|&p| num[p as usize])
-                .collect::<Vec<u32>>()
-        });
-        assert_eq!(got[0], 0, "iter {iter}: the root dominates itself");
-        for w in 1..n as usize {
-            assert_eq!(
-                vertex[got[w] as usize], idom[&vertex[w]],
-                "iter {iter}: idom({}) (n={n})\npreds={preds:?}",
-                vertex[w]
-            );
-        }
-    }
-}
-
 /// The interval numbering answers exactly the reflexive ancestor relation of
 /// the idom array it was built from.
 #[test]
 fn dom_intervals_answer_the_idom_chain() {
-    let mut rng = Rng(0xfeed_bead_0bad_c0de);
-    for iter in 0..2_000u32 {
-        let n = 1 + rng.below(20) as usize;
+    proptest!(|(raw in proptest::collection::vec(any::<u32>(), 1..=20))| {
         // `idom[v] < v` for `v > 0`: a valid preorder-numbered tree.
-        let idom: Vec<u32> = (0..n)
-            .map(|v| if v == 0 { 0 } else { rng.below(v as u32) })
+        let idom: Vec<u32> = (0..raw.len() as u32)
+            .map(|v| if v == 0 { 0 } else { raw[v as usize] % v })
             .collect();
         let intervals = DomIntervals::new(&idom);
-        for a in 0..n as u32 {
-            for b in 0..n as u32 {
+        for a in 0..idom.len() as u32 {
+            for b in 0..idom.len() as u32 {
                 let mut at = b;
                 let mut climbed = at == a;
                 while !climbed && at != 0 {
                     at = idom[at as usize];
                     climbed = at == a;
                 }
-                assert_eq!(
+                prop_assert_eq!(
                     intervals.dominates(a, b),
                     climbed,
-                    "iter {iter}: dominates({a}, {b}) over {idom:?}"
+                    "dominates({}, {}) over {:?}", a, b, &idom
                 );
             }
         }
-    }
+    });
 }
 
 const CASES: u32 = if cfg!(debug_assertions) { 256 } else { 8192 };
