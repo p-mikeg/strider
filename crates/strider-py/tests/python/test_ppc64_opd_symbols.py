@@ -184,6 +184,23 @@ def test_analyze_binds_r2_to_the_descriptors_toc(tmp_path):
     assert _returns_toc_base(lift.analyze(text_addr))
 
 
+def test_two_descriptors_with_different_tocs_leave_r2_unbound(tmp_path):
+    """`add` and `add2` name one code address through descriptors with
+    different TOC words, so neither is `r2` on entry there."""
+    path, text_addr, _opd = _ppc64_elfv1(
+        tmp_path / "two.elf", e_flags=1, code=TOC_CODE, tocs=(TOC, TOC + 0x100)
+    )
+    lift = strider.lift.load_elf(path)
+    assert lift.symbol("add2").address == text_addr
+    assert not _returns_toc_base(lift.analyze("add"))
+    assert not _returns_toc_base(lift.analyze(text_addr))
+    # The same pair with one TOC binds it.
+    path, text_addr, _opd = _ppc64_elfv1(
+        tmp_path / "same.elf", e_flags=1, code=TOC_CODE, tocs=(TOC, TOC)
+    )
+    assert _returns_toc_base(strider.lift.load_elf(path).analyze(text_addr))
+
+
 def test_a_debug_files_symbols_resolve_through_the_loaded_opd(tmp_path):
     """A stripped image with its symbols in a debug file, whose `.opd` is
     `SHT_NOBITS`: the descriptor `add` names is read from the loaded image,
