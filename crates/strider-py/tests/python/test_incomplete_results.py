@@ -1,5 +1,5 @@
 """`analyze` and `build_cfg` return their result whatever `cfg.incomplete`
-names: incompleteness is reported, never raised."""
+names."""
 
 import pytest
 import strider
