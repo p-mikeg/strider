@@ -21,7 +21,7 @@ RAM a `Load` / `Store`. The set is frozen before the lift, and a write to a
 register outside it fails the function. It holds:
 
 - every REGISTER / UNIQUE varnode the pcode names,
-- the convention's registers, plus the argument registers of the
+- the convention's stack pointer, plus the argument registers of the
   `per_address_ccs` overrides this CFG's direct calls select,
 - each `CallOther`'s ABI footprint (x86-64 `syscall` reads `R10`, writes `R11`),
 - the declared register enclosing each resolved register-space LOAD / STORE
