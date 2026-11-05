@@ -175,21 +175,12 @@ an error under CI's `-D warnings`), so a new `NodeKind` variant forces a
 decision at every classifying `match`. The lint does not see tuple scrutinees,
 guarded `_ if` arms or `matches!`.
 
-Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}`;
-`IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
-SShiftRight,ShiftLeft,Mul}`; `IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}`
-(output `I1`); `FloatBinaryOp{Add,Mul,Div}`;
-`FloatUnaryOp{Neg,Abs,Sqrt,Ceil,Floor,Round}`; `FloatCmpOp{Equal,Less}`;
-`ExtendOp{ZeroExtend,SignExtend}`. Subtraction and `<=` / `!=` arrive already
-lowered.
-
-`ValueType` (`node/value_type.rs`): `enum { Int(u16), Float(u16) }`, width in
-bits, limited to `SUPPORTED`: integers 1, 8, 16, 24, 32, 40, 48, 56, 64, 72,
-80, 96, 112, 128, 256, 512 and floats 16, 32, 64, 80, 128. A Sleigh width with
-no entry fails the function's lift. `ValueType::I1` is the only named type;
-write the rest `ValueType::int(32)` / `ValueType::float(64)` (panic on an
-unlisted width). `bit_width(I1) == 1`; `int_from_bytes(1)` is `I8`. `Debug`
-spells `I32`, `Display` `i32`.
+Op sub-enums are in `node/ops.rs`; subtraction and `<=` / `!=` arrive already
+lowered. `ValueType` (`node/value_type.rs`) is `Int(u16)` / `Float(u16)` in
+bits, limited to `SUPPORTED`; a Sleigh width with no entry fails the
+function's lift. `ValueType::I1` is the only named type; write the rest
+`ValueType::int(32)` (panics on an unlisted width). `int_from_bytes(1)` is
+`I8`; `Debug` spells `I32`, `Display` `i32`.
 
 `expected_signature` (`node/signature.rs`) defines each kind's slot kinds.
 `Graph` holds only structure; per-function data (`default_cc`, `byte_order`,
@@ -210,21 +201,9 @@ walks), `IRBuilder: IRViewer` (`create_node` / `create_node_attributed`),
 
 ## Lift-time canonicalisations
 
-Patterns match these shapes, not the p-code ones:
-
-```
-IntSub(a,b)         -> Add(a, Neg(b))
-IntLessEqual(a,b)   -> Xor(Less(b,a), IntConst(1)):I1
-IntSlessEqual(a,b)  -> Xor(Sless(b,a), IntConst(1)):I1
-IntNotEqual(a,b)    -> Xor(Equal(a,b), IntConst(1)):I1
-FloatSub(a,b)       -> FloatAdd(a, Neg(b))   (a NaN b's sign flips)
-FloatNotEqual(a,b)  -> Xor(FloatEqual(a,b), IntConst(1)):I1
-FloatLessEqual(a,b) -> Or(FloatLess(a,b), FloatEqual(a,b)):I1   (NaN-aware)
-FLOAT_NAN(x)        -> Xor(FloatEqual(x,x), IntConst(1)):I1
-BoolNeg(x)          -> Xor(x, IntConst(1)):I1
-IntNeg(x)           -> Xor(x, all_ones)   (Sleigh IntNeg is complement ~x)
-If(Xor(C,IntConst(1)):I1){A}{B} -> If(C){B}{A}   (opt::IfCondInversion)
-```
+Patterns match the shapes in the strider-lift README's table, not the p-code
+ones, plus `If(Xor(C,IntConst(1)):I1){A}{B} -> If(C){B}{A}`
+(`opt::IfCondInversion`).
 
 Commutative matching tries both operand orders for the kinds
 `NodeKind::is_commutative` names: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
@@ -269,14 +248,12 @@ operands accept the same pairs with the same bindings.
   reasons are the final round's. Each reason's contract is on
   `strider_cfg::Reason`.
 - Memory precision rests on `Function::assumptions`, nine claims the IR cannot
-  prove; a wrong one miscompiles. `AnalyzeOptions.assumptions` seeds each lift
-  and `Function::assume` adds claims, withdrawing none. Five default on;
-  `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest` are read by the
-  lift. `AssumptionOptions::none()` is the sound floor for RAM-like memory and
-  IEEE-default float controls. `LoadForward` and `FunctionArgDetect` narrow
-  under `Policy::strict` (the claims less the call relaxations), because later
-  walks honour no call relaxation. Per-field detail is in
-  `crates/strider-ir/src/function/assumptions.rs`.
+  prove (five default on; `assumptions.rs` has each); a wrong one miscompiles.
+  `AnalyzeOptions.assumptions` seeds each lift and `Function::assume` adds
+  claims, withdrawing none. `msr_register_keeps_mode` and
+  `fp_rounding_mode_is_nearest` are read by the lift. `LoadForward` and `FunctionArgDetect` narrow under
+  `Policy::strict` (the claims less the call relaxations), because later walks
+  honour no call relaxation.
 
 ## strider-py
 
@@ -285,7 +262,9 @@ Submodules `strider.ir`, `.lift`, `.cfg`, `.sleigh`, `.reader`, `.opt`,
 `visualize` explorer, outside `__all__`), plus `strider.StriderError`.
 `strider.lift.lifter(arch, mem, rom=None)` builds a handle;
 `analyze(entry, cc, opts)` returns an `AnalyzeResult` (`.cfg` / `.function` /
-`.unresolved`, unpackable as a 3-tuple) and never raises over incompleteness.
+`.unresolved`, unpackable as a 3-tuple) and reports incompleteness in
+`cfg.incomplete` rather than raising; only an unmapped entry or a fall-through
+no call explains into bytes Sleigh rejects raises.
 The `.pyi` stubs are the typed surface.
 
 `CfgOptions.known_targets` / `call_other_abis` and

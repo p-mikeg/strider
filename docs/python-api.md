@@ -54,6 +54,8 @@ arch:
 - An undefined or `SHN_COMMON` symbol gets a distinct address in an unmapped
   range past the image, which `prog.symbol("ext_fn").address` names.
 - A GOT reference loads from a synthetic slot holding the symbol's address.
+  The synthetic link binds every symbol locally, so the slot is read-only
+  whatever `relocated_got_is_rom` says.
 - A relocation strider does not compute is a hole outside writable data:
   decoding stops there, with an error naming the relocation type.
 
@@ -91,11 +93,10 @@ fw = strider.lift.lifter(sleigh.SleighArch.arm(), Firmware(blob))
 loads from constant addresses. `BufferReader` works as either; `reader.MemLike`
 / `reader.RomLike` name what each argument accepts.
 
-A Python subclass of `MemReader`, `ReadOnlyMemory` or `JoinPredicate` is never
-freed once instantiated (its instances are), so define it once, not in a loop.
-A reader holding its own `Lifter` (tens of MB of decoder state) forms a
-cycle that only a cyclic GC pass frees, so in a loop hold the `Lifter` through
-a `weakref` or call `gc.collect()`.
+Define a `MemReader`, `ReadOnlyMemory` or `JoinPredicate` subclass once, not
+in a loop: once instantiated, the class is never freed. A reader holding its
+own `Lifter` (tens of MB of decoder state) is a cycle only a cyclic GC pass
+frees; hold the `Lifter` through a `weakref`, or call `gc.collect()`.
 
 ## 2. Analyzing a function
 
@@ -108,9 +109,10 @@ result.cfg, result.function, result.unresolved   # or read the fields
 # unresolved: machine addresses of indirect branches that stayed unresolved
 ```
 
-`analyze` returns even when it cannot vouch for every path: `cfg.incomplete`
-lists each such address and why. Check it before trusting an absence ("no
-store to X").
+`analyze` reports what it cannot vouch for in `cfg.incomplete`, each address
+with its reason, rather than raising; check it before trusting an absence ("no
+store to X"). Of incomplete code, only an unmapped entry, or a fall-through no
+call explains into bytes Sleigh rejects, raises `StriderError`.
 
 A plain `Lifter` needs an address and a calling convention:
 
@@ -125,7 +127,7 @@ this Lifter is already in use`, while the `ElfLifter` symbol, `read`,
 built over `prog.arch`, `prog.reader()` and `prog.rom()` (gathered before any
 analysis is in flight and after every `add_elf`), and call
 `analyze(addr, prog.cc)`. `analyze` drops the GIL unless a reader is a Python
-object; `Function.optimize` holds it.
+one (anything but a `BufferReader`); `Function.optimize` holds it.
 
 ### `lift.LifterOptions`, per-call tuning
 
@@ -339,7 +341,8 @@ n.call_other_name()            # a CallOther's user-op name, else None
 n.vn()                         # an InitialVar's register, a Call's return
                                # register (first value output), a CallOther's
                                # result varnode, else None
-n.asm_fingerprint()            # machine addresses this node was lifted or folded from
+n.asm_fingerprint()            # machine addresses recorded on it (a superset:
+                               # a shared constant carries every user's)
 ```
 
 A rewrite adds the addresses of the nodes it folded to the node it builds.
@@ -467,7 +470,9 @@ A call's argument index counts the integer registers, then the float ones,
 then any vector window, then stack arguments: on x86-64 SysV `.arg(6)` is
 XMM0; on PPC64 the first stack argument is `8+25` (userland) or `8+13`
 (`*_linux_kernel`). `function_arg` / `function_arg_float` index the two
-classes separately.
+classes separately. An incoming stack ordinal counts slots, not C arguments:
+one per run of slots one load spans, so a `long long` read as two 4-byte loads
+takes two, and the first slot no load reads ends the stack arguments.
 
 If slots: `.cond(p)`, `.ctrl(p)`, `.capture_true(c)` / `.capture_false(c)`.
 To match what an edge leads to, join on the edge:
@@ -815,11 +820,14 @@ arch = sleigh.SleighArch.x86_64()      # a preset; also x86(), arm(), arm_thumb(
 arch.name()                            # "x86_64"
 arch.endianness()                      # "little" / "big"
 arch.reg("RAX")                        # the Vn for a register name, or None;
-                                       # exact case: upper on x86, lower elsewhere
+                                       # the sla's exact spelling: "RAX", "x0",
+                                       # "r1", but "NG" and ppc "LR" / "CTR"
 arch.reg_name(vn)                      # the name for a Vn, or None
 
 lft.pcode_at(entry, addr)              # one instruction's p-code as text; an odd
-                                       # entry is Thumb / MIPS16e, as in analyze
+                                       # entry is Thumb / MIPS16e, as in analyze;
+                                       # a new entry clones the decoder, so per
+                                       # function prefer build_cfg(entry).pcode_at
 
 lft.user_op_names()                    # every Sleigh user-op name this arch emits
 lft.call_other_abi("rdtsc")            # how one is classified, or None
@@ -849,15 +857,12 @@ callee. On 32-bit x86 three kinds of callee need their own convention in
   takes every argument on the stack and needs `x86_cdecl()`; otherwise its
   first argument reads as `arg(3)`.
 
-On 32-bit PowerPC, `-fpic -mbss-plt` code finds its GOT with
-`bl _GLOBAL_OFFSET_TABLE_-4; mflr r30`: the word before the GOT is `blrl`,
-which returns at once with LR pointing at the GOT. Under `powerpc_sysv32()`
-LR survives the call, so `mflr` reads the `bl`'s own return address and
-every GOT load after it is wrong. Key that word in `per_address_ccs` with a
-convention that leaves `LR` out of `callee_saved_regs`: LR is then unknown
-after the call (strider does not model the `blrl`), so the GOT loads stay
-unresolved rather than wrong. A convention clobbering its link register is
-refused as the function's own.
+A ppc32 `-fpic -mbss-plt` GOT thunk (`bl _GLOBAL_OFFSET_TABLE_-4; mflr r30`)
+needs a `per_address_ccs` convention for that word leaving `LR` out of
+`callee_saved_regs`; otherwise `mflr` reads the `bl`'s own return address and
+every GOT load after it is wrong. LR is then unknown, so those loads stay
+unresolved. A convention clobbering its link register is refused as the
+function's own.
 
 `CallingConvention.custom` states the first two and the PowerPC thunk, a
 preset the third:

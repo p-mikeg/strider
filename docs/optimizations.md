@@ -9,10 +9,7 @@ default set. When a pattern does not match, a pass has usually reshaped it.
 - **Rewriting passes** loop together to a fixed point. A pass whose last run
   changed nothing is skipped until another pass changes the graph. The loop is
   capped at 1024 iterations and raises if it has not settled.
-- **Post-passes** run once afterwards: `CallStackArgCollect` adds a call's
-  stack arguments as extra `Call` inputs, and `FunctionArgDetect` records the
-  incoming stack arguments and moves their loads' memory edges past
-  definitions that cannot overwrite them.
+- **Post-passes** run once afterwards (below).
 
 ## Rewriting passes
 
@@ -72,23 +69,17 @@ as `__fentry__`). Memory is taken to be RAM: a memory-mapped register polled
 after a write folds to the value written.
 
 Each examined load's memory edge is also moved past definitions that cannot
-overwrite it, using `stack_global_disjoint` and `noalias_allocators`' heap
-identity, but never through a call a claim makes transparent
-(`escape_analysis`, a listed allocator), because the jump-table walk and
-return-target verification read that edge without those claims. Claims are
-never withdrawn from a function; to drop one, analyse again without it.
+overwrite it (`stack_global_disjoint`, `noalias_allocators`' heap identity),
+never through a call a claim makes transparent: the jump-table walk and
+return-target verification read that edge without those claims.
 
-With `AssumptionOptions(escape_analysis=True)` it forwards across a call when no
-stack address escapes the frame anywhere in the function (as a call argument,
-stored value, return value, pointer-arithmetic input, or in a call-clobbered
-register) and the slot is not one of the callee's arguments. With
-`noalias_allocators=[addr, ...]`, a load steps through a call to a listed pure
-allocator when it reads a different allocation, or a non-escaping frame's slot
-outside that call's argument window; a global load does not. A listed call's
-result overlaps no stack slot or global; an allocator carving from a static or
-caller-supplied arena does not qualify. Under either of those two,
-`callee_preserves_stack_args=True` empties the outgoing-argument window so a
-spill at the stack top forwards too; alone it does nothing.
+With `escape_analysis`, a spill load forwards across a call when no stack
+address escapes the frame and the slot is outside the callee's argument
+window. With `noalias_allocators`, a load steps through a call to a listed
+allocator when it reads another allocation or such a frame slot; a global load
+does not. `callee_preserves_stack_args` empties the argument window under
+either. [python-api §2](python-api.md#2-analyzing-a-function) says when each
+claim is safe.
 
 ## Post-passes
 
@@ -98,10 +89,11 @@ In default pipeline order:
 window to the call as ordinary arguments. It errs wide: a spill just above the
 arguments can come along.
 
-**FunctionArgDetect.** Records which value carries each incoming *stack-passed*
-argument (loads off the entry stack pointer), and narrows those loads' memory
-edges under the same claims as `LoadForward`. Register arguments are recorded
-at lift time.
+**FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
+stack pointer read, after the register arguments: one ordinal per run of slots
+one load spans, up to the first slot no load reads. It narrows those loads'
+memory edges under the same claims as `LoadForward`. Register arguments are
+recorded at lift time.
 
 Every run then records, for each load and store whose address is a base plus a
 constant, that pair. The base is a stack pointer or a `noalias_allocators`
@@ -170,18 +162,17 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 - A chain of about 500 constant guards held only in registers reaches the
   1024-iteration cap, and the analysis raises. A chain whose guards each test
   a different stack slot, with stores between them, still costs quadratic
-  settle work (about 2 s at 2000 guards).
+  settle work in the guard count.
 - Reloads of `n` distinct stack slots cost quadratic climb work past `n`
   diamonds inside an irreducible loop, where the climb steps one dominator at
   a time, and past `n` calls under `escape_analysis`, where every call is a
-  candidate for every slot (about 0.8 s and 0.4 s at `n` = 2000).
+  candidate for every slot.
 - A pattern nesting commutative nodes `d` deep can cost up to 2^d match
   attempts, even when nothing matches; `.ordered()` pins the operand order.
 - Sibling KnownBits folds over one unfolded chain of depth `d` each copy the
-  chain's instruction addresses, quadratic in `d` (about 0.2 s at `d` = 2000).
+  chain's instruction addresses, quadratic in `d`.
 - A jump table whose arms fall into one another, explored lowest first,
-  re-splits one long region per arm, quadratic in the arm count (about 2.5 s
-  at 16000 arms).
+  re-splits one long region per arm, quadratic in the arm count.
 
 ## Using a different pipeline
 

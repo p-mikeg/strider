@@ -36,19 +36,10 @@ verdicts freeze a site:
 ## Incompleteness
 
 `AnalyzeResult::incomplete()` is one `Incompleteness` set of
-`(PcodeInsnAddr, Reason)`; check it before trusting an absence.
-
-- `UnresolvedBranch`: a live placeholder, a seated `Switch` whose selector no
-  longer derives, a site still growing at the cap, a site that lost a proved
-  successor or narrowed, a withdrawn site, and an unproven return the caller
-  did not seed.
-- `UnverifiedSeed`: a `Switch` holding only the caller's seed, a site the CFG
-  consumed as a `TailCall` or as a caller-seeded `Return`, an unproven return
-  the caller seeded `LinkRegister`, and an arm seated in a mode nothing
-  proved for it.
-- `IsaModeConflict`, `InteriorTarget`, `UnmappedTarget`, `UndecodableTarget`,
-  `PastFunctionEnd`: from every round, since an inexact edge fed the
-  classifier whether or not the final CFG keeps it.
+`(PcodeInsnAddr, Reason)`; check it before trusting an absence. Each reason's
+contract is on `Reason`. The five target reasons accumulate over every round,
+since an inexact edge fed the classifier whether or not the final CFG keeps
+it; the two site reasons are the final round's.
 
 A seed suppresses only the unclassified-`Switch` report, and only until the
 site outgrows it.

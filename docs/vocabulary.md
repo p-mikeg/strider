@@ -26,15 +26,13 @@ reached it. An address reached in two modes is listed in `cfg.incomplete` as
 
 ## Control flow
 
-**Region.** A straight run of instructions entered at the top and left at the
-bottom; elsewhere called a "basic block". Strider says region in both the CFG
-and the IR.
+**Region.** A straight run of instructions left at the bottom; elsewhere
+called a "basic block". Strider says region in both the CFG and the IR.
 
 **CFG (control flow graph).** The regions and the jumps between them.
 
 **Dominator.** Region A *dominates* B if every path from entry to B goes
-through A. A phi goes where the dominance of a region writing the value ends
-(its *dominance frontier*).
+through A.
 
 ## The IR
 
@@ -102,27 +100,23 @@ removal, store-to-load forwarding, ...) before you query.
 matches all of them: `a - b` is always `a + (-b)`.
 [optimizations.md](optimizations.md) lists what each pass rewrites.
 
-**Assumption.** A claim about the code the IR cannot prove. Seven are about
-memory (the stack and globals do not overlap, a named allocator returns fresh
-storage, ...); two are about the processor (an ARM register `msr` keeps the
-mode, float conversions round to nearest).
-`AssumptionOptions` holds all nine; a wrong one makes the answer wrong, not
+**Assumption.** A claim the IR cannot prove (stack and globals disjoint, a
+named allocator such as `malloc` returns fresh storage, ...);
+`AssumptionOptions` holds nine. A wrong one makes the answer wrong, not
 imprecise. [python-api.md](python-api.md#2-analyzing-a-function) covers each.
-
-**Noalias allocator.** A function you name as returning storage nothing else
-points at, typically `malloc`. Its result is a distinct base, so a load from a
-different allocation, or from a non-escaping frame's stack slot, steps through
-a call to it; a load from a global does not.
 
 **Stack offset.** For a load or store at "stack pointer plus a constant",
 Strider records the constant, so you can ask for stack accesses or one exact
 slot.
 
-**Asm-fingerprint.** The addresses of the machine instructions whose lift, or a
-later rewrite, produced an IR node, mapping a match back to assembly. Every
-reachable node has at least one, except the six synthesised kinds (`Entry`,
-`InitialMemory`, `InitialVar`, `Region`, `Phi`, `MemPhi`), which may have none
-until a rewrite replaces another node with them.
+**Asm-fingerprint.** The machine-instruction addresses recorded on an IR node,
+mapping a match back to assembly: the instruction that lifted it, each one whose
+lift reused it, and those of every node a rewrite folded into it. A superset of
+the instructions behind the value: a shared constant carries every address that
+used it, and so does a node that absorbs it. Every reachable node has at least
+one, except the six synthesised kinds (`Entry`, `InitialMemory`, `InitialVar`,
+`Region`, `Phi`, `MemPhi`), which may have none until a rewrite replaces
+another node with them.
 
 ## Querying
 
