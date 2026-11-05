@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional, Sequence, Union
 
 from .cfg import Cfg, DotStyle
-from .lift import AssumptionOptions
+from .lift import AssumptionOptions, StrPath
 from .opt import OptimizerPipeline
 from .pattern import (
     Capture,
@@ -118,7 +118,7 @@ class Function:
         ...
     def to_dot(
         self,
-        path: Optional[str] = ...,
+        path: Optional[StrPath] = ...,
         *,
         pretty: Union[bool, DotStyle] = ...,
     ) -> Optional[str]:
@@ -129,7 +129,7 @@ class Function:
         ...
     def to_html(
         self,
-        path: Optional[str] = ...,
+        path: Optional[StrPath] = ...,
         *,
         pretty: Union[bool, DotStyle] = ...,
     ) -> Optional[str]:

@@ -1160,9 +1160,9 @@ pub fn int_const(value: Option<CapOr<IntConstArg>>) -> PyResult<PyPat> {
 #[derive(FromPyObject)]
 pub enum IntConstAnyWidthArg {
     #[pyo3(annotation = "int")]
-    One(i128),
+    One(crate::bigint::PyBigInt),
     #[pyo3(annotation = "list[int]")]
-    Set(Vec<i128>),
+    Set(Vec<crate::bigint::PyBigInt>),
 }
 
 /// Match an `IntConst` holding `value` exactly, zero-extended or
@@ -1172,14 +1172,14 @@ pub enum IntConstAnyWidthArg {
 pub fn int_const_any_width(value: IntConstAnyWidthArg) -> PyResult<PyPat> {
     Ok(PyPat::from(match value {
         IntConstAnyWidthArg::One(v) => {
-            let v = checked_signed_i64(v)?;
+            let v: i64 = v.to()?;
             let make = move || ex(sp::int_const_any_width(v));
             leaf("int_const_any_width()", Kind::Build, Box::new(make))
         }
         IntConstAnyWidthArg::Set(vs) => {
             let vs: Vec<i64> = vs
                 .into_iter()
-                .map(checked_signed_i64)
+                .map(crate::bigint::PyBigInt::to)
                 .collect::<PyResult<_>>()?;
             let make = move || ex(sp::int_const_any_width(vs.clone()));
             leaf("int_const_any_width([..])", Kind::Build, Box::new(make))
@@ -1214,7 +1214,7 @@ pub fn bool_const(value: Option<CapOr<BoolConstArg>>) -> PyPat {
 #[derive(FromPyObject)]
 pub enum FloatConstArg {
     #[pyo3(annotation = "int")]
-    Bits(u64),
+    Bits(crate::bigint::PyBigInt),
     #[pyo3(annotation = "Capture")]
     Cap(Py<PyCapture>),
 }
@@ -1223,13 +1223,13 @@ pub enum FloatConstArg {
 /// argument, match any float constant, binding it to the capture if given.
 #[pyfunction]
 #[pyo3(signature = (bits=None))]
-pub fn float_const(bits: Option<CapOr<FloatConstArg>>) -> PyPat {
+pub fn float_const(bits: Option<CapOr<FloatConstArg>>) -> PyResult<PyPat> {
     let any = |c| cap_opt("float_const()", Kind::Build, sp::any_float_const, c);
-    match bits {
+    Ok(match bits {
         None => any(None),
         Some(CapOr::Cap(c) | CapOr::Else(FloatConstArg::Cap(c))) => any(Some(c.get().inner)),
-        Some(CapOr::Else(FloatConstArg::Bits(b))) => PyPat::from(float_const_repr(b)),
-    }
+        Some(CapOr::Else(FloatConstArg::Bits(b))) => PyPat::from(float_const_repr(b.to()?)),
+    })
 }
 
 /// Match any node with an integer value output (`I1` through `I512`),
@@ -1407,14 +1407,6 @@ op_parser!(
     "ExtendOp",
     variants = [ZeroExtend, SignExtend]
 );
-
-pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
-    i64::try_from(value).map_err(|_| {
-        into_strider_err(anyhow::anyhow!(
-            "int_const_any_width value {value} does not fit in i64 (the core candidate width)"
-        ))
-    })
-}
 
 value_ops!(PyPat, "Match", pattern);
 
@@ -1800,8 +1792,11 @@ macro_rules! node_builder {
         node_builder!(@setters $ty [ $($acc)*
             /// Match only accesses whose address decomposes to exactly
             /// `sp + k`. Replaces any region filter called before it.
-            fn stack_offset<'py>(slf: PyRef<'py, Self>, k: i128) -> PyRef<'py, Self> {
-                slf.inner.borrow_mut().$name.push(RegionCall::StackOffset(k));
+            fn stack_offset<'py>(
+                slf: PyRef<'py, Self>,
+                k: crate::bigint::Ranged<i128>,
+            ) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name.push(RegionCall::StackOffset(k.0));
                 slf
             }
             /// Keep only accesses whose address decomposes to a stack base.
@@ -2691,9 +2686,9 @@ impl PyFunctionArgPat {
     fn source_stack(
         slf: PyRef<'_, Self>,
         space: crate::sleigh::PyVnSpace,
-        offset: i128,
+        offset: crate::bigint::Ranged<i128>,
     ) -> PyRef<'_, Self> {
-        slf.source.set(Some(stack_source(space, offset)));
+        slf.source.set(Some(stack_source(space, offset.0)));
         slf
     }
 }
@@ -2735,8 +2730,11 @@ pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
 
 /// Match a `FunctionArg` whose source is a specific stack slot.
 #[pyfunction]
-pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i128) -> PyFunctionArgPat {
-    let source = stack_source(space, offset);
+pub fn function_arg_stack(
+    space: crate::sleigh::PyVnSpace,
+    offset: crate::bigint::Ranged<i128>,
+) -> PyFunctionArgPat {
+    let source = stack_source(space, offset.0);
     PyFunctionArgPat::new(sp::FunctionArgClass::Any, None, Some(source))
 }
 

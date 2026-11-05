@@ -23,7 +23,12 @@ impl PyFunction {
         }
     }
 
-    fn render(&self, path: Option<&str>, pretty: &Pretty, html: bool) -> PyResult<Option<String>> {
+    fn render(
+        &self,
+        path: Option<std::path::PathBuf>,
+        pretty: &Pretty,
+        html: bool,
+    ) -> PyResult<Option<String>> {
         let function = self.read()?;
         let Some(style) = pretty.theme() else {
             return crate::dot::render(&function.raw_graph_dot(), html, path);
@@ -110,13 +115,17 @@ impl PyFunction {
     /// `pretty=False` renders it as stored; `pretty=True` inlines constants
     /// and names registers; a `DotStyle` name picks the pretty theme.
     #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
-    fn to_dot(&self, path: Option<&str>, pretty: Pretty) -> PyResult<Option<String>> {
+    fn to_dot(&self, path: Option<std::path::PathBuf>, pretty: Pretty) -> PyResult<Option<String>> {
         self.render(path, &pretty, /* html */ false)
     }
 
     /// `to_dot` wrapped in a self-contained HTML page.
     #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
-    fn to_html(&self, path: Option<&str>, pretty: Pretty) -> PyResult<Option<String>> {
+    fn to_html(
+        &self,
+        path: Option<std::path::PathBuf>,
+        pretty: Pretty,
+    ) -> PyResult<Option<String>> {
         self.render(path, &pretty, /* html */ true)
     }
 
