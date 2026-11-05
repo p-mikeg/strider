@@ -1,4 +1,4 @@
-//! Heap-allocation profile of `Strider::analyze` on `SYMBOL` in the image
+//! Heap-allocation profile of `Strider::analyze` on `x86emu_exec` in the image
 //! named by `argv[1]` or `$STRIDER_KERNEL` (a FreeBSD 12.4 kernel):
 //!
 //! ```text
@@ -7,56 +7,12 @@
 //!
 //! Writes `dhat-heap.json` for dhat's `dh_view` viewer.
 
-use object::{Object, ObjectSymbol};
+mod kernel;
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-fn kernel_path() -> String {
-    std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("STRIDER_KERNEL").ok())
-        .unwrap_or_else(|| panic!("pass the image to analyze as argv[1], or set $STRIDER_KERNEL"))
-}
-const SYMBOL: &str = "x86emu_exec";
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _profiler = dhat::Profiler::new_heap();
-
-    let elf = strider_reader::load_elf(kernel_path())?;
-    let obj = elf.checked_file().expect("the mapped file is unchanged");
-    let mem_reader = strider_reader::ElfFileMemReader::new(
-        &elf,
-        strider_reader::elf::RelocationMode::Unapplied,
-    )?;
-    let rom = strider_reader::ElfFileMemReader::new(
-        &elf,
-        strider_reader::elf::RelocationMode::Unapplied,
-    )?;
-
-    let addr = obj
-        .symbol_by_name(SYMBOL)
-        .ok_or_else(|| format!("'{SYMBOL}' not found"))?
-        .address();
-
-    let arch = strider_target::SleighArch::x86_64();
-    let mut strider = strider_orchestrator::Strider::new(arch, mem_reader, Some(Box::new(rom)))?;
-    let cc = strider_target::CallingConvention::x86_64_systemv().build(strider.sleigh_regs())?;
-
-    let result = strider.analyze(
-        addr,
-        &cc,
-        &strider_orchestrator::AnalyzeOptions::default(),
-        None,
-    )?;
-    // Keep `result` observable so nothing is optimised away.
-    println!(
-        "analyzed {SYMBOL} @ {addr:#x}: {} unresolved",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .len()
-    );
-    Ok(())
+    kernel::analyze()
 }
