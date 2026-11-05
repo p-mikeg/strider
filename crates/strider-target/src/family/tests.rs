@@ -82,7 +82,7 @@ fn every_family_row_names_only_its_own_presets() {
             .chain(family.calling_conventions.iter().flat_map(|cc| cc.arches));
         for preset in named {
             assert!(
-                preset.family() == family,
+                preset.family().name == family.name,
                 "{}: names {preset:?}, a {} preset",
                 family.name,
                 preset.family_name(),
