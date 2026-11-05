@@ -39,7 +39,9 @@ pub enum RelocationMode {
     /// ROM: an unchecked claim that nothing writes them after the loader (full
     /// RELRO; PPC32 code relocating its own `.got2` breaks it) and that a
     /// symbol the image defines binds to that definition. A slot only the
-    /// loader computes stays a hole; `.got.plt` is not served.
+    /// loader computes stays a hole; `.got.plt` is not served. An object
+    /// file's synthetic GOT is ROM either way: its synthetic link binds every
+    /// symbol locally.
     Applied { got_is_rom: bool },
 }
 
@@ -48,8 +50,8 @@ pub enum RelocationMode {
 pub struct ElfImage {
     /// Code and read-only mappings, plus writable ones when relocated.
     pub fetch: Vec<MemRegion>,
-    /// The runtime-immutable mappings, plus `.got`, `.got2` and `.data.rel.ro`
-    /// under `got_is_rom`.
+    /// The runtime-immutable mappings, an object file's synthetic GOT, and
+    /// `.got`, `.got2` and `.data.rel.ro` under `got_is_rom`.
     pub rom: Vec<MemRegion>,
     /// Every address the image maps writable, loaded or not.
     pub writable: AddressSet,

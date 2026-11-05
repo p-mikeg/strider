@@ -23,6 +23,8 @@
 //! `Xor(Sless(a, b), 1)`, then each cond code's tree of those collapses.
 //! `MI`/`PL` stays as lifted: `Sless(a-b, 0)` differs from `Sless(a, b)` on
 //! overflow.
+//!
+//! Also: PowerPC CR-bit tests and Thumb flag tests (`canonicalize_cr_bit_test`).
 
 use crate::rewrite_rule::{Rule, RuleTable};
 use strider_ir::eval;

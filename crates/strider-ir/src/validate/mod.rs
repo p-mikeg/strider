@@ -239,10 +239,8 @@ pub enum ValidationError {
     },
 
     #[error(
-        "reachable Store {node:?} (kind {kind:?}) produces a Memory output that no \
-         reachable node consumes; a Store must stay anchored in the live memory \
-         chain (back to a Return / IndirectBranch terminator) or it is silently \
-         dropped by compaction"
+        "reachable Store {node:?} (kind {kind:?}): its Memory output lists no \
+         reachable consumer, so its use-list is severed"
     )]
     OrphanedMemoryOutput {
         node: NodeId,

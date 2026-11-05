@@ -134,9 +134,9 @@ impl RegionTerminator {
     }
 }
 
-/// A basic block: maximal straight-line pcode entered only at `start_addr` and
-/// left only at its [`RegionTerminator`]. Every zero-pcode-op instruction is
-/// its own region.
+/// A straight-line run of pcode from `start_addr`, left only at its
+/// [`RegionTerminator`]. Not maximal: a split never re-merges, and every
+/// zero-pcode-op instruction is its own region.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
     pub start_addr: PcodeInsnAddr,

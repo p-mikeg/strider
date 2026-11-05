@@ -186,7 +186,8 @@ fn mem_succs(function: &Function, node: NodeId) -> impl Iterator<Item = NodeId> 
 
 /// The memory-chain nodes reachable forward from the entry-reachable
 /// `InitialMemory`, in pre-order, root included; empty without one. Excludes
-/// mere token readers (`Return`, `IndirectBranch`). Follows raw use-lists, so
+/// the exits (`Return`, `IndirectBranch`, `Unreachable`); includes `Load`
+/// leaves. Follows raw use-lists, so
 /// on an uncompacted graph it can include a dead `Store` on the live token.
 pub fn memory_reachable(function: &Function) -> Vec<NodeId> {
     let graph = function.graph();

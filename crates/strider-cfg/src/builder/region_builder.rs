@@ -392,7 +392,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             addr,
         })?;
         // Enqueued highest first so the LIFO explores lowest first: a higher
-        // over-read arm then lands inside an existing region and is dropped.
+        // over-read arm then lands inside an existing region, where an
+        // off-boundary one is dropped.
         let flowing = self.flowing_commits()?;
         for target in arms.iter().rev() {
             self.builder.enqueue_resolved(

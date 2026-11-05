@@ -92,17 +92,14 @@ fn every_binary_op_commutes_iff_is_commutative() {
     }
 }
 
-/// `int_add(anything(), anything())` on `int_add(5, 3)`: no captures, so both orderings produce
-/// the same binding map and collapse to one hit. Over-counting here means the
-/// swap retry is emitting duplicates.
+/// Capture-free: both orderings collapse to one hit.
 #[test]
 fn commutative_match_emits_single_match_per_root() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
     a::matches(&function, int_add(anything(), anything()).into_pattern(), 1);
 }
 
-/// Constant dedup makes both operands of `int_add(5, 5)` one `ValueId`, so the
-/// swap retry must still yield a single hit.
+/// Both slots one value: one hit.
 #[test]
 fn commutative_match_with_identical_operands_emits_one() {
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
@@ -112,9 +109,8 @@ fn commutative_match_with_identical_operands_emits_one() {
         1,
     );
 }
-/// `find_all` dedups by the capture->binding MAP, not by root, so a capture on
-/// one operand of a commutative node yields one hit per operand it can bind: a
-/// single hit means the binding is unambiguous.
+
+/// A capture on one commutative operand binds each operand in turn.
 #[test]
 fn commutative_capture_reports_both_operand_bindings() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
@@ -139,8 +135,7 @@ fn commutative_capture_reports_both_operand_bindings() {
     assert_eq!(bound.len(), 2, "the two bindings must be DISTINCT");
 }
 
-/// Both operands the same value (constant dedup) means the two orderings
-/// produce an identical binding map, hence one match, not two.
+/// Both operands one value: the two orderings give one binding map.
 #[test]
 fn commutative_capture_identical_operands_dedups_to_one() {
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
@@ -156,10 +151,7 @@ fn commutative_capture_identical_operands_dedups_to_one() {
     );
 }
 
-/// Arrangements MULTIPLY across nested commutative nodes: `int_add(int_add(w,x),
-/// int_add(y,z))` over `int_add(int_add(5,3), int_add(7,9))` has three independent swap
-/// choices, so 2*2*2 = 8 distinct binding maps, not one node's worth. The
-/// single-node tests above cannot observe this.
+/// Three nested commutative nodes: 2^3 distinct binding maps.
 #[test]
 fn nested_commutative_arrangements_multiply() {
     let mut t = Tb::empty();
