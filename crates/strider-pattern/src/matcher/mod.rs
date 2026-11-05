@@ -855,7 +855,7 @@ fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>) {
         let mut sig: BTreeMap<u32, Binding> = BTreeMap::new();
         for (slot, m) in tuple.iter().enumerate() {
             if m.bindings.iter().next().is_none() {
-                // Capture ids count up from 0, so ids counted down by position cannot collide.
+                // Capture ids stay below 2^31, so ids counted down from the top cannot collide.
                 let slot_id = u32::MAX - u32::try_from(slot).unwrap_or(0);
                 sig.insert(slot_id, Binding::Node(m.root()));
                 continue;
