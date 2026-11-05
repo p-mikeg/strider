@@ -117,8 +117,9 @@ pub(crate) fn check_mem_unchanged(
 
 enum SymbolPlace {
     Defined,
-    /// An undefined symbol with an address: a PLT stub, or an object file's
-    /// synthetic extern.
+    /// An address the file defines no bytes at: a PLT stub, or an object
+    /// file's synthetic extern (an undefined, common or defined IFUNC
+    /// symbol's).
     Import(u64),
     Nowhere,
 }
@@ -128,18 +129,15 @@ fn symbol_place<'d, S: ObjectSymbol<'d>>(sym: &S, layout: &ElfSectionLayout) -> 
     if sym.kind() == object::SymbolKind::Tls {
         return SymbolPlace::Nowhere;
     }
+    if let Some(addr) = layout.extern_address(sym.index().0) {
+        return SymbolPlace::Import(addr);
+    }
     match sym.section() {
         object::SymbolSection::Section(_) => SymbolPlace::Defined,
         // `SHN_ABS` at 0 is a synthetic entry, such as an `STT_FILE` name.
         object::SymbolSection::Absolute if sym.address() != 0 => SymbolPlace::Defined,
-        object::SymbolSection::Undefined | object::SymbolSection::Common => {
-            match layout.extern_address(sym.index().0) {
-                Some(addr) => SymbolPlace::Import(addr),
-                None if sym.is_undefined() && sym.address() != 0 => {
-                    SymbolPlace::Import(sym.address())
-                }
-                None => SymbolPlace::Nowhere,
-            }
+        object::SymbolSection::Undefined if sym.address() != 0 => {
+            SymbolPlace::Import(sym.address())
         }
         _ => SymbolPlace::Nowhere,
     }
@@ -673,8 +671,11 @@ impl PyLoadedElf {
                     size,
                     is_function,
                     thumb: arm && is_function && address & 1 == 1,
-                    local_entry: address
-                        .wrapping_add(strider_reader::elf::local_entry_offset(&file, &sym)),
+                    local_entry: match place {
+                        SymbolPlace::Defined => address
+                            .wrapping_add(strider_reader::elf::local_entry_offset(&file, &sym)),
+                        _ => address,
+                    },
                     region: None,
                 });
                 if matches!(place, SymbolPlace::Import(_)) {

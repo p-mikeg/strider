@@ -303,10 +303,10 @@ the ppc64 ELFv2 local entry (`address` plus the `st_other` offset), and
 `address` elsewhere.
 
 `symbol(name)` prefers a definition, else an undefined symbol with an address
-(a PLT stub, an object file's extern). `symbol_at` takes the nearest symbol at
-or below the address whose extent reaches it, ranking aliases by extent, then
-by being code; `functions()` prefers code, so the two can name different
-symbols at one address.
+(a PLT stub, an object file's extern, as is its defined IFUNC). `symbol_at`
+takes the nearest symbol at or below the address whose extent reaches it,
+ranking aliases by extent, then by being code; `functions()` prefers code, so
+the two can name different symbols at one address.
 
 ## 3. The `Function` and its `Node`s
 

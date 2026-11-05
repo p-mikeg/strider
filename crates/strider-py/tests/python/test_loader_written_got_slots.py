@@ -104,3 +104,20 @@ def test_a_textrel_image_without_section_headers_is_relocated_from_its_tags():
     result = elf.analyze(getl)
     assert "iconst[0x464c457f]" not in result.function.to_text()
     assert result.cfg.incomplete, result.function.to_text()
+
+
+@pytest.mark.parametrize(
+    "image",
+    ["x64_ifunc_nopic.o", "ppc64be_ifunc.o", "ppc64le_ifunc.o"],
+)
+def test_an_object_files_call_to_a_defined_ifunc_names_its_symbol(image):
+    """An unlinked object calls its defined IFUNC `f` at an unmapped extern
+    address, as it calls an undefined symbol; `f`'s symbol sits there, not at
+    the resolver."""
+    elf = strider.lift.load_elf(_image(image))
+    f = elf.symbol("f")
+    assert f.address != elf.symbol("resolve_f").address
+    sym = elf.symbol_at(f.address)
+    assert sym is not None and sym.name == "f"
+    function = elf.analyze("call_f").function
+    assert function.find_all(p.call().target(f.address)), function.to_text()
