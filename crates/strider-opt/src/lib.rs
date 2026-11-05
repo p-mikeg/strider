@@ -47,7 +47,7 @@ pub fn default_pipeline() -> OptimizerPipeline {
     // After ConstantFold, for a folded constant address.
     p.add(&LoadReadOnly);
     p.add(&KnownBits);
-    // After ConstantFold, which collapses a doubled `Xor(Xor(_,1),1)`.
+    // After ConstantFold, whose folded constants its offset and solve rules read.
     p.add(&FlagCmpCanonicalize);
     // After both, so a cond is at most one `Xor(_,1)` deep.
     p.add(&IfCondInversion);

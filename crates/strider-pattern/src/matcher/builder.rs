@@ -112,6 +112,8 @@ impl MatcherBuilder {
         }
     }
 
+    /// Wiring is tree-like: each slot consuming `node`, through one output vertex or
+    /// several, may match a different IR node. [`Self::capture_node`] ties them to one.
     pub fn value_output(&mut self, node: PatNodeRef, slot: usize) -> PatValueRef {
         self.add_output(node, PatValue::value(slot))
     }
@@ -174,6 +176,7 @@ impl MatcherBuilder {
     }
 
     /// Forces every slot consuming `out` to bind the same IR value, which wiring alone does not.
+    /// Another output vertex of the same node is not tied to it.
     /// See [`PatValue::identity`](crate::matcher::PatValue).
     pub(crate) fn pin_shared_identity(&mut self, out: PatValueRef) {
         self.out_of(out).identity = Some(crate::capture::Capture::internal());

@@ -1,21 +1,5 @@
-//! `read_reg_vn` truncates a sub-register read to the sub-register's declared
-//! width even when its offset inside the container is zero (shift == 0), i.e.
-//! it always calls `truncate_if_needed(shifted, reg_ty)`.
-//!
-//! ARM soft-float ABI `s0` (4-byte float arg/return) lives at offset 0 inside
-//! the 8-byte `d0`. An untruncated read yields the 8-byte `d0` value (I64),
-//! which flows into `IntBitsToFloat(F32)`, whose signature requires an I32
-//! input, and fails validation.
-//!
-//! The surface is the `f32_arith` fixture on ARM / MIPS32 soft-float targets,
-//! where the compiler lowers `float` args as raw integer bits in integer
-//! registers and the float-register view (`s0`/`f12`) is a 4-byte
-//! sub-register of an 8-byte container.
-//!
-//! `write_reg_vn` uses positioned reg_mask + container-domain
-//! container_mask so x64 and aarch64 round-trip cleanly. x86 goes through
-//! the 80-bit x87 stack instead (F80/I80 ValueType, ST0 in the x86 cdecl
-//! float-return regs).
+//! A sub-register read at container offset 0 (ARM soft-float `s0` in `d0`)
+//! is truncated to its own width.
 
 use crate::common::*;
 use strider_ir::IRViewer;

@@ -10,7 +10,8 @@
 //! `SleighArch::flow_commit_vars` names what is re-derived; the sla's flow
 //! class decides what each is erased TO: the pspec default for `noflow`
 //! `condit`, the predecessor's value for flowing `TEEMode`. The same through
-//! `Lifter` is pinned by `reused_lifter_rederives_flow_context`.
+//! `Lifter` is pinned by strider-lift's
+//! `tests/reused_lifter_rederives_flow_context.rs`.
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{Cfg, CfgOptions, DecodeEngine};

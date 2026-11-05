@@ -42,9 +42,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         })
     }
 
-    /// Single-input integer op. `enforce_equal_io_width` requires the output
-    /// width; off for `popcount` / `lzcount`, which count over the input's
-    /// own width.
+    /// Single-input integer op. With `enforce_equal_io_width` the input must
+    /// have the output's width; off for `popcount` / `lzcount`, which count
+    /// over the input's own width.
     pub(super) fn lift_int_unary(
         &mut self,
         insn: &rsleigh::Insn,

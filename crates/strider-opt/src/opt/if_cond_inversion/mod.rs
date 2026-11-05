@@ -1,10 +1,11 @@
+//! Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`.
+
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;
 use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 
-/// Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`.
 pub struct IfCondInversion;
 
 thread_local! {

@@ -28,7 +28,9 @@ enum ArgClass {
 /// [`Function::compact`]: crate::Function::compact
 #[derive(Clone)]
 pub struct FunctionSideTables {
-    /// Instruction addresses that contributed to each node's value.
+    /// Instruction addresses recorded on each node: its own, each dedup hit's,
+    /// and every node absorbed into it (a live alias). A superset of the
+    /// contributors: a shared constant carries every address that used it.
     asm_fingerprints: UnionDag<NodeId, u64>,
     /// The tracked varnode a value represents, at most one per value.
     pub(crate) value_vn: FxHashMap<ValueId, crate::node::InitialVnId>,
