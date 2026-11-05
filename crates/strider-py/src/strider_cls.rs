@@ -102,26 +102,27 @@ fn reentrant_lifter_err() -> PyErr {
     ))
 }
 
+/// `entry` as an [`crate::bigint::Addr`]: `TypeError` for a non-int, a `str`
+/// naming the one method that takes a symbol.
 fn entry_addr(entry: &Bound<'_, PyAny>) -> PyResult<u64> {
-    if entry.is_instance_of::<pyo3::types::PyBool>() {
+    if entry.is_instance_of::<pyo3::types::PyString>() {
         return Err(pyo3::exceptions::PyTypeError::new_err(
-            "`entry`: expected an int, got bool",
+            "`entry` must be an address (int); only ElfLifter.analyze takes a \
+             symbol name (str)",
         ));
     }
-    entry.extract().map_err(|_| {
-        if entry.is_instance_of::<pyo3::types::PyInt>() {
-            into_strider_err(anyhow::anyhow!(
-                "`entry` is out of range for an address: it must fit an \
-                 unsigned 64-bit integer"
-            ))
-        } else {
-            into_strider_err(anyhow::anyhow!(
-                "`entry` must be an address (int); a symbol name (str) is \
-                 accepted by ElfLifter.analyze only. Build one with \
-                 strider.lift.load_elf(path)"
-            ))
-        }
-    })
+    let py = entry.py();
+    entry
+        .extract::<crate::bigint::Addr>()
+        .map(|a| a.0)
+        .map_err(|e| {
+            let msg = format!("`entry`: {}", e.value_bound(py));
+            if e.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {
+                pyo3::exceptions::PyTypeError::new_err(msg)
+            } else {
+                into_strider_err(anyhow::anyhow!(msg))
+            }
+        })
 }
 
 /// A size fixes the extent, so `allow_code_before_start_addr` cannot join it.
