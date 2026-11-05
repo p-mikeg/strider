@@ -128,8 +128,8 @@ enum Table {
         size: u64,
         ent: u64,
     },
-    /// A CREL stream, which carries its own count; it runs to the end of
-    /// its mapping, as far as the extent goes.
+    /// A CREL stream, which carries its own count; its extent is the rest
+    /// of its mapping.
     Crel { addr: u64 },
     /// An Android `APS2` stream of `size` bytes, `RELA` or `REL`.
     Android { rela: bool, addr: u64, size: u64 },
@@ -142,8 +142,8 @@ pub(crate) enum LoaderView {
     /// The tables the tags place, as an ELF of their own that `object`
     /// walks as a dynamic table ([`synthesized`]).
     Tables { walked: Option<Vec<u8>> },
-    /// A table the tags place that cannot be read or decoded, or an array
-    /// that cannot be: what it relocates is unknown.
+    /// The dynamic array or a table it places cannot be read or decoded:
+    /// what it relocates is unknown.
     Unreadable(&'static str),
     /// The tables name more entries than the budget allows.
     OverBudget { entries: u64, budget: u64 },
