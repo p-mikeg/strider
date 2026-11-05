@@ -105,6 +105,7 @@ fn run_on(
         seed: 1,
         step_budget: 1000,
         private: None,
+        keeps: None,
     };
     lift(arch, cc, insns, rom)
         .iter()

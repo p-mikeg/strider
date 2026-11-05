@@ -693,6 +693,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
                     STEP_BUDGET
                 },
                 private: None,
+                keeps: None,
             };
             let mut ret = None;
             let mut ifs = Vec::new();

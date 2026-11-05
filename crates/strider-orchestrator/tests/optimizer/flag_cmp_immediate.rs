@@ -376,6 +376,7 @@ fn returned(f: &Function, reg: rsleigh::Vn, stack: rsleigh::Vn, x: u128, width: 
         seed: 0,
         step_budget: 64,
         private: None,
+        keeps: None,
     };
     match interp::run(f, &env) {
         Ok(Outcome::Return { values, .. }) => match values.first() {
