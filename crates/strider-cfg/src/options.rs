@@ -139,8 +139,8 @@ impl LocalEntries {
         Self(by_local)
     }
 
-    /// `map`'s entry at `addr`, else at the lowest global entry whose local
-    /// entry `addr` is.
+    /// `map`'s entry at `addr`, else at the lowest global entry `map` holds
+    /// whose local entry `addr` is.
     pub fn get<'m, V>(&self, map: &'m FxHashMap<u64, V>, addr: u64) -> Option<&'m V> {
         map.get(&addr)
             .or_else(|| self.globals_of(addr).find_map(|global| map.get(&global)))
