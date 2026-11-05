@@ -6,7 +6,9 @@ pub(crate) mod peephole;
 mod pipeline;
 pub(crate) mod rewrite_rule;
 pub use mem_analysis::refresh_memory_classes;
-pub use rewrite_rule::{BoxedRule, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
+pub use rewrite_rule::{
+    BoxedRule, UnboundCapture, apply_rules_count, rewrite_rule, rewrite_rule_runtime,
+};
 pub use strider_ir::AssumptionOptions;
 pub use strider_ir::EditFunction;
 
