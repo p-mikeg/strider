@@ -12,9 +12,9 @@ use strider_pattern::{
 /// The closure declines with `Ok(None)` on no match, a skipped RHS, an unused
 /// root, a width change, or a through-join replacement that would read the
 /// root or is unavailable at its uses. It errs when built nodes would carry no
-/// asm-fingerprint, when the replacement would read the root, or when the root
-/// has more than one value output. Panics if either side is refused, or the
-/// RHS reads a [`Capture`] the LHS does not bind.
+/// asm-fingerprint, when any other replacement would read the root, or when
+/// the root has other than one output. Panics if either side is refused, or
+/// the RHS reads a [`Capture`] the LHS does not bind.
 pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs: T) -> BoxedRule {
     Rewrite::typed(lhs, rhs).boxed()
 }
@@ -427,7 +427,7 @@ impl std::fmt::Display for UnboundCapture {
 
 impl std::error::Error for UnboundCapture {}
 
-/// Asserts both sides are unrefused and every capture the RHS references also
+/// Checks both sides are unrefused and every capture the RHS references also
 /// appears in the LHS, erring with an [`UnboundCapture`] where not.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     rhs.root()?;

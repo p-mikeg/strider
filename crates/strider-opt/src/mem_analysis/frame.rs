@@ -10,7 +10,6 @@ use super::{MemExpr, MemKind};
 /// (0 without one). The base's [`entry_sp_span`] must top out at or below
 /// zero: `(sp + K) & !0xF` can sit above the entry SP.
 pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, size: i128) -> bool {
-    // The access's end, not its start, is bounded.
     entry_sp_span(function, base).is_some_and(|(_, hi)| hi <= 0)
         && offset.saturating_add(size)
             <= function
@@ -21,8 +20,8 @@ pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, siz
 
 /// The lowest and highest offset from the entry SP `value` can stand at, or
 /// `None` when no bound follows from its spine. Each alignment mask on the
-/// [`decompose`] chain lowers the value by at most one alignment less a byte;
-/// `hi` is overflow-checked, `lo` saturates.
+/// [`decompose`] chain lowers the value by at most one alignment less a byte.
+/// `None` on overflow.
 pub(crate) fn entry_sp_span(function: &Function, value: ValueId) -> Option<(i128, i128)> {
     let (mut cur, mut acc, mut slack) = (value, 0i128, 0i128);
     loop {

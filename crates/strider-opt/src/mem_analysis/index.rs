@@ -67,7 +67,7 @@ impl<K: Copy + Eq> Keyed<K> {
 /// Stores whose offsets share one coordinate system and one address width.
 #[derive(Default)]
 struct Offsets {
-    /// The positions of the stores of each start offset and width.
+    /// The positions of the stores of each start offset and byte size.
     starts: BTreeMap<(i128, i128), Vec<u32>>,
     all: Vec<u32>,
     max_size: i128,
