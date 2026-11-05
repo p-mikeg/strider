@@ -885,3 +885,31 @@ fn an_uncomputed_eight_byte_field_holes_all_eight_bytes() {
         );
     }
 }
+
+/// The PowerPC TLS markers name no field: the `bl __tls_get_addr` they mark
+/// is served as assembled, not holed.
+#[test]
+fn a_ppc_tls_marker_leaves_its_instruction_served() {
+    for (arch, r_type) in [
+        (Architecture::PowerPc64, elf::R_PPC64_TLS),
+        (Architecture::PowerPc64, elf::R_PPC64_TLSGD),
+        (Architecture::PowerPc64, elf::R_PPC64_TLSLD),
+        (Architecture::PowerPc, elf::R_PPC_TLS),
+        (Architecture::PowerPc, elf::R_PPC_TLSGD),
+        (Architecture::PowerPc, elf::R_PPC_TLSLD),
+    ] {
+        let mut obj = Object::new(BinaryFormat::Elf, arch, Endianness::Big);
+        let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+        // `bl .`
+        obj.append_section_data(text, &0x4800_0001u32.to_be_bytes(), 4);
+        let tv = undefined(&mut obj, "tv");
+        reloc(&mut obj, text, 0, tv, 0, r_type);
+        let bytes = obj.write().expect("write");
+
+        let table = relocated(&bytes);
+        let base = common::section_base(&bytes, ".text");
+        let mut w = [0u8; 4];
+        assert_eq!(table.read(base, &mut w), Some(4), "{arch:?} {r_type}");
+        assert_eq!(u32::from_be_bytes(w), 0x4800_0001, "{arch:?} {r_type}");
+    }
+}
