@@ -1,4 +1,4 @@
-"""Type stubs for strider.opt: the optimizer pipeline and its passes."""
+"""The optimizer pipeline and its passes."""
 
 from __future__ import annotations
 
