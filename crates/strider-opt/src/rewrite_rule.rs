@@ -2,8 +2,8 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{EditFunction, IRBuilder, IRViewer, IRWalker};
 
 use strider_pattern::{
-    Capture, MatchPat, Matcher, Pattern, Result, Template, TemplatePat, instantiate_guarded,
-    is_skip,
+    Capture, MatchPat, Matcher, OperandWidthMismatch, Pattern, Result, Template, TemplatePat,
+    instantiate_guarded, is_skip,
 };
 
 /// Builds a rule that matches `lhs` at a root and redirects the root's single
@@ -114,6 +114,8 @@ impl Rewrite {
         ) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
+            // A cast-walking match binds captures of any width.
+            Err(e) if lhs.ignores_casts() && e.is::<OperandWidthMismatch>() => return Ok(None),
             Err(e) => return Err(e),
         };
         let Unattributed { edit, built } = build;
@@ -617,10 +619,30 @@ mod tests {
         edit.cull_dead();
         let refused = rule(&mut edit, add);
         assert!(
-            !matches!(refused, Ok(Some(_))),
-            "an I32 Mul cannot replace an I64 Add"
+            matches!(refused, Ok(None)),
+            "an I32 Mul cannot replace an I64 Add: {refused:?}"
         );
         assert_eq!(edit.function().side_tables().asm_fingerprint(mul), before);
+    }
+
+    /// Through a cast, an untyped RHS node evaluated at the root's width
+    /// over narrower captures declines as a typed one does. Mutation: err on
+    /// the operand-width mismatch.
+    #[test]
+    fn an_inferred_width_mismatch_through_a_cast_declines() {
+        use strider_pattern::{int_const as int_const_match, int_mul};
+
+        let (mut function, _, add) = widened_square_fn();
+        let (a, bcap) = (Capture::new(), Capture::new());
+        let lhs = int_add(int_mul(var(a), var(bcap)), int_const_match(0u64))
+            .into_pattern()
+            .ignore_casts();
+        let rhs = strider_pattern::TemplatePat::into_template(template::int_mul(var(a), var(bcap)));
+        let rule = super::rewrite_rule_runtime(lhs, rhs).unwrap();
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        let r = rule(&mut edit, add);
+        assert!(matches!(r, Ok(None)), "{r:?}");
     }
 
     /// A root nothing reads is no site: neither a bare capture nor a build

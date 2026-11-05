@@ -16,7 +16,7 @@ use strider_ir::IRViewer;
 
 pub use bindings::Bindings;
 pub use capture::Capture;
-pub use error::{Result, RewriteSkip, is_skip, missing_binding, skip};
+pub use error::{OperandWidthMismatch, Result, RewriteSkip, is_skip, missing_binding, skip};
 pub use expr::OutputAspect;
 #[doc(hidden)]
 pub use expr::{Expr, IntoExpr};

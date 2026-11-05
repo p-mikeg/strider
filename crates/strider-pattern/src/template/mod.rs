@@ -604,10 +604,13 @@ fn check_operand_types(
             WidthTie::NoHead | WidthTie::Free => continue,
         };
         if want.bit_width() != got.bit_width() {
-            anyhow::bail!(
-                "template node {kind:?} takes a {got} operand at input slot {slot}, \
-                 where it is evaluated at {want}"
-            );
+            return Err(crate::OperandWidthMismatch {
+                kind: *kind,
+                slot,
+                got,
+                want,
+            }
+            .into());
         }
     }
     Ok(())

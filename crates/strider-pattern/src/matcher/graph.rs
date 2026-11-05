@@ -239,6 +239,12 @@ impl Pattern {
         self.ignore_casts_mask(CastMask::all())
     }
 
+    /// Whether any cast kind is walked through.
+    #[must_use]
+    pub fn ignores_casts(&self) -> bool {
+        !self.cast_mask.is_empty()
+    }
+
     #[cfg(test)]
     pub(crate) fn control_output_count(&self) -> usize {
         self.graph
