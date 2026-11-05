@@ -116,8 +116,9 @@ impl DotStyle {
 
 /// Escapes a string for a DOT double-quoted label.
 ///
-/// Backslashes double and a newline becomes `\n`; every other control
-/// character but tab, and every bidi formatting character, becomes `\xNN`.
+/// Quotes and backslashes are escaped and a newline becomes `\n`; every other
+/// control character but tab, and every bidi formatting character, becomes
+/// `\xNN`.
 fn escape_dot_label(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
