@@ -440,82 +440,72 @@ fn plain_opcodes_lower_to_their_ir_shape() {
     }
 }
 
-/// A narrow operand reaches each binary op through that op's own coercion:
-/// signed division sign-extends both operands, every other op zero-extends,
-/// and a shift COUNT zero-extends even under `SShiftRight`, whose value must
-/// already match the output.
+/// Every binary op's operands match the output width, in either direction,
+/// except a shift count.
 #[test]
-fn a_narrow_operand_takes_its_ops_coercion() {
-    let (r0, r8, b16) = (reg(0), reg(8), reg_vn(16, 1));
-    let count = const_vn(0x80, 1);
-    let rows: &[(Opcode, Vn, &str)] = &[
-        (
-            Opcode::IntAdd,
-            b16,
-            "IntBinaryOp(Add):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
-        ),
-        (
-            Opcode::IntMul,
-            b16,
-            "IntBinaryOp(Mul):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
-        ),
-        (
-            Opcode::IntAnd,
-            b16,
-            "IntBinaryOp(And):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
-        ),
-        (
-            Opcode::IntOr,
-            b16,
-            "IntBinaryOp(Or):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
-        ),
-        (
-            Opcode::IntXor,
-            b16,
-            "IntBinaryOp(Xor):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
-        ),
-        (
-            Opcode::IntDiv,
-            b16,
-            "IntBinaryOp(Div):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
-        ),
-        (
-            Opcode::IntRem,
-            b16,
-            "IntBinaryOp(Rem):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
-        ),
-        (
-            Opcode::IntSdiv,
-            b16,
-            "IntBinaryOp(Sdiv):i32(Extend(SignExtend):i32(r16), 0xffffff80:i32)",
-        ),
-        (
-            Opcode::IntSrem,
-            b16,
-            "IntBinaryOp(Srem):i32(Extend(SignExtend):i32(r16), 0xffffff80:i32)",
-        ),
+fn a_binary_op_operand_off_the_output_width_errs() {
+    let (narrow, wide) = (reg_vn(16, 2), reg_vn(0x200, 8));
+    let ops = [
+        Opcode::IntAdd,
+        Opcode::IntMul,
+        Opcode::IntAnd,
+        Opcode::IntOr,
+        Opcode::IntXor,
+        Opcode::IntDiv,
+        Opcode::IntRem,
+        Opcode::IntSdiv,
+        Opcode::IntSrem,
+        Opcode::IntLeft,
+        Opcode::IntRight,
+        Opcode::IntSright,
+    ];
+    for opcode in ops {
+        let mut cases = vec![vec![narrow, reg(4)], vec![wide, reg(4)]];
+        if !matches!(
+            opcode,
+            Opcode::IntLeft | Opcode::IntRight | Opcode::IntSright
+        ) {
+            cases.extend([vec![reg(4), narrow], vec![reg(4), wide]]);
+        }
+        for inputs in cases {
+            with_test_lifter_tracking(vec![reg(0), reg(4), narrow, wide], |d, rid| {
+                let insn = Insn {
+                    opcode,
+                    output: Some(reg(0)),
+                    inputs: inputs.clone().into(),
+                };
+                let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+                let msg = format!("{:#}", res.expect_err("an off-width operand must error"));
+                assert!(
+                    msg.contains("width mismatch"),
+                    "{opcode:?} {inputs:?}: {msg}"
+                );
+            });
+        }
+    }
+}
+
+/// A shift count narrower than the output zero-extends, even under
+/// `SShiftRight`.
+#[test]
+fn a_narrow_shift_count_zero_extends() {
+    let (r0, r8) = (reg(0), reg(8));
+    let count = reg_vn(16, 1);
+    for (opcode, expected) in [
         (
             Opcode::IntLeft,
-            b16,
-            "IntBinaryOp(ShiftLeft):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
-        ),
-        (
-            Opcode::IntRight,
-            b16,
-            "IntBinaryOp(ShiftRight):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+            "IntBinaryOp(ShiftLeft):i32(r0, Extend(ZeroExtend):i32(r16))",
         ),
         (
             Opcode::IntSright,
-            r0,
-            "IntBinaryOp(SShiftRight):i32(r0, 0x80:i32)",
+            "IntBinaryOp(SShiftRight):i32(r0, Extend(ZeroExtend):i32(r16))",
         ),
-    ];
-    for &(opcode, lhs, expected) in rows {
-        with_test_lifter_tracking(vec![r0, r8, b16], |d, rid| {
+    ] {
+        with_test_lifter_tracking(vec![r0, r8, count], |d, rid| {
             let insn = Insn {
                 opcode,
                 output: Some(r8),
-                inputs: vec![lhs, count].into(),
+                inputs: vec![r0, count].into(),
             };
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .unwrap_or_else(|e| panic!("{opcode:?} must lift: {e}"));
@@ -739,58 +729,6 @@ fn find_int_const_node(builder: &FunctionBuilder, expected: u128) -> Option<Node
 }
 
 #[test]
-fn signed_binary_op_sign_extends_narrower_operand() {
-    // A 2-byte dividend 0xFFFF is -1, so a signed op must SIGN-extend it to
-    // 0xFFFF_FFFF at the 4-byte op width, not zero-extend it to 0x0000_FFFF.
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::IntSdiv,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(0xFFFF, 2), const_vn(2, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        assert!(
-            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Sdiv)),
-            "expected an Sdiv node"
-        );
-        assert!(
-            find_int_const_node(&d.builder, 0xFFFF_FFFF).is_some(),
-            "the 2-byte -1 dividend must be SIGN-extended to the 4-byte op width (0xFFFF_FFFF)"
-        );
-    });
-}
-
-#[test]
-fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
-    // Compare at the MAX of the two widths so the 8-byte operand is never
-    // truncated, and sign-extend the 4-byte -1 so it stays
-    // 0xFFFF_FFFF_FFFF_FFFF rather than 0x0000_0000_FFFF_FFFF.
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::IntSless,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(5, 8)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        assert!(
-            graph_has_kind(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
-            "expected an Sless comparison node"
-        );
-        assert!(
-            find_int_const_node(&d.builder, 0xFFFF_FFFF_FFFF_FFFF).is_some(),
-            "the 4-byte -1 operand must be SIGN-extended to the 8-byte max width \
-             (0xFFFF_FFFF_FFFF_FFFF), proving max-width comparison and sign-correct extension"
-        );
-    });
-}
-
-#[test]
 fn lift_with_set_lift_addr_records_asm_fingerprint() {
     with_test_lifter(|d, rid| {
         // `process_insn` owns the funnel, so the fingerprint comes from its
@@ -991,38 +929,6 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
         assert_eq!(
             negs_after_second, negs_after_first,
             "second IntSub lift with same operands must dedup the Neg via the node cache"
-        );
-    });
-}
-
-/// The negated compares coerce each operand at its own width, which re-interns
-/// a constant operand and so stamps this instruction's address onto a constant
-/// an earlier instruction built.
-#[test]
-fn a_negated_compare_stamps_its_address_on_an_earlier_constant_operand() {
-    with_test_lifter(|d, rid| {
-        let at = strider_cfg::PcodeInsnAddr::at_machine_start;
-        let copy = Insn {
-            opcode: Opcode::Copy,
-            output: Some(reg(0)),
-            inputs: vec![const_vn(0xFFFF_FFFF, 4)].into(),
-        };
-        d.process_insn(rid, &copy, at(0x1000), &super::RegionMap::default())
-            .unwrap();
-        let sless_equal = Insn {
-            opcode: Opcode::IntSlessEqual,
-            output: Some(reg(8)),
-            inputs: vec![reg(0), reg(4)].into(),
-        };
-        d.process_insn(rid, &sless_equal, at(0x2000), &super::RegionMap::default())
-            .unwrap();
-        let minus_one = find_int_const_node(&d.builder, 0xFFFF_FFFF).expect("the copied constant");
-        assert_eq!(
-            d.builder
-                .function()
-                .side_tables()
-                .asm_fingerprint(minus_one),
-            rustc_hash::FxHashSet::from_iter([0x1000, 0x2000])
         );
     });
 }
@@ -1298,126 +1204,10 @@ fn lift_float_nan_lowers_to_self_inequality() {
     });
 }
 
-/// A LHS wider than the output must error rather than be truncated before the
-/// signed division, which would drop high bits with no sign awareness.
+/// Sleigh emits every integer compare equal-width, so a mixed-width one
+/// errors rather than extending and comparing.
 #[test]
-fn sdiv_with_wider_lhs_does_not_silently_truncate() {
-    with_test_lifter_tracking(
-        vec![
-            Vn {
-                size: 8,
-                addr_off: 0x200,
-                addr_space: VnSpace::REGISTER,
-            },
-            reg(0),
-            reg(4),
-        ],
-        |d, rid| {
-            // 8-byte lhs, 4-byte rhs and output: `extend_if_needed` cannot
-            // narrow, so an unguarded path truncates before the divide.
-            let wide_lhs = Vn {
-                size: 8,
-                addr_off: 0x200,
-                addr_space: VnSpace::REGISTER,
-            };
-            let insn = Insn {
-                opcode: Opcode::IntSdiv,
-                output: Some(reg(0)),
-                inputs: vec![wide_lhs, reg(4)].into(),
-            };
-            let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
-            assert!(
-                res.is_err(),
-                "IntSdiv with lhs wider than output must error (no silent truncate)"
-            );
-            if let Err(e) = res {
-                // `{:#}` renders the full cause chain past the asm context.
-                let msg = format!("{e:#}");
-                assert!(
-                    msg.contains("width mismatch"),
-                    "error must name the width mismatch; got: {msg}"
-                );
-            }
-        },
-    );
-}
-
-/// The unsigned divide and remainder need the same guard as their signed
-/// counterparts: their low bits are not width-agnostic, so a silently
-/// truncated wider dividend yields the wrong quotient.
-#[test]
-fn unsigned_div_rem_with_wider_lhs_does_not_silently_truncate() {
-    for opcode in [Opcode::IntDiv, Opcode::IntRem] {
-        with_test_lifter_tracking(
-            vec![
-                Vn {
-                    size: 8,
-                    addr_off: 0x200,
-                    addr_space: VnSpace::REGISTER,
-                },
-                reg(0),
-                reg(4),
-            ],
-            |d, rid| {
-                let wide_lhs = Vn {
-                    size: 8,
-                    addr_off: 0x200,
-                    addr_space: VnSpace::REGISTER,
-                };
-                let insn = Insn {
-                    opcode,
-                    output: Some(reg(0)),
-                    inputs: vec![wide_lhs, reg(4)].into(),
-                };
-                let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
-                assert!(
-                    res.is_err(),
-                    "{opcode:?} with lhs wider than output must error (no silent truncate)"
-                );
-                if let Err(e) = res {
-                    let msg = format!("{e:#}");
-                    assert!(
-                        msg.contains("width mismatch"),
-                        "error must name the width mismatch; got: {msg}"
-                    );
-                }
-            },
-        );
-    }
-}
-
-/// The divisor is held to the same guard as the dividend: a wider one would be
-/// truncated just as silently.
-#[test]
-fn div_rem_with_wider_rhs_does_not_silently_truncate() {
-    for opcode in [
-        Opcode::IntDiv,
-        Opcode::IntRem,
-        Opcode::IntSdiv,
-        Opcode::IntSrem,
-    ] {
-        let wide_rhs = Vn {
-            size: 8,
-            addr_off: 0x200,
-            addr_space: VnSpace::REGISTER,
-        };
-        with_test_lifter_tracking(vec![wide_rhs, reg(0), reg(4)], |d, rid| {
-            let insn = Insn {
-                opcode,
-                output: Some(reg(0)),
-                inputs: vec![reg(4), wide_rhs].into(),
-            };
-            let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
-            let msg = format!("{:#}", res.expect_err("a wider divisor must error"));
-            assert!(msg.contains("width mismatch"), "{opcode:?}: {msg}");
-        });
-    }
-}
-
-/// Sleigh emits the three negated comparisons equal-width, so a mixed-width
-/// one errors rather than extending and comparing.
-#[test]
-fn negated_compare_inputs_must_match_in_width() {
+fn compare_inputs_must_match_in_width() {
     let wide = Vn {
         size: 8,
         addr_off: 0x200,
@@ -1429,6 +1219,12 @@ fn negated_compare_inputs_must_match_in_width() {
         addr_space: VnSpace::REGISTER,
     };
     for opcode in [
+        Opcode::IntEqual,
+        Opcode::IntLess,
+        Opcode::IntSless,
+        Opcode::IntCarry,
+        Opcode::IntScarry,
+        Opcode::IntSborrow,
         Opcode::IntNotEqual,
         Opcode::IntLessEqual,
         Opcode::IntSlessEqual,
@@ -1486,39 +1282,6 @@ fn copy_input_width_must_match_the_output() {
                 opcode: Opcode::Copy,
                 output: Some(output),
                 inputs: vec![input].into(),
-            };
-            let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
-            assert!(res.is_err(), "{label} must error");
-            let msg = format!("{:#}", res.unwrap_err());
-            assert!(
-                msg.contains("width mismatch"),
-                "{label}: error must name the width mismatch; got: {msg}"
-            );
-        });
-    }
-}
-
-/// `OpBehaviorIntSright` computes the sign fill at the INPUT width, this
-/// lowering at the OUTPUT width, so the two agree only at equal widths: with
-/// sizein=4, sizeout=8 and in1=0xFFFFFFFF GHIDRA yields 0x00000000FFFFFFFF and
-/// the lowering 0xFFFFFFFFFFFFFFFF.  A conforming sla pins the two equal, so
-/// the mismatch is rejected in both directions rather than silently taken.
-#[test]
-fn sshiftright_value_width_must_match_the_output() {
-    let wide = Vn {
-        size: 8,
-        addr_off: 0x200,
-        addr_space: VnSpace::REGISTER,
-    };
-    for (label, value, output) in [
-        ("narrower value", reg(0), wide),
-        ("wider value", wide, reg(0)),
-    ] {
-        with_test_lifter_tracking(vec![wide, reg(0), reg(8)], |d, rid| {
-            let insn = Insn {
-                opcode: Opcode::IntSright,
-                output: Some(output),
-                inputs: vec![value, reg(8)].into(),
             };
             let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
             assert!(res.is_err(), "{label} must error");
