@@ -1,6 +1,6 @@
 //! Two's-complement integer evaluation at a declared width, over unbounded
 //! [`UBig`]. Total at every integer width; `None` means a divide by zero, a
-//! signed `INT_MIN / -1`, or a float `ty`.
+//! signed `INT_MIN / -1` or `INT_MIN % -1`, or a float `ty`.
 //!
 //! [`bit`], [`mask_below`] and [`sign_bit`] are `u128` helpers instead.
 

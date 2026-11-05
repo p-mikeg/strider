@@ -30,8 +30,7 @@ pub(super) fn check_function_invariants_data_cycles(
             .filter(move |&producer| reachable.contains(producer))
     };
     let mut walk = PostOrder::new(FnSuccs::new(producers), reachable.iter());
-    // Not a `NodeIdSet`: its `remove` of the maximum is O(max_index / 64),
-    // and the path empties once per seed.
+    // Not a `NodeIdSet`, whose `remove` of the maximum is O(max_index / 64).
     let mut on_path: SecondaryMap<NodeId, bool> = SecondaryMap::new();
     while let Some((phase, node)) = walk.next_event() {
         match phase {
@@ -296,8 +295,7 @@ pub(super) fn check_phis(
         });
     }
 
-    // Every value input must carry the phi's own output type. `MemPhi` is
-    // exempt: Memory tokens have no value type.
+    // Every value input carries the phi's output type; `MemPhi` arms have none.
     if matches!(kind, NodeKind::Phi) {
         let phi_out_ty = function
             .first_value_output_of(node)
@@ -335,10 +333,9 @@ pub(super) fn check_asm_fingerprint(
     }
 }
 
-/// Every reachable `Store` has its Memory output consumed by a reachable node
-/// (a memory-preserving call may leave its own unconsumed). A violation means
-/// a severed use-list. Not every `Store` on the chain is reachable: a deduped
-/// twin can leave a corpse that still consumes it.
+/// Every reachable `Store`'s Memory output has a reachable consumer; a
+/// violation means a severed use-list. An unreachable consumer can be a
+/// corpse a dedup left behind.
 pub(super) fn check_memory_chain(
     function: &Function,
     reachable: &NodeIdSet,
