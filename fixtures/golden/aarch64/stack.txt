@@ -11,7 +11,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x600
 cfg
   0x600 98 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0xc000:8, u:0xef00:8, u:0xf100:8, u:0x23400:8, u:0x23600:8, u:0x3fd00:4, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b200:4, u:0x76f00:4, u:0x77000:4, u:0x77100:8, u:0x77200:8, u:0x77300:8, u:0x77400:8]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0xc000:8, u:0xef00:8, u:0xf100:8, u:0x23000:8, u:0x23200:8, u:0x3f900:4, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x4ae00:4, u:0x76b00:4, u:0x76c00:4, u:0x76d00:8, u:0x76e00:8, u:0x76f00:8, u:0x77000:8]
 frame_address_in_call_register reach=-4
 arg 2 [%v17]
 arg 3 [%v18]
@@ -112,7 +112,7 @@ cfg
   0x6c4 27 ops cbranch 0x704 -> [0x700, 0x704]
   0x700 1 ops tailcall 0x5e0 -> []
   0x704 2 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23400:8, u:0x23600:8, u:0x31500:1]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23000:8, u:0x23200:8, u:0x31100:1]
 frame_address_in_call_register reach=8
 arg 0 [%v10]
 arg 7 [%v11]
@@ -162,7 +162,7 @@ cfg
   0x6f4 5 ops cbranch 0x704 -> [0x700, 0x704]
   0x700 1 ops tailcall 0x5e0 -> []
   0x704 2 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x31500:1]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x31100:1]
 arg 1 [%v8]
 arg 2 [%v15]
 arg 3 [%v16]
@@ -209,7 +209,7 @@ return %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32
 == volatile_three_writes @0x7e0
 cfg
   0x7e0 22 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc700:8, u:0x22c00:4, u:0x22e00:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc700:8, u:0x22800:4, u:0x22a00:4]
 arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v12]
@@ -248,7 +248,7 @@ cfg
   0x854 0 ops goto -> [0x858]
   0x858 33 ops cbranch 0x858 -> [0x858, 0x870]
   0x870 9 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0x3e00:1, u:0x3f00:1, u:0x4100:1, u:0xae00:8, u:0xda00:8, u:0xe300:8, u:0x1c600:1, u:0x1c800:1, u:0x1ca00:1, u:0x1cc00:1, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x32f00:1, u:0x33000:1, u:0x33100:1, u:0x33300:4, u:0x38900:4, u:0x38b00:4, u:0x39600:4, u:0x4bd00:4, u:0x59100:4, u:0x77800:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0x3e00:1, u:0x3f00:1, u:0x4100:1, u:0xae00:8, u:0xda00:8, u:0xe300:8, u:0x1c200:1, u:0x1c400:1, u:0x1c600:1, u:0x1c800:1, u:0x22800:4, u:0x22a00:4, u:0x23000:8, u:0x23200:8, u:0x23600:4, u:0x23800:4, u:0x32b00:1, u:0x32c00:1, u:0x32d00:1, u:0x32f00:4, u:0x38500:4, u:0x38700:4, u:0x39200:4, u:0x4b900:4, u:0x58d00:4, u:0x77400:4]
 arg 0 [%v16]
 float_arg 0 [%v86]
 float_arg 1 [%v87]
@@ -344,7 +344,7 @@ return %v71, %v64, %v85, %v74, %v86, %v87, %v88, %v89
 == inplace_swap @0x880
 cfg
   0x880 12 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc700:8, u:0x4b200:4]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc700:8, u:0x4ae00:4]
 arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v8]
@@ -373,7 +373,7 @@ cfg
   0x900 10 ops goto -> [0x908]
   0x908 26 ops cbranch 0x900 -> [0x900, 0x918]
   0x918 11 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x19, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0xc000:8, u:0xc200:8, u:0xef00:8, u:0xf100:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x23e00:8, u:0x24000:8, u:0x38900:4, u:0x38b00:4, u:0x38f00:8, u:0x39100:8, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b200:4, u:0x76f00:4, u:0x77000:4, u:0x77100:8, u:0x77200:8, u:0x77300:8, u:0x77400:8, u:0x7bf00:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x19, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x1400:1, u:0x2900:1, u:0x2b00:1, u:0xc000:8, u:0xc200:8, u:0xef00:8, u:0xf100:8, u:0x22800:4, u:0x22a00:4, u:0x23000:8, u:0x23200:8, u:0x23600:4, u:0x23800:4, u:0x23a00:8, u:0x23c00:8, u:0x38500:4, u:0x38700:4, u:0x38b00:8, u:0x38d00:8, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x4ae00:4, u:0x76b00:4, u:0x76c00:4, u:0x76d00:8, u:0x76e00:8, u:0x76f00:8, u:0x77000:8, u:0x7bb00:4]
 arg 0 [%v2]
 arg 7 [%v68]
 float_arg 0 [%v69]
@@ -510,7 +510,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 == escape_via_ptr @0x930
 cfg
   0x930 39 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x7d00:4, u:0xc000:8, u:0xf100:8, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x4a700:8, u:0x4a800:8, u:0x4aa00:8, u:0x4b200:4, u:0x77200:8, u:0x77300:8, u:0x77400:8]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x7d00:4, u:0xc000:8, u:0xf100:8, u:0x23000:8, u:0x23200:8, u:0x23600:4, u:0x23800:4, u:0x4a300:8, u:0x4a400:8, u:0x4a600:8, u:0x4ae00:4, u:0x76e00:8, u:0x76f00:8, u:0x77000:8]
 frame_address_in_call_register reach=-4
 arg 0 [%v13]
 arg 2 [%v20]

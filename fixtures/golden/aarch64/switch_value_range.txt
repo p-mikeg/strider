@@ -8,7 +8,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x600
 cfg
   0x600 222 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0xc000:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x4b200:4, u:0x7bf00:4]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x600:4, u:0xc000:8, u:0x22800:4, u:0x22a00:4, u:0x23000:8, u:0x23200:8, u:0x4ae00:4, u:0x7bb00:4]
 arg 1 [%v44]
 float_arg 0 [%v45]
 float_arg 1 [%v46]
@@ -72,7 +72,7 @@ cfg
   0x704 27 ops cbranch 0x744 -> [0x740, 0x744]
   0x740 1 ops tailcall 0x5e0 -> []
   0x744 2 ops return -> []
-tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23400:8, u:0x23600:8, u:0x31500:1]
+tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23000:8, u:0x23200:8, u:0x31100:1]
 frame_address_in_call_register reach=8
 arg 0 [%v10]
 arg 7 [%v11]
@@ -122,7 +122,7 @@ cfg
   0x734 5 ops cbranch 0x744 -> [0x740, 0x744]
   0x740 1 ops tailcall 0x5e0 -> []
   0x744 2 ops return -> []
-tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x31500:1]
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0x31100:1]
 arg 1 [%v8]
 arg 2 [%v15]
 arg 3 [%v16]
@@ -183,7 +183,7 @@ cfg
   0x884.3 1 ops goto -> [0x884.4]
   0x884.4 3 ops return -> []
   0x88c 9 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x1400:1, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0x22c00:4, u:0x22e00:4, u:0x31400:1, u:0x38900:4, u:0x38b00:4, u:0x3cb00:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x1400:1, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0x22800:4, u:0x22a00:4, u:0x31000:1, u:0x38500:4, u:0x38700:4, u:0x3c700:4]
 arg 0 [%v1]
 arg 1 [%v8]
 float_arg 0 [%v13]
@@ -226,7 +226,7 @@ return %v5, %v7, %v12, %v8, %v13, %v14, %v15, %v16
 %v37:i32 = iconst[0xffffffff]
 
 %v38:ctrl, %v39:token = region %v34, %v35
-%v40:i32<u:0x3cb00:4> = phi %v39, %v36, %v37
+%v40:i32<u:0x3c700:4> = phi %v39, %v36, %v37
 %v41:i64 = extend.zero %v40
 return %v38, %v7, %v41, %v8, %v13, %v14, %v15, %v16
 %v42:i32 = iconst[0x2]
@@ -254,7 +254,7 @@ return %v61, %v7, %v63, %v8, %v13, %v14, %v15, %v16
 %v67:i32 = int.add %v9, %v42
 
 %v68:ctrl, %v69:token = region %v65, %v66
-%v70:i32<u:0x3cb00:4> = phi %v69, %v67, %v37
+%v70:i32<u:0x3c700:4> = phi %v69, %v67, %v37
 %v71:i64 = extend.zero %v70
 return %v68, %v7, %v71, %v8, %v13, %v14, %v15, %v16
 
@@ -275,7 +275,7 @@ cfg
   0x8fc.3 1 ops goto -> [0x8fc.4]
   0x8fc.4 3 ops return -> []
   0x904 9 ops return -> []
-tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x1400:1, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0x22c00:4, u:0x22e00:4, u:0x38900:4, u:0x38b00:4, u:0x3cb00:4]
+tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x1400:1, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0x22800:4, u:0x22a00:4, u:0x38500:4, u:0x38700:4, u:0x3c700:4]
 arg 0 [%v1]
 arg 1 [%v8]
 float_arg 0 [%v13]
@@ -321,7 +321,7 @@ return %v5, %v7, %v12, %v8, %v13, %v14, %v15, %v16
 %v40:i32 = iconst[0xffffffff]
 
 %v41:ctrl, %v42:token = region %v36, %v37
-%v43:i32<u:0x3cb00:4> = phi %v42, %v39, %v40
+%v43:i32<u:0x3c700:4> = phi %v42, %v39, %v40
 %v44:i64 = extend.zero %v43
 return %v41, %v7, %v44, %v8, %v13, %v14, %v15, %v16
 %v45:i32 = iconst[0xc]
@@ -353,6 +353,6 @@ return %v66, %v7, %v68, %v8, %v13, %v14, %v15, %v16
 %v74:i32 = int.add %v9, %v73
 
 %v75:ctrl, %v76:token = region %v71, %v72
-%v77:i32<u:0x3cb00:4> = phi %v76, %v74, %v40
+%v77:i32<u:0x3c700:4> = phi %v76, %v74, %v40
 %v78:i64 = extend.zero %v77
 return %v75, %v7, %v78, %v8, %v13, %v14, %v15, %v16
