@@ -835,18 +835,30 @@ fn an_uncomputed_ppc_be_half16_holes_only_its_halfword() {
     }
 }
 
-/// The ppc64 doubleword64 types `object` does not compute hole all eight
-/// bytes: neither word of the pointer is served from read-only data.
+/// The 8-byte fields `object` does not size hole all eight bytes: neither
+/// word is served from read-only data.
 #[test]
-fn an_uncomputed_ppc64_doubleword_holes_all_eight_bytes() {
-    // `R_PPC64_ADDR64_LOCAL` (117), which `object` does not name.
-    for r_type in [
+fn an_uncomputed_eight_byte_field_holes_all_eight_bytes() {
+    let ppc64 = (Architecture::PowerPc64, Endianness::Big);
+    let x86_64 = (Architecture::X86_64, Endianness::Little);
+    // The doubleword64s, `R_PPC64_ADDR64_LOCAL` (117) and the prefixed
+    // 34-bit / 28-bit types (128..=135, 144..=151), which `object` does
+    // not name.
+    let ppc64_types = [
         elf::R_PPC64_UADDR64,
         elf::R_PPC64_PLT64,
         elf::R_PPC64_PLTREL64,
         117,
-    ] {
-        let mut obj = Object::new(BinaryFormat::Elf, Architecture::PowerPc64, Endianness::Big);
+    ]
+    .into_iter()
+    .chain(128..=135)
+    .chain(144..=151)
+    .map(|r_type| (ppc64, r_type));
+    let x86_64_types = [elf::R_X86_64_GOTPLT64, elf::R_X86_64_SIZE64]
+        .into_iter()
+        .map(|r_type| (x86_64, r_type));
+    for ((arch, endian), r_type) in ppc64_types.chain(x86_64_types) {
+        let mut obj = Object::new(BinaryFormat::Elf, arch, endian);
         let data = obj.add_section(Vec::new(), b".rodata".to_vec(), SectionKind::ReadOnlyData);
         obj.append_section_data(data, &[0x11u8; 16], 8);
         let ext = undefined(&mut obj, "ext_var");
@@ -856,16 +868,20 @@ fn an_uncomputed_ppc64_doubleword_holes_all_eight_bytes() {
         let table = relocated(&bytes);
         let base = common::section_base(&bytes, ".rodata");
         let mut w = [0u8; 4];
-        assert_eq!(table.read(base, &mut w), None, "type {r_type}: high word");
+        assert_eq!(
+            table.read(base, &mut w),
+            None,
+            "{arch:?} {r_type}: first word"
+        );
         assert_eq!(
             table.read(base + 4, &mut w),
             None,
-            "type {r_type}: low word"
+            "{arch:?} {r_type}: second word"
         );
         assert_eq!(
             table.read(base + 8, &mut w),
             Some(4),
-            "type {r_type}: past it"
+            "{arch:?} {r_type}: past it"
         );
     }
 }
