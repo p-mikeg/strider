@@ -168,3 +168,17 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn int_min_by_minus_one_is_left_unfolded() {
+    for w in [8u16, 16, 32, 64] {
+        let (min, minus_one) = (UBig::from(1u128 << (w - 1)), UBig::from(m(w.into())));
+        for op in [IntBinaryOp::Sdiv, IntBinaryOp::Srem] {
+            assert_eq!(
+                eval::int_binary(op, &min, &minus_one, ValueType::int(w)),
+                None,
+                "{op:?} i{w}"
+            );
+        }
+    }
+}
