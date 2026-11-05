@@ -241,16 +241,13 @@ fn ppc_samples() -> (SleighArch, Vec<Sample>) {
         bytes: cmpw.to_be_bytes().to_vec(),
     });
     // bc 12, 2, +4 (= beq cr0, +4): primary=16, BO=12 (01100), BI=2, BD=1, AA=0, LK=0
-    //   = 010000 01100 00010 00000000000001 0 0
-    //   = 0100 0001 1000 0010 0000 0000 0000 0100
-    //   = 0x41820004
+    //   = 010000 01100 00010 00000000000001 0 0 = 0x41820004
     let beq = 0x4182_0004u32;
     samples.push(Sample {
         label: "beq cr0, +4".into(),
         bytes: beq.to_be_bytes().to_vec(),
     });
-    // bne cr0, +4: BO=4 (00100), BI=2 -> 010000 00100 00010 00000000000001 0 0
-    //   = 0100 0000 1000 0010 0000 0000 0000 0100 = 0x40820004
+    // bne cr0, +4: BO=4 (00100), BI=2 -> 0x40820004
     let bne = 0x4082_0004u32;
     samples.push(Sample {
         label: "bne cr0, +4".into(),

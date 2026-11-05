@@ -113,8 +113,8 @@ impl<'s> SiteTable<'s> {
         seated_in(self.seeds, site)
     }
 
-    /// Whether the loop holds an answer at `site` with an arm to seat,
-    /// ignoring seeds.
+    /// Whether the loop holds a non-`Withdrawn` answer at `site`, ignoring
+    /// seeds.
     pub(super) fn is_seated(&self, site: PcodeInsnAddr) -> bool {
         self.seats
             .get(&site)

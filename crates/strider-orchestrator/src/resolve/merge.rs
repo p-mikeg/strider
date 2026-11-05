@@ -158,8 +158,8 @@ fn single_or_table(arms: Vec<ResolvedTarget>, from_single: bool) -> ResolvedTarg
     }
 }
 
-/// The ISA mode two classifications of one target agree on; no mode denies
-/// nothing.
+/// The ISA mode two classifications of one target agree on; `None` agrees
+/// with either mode.
 fn merge_isa_bit(a: Option<bool>, b: Option<bool>) -> Result<Option<bool>, Contradiction> {
     match (a, b) {
         (Some(x), Some(y)) if x != y => Err(Contradiction),
