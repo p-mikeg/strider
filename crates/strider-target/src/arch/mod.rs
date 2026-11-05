@@ -57,6 +57,7 @@ macro_rules! arch_presets {
             }
 
             /// The Ghidra language id this preset is.
+            #[cfg(any(test, feature = "test-util"))]
             #[must_use]
             pub const fn ghidra_id(self) -> &'static str {
                 match self { $(Self::$variant => $ghidra_id,)+ }
