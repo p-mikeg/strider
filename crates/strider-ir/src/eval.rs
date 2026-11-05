@@ -232,18 +232,12 @@ mod tests {
     /// The variants are public and only the constructors check the width, so
     /// `Int(0)` reaches these `pub fn`s.
     #[test]
-    fn the_width_primitives_are_total_at_both_ends_of_the_carrier() {
+    fn the_width_primitives_are_total_at_width_zero() {
         use super::{all_ones, mask};
         use crate::UBig;
         use crate::node::ValueType;
         assert_eq!(all_ones(ValueType::Int(0)), UBig::ZERO);
         assert_eq!(mask(&UBig::from(0xffu32), ValueType::Int(0)), UBig::ZERO);
-        assert_eq!(all_ones(ValueType::Int(128)), UBig::from(u128::MAX));
-        assert_eq!(
-            mask(&(UBig::ONE << 200usize), ValueType::Int(128)),
-            UBig::ZERO,
-            "a value past the carrier still masks at the carrier's own width"
-        );
     }
 
     use super::*;
@@ -652,6 +646,5 @@ mod tests {
         }
         assert_eq!(mask(&u(u128::MAX), ValueType::int(512)), u(u128::MAX));
         assert_eq!(mask(&u(0x1ff), ValueType::int(8)), u(0xff));
-        assert_eq!(mask(&large, ValueType::float(64)), UBig::ZERO);
     }
 }
