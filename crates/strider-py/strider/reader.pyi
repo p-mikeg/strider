@@ -70,7 +70,9 @@ class Symbol:
 
     @property
     def is_function(self) -> bool:
-        """Whether the ELF types this `STT_FUNC` or `STT_GNU_IFUNC`."""
+        """Whether the ELF types this `STT_FUNC` or `STT_GNU_IFUNC`, but
+        `False` for an object file's defined IFUNC, which has no code at its
+        extern address."""
         ...
     @property
     def end(self) -> Optional[int]:
