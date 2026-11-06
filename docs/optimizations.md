@@ -144,7 +144,8 @@ loop grows from; a site holding only your seed is listed as
 - A dispatch in a loop whose arms call a function the convention says
   clobbers the table-base register, which the compiler kept live across the
   call (GCC `-fipa-ra` on a same-unit callee): once the loop closes the
-  selector no longer derives. Use `per_address_ccs={callee: cc.preserves_regs()}`.
+  selector no longer derives. Use
+  `per_address_ccs={callee: cc.preserves_regs()}`.
 
 ### Dispatch shapes that do not resolve
 
