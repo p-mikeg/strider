@@ -7,7 +7,7 @@ use crate::pcode_util::require_output_vn;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// A constant-space LOAD yields its address (GHIDRA's `IPTR_CONSTANT`), as
-    /// ppc `rlwimi` / `rldimi` masks use.
+    /// ppc64 `rldic` / `rldimi` / `rldcr` masks use.
     pub(super) fn handle_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let space = self.lifter.decode_space_id(insn)?;
         if space == rsleigh::VnSpace::REGISTER {

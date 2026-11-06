@@ -253,8 +253,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         )?;
         driver.builder.function_mut().assume(claims);
 
-        // Semi-pruned SSA: phis at the iterated dominance frontier of each
-        // variable's def sites, less region-local temporaries.
         let graph = cfg.region_graph();
         let doms = graph_algorithms::dominance::dominators(cfg.entry(), |r| graph.neighbors(r));
         let (mut def_sites, nonlocal) = driver.collect_def_sites()?;
