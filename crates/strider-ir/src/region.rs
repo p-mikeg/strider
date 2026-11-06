@@ -37,9 +37,9 @@ pub(crate) struct TerminatedRegion {
 impl FunctionBuilder {
     /// Errors if no region is set or the region is already terminated.
     pub(crate) fn require_cur_region(&self) -> Result<RegionId> {
-        let region_id = self.cur_region.ok_or_else(|| {
-            anyhow!("no current region is set; call set_region or set_entry_region first")
-        })?;
+        let region_id = self
+            .cur_region
+            .ok_or_else(|| anyhow!("no current region is set; call set_region first"))?;
         if self.regions[region_id].terminated {
             let id = region_id.as_u32();
             return Err(anyhow!("attempted to insert into terminated region {id}"));
