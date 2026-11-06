@@ -112,8 +112,14 @@ result.cfg, result.function, result.unresolved   # or read the fields
 
 `analyze` reports what it cannot vouch for in `cfg.incomplete`, each address
 with its reason, rather than raising; check it before trusting an absence ("no
-store to X"). Of incomplete code, only an unmapped entry, or a fall-through no
-call explains into bytes Sleigh rejects, raises `StriderError`.
+store to X"). It raises `StriderError` only for:
+
+- an unmapped or undecodable entry;
+- a fall-through no call explains into bytes Sleigh rejects;
+- a Sleigh user-op with no `CallOtherAbi` (`lft.call_other_abi(name)` is
+  `None`; most x86 SIMD and x87 ops), which `call_other_abis` can classify.
+
+`build_cfg` raises for the first two.
 
 A plain `Lifter` needs an address and a calling convention:
 
@@ -950,7 +956,8 @@ one of seven reasons (`strider.cfg.INCOMPLETE_REASONS`):
 - `"undecodable_target"`: no liftable instruction (bytes Sleigh rejects or has
   no p-code for, or `data_ranges`). A branch there, or a fall-through into
   `data_ranges`, leaves through an empty stub; a call falling into it ends as
-  no-return; any other fall-through into rejected bytes raises.
+  no-return; an undecodable entry or any other fall-through into rejected
+  bytes raises.
 - `"past_function_end"`: where code falls through past `function_max_size`
   or a `fragment_ranges` end (sequentially, on a not-taken branch, or a
   conditional instruction skipping itself), at the first address after the

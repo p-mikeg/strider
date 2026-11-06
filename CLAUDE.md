@@ -263,8 +263,9 @@ Submodules `strider.ir`, `.lift`, `.cfg`, `.sleigh`, `.reader`, `.opt`,
 `strider.lift.lifter(arch, mem, rom=None)` builds a handle;
 `analyze(entry, cc, opts)` returns an `AnalyzeResult` (`.cfg` / `.function` /
 `.unresolved`, unpackable as a 3-tuple) and reports incompleteness in
-`cfg.incomplete` rather than raising; only an unmapped entry or a fall-through
-no call explains into bytes Sleigh rejects raises.
+`cfg.incomplete` rather than raising. It raises only for an unmapped or
+undecodable entry, a fall-through no call explains into bytes Sleigh rejects,
+or a user-op with no `CallOtherAbi`.
 The `.pyi` stubs are the typed surface.
 
 `CfgOptions.known_targets` / `call_other_abis` and

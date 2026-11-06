@@ -52,7 +52,9 @@ strider.explore.shutdown(port)
 **0.3.0**
 
 - `cfg.incomplete`: every address the analysis cannot vouch for, with its
-  reason. `analyze` and `build_cfg` report it rather than raise.
+  reason. `analyze` and `build_cfg` report it rather than raise; the few
+  cases that raise are in the
+  [API reference](docs/python-api.md#2-analyzing-a-function).
 - `Function.optimize`, `Function.assumptions` (claims accumulate on the
   function) and `Function.optimizer_converged`.
 - Two lift-time claims, `fp_rounding_mode_is_nearest` and
