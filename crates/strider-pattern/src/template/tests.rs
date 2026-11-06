@@ -480,6 +480,28 @@ fn an_unbound_capture_is_refused_before_any_node_is_built() {
     assert_eq!(fx.graph().all_node_ids().count(), before);
 }
 
+/// A capture bound to a node is named as such, not as unbound.
+#[test]
+fn a_node_bound_capture_is_refused_as_a_node() {
+    let (x, node) = (Capture::new(), Capture::new());
+    let mut fx = cmp_over_i64();
+    let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+    let rhs = super::int_add(var(x), var(node)).into_template();
+    let (root, mut bindings, root_ty) = match_once(&fx, &lhs);
+    assert!(bindings.bind_capture(node, crate::bindings::Binding::Node(root)));
+    let err = super::instantiate(
+        &rhs,
+        &mut EditFunction::new(&mut fx),
+        &bindings,
+        root,
+        &[root],
+        root_ty,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("bound a node"), "got: {err}");
+}
+
 /// Two outputs at one slot are refused, as two inputs at one slot are.
 #[test]
 fn two_outputs_at_one_slot_are_refused() {
