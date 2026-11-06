@@ -7,8 +7,6 @@ use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueId};
 
-mod cast;
-pub use cast::{CastMask, cast_mask_of};
 #[cfg(test)]
 mod tests;
 

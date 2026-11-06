@@ -1,8 +1,8 @@
 use std::ops::RangeInclusive;
 
+use super::CastMask;
 use crate::node::signature::{Conversion, ExpectedValueKind, OperandWidth};
 use crate::node::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
-use crate::walk::CastMask;
 use cranelift_entity::entity_impl;
 
 /// Where a function argument is passed.

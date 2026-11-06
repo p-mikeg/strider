@@ -1,3 +1,4 @@
+mod cast;
 mod kind;
 mod ops;
 pub(crate) mod signature;
@@ -8,6 +9,7 @@ mod width_relation;
 #[cfg(test)]
 mod tests;
 
+pub use cast::{CastMask, cast_mask_of};
 pub(crate) use kind::KindFlags;
 pub use kind::{CcId, FunctionArgSource, InitialVnId, IntConstId, NodeKind, SwitchTableId};
 pub use ops::{

@@ -7,7 +7,7 @@ pub(crate) mod walk;
 
 pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 pub use graph::Pattern;
-pub use strider_ir::walk::CastMask;
+pub use strider_ir::node::CastMask;
 pub(crate) use vertex::{InputSlot, OutputKindSpec, PatNode, PatValue, Role, SlotMode};
 pub use vertex::{KindSpec, NodePredicate, PostMatchFn};
 
