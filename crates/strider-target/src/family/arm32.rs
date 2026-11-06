@@ -62,14 +62,18 @@ const CALL_OTHER: &[Row] = &[
     ),
     // NEON register compute outside the `Vector*` / `Float*` families.
     Row::new(
-        &[
-            "SHA256ScheduleUpdate0",
-            "SHA256ScheduleUpdate1",
-            "SatQ",
-            "SignedSatQ",
-            "vrev",
-        ],
+        &["SHA256ScheduleUpdate0", "SHA256ScheduleUpdate1", "vrev"],
         PURE,
+    ),
+    // NEON saturation, which sets FPSCR.QC.
+    Row::new(
+        &["SatQ", "SignedSatQ"],
+        CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["fpscr"],
+            implicit_writes: &["fpscr"],
+            clobbers_memory: false,
+            no_return: false,
+        }),
     ),
     Row::new(
         &[

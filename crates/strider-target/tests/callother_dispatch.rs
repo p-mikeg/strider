@@ -123,16 +123,18 @@ fn sve_load_store_clobber_memory_unlike_sve_compute() {
     assert!(!compute.clobbers_memory, "SVE compute stays pure");
 }
 
-/// ARM-32 NEON names outside the `Vector*` / `Float*` groups.
+/// ARM-32 NEON names outside the `Vector*` / `Float*` groups; saturation
+/// sets FPSCR.QC.
 #[test]
 fn arm32_neon_scalar_ops_are_pure_and_scoped() {
-    for name in [
-        "SHA256ScheduleUpdate0",
-        "SHA256ScheduleUpdate1",
-        "SatQ",
-        "SignedSatQ",
-        "vrev",
+    for (name, fpscr) in [
+        ("SHA256ScheduleUpdate0", false),
+        ("SHA256ScheduleUpdate1", false),
+        ("SatQ", true),
+        ("SignedSatQ", true),
+        ("vrev", false),
     ] {
+        let footprint: &[&str] = if fpscr { &["fpscr"] } else { &[] };
         for preset in [
             ArchPreset::Arm,
             ArchPreset::ArmBe,
@@ -141,8 +143,8 @@ fn arm32_neon_scalar_ops_are_pure_and_scoped() {
         ] {
             let abi = expect_call(classify(preset, name));
             assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
+            assert_eq!(abi.implicit_reads, footprint, "{preset:?}/{name}");
+            assert_eq!(abi.implicit_writes, footprint, "{preset:?}/{name}");
         }
         // `vrev` and `SatQ` are generic spellings; keep them off other arches.
         assert_eq!(classify(ArchPreset::X86_64, name), None, "x86/{name}");
