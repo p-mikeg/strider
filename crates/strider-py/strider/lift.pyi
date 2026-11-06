@@ -151,8 +151,8 @@ class LifterOptions:
     overrides the calling convention of a callee, keyed by the direct-call
     target address (not the call site); on ppc64 ELFv2 `ElfLifter.analyze`
     also matches a call to `Symbol.local_entry` for a key at
-    `Symbol.address`. An override's `stack_pointer` must be the analysed
-    function's own, or `analyze` raises `StriderError`. `pipeline`, when
+    `Symbol.address`. A call to an override whose `stack_pointer` is not
+    the analysed function's own raises `StriderError`. `pipeline`, when
     set, replaces the default optimizer pipeline.
     """
 
