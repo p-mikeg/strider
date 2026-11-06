@@ -84,10 +84,7 @@ pub(crate) fn build_per_address_ccs(
         .collect::<PyResult<_>>()
 }
 
-/// Raises `StriderError`, not PyO3's `RuntimeError`, on a conflict with a
-/// call in flight. `analyze`, `build_cfg` and `add_elf` borrow exclusively, so
-/// they exclude every other `Lifter` method; `ElfLifter`'s ELF reads do not
-/// come here.
+/// Raises `StriderError`, not PyO3's `RuntimeError`, on a conflict.
 fn try_borrow_lifter<'py>(slf: &Bound<'py, PyLifter>) -> PyResult<pyo3::PyRef<'py, PyLifter>> {
     slf.try_borrow().map_err(|_| reentrant_lifter_err())
 }
@@ -624,7 +621,9 @@ impl PyLifter {
     }
 
     /// The control-flow graph of the function at `entry`, without lifting.
-    /// Raises `StriderError` on failure. Holds the GIL throughout.
+    /// An unmapped or undecodable entry, or a fall-through no call explains
+    /// into bytes Sleigh rejects, raises `StriderError`. Holds the GIL
+    /// throughout.
     #[pyo3(signature = (entry, opts=None))]
     fn build_cfg(
         slf: Py<Self>,
@@ -648,8 +647,9 @@ impl PyLifter {
     }
 
     /// Lift, optimise and resolve the function at address `entry`. Incomplete
-    /// code is reported in `Cfg.incomplete`, not raised, except an unmapped
-    /// entry or a fall-through no call explains into bytes Sleigh rejects.
+    /// code is reported in `Cfg.incomplete`, not raised. An unmapped or
+    /// undecodable entry, a fall-through no call explains into bytes Sleigh
+    /// rejects, and a user-op with no `CallOtherAbi` raise `StriderError`.
     #[pyo3(signature = (entry, cc, opts=None))]
     fn analyze(
         slf: Py<Self>,

@@ -477,7 +477,8 @@ assumption_fields! {
 
     /// When no stack address escapes to a callee, forward a spill load across
     /// a call (and, under `stack_global_disjoint`, past an opaque store).
-    /// Default `False`.
+    /// Misses a callee reaching the frame through a preserved register, or
+    /// writing an argument slot above an alignment hole. Default `False`.
     escape_analysis: bool,
 
     /// Untracked stores, callees and user-ops leave the saved return address

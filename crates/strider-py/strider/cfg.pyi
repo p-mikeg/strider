@@ -124,7 +124,8 @@ class CfgOptions:
     - `allow_code_before_start_addr`: follow branches below the entry;
       `ValueError` beside a size.
     - `known_targets`: a dispatch address's targets, or `"return"` to seat
-      it as a function return. An empty list seats nothing.
+      it as a function return. An empty list seats nothing. A Thumb or
+      MIPS16 target goes at `addr & ~1`; each decodes in the dispatch's mode.
     - `call_other_abis`: Sleigh user-op names to a `CallOtherAbi`, over the
       built-in table.
     - `no_return_targets`: direct-call targets that never return, a Thumb or
