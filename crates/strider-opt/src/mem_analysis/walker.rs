@@ -60,11 +60,7 @@ impl ClobberProbe for MemWalker<'_> {
                 match self.policy.calls {
                     Calls::Block => true,
                     Calls::Pass => false,
-                    Calls::Forward => !self.call_transparent(
-                        function,
-                        def,
-                        function.assumptions().escape_analysis,
-                    ),
+                    Calls::Forward => !self.call_transparent(function, def),
                 }
             }
             // A `CallOther` may write the stack without a frame address.
@@ -138,11 +134,11 @@ impl MemWalker<'_> {
     /// Whether `call` cannot write the probed location. A private-frame slot
     /// outside the argument window passes under `escape_analysis` or a listed
     /// allocator; an allocator also passes a different heap object.
-    fn call_transparent(&self, function: &Function, call: NodeId, escape_analysis: bool) -> bool {
+    fn call_transparent(&self, function: &Function, call: NodeId) -> bool {
         let allocated = allocator_return_base(function, call);
         match self.loc.class {
             AddrClass::StackRooted { .. } => {
-                (escape_analysis || allocated.is_some())
+                (function.assumptions().escape_analysis || allocated.is_some())
                     && self.frame_is_private(function)
                     && !self.in_outgoing_arg_area(function, call)
             }
