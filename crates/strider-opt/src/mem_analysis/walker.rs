@@ -77,10 +77,9 @@ impl ClobberProbe for MemWalker<'_> {
 }
 
 impl MemWalker<'_> {
-    /// Whether the probe is a slot of this function's frame and no frame
-    /// address escapes, so no callee or opaque pointer can name it. A fact,
-    /// not a claim; it says nothing of the outgoing-argument window
-    /// ([`Self::in_outgoing_arg_area`]).
+    /// Whether the probe is a slot of this function's own frame and no frame
+    /// address escapes ([`frame_escape`]'s claims). Says nothing of the
+    /// outgoing-argument window ([`Self::in_outgoing_arg_area`]).
     fn frame_is_private(&self, function: &Function) -> bool {
         *self.private_frame.get_or_init(|| match self.loc.class {
             AddrClass::StackRooted { base, offset } => {

@@ -18,8 +18,6 @@ pub struct RegionCollapse;
 
 impl Optimizer for RegionCollapse {
     fn apply(&self, edit: &mut crate::EditFunction<'_>, _opt: &OptCtx<'_>) -> Result<()> {
-        // `try_collapse` reads each root's current inputs, so earlier edits in
-        // this loop are visible.
         let reachable = strider_ir::walk::cfg_reachable(edit.function().graph(), edit.entry());
         let regions: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Region))

@@ -175,8 +175,8 @@ impl RangeMap<'_> {
             .is_some_and(|(sinks, span)| sinks.meet_dominating(span).is_some())
     }
 
-    /// The values `index` scales without wrapping through zero-extends,
-    /// constant multiplies and left shifts, each with its factor to `index`.
+    /// `index` and each value it is a non-wrapping zero-extend, multiple or
+    /// left shift of, as `(value, factor)` with `index = value * factor`.
     pub(crate) fn index_scales(&self, index: ValueId) -> Vec<(ValueId, u128)> {
         let f = self.function;
         let mut out = Vec::new();

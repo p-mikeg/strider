@@ -113,7 +113,6 @@ pub(crate) fn eval_node_const(
         NodeKind::IntUnaryOp(op) => {
             let ty = out_ty?;
             let v = ins.get(0).copied()?;
-            // Mid-pipeline, nothing has validated the width yet.
             operands_carry(function, &kind, &[v], ty)?;
             eval::int_unary(op, &resolve(v)?, ty)
         }

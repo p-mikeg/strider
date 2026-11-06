@@ -1,5 +1,5 @@
 //! Folds `And(phi, C)` to `v` when every arm of the phi, masked by `C`, is
-//! `v`, an arm reaching the `And` or the phi itself agreeing with any `v`.
+//! `v`; an arm that reads the `And` or the phi back agrees with any `v`.
 //!
 //! Arms peel through `And` / `Or` / `Xor` with a constant or known-zero
 //! operand, never a phi: at most [`PEEL_STEPS`] steps per peel, within
