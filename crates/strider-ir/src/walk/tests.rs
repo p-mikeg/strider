@@ -96,66 +96,10 @@ fn walk_follows_data_inputs_to_producer() {
     );
 }
 
-/// A node with no Control outputs must have no CFG successors.
+/// `cfg_outputs` yields only Control outputs, consumed or not; `cfg_succs`
+/// every consumer of them, a doubly consumed output twice over.
 #[test]
-fn cfg_succs_no_control_outputs_is_empty() {
-    let mut graph = Graph::new();
-    let node = graph.create_node(
-        NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
-        [],
-        [ValueKind::Typed(ValueType::int(64))],
-    );
-    let succs: Vec<_> = cfg_succs(&graph, node).collect();
-    assert!(
-        succs.is_empty(),
-        "data-only node must have no cfg successors"
-    );
-}
-
-#[test]
-fn cfg_succs_returns_all_control_consumers() {
-    let mut graph = Graph::new();
-    let (entry, ctrl) = make_entry(&mut graph);
-
-    let r0 = make_return(&mut graph, ctrl);
-    let r1 = make_return(&mut graph, ctrl);
-
-    let succs: Vec<_> = cfg_succs(&graph, entry).collect();
-    assert_eq!(succs.len(), 2, "both consumers must appear");
-    assert!(succs.contains(&r0));
-    assert!(succs.contains(&r1));
-}
-
-#[test]
-fn cfg_succs_two_control_outputs_two_successors() {
-    let mut graph = Graph::new();
-    let entry = graph.create_node(
-        NodeKind::Entry,
-        [],
-        [ValueKind::Control, ValueKind::Control],
-    );
-    let [ctrl0, ctrl1] = graph.node_outputs_exact::<2>(entry).unwrap();
-
-    let left = make_return(&mut graph, ctrl0);
-    let right = make_return(&mut graph, ctrl1);
-
-    let succs: Vec<_> = cfg_succs(&graph, entry).collect();
-    assert_eq!(succs.len(), 2);
-    assert!(succs.contains(&left));
-    assert!(succs.contains(&right));
-}
-
-#[test]
-fn cfg_succs_unconsumed_control_output_yields_nothing() {
-    let mut graph = Graph::new();
-    let (entry, _ctrl) = make_entry(&mut graph);
-    let succs: Vec<_> = cfg_succs(&graph, entry).collect();
-    assert!(succs.is_empty());
-}
-
-/// Data and memory outputs must be excluded.
-#[test]
-fn cfg_outputs_excludes_non_control_outputs() {
+fn cfg_outputs_and_succs_follow_control_outputs_only() {
     let mut graph = Graph::new();
     // Region is non-cacheable, so it accepts arbitrary outputs here.
     let node = graph.create_node(
@@ -166,41 +110,32 @@ fn cfg_outputs_excludes_non_control_outputs() {
             ValueKind::Typed(ValueType::int(64)),
             ValueKind::Memory,
             ValueKind::Control,
+            ValueKind::Control,
         ],
     );
-    let ctrl_outs: Vec<_> = cfg_outputs(&graph, node).collect();
+    let [c0, data, mem, c1, unconsumed] = graph.node_outputs_exact::<5>(node).unwrap();
+    let r0 = make_return(&mut graph, c0);
+    let r1 = make_return(&mut graph, c0);
+    let r2 = make_return(&mut graph, c1);
+    make_return(&mut graph, data);
+    make_return(&mut graph, mem);
+
     assert_eq!(
-        ctrl_outs.len(),
-        2,
-        "only the two Control outputs must appear"
+        cfg_outputs(&graph, node).collect::<Vec<_>>(),
+        [c0, c1, unconsumed]
     );
-    for value in ctrl_outs {
-        assert_eq!(
-            graph.value_kind(value),
-            ValueKind::Control,
-            "cfg_outputs must only yield Control-kind outputs"
-        );
-    }
-}
+    let mut succs: Vec<_> = cfg_succs(&graph, node).collect();
+    succs.sort();
+    assert_eq!(succs, [r0, r1, r2]);
 
-#[test]
-fn cfg_outputs_empty_for_node_with_no_outputs() {
-    let mut graph = Graph::new();
-    let node = graph.create_node(NodeKind::Return, [], []);
-    let outs: Vec<_> = cfg_outputs(&graph, node).collect();
-    assert!(outs.is_empty());
-}
-
-#[test]
-fn cfg_outputs_empty_when_all_outputs_are_data() {
-    let mut graph = Graph::new();
-    let node = graph.create_node(
-        NodeKind::IntConst(crate::node::IntConstId::new(5_usize)),
+    let data_only = graph.create_node(
+        NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
         [],
-        [ValueKind::Typed(ValueType::int(32))],
+        [ValueKind::Typed(ValueType::int(64))],
     );
-    let outs: Vec<_> = cfg_outputs(&graph, node).collect();
-    assert!(outs.is_empty());
+    assert_eq!(cfg_outputs(&graph, data_only).count(), 0);
+    assert_eq!(cfg_succs(&graph, data_only).count(), 0);
+    assert_eq!(cfg_outputs(&graph, r0).count(), 0);
 }
 
 /// Both operands must precede the Add, and the seed comes last.
