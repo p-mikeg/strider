@@ -31,8 +31,8 @@ impl InitialVnId {
     }
 }
 
-/// A `Switch`'s case-address table, resolved by the crate-internal
-/// `Function::switch_table`.
+/// A `Switch`'s case-address table; read it through
+/// [`crate::Function::switch_targets`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SwitchTableId(u32);
 entity_impl!(SwitchTableId, "switch_table");
@@ -100,7 +100,6 @@ pub enum NodeKind {
     IntCmpOp(crate::node::IntCmpOp),
     Truncate,
     Popcount,
-    /// Leading zero count.
     Lzcount,
     Extend(crate::node::ExtendOp),
 
