@@ -95,8 +95,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .build_int_binary_operation(narrow, addend, IntBinaryOp::Or, out_ty)
     }
 
-    /// Operands match the output width, except a shift count, which may be
-    /// any width and is saturated then zero-extended.
+    /// Operands match the output width, except a shift count: any width,
+    /// saturated when wider, zero-extended when narrower.
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,

@@ -29,9 +29,7 @@ pub(crate) fn ensure_const_space(
 ) -> Result<()> {
     if vn.addr_space != rsleigh::VnSpace::CONST {
         anyhow::bail!(
-            "opcode {opcode:?}: {slot_label} must be a CONST-space varnode \
-             (got addr_space {:?}); Sleigh's contract requires this slot \
-             to encode a literal value",
+            "opcode {opcode:?}: {slot_label} is not a CONST varnode (got {:?})",
             vn.addr_space,
         );
     }
