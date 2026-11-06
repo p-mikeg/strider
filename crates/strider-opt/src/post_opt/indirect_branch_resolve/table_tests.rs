@@ -2434,45 +2434,36 @@ fn sequential_field_switches(n: usize) -> Function {
 }
 
 /// Each of `n` switches on fields of one pointer looks at the pointer's
-/// other offsets only where one may be bounded, so the guard scans stay
-/// linear in `n`.
+/// other offsets only where one may be bounded, and weighs only the tests of
+/// its own field, so the guard and cell-test scans stay linear in `n`.
 /// Mutation: range every `Add(v, k)` sibling of a chain value at each site.
-#[test]
-fn sequential_field_switches_scan_guards_linearly() -> crate::Result<()> {
-    let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x10 * (i + 1)).collect(), 4);
-    crate::test_support::assert_near_linear(
-        "sequential field switches",
-        64,
-        |n| {
-            let f = sequential_field_switches(n);
-            crate::test_support::steps(&[&super::super::index_range::GUARD_SCANS], || {
-                let sites = super::super::classify_sites(&f, Some(&rom));
-                assert_eq!(sites.resolved.len(), n, "every switch is seated");
-                Ok(())
-            })
-        },
-        250,
-    )
-}
-
-/// The same switches weigh only the tests of their own field.
 /// Mutation: weigh every `If` dominating the site.
 #[test]
-fn sequential_field_switches_weigh_tests_linearly() -> crate::Result<()> {
+fn sequential_field_switches_scan_linearly() -> crate::Result<()> {
+    use super::super::index_range::{CELL_TEST_SCANS, GUARD_SCANS};
     let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x10 * (i + 1)).collect(), 4);
-    crate::test_support::assert_near_linear(
-        "sequential field switches",
-        64,
-        |n| {
-            let f = sequential_field_switches(n);
-            crate::test_support::steps(&[&super::super::index_range::CELL_TEST_SCANS], || {
-                let sites = super::super::classify_sites(&f, Some(&rom));
-                assert_eq!(sites.resolved.len(), n, "every switch is seated");
-                Ok(())
-            })
-        },
-        250,
-    )
+    for (name, counter) in [
+        ("guard scans of sequential field switches", &GUARD_SCANS),
+        (
+            "cell-test scans of sequential field switches",
+            &CELL_TEST_SCANS,
+        ),
+    ] {
+        crate::test_support::assert_near_linear(
+            name,
+            64,
+            |n| {
+                let f = sequential_field_switches(n);
+                crate::test_support::steps(&[counter], || {
+                    let sites = super::super::classify_sites(&f, Some(&rom));
+                    assert_eq!(sites.resolved.len(), n, "every switch is seated");
+                    Ok(())
+                })
+            },
+            250,
+        )?;
+    }
+    Ok(())
 }
 
 /// `n` switches on one field byte `x`, the `i`th behind `if (x == k_i)
@@ -2522,43 +2513,31 @@ fn sequential_equalities_on_one_index(n: usize) -> Function {
 }
 
 /// The tests of the shared field are weighed once per index, not once per
-/// switch, so the cell-test scans stay linear in `n`.
+/// switch, and each switch weighs only the equalities its own values could
+/// be, so the cell-test and equality scans stay linear in `n`.
 /// Mutation: weigh every `If` reading the cell at each site.
-#[test]
-fn equalities_on_a_shared_index_weigh_tests_linearly() -> crate::Result<()> {
-    let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x10 * (i + 1)).collect(), 4);
-    crate::test_support::assert_near_linear(
-        "cell tests on a shared index",
-        128,
-        |n| {
-            let f = sequential_equalities_on_one_index(n);
-            crate::test_support::steps(&[&super::super::index_range::CELL_TEST_SCANS], || {
-                let sites = super::super::classify_sites(&f, Some(&rom));
-                assert_eq!(sites.resolved.len(), n, "every switch is seated");
-                Ok(())
-            })
-        },
-        250,
-    )
-}
-
-/// Each switch weighs only the equalities its own values could be, so the
-/// equality scans stay linear in `n`.
 /// Mutation: weigh every equality on each index value at each site.
 #[test]
 fn equalities_on_a_shared_index_scan_linearly() -> crate::Result<()> {
+    use super::super::index_range::{CELL_TEST_SCANS, EQUALITY_SCANS};
     let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x10 * (i + 1)).collect(), 4);
-    crate::test_support::assert_near_linear(
-        "equalities on a shared index",
-        128,
-        |n| {
-            let f = sequential_equalities_on_one_index(n);
-            crate::test_support::steps(&[&super::super::index_range::EQUALITY_SCANS], || {
-                let sites = super::super::classify_sites(&f, Some(&rom));
-                assert_eq!(sites.resolved.len(), n, "every switch is seated");
-                Ok(())
-            })
-        },
-        250,
-    )
+    for (name, counter) in [
+        ("cell tests on a shared index", &CELL_TEST_SCANS),
+        ("equalities on a shared index", &EQUALITY_SCANS),
+    ] {
+        crate::test_support::assert_near_linear(
+            name,
+            128,
+            |n| {
+                let f = sequential_equalities_on_one_index(n);
+                crate::test_support::steps(&[counter], || {
+                    let sites = super::super::classify_sites(&f, Some(&rom));
+                    assert_eq!(sites.resolved.len(), n, "every switch is seated");
+                    Ok(())
+                })
+            },
+            250,
+        )?;
+    }
+    Ok(())
 }
