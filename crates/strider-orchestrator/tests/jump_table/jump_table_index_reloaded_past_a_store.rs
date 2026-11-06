@@ -45,10 +45,7 @@ fn analyze_with(
     assumptions: AssumptionOptions,
     pipeline: Option<OptimizerPipeline>,
 ) -> (Vec<Vec<u64>>, Vec<u64>, usize) {
-    let code = (0..code.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&code[i..i + 2], 16).expect("hex"))
-        .collect();
+    let code = common::hex(code);
     let table = arms.iter().flat_map(|a| a.to_le_bytes()).collect();
     let rom = MockRom::raw_bytes(TABLE, table);
     let (mut strider, cc) =

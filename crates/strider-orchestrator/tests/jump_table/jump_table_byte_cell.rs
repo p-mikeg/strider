@@ -48,18 +48,10 @@ const CODE: &[&str] = &[
     "08185e3908011f32e2ffff17",
 ];
 
-fn code() -> Vec<u8> {
-    let hex: String = CODE.concat();
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
 /// The lifted and optimised function, its dispatch left unresolved, and what
 /// the classifier answers for it over `rom`.
 fn classify(rom: &dyn ReadOnlyMemory) -> Option<ResolvedTargets> {
-    let bytes = code();
+    let bytes = common::hex(&CODE.concat());
     assert_eq!(bytes.len(), 0xcc);
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Aarch64, bytes, BASE, None);
     let opts = AnalyzeOptions {
@@ -89,7 +81,7 @@ fn arms(targets: &ResolvedTargets) -> Vec<u64> {
 /// Mutation: take no term of the address for a bounded index.
 #[test]
 fn a_byte_table_no_rom_serves_defers() {
-    let text = MockRom::raw_bytes(BASE, code());
+    let text = MockRom::raw_bytes(BASE, common::hex(&CODE.concat()));
     let got = classify(&text);
     assert!(got.is_none(), "{:x?}", got.as_ref().map(arms));
 }

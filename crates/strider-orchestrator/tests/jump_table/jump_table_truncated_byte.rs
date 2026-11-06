@@ -67,18 +67,11 @@ fn analyze(code: Vec<u8>, rom: MockRom) -> (Vec<Vec<u64>>, Vec<u64>) {
     (switches, unresolved)
 }
 
-fn hex(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
 /// Mutations: stop the width count's strip at a truncate; enumerate one cell
 /// fewer.
 #[test]
 fn the_low_byte_of_a_loaded_field_indexes_its_256_cells() {
-    let code = hex("8b47100fb6c0ff24c500204000b801000000c3b802000000c3b803000000c3");
+    let code = common::hex("8b47100fb6c0ff24c500204000b801000000c3b802000000c3b803000000c3");
     let (switches, unresolved) = analyze(code, MockRom::raw_bytes(TABLE, table()));
     assert!(unresolved.is_empty(), "{unresolved:#x?}");
     assert_eq!(switches, [ARMS.to_vec()]);

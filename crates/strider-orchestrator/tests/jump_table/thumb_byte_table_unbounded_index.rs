@@ -31,20 +31,16 @@ const CODE: &[&str] = &[
     "fff77afe80f0050080bd0520fff774fe013880bd0620fff76ffe40f0090080bd",
 ];
 
-fn code() -> Vec<u8> {
-    let hex: String = CODE.concat();
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
 /// Mutation: read no constant term as ROM in `loads_a_field`.
 #[test]
 fn a_tbb_over_an_unbounded_index_defers() {
-    let rom = MockRom::raw_bytes(BASE, code());
-    let (mut strider, cc) =
-        common::strider_over_bytes(common::Arch::ArmThumb, code(), BASE, Some(Box::new(rom)));
+    let rom = MockRom::raw_bytes(BASE, common::hex(&CODE.concat()));
+    let (mut strider, cc) = common::strider_over_bytes(
+        common::Arch::ArmThumb,
+        common::hex(&CODE.concat()),
+        BASE,
+        Some(Box::new(rom)),
+    );
     let cfg = strider
         .analyze(BASE | 1, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze")

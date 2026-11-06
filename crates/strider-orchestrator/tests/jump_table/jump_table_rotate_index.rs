@@ -14,13 +14,6 @@ use crate::common;
 const BASE: u64 = 0x1000_0000;
 const TABLE: u64 = 0x1000_2000;
 
-fn hex(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
 /// The arms of every seated `Switch` and the unresolved sites, for `code` at
 /// `BASE` over a ROM holding `arms` at `TABLE`, then cells naming `BASE`.
 fn analyze(code: &str, arms: &[u64]) -> (Vec<Vec<u64>>, Vec<u64>) {
@@ -32,7 +25,7 @@ fn analyze(code: &str, arms: &[u64]) -> (Vec<Vec<u64>>, Vec<u64>) {
         .collect();
     let (mut strider, cc) = common::strider_over_bytes(
         common::Arch::Ppc32be,
-        hex(code),
+        common::hex(code),
         BASE,
         Some(Box::new(MockRom::raw_bytes(TABLE, cells))),
     );

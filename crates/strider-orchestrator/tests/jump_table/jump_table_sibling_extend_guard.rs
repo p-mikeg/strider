@@ -66,18 +66,10 @@ const CODE: &[&str] = &[
     "5cffffff",
 ];
 
-fn code() -> Vec<u8> {
-    let hex: String = CODE.concat();
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
 /// Mutation: bound an arm only by a guard on the arm's own value chain.
 #[test]
 fn a_guard_on_a_sibling_extend_bounds_the_switch() {
-    let bytes = code();
+    let bytes = common::hex(&CODE.concat());
     assert_eq!(bytes.len(), 0x2c4);
     let rom = Box::new(MockRom::strided(TABLE, 8, SLOTS.to_vec(), 8))
         as Box<dyn strider_orchestrator::opt::ReadOnlyMemory>;
