@@ -29,13 +29,15 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    node and `function.validate()` checks its invariants.
 5. **Optimize** so equivalent code reaches a query in fewer shapes: constants
    fold, `x + (x << 1)` becomes `x * 3`, a phi carrying one value collapses
-   ([optimizations.md](optimizations.md)).
+   ([optimizations.md](optimizations.md)). `function.optimizer_converged` is
+   false when a run stopped at its iteration cap.
 6. **Resolve** indirect branches: classify each against the optimized IR, feed
    the targets back, re-lift, repeat until the edges stop changing.
    `cfg.incomplete` lists what is left
    ([reasons](python-api.md#12-the-cfg-stridercfg)); `analyze` reports it
    rather than raising, so check it before trusting an absence. The answer
-   rests on `AssumptionOptions`, claims the analysis cannot check.
+   rests on `AssumptionOptions`, claims the analysis cannot check;
+   `function.assumptions` holds those in force.
 7. **Query** it with patterns, or **rewrite** it with `strider.template`.
    [python-api.md](python-api.md#4-patterns) is the reference.
 
