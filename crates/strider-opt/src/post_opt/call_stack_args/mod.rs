@@ -64,7 +64,9 @@ fn collect_stack_args(
                 .into_iter()
                 .any(|edge| doms.dominates(region, function.producer(edge)))
         };
-        if header || data.iter().any(|v| saved.contains(v)) {
+        // A big-endian store narrower than its slot is left-justified there.
+        let narrow = big_endian && stores[0].size(function) < increment;
+        if header || narrow || data.iter().any(|v| saved.contains(v)) {
             break;
         }
         let ty = function.value_type(data[0]).expect("store data is typed");
