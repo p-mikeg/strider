@@ -233,8 +233,10 @@ operands accept the same pairs with the same bindings.
   edges reaching one address with different IT state keep the first decode.
 - Register aliasing (x86 rax/eax/ax, AArch64 q/d/s, x87 ST*, ...) is resolved
   in the lifter's `read_vn` / `write_vn` through the largest containing
-  register. `Function::new` dedups tracked varnodes into their largest
-  containers and sorts them, which fixes `InitialVnId` numbering.
+  register. Partially overlapping views (AArch64 `s21` and the 6-byte tail an
+  `h21` write zeroes) share one container: the lift adds the smallest declared
+  register enclosing them. `Function::new` dedups tracked varnodes into their
+  largest containers and sorts them, which fixes `InitialVnId` numbering.
 - Indirect-branch resolution is a re-lift fixed-point loop in
   `Strider::analyze`. Unresolvable sites, sites whose answer narrows twice,
   sites still growing at `MAX_RESOLUTION_ITERATIONS`, and returns whose target
