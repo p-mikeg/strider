@@ -66,8 +66,8 @@ impl PeepholePass for DeadBranchElimination {
 /// one. The caller resyncs the live set.
 fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     let entry = edit.entry();
-    // Live, not control-reachable, joins: a join reached only through data
-    // can hold a dead slot.
+    // Every live join, not only reachable ones: a join kept live by its phi's
+    // use still has dead slots.
     let reachable = cfg_reachable(edit.function().graph(), entry);
 
     let regions: Vec<NodeId> = edit
@@ -103,7 +103,12 @@ fn constant_selection(edit: &crate::EditFunction<'_>, node: NodeId) -> Option<Se
     let (selector, live) = match edit.node_kind(node) {
         NodeKind::If => {
             let cond = edit.if_cond(node);
-            (cond, usize::from(!edit.bool_const_val(cond)?))
+            let live = if edit.bool_const_val(cond)? {
+                NodeKind::IF_TRUE_OUT_SLOT
+            } else {
+                NodeKind::IF_FALSE_OUT_SLOT
+            };
+            (cond, live)
         }
         NodeKind::Switch(_) => {
             let selector = edit.switch_selector(node);
