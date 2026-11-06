@@ -205,7 +205,7 @@ impl PyCfg {
             .map_err(into_strider_err)
     }
 
-    /// Disassembly text per region index, joined with `"\n"`.
+    /// P-code text per region index, one op per line.
     #[pyo3(name = "_region_texts")]
     fn region_texts(&self) -> HashMap<u32, String> {
         let names = self.arch.names();
