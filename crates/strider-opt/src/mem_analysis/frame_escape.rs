@@ -32,7 +32,7 @@ pub(crate) fn frame_address_escapes_cached(function: &Function) -> bool {
 }
 
 fn frame_address_escapes(function: &Function) -> bool {
-    function.frame_address_in_call_register() || any_exposed(function, |_| true)
+    function.call_register_frame_reach().is_some() || any_exposed(function, |_| true)
 }
 
 /// Whether a callee may hold a pointer into the incoming arguments' memory,

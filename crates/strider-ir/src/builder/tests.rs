@@ -3064,7 +3064,7 @@ fn a_clobbered_register_holding_no_stack_address_is_not_recorded() -> Result<()>
     let f = call_with_register_holding(true, false, |b, _| {
         b.build_int_const(0x1234u64, ValueType::int(64))
     })?;
-    assert!(!f.frame_address_in_call_register());
+    assert!(f.call_register_frame_reach().is_none());
     Ok(())
 }
 
@@ -3076,7 +3076,7 @@ fn a_stack_address_in_a_preserved_register_is_not_recorded() -> Result<()> {
         let k = b.build_int_const((-16i64) as u64, ValueType::int(64))?;
         b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::int(64))
     })?;
-    assert!(!f.frame_address_in_call_register());
+    assert!(f.call_register_frame_reach().is_none());
     Ok(())
 }
 
@@ -3087,6 +3087,6 @@ fn a_stack_address_in_an_internal_register_is_not_recorded() -> Result<()> {
         let k = b.build_int_const((-16i64) as u64, ValueType::int(64))?;
         b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::int(64))
     })?;
-    assert!(!f.frame_address_in_call_register());
+    assert!(f.call_register_frame_reach().is_none());
     Ok(())
 }
