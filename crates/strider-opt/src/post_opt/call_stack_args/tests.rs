@@ -486,7 +486,13 @@ fn collect_walk_steps(slots: usize) -> Result<u64> {
         ..crate::AssumptionOptions::none()
     });
     steps(&[&WALK_STEPS], || {
-        let args = collect_stack_args(&fg, call_id, stack_args.increment, &MemQuery::default());
+        let mut edit = crate::EditFunction::new(&mut fg);
+        let args = collect_stack_args(
+            &mut edit,
+            call_id,
+            stack_args.increment,
+            &MemQuery::default(),
+        );
         assert_eq!(args.len(), slots, "every argument slot must be collected");
         Ok(())
     })

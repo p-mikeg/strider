@@ -120,6 +120,70 @@ impl ArgPrefix {
     }
 }
 
+/// Each slot after `prefix` whose nearest clobber is a `MemPhi` every arm of
+/// which reaches a whole store of one type at the slot's start: the `MemPhi`
+/// and those stores in arm order, up to the first other slot.
+pub(crate) fn merged_slots(
+    function: &Function,
+    query: &MemQuery,
+    call: NodeId,
+    prefix: &ArgPrefix,
+) -> Vec<(NodeId, Vec<ReachingSpStore>)> {
+    let (Some(args), Some((base, sp_offset))) = (
+        function.get_cc(call).stack_args,
+        super::decompose::call_sp(function, call),
+    ) else {
+        return Vec::new();
+    };
+    let mem = function
+        .memory_input_of(call)
+        .expect("a Call has a memory input");
+    let policy = Policy::strict(function);
+    let nearest = |from, offset, size| {
+        query.nearest_sp_clobber(
+            function,
+            policy,
+            from,
+            base,
+            offset,
+            size,
+            rsleigh::VnSpace::RAM,
+        )
+    };
+    let mut cursor: usize = prefix
+        .slots
+        .iter()
+        .map(|slot| args.slots_spanned(slot.span))
+        .sum();
+    let mut merged = Vec::new();
+    loop {
+        let start = wrap_to_addr_width(function, base, args.slot_offset(sp_offset, cursor));
+        let phi = nearest(mem, start, args.increment);
+        if !matches!(function.node_kind(phi), NodeKind::MemPhi) {
+            break;
+        }
+        let stores: Option<Vec<ReachingSpStore>> = function
+            .phi_data_inputs(phi)
+            .map(|arm| {
+                let def = nearest(arm, start, 1);
+                let hit = query
+                    .anchored_store(function, def, base)
+                    .filter(|hit| hit.store_offset == start)?;
+                (nearest(arm, start, hit.size(function)) == def).then_some(hit)
+            })
+            .collect();
+        let Some(stores) = stores else { break };
+        let ty = |hit: &ReachingSpStore| function.value_type(hit.data(function)).ok();
+        let size = stores[0].size(function);
+        if stores.iter().any(|hit| ty(hit) != ty(&stores[0])) || nearest(mem, start, size) != phi {
+            break;
+        }
+        cursor += args.slots_spanned(size);
+        merged.push((phi, stores));
+    }
+    merged
+}
+
 /// One lazy reverse scan of a call's memory chain for the stores anchoring its
 /// outgoing-argument slots: it probes the whole window and resumes past each
 /// store, so all slots cost one traversal. A slot left uncovered at a `MemPhi`
