@@ -80,9 +80,9 @@ These raise:
 - `Cfg.is_complete()` and the per-reason `Cfg` getters are gone:
   `cfg.incomplete` lists every `(address, reason)`, the reasons in
   `strider.cfg.INCOMPLETE_REASONS`. `analyze` and `build_cfg` report
-  incompleteness rather than raise it; only an unmapped entry, or a
-  fall-through no call explains into bytes Sleigh rejects, raises
-  `StriderError`.
+  incompleteness rather than raise it. They raise `StriderError` only for an
+  unmapped or undecodable entry or a fall-through no call explains into bytes
+  Sleigh rejects; `analyze` also raises for a user-op with no `CallOtherAbi`.
 - `CallingConvention.no_return()` is gone: list the callee in
   `CfgOptions(no_return_targets=...)`, which `build_cfg` honours too.
 - `CfgOptions.with_function_max_size`, `with_data_ranges` and
@@ -125,7 +125,8 @@ These raise:
   raises `TypeError` where it read as 0 or 1.
 - A non-int `entry` to `Lifter.analyze` / `build_cfg` (and
   `ElfLifter.build_cfg`) raises `TypeError`, not `StriderError`; `pcode_at`
-  takes `entry` the same way.
+  takes `entry` the same way. `Lifter.analyze` without `cc` raises
+  `TypeError`.
 - `of_width`, `value_of_width`, `inputs_of_width` and the `load()` /
   `store()` `bit_width` raise `StriderError` for a width no value type has;
   they matched nothing.
@@ -138,6 +139,9 @@ Output that reads differently:
 - `Node.kind()` / `repr(Node)` render `IntConst`, `InitialVar` and
   `CallOther` without the interner handle.
 - `to_dot(pretty=True)` names a `Load` / `Store` space by its sla name.
+- `Function.to_text()` adds `assumptions` and
+  `frame_address_in_call_register` header lines, and a REGISTER-space byte
+  order that differs from the data order.
 - `Node.sint()` and the signed `Match` readers answer past 128 bits where they
   answered `None`; `int_const` takes an `int` of up to 512 bits.
 - A failed read at a decode address is reported as `is unmapped`,
@@ -166,6 +170,8 @@ replaced the rest.
 - `one_of![ret()].when_match(..)` is refused as `ret().when_match(..)` is; it
   never matched.
 - `Region::insns` is a `VecDeque`.
+- `ValidationError::EmptySwitchTargets` is gone (reported as
+  `NodeOutputCountMismatch`), and so is `EditFunction::control_edits`.
 - `Function::frame_address_in_call_register` is gone: read
   `call_register_frame_reach().is_some()`.
 
@@ -198,9 +204,6 @@ replaced the rest.
 - A `Lifter` takes weak references, so a reader can point back at its
   handle without a cycle.
 - `.ordered()` on `inputs_of_width` and `bool_inputs`.
-- `Function.to_text()` prints `assumptions` and
-  `frame_address_in_call_register` lines, and a REGISTER-space byte order
-  that differs from the data order.
 - `Function.optimizer_converged`.
 
 ### Changed, Python
@@ -253,6 +256,8 @@ replaced the rest.
 
 Matching and rewriting:
 
+- A template reading a capture its pattern bound to a node says so; it
+  reported the capture as unbound.
 - `rewrite` binds the same match `find_all` lists first at a root under
   `first_of`.
 - `first_of` and `ignore_casts` settle in a fixed order: at each value the
@@ -262,8 +267,7 @@ Matching and rewriting:
 - `.when()` on a nested `function_arg(..)` runs; `m[a] == m[b]` compares the
   captured constants in the abi3 wheel.
 - A template constant at a shift count is built at the shift's width;
-  `capture_typed` over a capture raises rather than panicking; a template
-  `float_const` with bits above its width is refused.
+  a template `float_const` with bits above its width is refused.
 - Rewrites skip a match through a `Phi` / `MemPhi` / `Region` whose
   replacement would form a data cycle or read an unavailable value.
 - `repr()` of `CastMask`, `VnSpace`, a stale `BoundCapture` and a
@@ -271,7 +275,6 @@ Matching and rewriting:
   the variant.
 - A `StriderError` raised on a small thread, and a query compiled on one, no
   longer crash the process.
-- `f.optimize()` keeps the `noalias_allocators` `analyze` ran under.
 - `int_sub(x, K)` and `float_sub(x, K)` with an uncaptured constant `K` (a
   value, a list, `int_const_any_width`, bare or under one `of_width`) also
   match the folded `x + (-K)`.
@@ -281,6 +284,15 @@ Matching and rewriting:
 
 Analysis:
 
+- A jump table indexed by a leading-zero or population count with no bounds
+  check (clang AArch64 `switch(__builtin_clz(x))`) is read up to the count's
+  largest value; it read past the table and seated arms of the next one.
+- A seeded table arm inside an instruction of the dispatch's own region
+  defers the site, as one in any other region does; it left a one-arm table.
+- `validate` rejects a memory read that skips a Store through a call that
+  leaves memory alone.
+- An exception a Python `ReadOnlyMemory.read` raised, read as unmapped, is
+  no longer the `__cause__` of a later `StriderError`.
 - A ppc64 `rldicl` switch (`switch (x >> 28)`) bounds its table by the
   guard on the truncated rotate; it read past the table.
 - The ppc64 Linux-kernel conventions clobber r13 (the per-CPU `paca`)
@@ -328,6 +340,14 @@ Analysis:
 
 Lifting and decoding (most in the vendored Sleigh):
 
+- Partially overlapping views of one register (AArch64 `ldr h21` then a read
+  of `s21`, v8-v31) share one variable; the read kept stale bytes.
+- x86 VEX shifts by an immediate (`vpsrldq`, `vpsraw`, ...) zero the
+  destination's upper bits.
+- `xgetbv` reads the XCR that ECX selects.
+- VEX.128 AES and carry-less multiply ops, `vinserti128` and VEX.128
+  `vcvtps2ph` zero their destination up to ZMM, and an AVX2 gather clears
+  its whole mask register; VEX.128 `vcvtps2ph` to memory stores its result.
 - Float-to-integer and narrowing conversions round by the dynamic rounding
   mode and saturate as the ISA does on x86 (SSE, VEX, x87), ARM, AArch64,
   PowerPC and MIPS; `fcvt*`, `vcvt`, `fctid*`, `fcfidu`, `friz`, `frsp`,
@@ -362,17 +382,14 @@ Lifting and decoding (most in the vendored Sleigh):
 - CFG decoding of a run of `nop`s is deterministic. A call followed by a
   `nop` and decodable non-code (Thumb `bl __stack_chk_fail; nop` before a
   literal pool) ends `NoReturn` where it failed the build.
-- `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb or MIPS16), and
-  keeps the mode after many builds on one handle. `Cfg.pcode_at` takes the
-  same address.
+- `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb or MIPS16) and
+  decodes as a fresh handle would, after any number of builds; only the
+  entry's mode is pinned. `Cfg.pcode_at` takes the same address.
 - A branch into the middle of an instruction with internal p-code branches
   (`lock cmpxchg`, `rep movs`) edges to its first op, not its last p-code
-  slice, and is still `"interior_target"`; glibc's `je 0f; lock; 0:`
-  re-entry is not reported whichever edge decodes first.
+  slice, and is still `"interior_target"`.
 - A MIPS delay slot whose ISA mode an earlier build on the same handle left
   stale decodes as on a fresh handle; the build raised `BadDataError`.
-- `Function.optimizer_converged` is `False` after a failed run, not the
-  previous run's value.
 - A fall-through or Duff's-device switch of n arms builds its CFG in linear
   time in n; it was quadratic.
 - `LoadForward` is linear on a run of `if (c) call()` joins; it was
