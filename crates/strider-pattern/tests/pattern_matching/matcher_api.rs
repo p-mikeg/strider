@@ -271,35 +271,6 @@ fn each_match_has_its_own_bindings() {
     );
 }
 
-#[test]
-fn get_vn_on_initial_var_returns_varnode() {
-    let (g, reg) = shapes::single_initial_var();
-    let v = Capture::new();
-    let m = a::unique(&g, initial_var().capture(v).into_pattern());
-    assert_eq!(m.get_vn(v, &g), Some(reg));
-}
-
-#[test]
-fn get_vn_on_non_mapped_producer_returns_none() {
-    let function = shapes::add_consts(5, 3);
-    let v = Capture::new();
-    let m = a::unique(
-        &function,
-        int_add(int_const(5u128), int_const(3u128))
-            .capture(v)
-            .into_pattern(),
-    );
-    assert_eq!(m.get_vn(v, &function), None);
-}
-
-#[test]
-fn get_vn_on_unbound_var_returns_none() {
-    let function = shapes::add_consts(5, 3);
-    let m = a::first(&function, int_const(5u128).into_pattern());
-    let never_bound = Capture::new();
-    assert_eq!(m.get_vn(never_bound, &function), None);
-}
-
 /// Returns `Add(ZeroExt(Mul(2,3)), 4)` at I64, with the Mul at I32.
 fn graph_add_zext_mul() -> strider_ir::Function {
     let mut t = Tb::empty();
@@ -848,5 +819,4 @@ fn a_match_used_after_compact_reports_stale_instead_of_indexing() {
     assert!(hit.is_stale(function.graph()));
     assert_eq!(hit.node(c, function.graph()), None);
     assert!(hit.asm_fingerprint(c, &function).is_empty());
-    assert_eq!(hit.get_vn(c, &function), None);
 }

@@ -8,7 +8,7 @@ use strider_ir_test_utils::Tb;
 
 // Shared with the other crate's copy of this module, so they live in the
 // dev-dependency both already use.
-pub(crate) use strider_ir_test_utils::{if_cmp_then_return, single_initial_var};
+pub(crate) use strider_ir_test_utils::if_cmp_then_return;
 
 pub(crate) fn int_bin_5_3(op: IntBinaryOp) -> Function {
     let mut t = Tb::empty();

@@ -60,34 +60,6 @@ impl Match {
         self.bindings.is_bound(c)
     }
 
-    /// The varnode of a bound `InitialVar` or tagged `Call` / `CallOther` output (result or
-    /// clobber); else `None`.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
-        use crate::bindings::Binding;
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
-        if self.is_stale(function.graph()) {
-            return None;
-        }
-        let binding = self.bindings.get_binding(c)?;
-        if let Binding::Value(value) = binding {
-            let (node, _slot) = function.value_definition(value);
-            let kind = function.node_kind(node);
-            if matches!(kind, NodeKind::Call { .. } | NodeKind::CallOther { .. })
-                && let Some(vn) = function.get_vn_for_value(value)
-            {
-                return Some(vn);
-            }
-        }
-        // An `InitialVar` tags the owning node, not the value.
-        let node = self.bindings.get_node(c, function.graph())?;
-        match function.node_kind(node) {
-            NodeKind::InitialVar(id) => Some(function.initial_vn(*id)),
-            _ => None,
-        }
-    }
-
     /// Addresses of the instructions whose lift or rewrite fed the bound node: a superset of its
     /// contributors. Empty if unbound, stale, or
     /// [`asm_fingerprint_exempt`](strider_ir::node::NodeKind::asm_fingerprint_exempt).
