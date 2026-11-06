@@ -110,3 +110,28 @@ fn a_mips16_arm_at_a_slot_does_not_corrupt_a_later_decode_of_its_branch() {
         "the bltz at 0x1008 decodes as 8 bytes, branch plus a MIPS32 slot",
     );
 }
+
+/// A failed MIPS16 build at a slot address leaves `ISA_MODE=1` there, and
+/// `lui` does not decode as MIPS16: the branch's first decode fails on its
+/// slot, before any hold of the slot's context.
+#[test]
+fn a_slot_whose_stale_mode_fails_the_branch_decode_still_builds() {
+    let words: [u32; 4] = [
+        0x1080_0002, // 0x1000 beqz a0, 0x100c
+        0x3c08_0040, // 0x1004 lui t0, 0x40   ; slot
+        0x03e0_0008, // 0x1008 jr ra
+        0x0000_0000, // 0x100c nop
+    ];
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
+    let mut fresh = engine(bytes.clone(), 0x1000);
+    let clean = build(&mut fresh, 0x1000, 0, &bounded(16)).expect("fresh build");
+
+    let mut reused = engine(bytes, 0x1000);
+    assert!(
+        build(&mut reused, 0x1004, 1, &bounded(16)).is_err(),
+        "`lui` is no MIPS16 instruction"
+    );
+    let again = build(&mut reused, 0x1000, 0, &bounded(16))
+        .expect("the same bytes, entry and mode must build on a reused engine");
+    assert_eq!(lens_at(&again, 0x1000), lens_at(&clean, 0x1000));
+}

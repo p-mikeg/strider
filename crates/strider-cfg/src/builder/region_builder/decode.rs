@@ -35,6 +35,9 @@ pub(super) fn next_pcode_addr(
     })
 }
 
+/// The longest lift holding a delay slot: a 4-byte MIPS branch and its slot.
+const MAX_BRANCH_SPAN: usize = 8;
+
 /// Why a decode produced no instruction, carried as the `anyhow` payload.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::builder) enum DecodeFailure {
@@ -148,8 +151,8 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
     }
 
     /// Imposes the region's ISA mode and the `noflow` defaults at every 2-byte
-    /// offset inside the lift at `addr` (a branch's delay slot decodes in the
-    /// context at its own address). Returns whether it wrote any.
+    /// offset of `[addr+2, addr+len)`, where a branch's delay slot decodes.
+    /// Returns whether it wrote any.
     fn hold_delay_slot(&mut self, addr: u64, len: usize) -> Result<bool> {
         if !self.builder.engine.arch.has_delay_slots() {
             return Ok(false);
@@ -195,7 +198,17 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         );
         self.hold_transients(addr)?;
         self.hold_isa_mode(addr)?;
-        let mut lift = self.lift_unheld(addr)?;
+        let mut lift = match self.lift_unheld(addr) {
+            Ok(lift) => lift,
+            // A stale context at the delay slot can fail the decode itself.
+            Err(e) => {
+                if !self.hold_delay_slot(addr, MAX_BRANCH_SPAN)? {
+                    return Err(e);
+                }
+                self.hold_isa_mode(addr)?;
+                self.lift_unheld(addr)?
+            }
+        };
         if self.hold_delay_slot(addr, lift.machine_insn_len)? {
             // The first decode may have committed the mode at a target below,
             // painting `addr` itself.
