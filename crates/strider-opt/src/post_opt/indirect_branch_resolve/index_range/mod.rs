@@ -164,8 +164,9 @@ impl<'f> RangeMap<'f> {
     }
 
     /// The union of the ranges of the arms `region` can be reached through,
-    /// each queried at the producer of its edge, met with a guard on the phi's own output at `region` and with a
-    /// guard on any field of it the union fits in.
+    /// each queried at the producer of its edge, met with a guard on the
+    /// phi's own output at `region` and with a guard on any field of it the
+    /// union fits in.
     fn resolve_phi(&mut self, value: ValueId, mask: u128, region: NodeId) -> Interval {
         let top = Interval::top(mask);
         let phi_node = self.function.producer(value);
