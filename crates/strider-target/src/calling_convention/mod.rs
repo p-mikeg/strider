@@ -135,8 +135,7 @@ fn first_overlapping<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a 
         .find(|vn| b.iter().any(|other| vn_container::vn_overlaps(vn, other)))
 }
 
-/// First entry of `list` appearing twice, by equality: ARM's `d0..d3` share
-/// two `q` containers.
+/// First entry of `list` appearing twice.
 fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
     list.iter()
         .enumerate()
@@ -305,29 +304,14 @@ impl BuiltCallingConvention {
         for (list_name, list) in [
             ("arg_passing_regs", &self.arg_passing_regs),
             ("arg_passing_regs_float", &self.arg_passing_regs_float),
+            ("ret_val_regs", &self.ret_val_regs),
+            ("ret_val_regs_float", &self.ret_val_regs_float),
         ] {
             if let Some(vn) = first_overlapping(list, &self.callee_saved_regs) {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: varnode {vn:?} in {list_name} shares \
-                     bytes with callee_saved_regs (a single register cannot be \
-                     both caller-supplied and callee-preserved)",
-                ));
-            }
-        }
-        for vn in self
-            .ret_val_regs
-            .iter()
-            .chain(self.ret_val_regs_float.iter())
-        {
-            if self
-                .callee_saved_regs
-                .iter()
-                .any(|saved| vn_container::vn_overlaps(vn, saved))
-            {
-                return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {vn:?} in \
-                     ret_val_regs/ret_val_regs_float shares bytes with \
-                     callee_saved_regs",
+                     bytes with callee_saved_regs (a single register cannot \
+                     both carry a value and be callee-preserved)",
                 ));
             }
         }
