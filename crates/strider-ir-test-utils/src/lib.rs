@@ -614,14 +614,6 @@ pub fn mem_phi_with_two_stores() -> Function {
     b.build().unwrap()
 }
 
-/// `return(reg)` over one tracked register, and that register.
-pub fn single_initial_var() -> (Function, rsleigh::Vn) {
-    let reg = reg_vn(0x00, 8);
-    let mut t = Tb::with_vars(&[reg]);
-    let v = t.read_var(&reg);
-    (t.ret_val(v), reg)
-}
-
 #[cfg(test)]
 mod rom_tests {
     use strider_ir::ReadOnlyMemory;
