@@ -57,8 +57,8 @@ pub type PostMatchFn =
 pub(crate) enum InputSlot {
     /// One IR input slot.
     At(usize),
-    /// Any input not taken by a fixed operand (`any_input`), of the sub-pattern's output kind;
-    /// a wildcard reaches every slot.
+    /// An input no fixed operand pins (`any_input`), any input on a commutative node; no
+    /// kind filter, the sub-pattern discriminates.
     Any,
 }
 
