@@ -109,8 +109,8 @@ pub struct ContainerMap {
 }
 
 impl ContainerMap {
-    /// Resolves each REGISTER / UNIQUE query against `tracked` in one
-    /// O(n log n) sweep per space.
+    /// Resolves each REGISTER / UNIQUE query against `tracked` with one sorted
+    /// sweep per space.
     pub fn build(tracked: &[rsleigh::Vn], queries: impl IntoIterator<Item = rsleigh::Vn>) -> Self {
         let mut tracked_by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> =
             FxHashMap::default();

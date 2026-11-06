@@ -46,8 +46,8 @@ impl<N: EntityRef, I: IntoIterator<Item = N>, F: Fn(N) -> I> GraphRef for FnSucc
     }
 }
 
-/// Yields each node reachable from the roots once, in DFS preorder, which is
-/// not a topological order: successors are explored LIFO.
+/// Yields each node reachable from the roots once, in DFS preorder;
+/// successors are visited in reverse push order.
 pub struct PreOrder<G: GraphRef> {
     graph: G,
     visited: DenseEntitySet<G::NodeId>,
