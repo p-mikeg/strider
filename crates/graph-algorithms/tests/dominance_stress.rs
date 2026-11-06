@@ -11,7 +11,7 @@ use std::hash::{Hash, Hasher};
 use common::cases::{self, Case};
 use graph_algorithms::dominance::{
     DomIntervals, Dominators, Frontiers, dominance_frontiers, dominators, immediate_dominators,
-    phi_placement,
+    phi_placement, phi_placement_from_frontiers,
 };
 use graph_algorithms::oracle;
 use petgraph::graph::NodeIndex;
@@ -97,6 +97,28 @@ impl Id for Counted {
 /// The frontiers lift computes.
 fn frontiers<N: Id>(doms: &Dominators<N>, preds: &[Vec<u32>]) -> Frontiers<N> {
     dominance_frontiers(doms, |v: N| preds[v.ix()].iter().map(|&p| N::at(p)))
+}
+
+/// The placement lift computes, as `(node, var)` pairs.
+fn placement<N: Id + Ord>(
+    doms: &Dominators<N>,
+    preds: &[Vec<u32>],
+    defs: &[Vec<u32>],
+) -> BTreeSet<(N, usize)> {
+    let sites: HashMap<usize, Vec<N>> = defs
+        .iter()
+        .map(|d| d.iter().map(|&v| N::at(v)).collect())
+        .enumerate()
+        .collect();
+    let placed = phi_placement(doms, |v: N| preds[v.ix()].iter().map(|&p| N::at(p)), &sites);
+    pairs(&placed)
+}
+
+fn pairs<N: Id + Ord>(placed: &FxHashMap<N, rustc_hash::FxHashSet<usize>>) -> BTreeSet<(N, usize)> {
+    placed
+        .iter()
+        .flat_map(|(&v, vars)| vars.iter().map(move |&var| (v, var)))
+        .collect()
 }
 
 /// The preorder strider-ir walks: siblings in depth-first discovery order.
@@ -188,7 +210,12 @@ fn check_dominance(c: &Case) {
         assert_eq!(&set, want, "DF({v}), {c:?}");
     }
     let sites: HashMap<usize, Vec<u32>> = c.defs.iter().cloned().enumerate().collect();
-    let placed = phi_placement(&fr, &sites);
+    let placed = phi_placement_from_frontiers(&fr, &sites);
+    assert_eq!(
+        placement(&doms, &preds, &c.defs),
+        pairs(&placed),
+        "placement against the frontier placement, {c:?}"
+    );
     for (var, defs) in c.defs.iter().enumerate() {
         let got: BTreeSet<u32> = placed
             .iter()
@@ -270,6 +297,14 @@ fn check_large(c: &Case) {
         assert_eq!(doms.immediate_dominator(v), theirs, "idom({v}), n {n}");
     }
     check_tree_numbering(&doms, n);
+    let preds = oracle::preds_of(&succs);
+    let sites: HashMap<usize, Vec<u32>> = c.defs.iter().cloned().enumerate().collect();
+    let placed = phi_placement_from_frontiers(&frontiers(&doms, &preds), &sites);
+    assert_eq!(
+        placement(&doms, &preds, &c.defs),
+        pairs(&placed),
+        "placement against the frontier placement, n {n}"
+    );
 }
 
 /// The tree numberings against the idoms, in one pass each: `tree_preorder`
@@ -491,8 +526,12 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         // so the peak holds one of them at a time.
         let fr = frontiers(&doms, &preds);
         let fr_entries: usize = fr.values().map(Vec::len).sum();
-        let placed = phi_placement(&fr, &HashMap::from([(0u8, vec![Counted(1)])]));
         drop(fr);
+        let placed = phi_placement(
+            &doms,
+            |v: Counted| preds[v.0 as usize].iter().map(|&p| Counted(p)),
+            &HashMap::from([(0u8, vec![Counted(1)])]),
+        );
         let mut got: Vec<u32> = placed.keys().map(|v| v.0).collect();
         drop(placed);
         let order_len = doms.tree_preorder().len();
@@ -517,4 +556,61 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         );
     }
     HASH_BUDGET.with(|c| c.set(u64::MAX));
+}
+
+/// Many small random graphs, irreducible and with unreachable predecessors
+/// and defs among them: the placement matches the frontier one.
+#[test]
+fn placement_matches_the_frontier_placement_on_random_graphs() {
+    for seed in 1..=4_000u64 {
+        let c = cases::large_case(2 + (seed % 60) as u32, seed);
+        let succs = c.succs();
+        let preds = oracle::preds_of(&succs);
+        let doms = dominators(0u32, |v| succs[v as usize].clone());
+        let sites: HashMap<usize, Vec<u32>> = c.defs.iter().cloned().enumerate().collect();
+        let placed = phi_placement_from_frontiers(&frontiers(&doms, &preds), &sites);
+        assert_eq!(
+            placement(&doms, &preds, &c.defs),
+            pairs(&placed),
+            "seed {seed}, {c:?}"
+        );
+    }
+}
+
+/// A back-edge ladder: a chain `L_0 .. L_{n-1}`, then a run of blocks each
+/// branching back to one `L_i`. `DF(L_k)` holds `L_0 ..= L_k`, so the
+/// frontiers total `n^2 / 2` entries; the placement probes linearly.
+#[test]
+fn placement_is_linear_on_a_back_edge_ladder() {
+    const N: u32 = 50_000;
+    // `L_i = i`, the test `N`, the back-gotos `N + 1 + i`, the exit `2N + 1`.
+    let succs = |v: u32| -> Vec<u32> {
+        match v {
+            _ if v < N => vec![v + 1],
+            _ if v == N => vec![N + 1, 2 * N + 1],
+            _ if v < 2 * N => vec![v - N - 1, v + 1],
+            _ if v == 2 * N => vec![N - 1, 2 * N + 1],
+            _ => Vec::new(),
+        }
+    };
+    let mut preds: Vec<Vec<u32>> = vec![Vec::new(); 2 * N as usize + 2];
+    let mut edges = 0u64;
+    for v in 0..2 * N + 2 {
+        for w in succs(v) {
+            preds[w as usize].push(v);
+            edges += 1;
+        }
+    }
+    let doms = dominators(Counted(0), |v: Counted| succs(v.0).into_iter().map(Counted));
+    HASHES.with(|c| c.set(0));
+    HASH_BUDGET.with(|c| c.set(64 * (u64::from(2 * N + 2) + edges)));
+    let placed = phi_placement(
+        &doms,
+        |v: Counted| preds[v.0 as usize].iter().map(|&p| Counted(p)),
+        &HashMap::from([(0u8, (0..N).map(Counted).collect::<Vec<_>>())]),
+    );
+    HASH_BUDGET.with(|c| c.set(u64::MAX));
+    let mut got: Vec<u32> = placed.keys().map(|v| v.0).collect();
+    got.sort_unstable();
+    assert_eq!(got, (0..N).collect::<Vec<_>>());
 }

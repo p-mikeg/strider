@@ -256,9 +256,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // variable's def sites, less region-local temporaries.
         let graph = cfg.region_graph();
         let doms = graph_algorithms::dominance::dominators(cfg.entry(), |r| graph.neighbors(r));
-        // An absent key means an empty frontier.
-        let frontiers =
-            graph_algorithms::dominance::dominance_frontiers(&doms, |r| cfg.region_predecessors(r));
         let (mut def_sites, nonlocal) = driver.collect_def_sites()?;
         // The write funnel checks against the unnarrowed map.
         #[cfg(debug_assertions)]
@@ -266,7 +263,11 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             driver.def_sites = def_sites.clone();
         }
         def_sites.retain(|&id, _| !driver.is_local_temporary(id, &nonlocal));
-        let placement = graph_algorithms::dominance::phi_placement(&frontiers, &def_sites);
+        let placement = graph_algorithms::dominance::phi_placement(
+            &doms,
+            |r| cfg.region_predecessors(r),
+            &def_sites,
+        );
 
         let region_map = driver.build_region_map(&placement)?;
 

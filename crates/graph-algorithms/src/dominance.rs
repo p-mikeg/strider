@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::hash::{BuildHasher, Hash};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// `Frontiers[x]` is the dominance frontier of `x`; absent means empty.
+#[cfg(feature = "test-util")]
 pub type Frontiers<N> = FxHashMap<N, Vec<N>>;
 
 /// Cytron dominance frontiers: `DF(x)` is the set of vertices `b` where `x`
@@ -12,6 +13,7 @@ pub type Frontiers<N> = FxHashMap<N, Vec<N>>;
 ///
 /// A root with a predecessor reachable from it is in its own frontier. A
 /// climb from an unreachable predecessor records `(p, b)` and stops.
+#[cfg(feature = "test-util")]
 #[must_use]
 pub fn dominance_frontiers<N, I>(
     doms: &Dominators<N>,
@@ -54,12 +56,112 @@ where
     frontiers
 }
 
-/// Iterated dominance frontier / SSA phi placement (Cytron et al., Fig. 11):
-/// a phi for `V` lands at node `R` iff `R` is in `IDF(def-sites(V))`.
+/// Iterated dominance frontier / SSA phi placement: a phi for `V` lands at
+/// node `R` iff `R` is in `IDF(def-sites(V))`. `preds` yields each vertex's
+/// predecessors, unreachable ones included; an unreachable def's frontier is
+/// its reachable successors.
+///
+/// Sreedhar-Gao over the DJ graph: each def's dominator subtree is walked
+/// deepest def first, and a join edge into a node no deeper than the def is
+/// in the IDF. `O(N + E)` per variable, no frontier is built.
 ///
 /// Returns, per node, the variables needing a phi there.
 #[must_use]
-pub fn phi_placement<Var, Node, C, H>(
+pub fn phi_placement<Var, Node, C, H, I>(
+    doms: &Dominators<Node>,
+    mut preds: impl FnMut(Node) -> I,
+    def_sites: &HashMap<Var, C, H>,
+) -> FxHashMap<Node, FxHashSet<Var>>
+where
+    Var: Copy + Eq + Hash,
+    Node: Copy + Eq + Hash,
+    H: BuildHasher,
+    for<'a> &'a C: IntoIterator<Item = &'a Node>,
+    I: IntoIterator<Item = Node>,
+{
+    let n = doms.vertices.len();
+    let children = children(&doms.idom);
+    let mut level = vec![0u32; n];
+    for v in 1..n {
+        level[v] = level[doms.idom[v] as usize] + 1;
+    }
+    // Join edges `p -> b`, `p` not `b`'s idom, by position. One from an
+    // unreachable `p` is keyed by `p`: its frontier holds every such `b`.
+    let mut joins: Vec<Vec<u32>> = vec![Vec::new(); n];
+    let mut unreached_joins: FxHashMap<Node, Vec<u32>> = FxHashMap::default();
+    for (b, &node) in doms.vertices.iter().enumerate() {
+        for p in preds(node) {
+            match doms.number.get(&p) {
+                Some(&at) if b != 0 && doms.idom[b] == at => {}
+                Some(&at) => joins[at as usize].push(b as u32),
+                None => unreached_joins.entry(p).or_default().push(b as u32),
+            }
+        }
+    }
+
+    let mut placement: FxHashMap<Node, FxHashSet<Var>> = FxHashMap::default();
+    // Per-variable marks: equal to `stamp` means set for this variable.
+    let (mut is_def, mut visited, mut placed) = (vec![0u32; n], vec![0u32; n], vec![0u32; n]);
+    let mut roots: BinaryHeap<(u32, u32)> = BinaryHeap::new();
+    let mut stack: Vec<u32> = Vec::new();
+    // IDF candidates not yet placed.
+    let mut found: Vec<u32> = Vec::new();
+    for (stamp, (&var, defs)) in (1u32..).zip(def_sites) {
+        for d in defs {
+            if let Some(&at) = doms.number.get(d) {
+                is_def[at as usize] = stamp;
+                roots.push((level[at as usize], at));
+            } else if let Some(bs) = unreached_joins.get(d) {
+                found.extend(bs);
+            }
+        }
+        loop {
+            for b in found.drain(..) {
+                let b_ix = b as usize;
+                if placed[b_ix] != stamp {
+                    placed[b_ix] = stamp;
+                    placement
+                        .entry(doms.vertices[b_ix])
+                        .or_default()
+                        .insert(var);
+                    // The phi is itself a def of `V`.
+                    if is_def[b_ix] != stamp {
+                        roots.push((level[b_ix], b));
+                    }
+                }
+            }
+            let Some((root_level, root)) = roots.pop() else {
+                break;
+            };
+            if visited[root as usize] == stamp {
+                continue;
+            }
+            visited[root as usize] = stamp;
+            stack.push(root);
+            while let Some(y) = stack.pop() {
+                let y = y as usize;
+                found.extend(
+                    joins[y]
+                        .iter()
+                        .filter(|&&b| level[b as usize] <= root_level),
+                );
+                for &c in &children[y] {
+                    if visited[c as usize] != stamp {
+                        visited[c as usize] = stamp;
+                        stack.push(c);
+                    }
+                }
+            }
+        }
+    }
+    placement
+}
+
+/// [`phi_placement`] from materialised frontiers (Cytron et al., Fig. 11),
+/// quadratic where frontiers overlap.
+#[cfg(feature = "test-util")]
+#[must_use]
+pub fn phi_placement_from_frontiers<Var, Node, C, H>(
     frontiers: &Frontiers<Node>,
     def_sites: &HashMap<Var, C, H>,
 ) -> FxHashMap<Node, FxHashSet<Var>>
@@ -369,6 +471,15 @@ mod tests {
             .collect()
     }
 
+    /// The placement over `edges`, checked against the frontier one.
+    fn place(edges: &Edges, pairs: &[(char, &[u32])]) -> FxHashMap<u32, FxHashSet<char>> {
+        let (doms, fr) = frontiers_of(edges);
+        let sites = defs(pairs);
+        let placed = phi_placement(&doms, |v| preds_of(edges, v), &sites);
+        assert_eq!(placed, phi_placement_from_frontiers(&fr, &sites));
+        placed
+    }
+
     const DIAMOND: &Edges = &[(0, &[1, 2]), (1, &[3]), (2, &[3])];
 
     /// Diamond: 0 -> {1,2} -> 3.
@@ -381,7 +492,7 @@ mod tests {
         assert!(df_sorted(&fr, 0).is_empty());
 
         // Defined in one arm only, but still needs a phi at the join.
-        let place = phi_placement(&fr, &defs(&[('a', &[1])]));
+        let place = place(DIAMOND, &[('a', &[1])]);
         assert!(place[&3].contains(&'a'));
         assert_eq!(place.len(), 1, "φ only at the join");
     }
@@ -391,13 +502,14 @@ mod tests {
     /// fixed point.
     #[test]
     fn loop_frontiers_and_iterated_placement() {
-        let (_, fr) = frontiers_of(&[(0, &[1]), (1, &[2, 3]), (2, &[1])]);
+        const LOOP: &Edges = &[(0, &[1]), (1, &[2, 3]), (2, &[1])];
+        let (_, fr) = frontiers_of(LOOP);
         assert_eq!(df_sorted(&fr, 2), vec![1]);
         assert_eq!(df_sorted(&fr, 1), vec![1]);
 
         // DF(2)={1} -> phi at head; head is then a fresh def, but DF(1)={1} is
         // already placed -> fixed point at one phi.
-        let place = phi_placement(&fr, &defs(&[('v', &[2])]));
+        let place = place(LOOP, &[('v', &[2])]);
         assert!(place[&1].contains(&'v'));
         assert_eq!(place.len(), 1);
     }
@@ -412,7 +524,7 @@ mod tests {
         assert_eq!(df_sorted(&fr, 0), vec![0]);
 
         // A variable defined in the loop body needs its phi AT the root.
-        let place = phi_placement(&fr, &defs(&[('v', &[0])]));
+        let place = place(&[(0, &[0])], &[('v', &[0])]);
         assert!(place[&0].contains(&'v'));
     }
 
@@ -608,8 +720,7 @@ mod tests {
 
     #[test]
     fn multiple_variables_share_a_join() {
-        let (_, fr) = frontiers_of(DIAMOND);
-        let place = phi_placement(&fr, &defs(&[('a', &[1]), ('b', &[2])]));
+        let place = place(DIAMOND, &[('a', &[1]), ('b', &[2])]);
         assert_eq!(place[&3].len(), 2);
         assert!(place[&3].contains(&'a') && place[&3].contains(&'b'));
         assert_eq!(place.len(), 1, "both φs land only at the join");
