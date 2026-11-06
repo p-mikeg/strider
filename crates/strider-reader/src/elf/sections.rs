@@ -128,7 +128,7 @@ fn relocated_got_ranges(
 pub(crate) struct LoadedImage {
     /// One per start.
     pub(crate) regions: Vec<MemRegion>,
-    /// Every writable mapping the walk saw, filtered out or not.
+    /// Every writable address the walk saw, less the ranges served as ROM.
     pub(crate) writable: AddressSet,
     /// Every executable mapping the walk saw.
     pub(crate) executable: AddressSet,
