@@ -216,7 +216,7 @@ impl PyCfgOptions {
                         fragment_ranges = Vec::new(),
                         no_return_targets = AddrSetArg(rustc_hash::FxHashSet::default())))]
     fn new(
-        function_max_size: Option<u64>,
+        function_max_size: Option<crate::bigint::Unsigned<u64>>,
         allow_code_before_start_addr: bool,
         known_targets: MapArg<HashMap<Addr, KnownTarget>>,
         call_other_abis: MapArg<HashMap<String, CallOtherAbiArg>>,
@@ -224,7 +224,7 @@ impl PyCfgOptions {
         fragment_ranges: Vec<(Addr, Addr)>,
         no_return_targets: AddrSetArg,
     ) -> PyResult<Self> {
-        let bound = function_bound(function_max_size, allow_code_before_start_addr)?;
+        let bound = function_bound(function_max_size.map(|s| s.0), allow_code_before_start_addr)?;
         let known_targets: HashMap<u64, KnownTarget> =
             known_targets.0.into_iter().map(|(a, t)| (a.0, t)).collect();
         let ranges = |r: Vec<(Addr, Addr)>| -> Vec<(u64, u64)> {
@@ -531,8 +531,8 @@ pub struct PyLifterOptions {
     /// Drop unreachable IR nodes after analysis (default `True`).
     #[pyo3(get)]
     pub compact: bool,
-    /// An override's `stack_pointer` must be the analysed function's own, or
-    /// `analyze` raises.
+    /// A call to an override whose `stack_pointer` is not the analysed
+    /// function's own raises.
     pub per_address_ccs: Option<PerAddressCcs>,
     /// Run the indirect-branch classifier (default `True`). `False` leaves
     /// every site not in `known_targets` an `IndirectBranch`.

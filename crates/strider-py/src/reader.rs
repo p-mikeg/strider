@@ -93,8 +93,9 @@ impl PyBufferReader {
         &self,
         py: Python<'py>,
         addr: crate::bigint::Addr,
-        size: usize,
+        size: crate::bigint::Unsigned<usize>,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        let size = size.0;
         let table = self.lookup_table();
         table.check_unchanged().map_err(into_strider_err)?;
         Ok(table
@@ -993,7 +994,7 @@ impl PyLoadedElf {
         &self,
         py: Python<'py>,
         addr: crate::bigint::Addr,
-        size: usize,
+        size: crate::bigint::Unsigned<usize>,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         self.mem.read(py, addr, size)
     }
