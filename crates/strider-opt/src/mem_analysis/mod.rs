@@ -12,7 +12,7 @@ mod stamp;
 mod walker;
 
 pub(crate) use alias::Loc;
-pub(crate) use arg_window::ArgPrefix;
+pub(crate) use arg_window::{ArgPrefix, merged_slots};
 pub(crate) use decompose::{alignment_masked_operand, decompose};
 pub(crate) use frame::entry_sp_span;
 pub(crate) use query::{MemQuery, Policy, ReachingDef, narrow_load_to, store_value_byte_size};

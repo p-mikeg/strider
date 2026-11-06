@@ -15,6 +15,9 @@ mod call_other_precise_abi;
 #[path = "calls_and_abi/call_other_simd_abi.rs"]
 mod call_other_simd_abi;
 
+#[path = "calls_and_abi/call_stack_args_merged_store.rs"]
+mod call_stack_args_merged_store;
+
 #[path = "calls_and_abi/call_stack_args_patched_slot.rs"]
 mod call_stack_args_patched_slot;
 

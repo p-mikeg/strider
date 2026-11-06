@@ -1,7 +1,8 @@
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 use crate::Result;
-use crate::mem_analysis::{ArgPrefix, MemQuery};
+use crate::mem_analysis::{ArgPrefix, MemQuery, merged_slots};
 use crate::pipeline::Optimizer;
 
 #[cfg(test)]
@@ -11,14 +12,17 @@ mod tests;
 /// stopping at the first slot no whole store of its own reaches. Offsets are
 /// relative to the call-time SP; a store wider than one slot is one argument.
 /// A slot holding the entry value of a register the function's own convention
-/// preserves (a prologue save) ends it, as does a `Call` on the chain.
-/// Over-collects other incidental stack writes.
+/// preserves (a prologue save) ends it, as does a `Call` on the chain. Slots
+/// past the prefix that every arm of a non-loop `MemPhi` stores whole continue
+/// it as a `Phi` of the stored values. Over-collects other incidental stack
+/// writes.
 fn collect_stack_args(
-    function: &strider_ir::Function,
+    edit: &mut crate::EditFunction<'_>,
     call_id: NodeId,
     increment: i128,
     query: &MemQuery,
 ) -> Vec<ValueId> {
+    let function = edit.function();
     let Some(prefix) = ArgPrefix::scan(function, query, call_id) else {
         return Vec::new();
     };
@@ -33,7 +37,7 @@ fn collect_stack_args(
     // An anchor a nearer store patched in part holds no one value to collect,
     // and a store inside the slot is its argument only right-justified on
     // big-endian.
-    prefix
+    let mut args: Vec<ValueId> = prefix
         .slots()
         .iter()
         .map_while(|slot| {
@@ -44,7 +48,35 @@ fn collect_stack_args(
                     || (big_endian && slot.span == increment)))
                 .then_some(data)
         })
-        .collect()
+        .collect();
+    if args.len() < prefix.slots().len() {
+        return args;
+    }
+    for (mem_phi, stores) in merged_slots(function, query, call_id, &prefix) {
+        let function = edit.function();
+        let data: Vec<ValueId> = stores.iter().map(|hit| hit.data(function)).collect();
+        let region = function.phi_region(mem_phi);
+        // A loop header's arms are a local's iterations, not one call's paths.
+        let header = {
+            let doms = edit.control_dominator_tree();
+            function
+                .node_inputs(region)
+                .into_iter()
+                .any(|edge| doms.dominates(region, function.producer(edge)))
+        };
+        if header || data.iter().any(|v| saved.contains(v)) {
+            break;
+        }
+        let ty = function.value_type(data[0]).expect("store data is typed");
+        let token = function.node_inputs(mem_phi)[NodeKind::PHI_TOKEN_SLOT];
+        let phi = edit.create_node(
+            NodeKind::Phi,
+            std::iter::once(token).chain(data),
+            [ValueKind::Typed(ty)],
+        );
+        args.push(edit.function().node_outputs(phi)[0]);
+    }
+    args
 }
 
 /// The inputs a `Call` carries before any collection: the head plus one per
@@ -94,7 +126,7 @@ impl Optimizer for CallStackArgCollect {
                 };
                 (stack_args, arity)
             };
-            let args = collect_stack_args(edit.function(), call_id, stack_args.increment, &query);
+            let args = collect_stack_args(edit, call_id, stack_args.increment, &query);
             edit.truncate_node_inputs(call_id, arity);
             for arg_value in &args {
                 edit.add_node_input(call_id, *arg_value);
