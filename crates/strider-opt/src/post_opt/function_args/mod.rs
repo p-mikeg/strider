@@ -43,11 +43,10 @@ impl Optimizer for FunctionArgDetect {
     }
 }
 
-/// Walks slots from 0 assigning one ordinal per anchored argument, spanning
-/// the widest load anchored at the cursor, so adjacent arguments read by one
-/// wide and one narrow load merge into one ordinal. The first slot with no
-/// anchored load ends the prefix, as does a dirty load reaching past its
-/// argument (after that argument).
+/// One ordinal per run of slots from slot 0. A run spans every clean load
+/// starting in it, so arguments one wide load reads merge. The first slot no
+/// clean load starts at ends the prefix; a dirty load reaching past a run
+/// ends it after that run.
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
     query: &MemQuery,
