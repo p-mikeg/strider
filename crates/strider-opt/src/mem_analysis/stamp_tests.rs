@@ -17,7 +17,7 @@ fn run(function: &mut Function) {
     // and PhiCollapse drops the read_variable(sp) phi, giving the production
     // shape the post-pass sees.
     run_passes(function, CF_RP).expect("canonicalize must not error");
-    super::stamp_all(&mut crate::EditFunction::new(function));
+    super::stamp_all(&crate::EditFunction::new(function));
 }
 
 /// Builds `store [sp-4] = 0x42; load [sp-4]; return loaded`.

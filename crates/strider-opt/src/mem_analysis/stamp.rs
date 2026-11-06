@@ -12,7 +12,7 @@ use strider_ir::node::{NodeId, NodeKind};
 use super::decompose::decompose;
 
 /// Fills the decomposition memo for every live access.
-pub(crate) fn stamp_all(edit: &mut crate::EditFunction<'_>) {
+pub(crate) fn stamp_all(edit: &crate::EditFunction<'_>) {
     let candidates: Vec<NodeId> = edit
         .live_of_kind(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
         .collect();
