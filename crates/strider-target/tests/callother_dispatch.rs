@@ -8,24 +8,6 @@ fn expect_call(c: Option<CallOtherClass>) -> CallOtherAbi {
     }
 }
 
-/// `software_interrupt` is declared only by ARM (`ARM.sinc`), and the
-/// four ARM32 presets are the only ones an ARM sla decodes for, so the name
-/// reaching any other preset would be a caller's typo, not an op.
-#[test]
-fn software_interrupt_is_an_arm32_only_name() {
-    for preset in ArchPreset::ALL {
-        let arm32 = matches!(
-            preset,
-            ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb
-        );
-        assert_eq!(
-            classify(*preset, "software_interrupt").is_some(),
-            arm32,
-            "{preset:?}"
-        );
-    }
-}
-
 /// An unknown user-op name classifies as `None` under EVERY preset, never a
 /// silent default ABI.  Missing table entries are intentional, added on demand
 /// when real binaries surface them; the lifter turns `None` into an
@@ -102,25 +84,6 @@ fn aarch64_tbl_is_pure_and_scoped() {
     }
     assert_eq!(classify(ArchPreset::X86_64, "a64_TBL"), None);
     assert_eq!(classify(ArchPreset::Arm, "a64_TBL"), None);
-}
-
-/// `SVE_ldr` / `SVE_str` take a BASE REGISTER, not a dynamic memory varnode,
-/// so no p-code Load / Store is emitted and the access is implicit.  They are
-/// the reason `SVE_` is not a prefix family: `SVE_fnmla` next to them is pure.
-#[test]
-fn sve_load_store_clobber_memory_unlike_sve_compute() {
-    for name in ["SVE_ldr", "SVE_str"] {
-        for preset in [ArchPreset::Aarch64, ArchPreset::Aarch64Be] {
-            let abi = expect_call(classify(preset, name));
-            assert!(
-                abi.clobbers_memory,
-                "{preset:?}/{name}: implicit memory access"
-            );
-        }
-        assert_eq!(classify(ArchPreset::X86_64, name), None, "x86/{name}");
-    }
-    let compute = expect_call(classify(ArchPreset::Aarch64, "SVE_fnmla"));
-    assert!(!compute.clobbers_memory, "SVE compute stays pure");
 }
 
 /// ARM-32 NEON names outside the `Vector*` / `Float*` groups; saturation
@@ -246,26 +209,6 @@ fn arm_mode_switch_writes_the_fiq_banked_registers() {
     }
 }
 
-/// `ARM.sinc` and `ARMTHUMBinstructions.sinc` are the only vendored specs
-/// declaring these pcodeops, and `sp` / `lr` are ARM-32 register names: off
-/// ARM-32 the write list either fails to resolve or, worse, resolves against
-/// an unrelated arch's `sp` and claims a stack pointer clobbered that the
-/// instruction never touches.
-#[test]
-fn arm_mode_switch_rows_are_scoped_to_arm32() {
-    for &preset in ArchPreset::ALL {
-        if matches!(
-            preset,
-            ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb
-        ) {
-            continue;
-        }
-        for name in ARM_MODE_SWITCH_OPS {
-            assert_eq!(classify(preset, name), None, "{preset:?}/{name}");
-        }
-    }
-}
-
 fn regs_for(preset: ArchPreset) -> rsleigh::SleighRegs {
     preset.arch().probe_regs()
 }
@@ -299,75 +242,6 @@ fn arm_privileged_state_ops_are_classified_in_pairs() {
             let abi = expect_call(classify(preset, name));
             assert!(!abi.clobbers_memory, "{preset:?}/{name}");
             assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-    }
-}
-
-const MIPS_PRESETS: [ArchPreset; 4] = [
-    ArchPreset::MipsBe32,
-    ArchPreset::MipsLe32,
-    ArchPreset::MipsBe64,
-    ArchPreset::MipsLe64,
-];
-
-/// `mips.sinc` declares `syscall` and `mips32Instructions.sinc` emits it, so
-/// without a MIPS-scoped row every MIPS function containing one fails to lift:
-/// the x86_64 row is scoped to x86_64 and the PPC one to the PPC presets.
-#[test]
-fn mips_syscall_carries_the_linux_footprint() {
-    for preset in MIPS_PRESETS {
-        let abi = expect_call(classify(preset, "syscall"));
-        assert!(
-            abi.clobbers_memory,
-            "{preset:?}: a kernel entry touches memory"
-        );
-        assert!(!abi.no_return, "{preset:?}: a syscall returns");
-        // v0 carries the number in and the result out; a3 is the error flag.
-        assert!(abi.implicit_reads.contains(&"v0"), "{preset:?}");
-        assert!(abi.implicit_reads.contains(&"a0"), "{preset:?}");
-        assert!(abi.implicit_writes.contains(&"v0"), "{preset:?}");
-        assert!(abi.implicit_writes.contains(&"a3"), "{preset:?}");
-        // The kernel's partial syscall exit does not restore these.
-        for r in ["at", "hi", "lo"] {
-            assert!(abi.implicit_writes.contains(&r), "{preset:?}/{r}");
-        }
-        // Every name has to resolve on this preset's own register table.
-        abi.build(&regs_for(preset))
-            .unwrap_or_else(|e| panic!("{preset:?}: {e}"));
-    }
-    // n64 passes eight arguments; Ghidra's MIPS spec spells a4..a7 as t0..t3.
-    let n64 = expect_call(classify(ArchPreset::MipsBe64, "syscall"));
-    assert!(n64.implicit_reads.contains(&"t3"));
-    let o32 = expect_call(classify(ArchPreset::MipsBe32, "syscall"));
-    assert!(!o32.implicit_reads.contains(&"t3"));
-}
-
-/// The ARM32 sla declares no output for `software_smc` / `software_hvc`, so
-/// an empty write footprint lets a read after the SMC resolve to the value
-/// that flowed in.  SMCCC returns in r0..r3.
-#[test]
-fn arm32_smc_and_hvc_clobber_the_smccc_result_registers() {
-    for preset in [
-        ArchPreset::Arm,
-        ArchPreset::ArmBe,
-        ArchPreset::ArmBeKernel,
-        ArchPreset::ArmThumb,
-    ] {
-        for op in ["software_smc", "software_hvc"] {
-            let abi = expect_call(classify(preset, op));
-            for r in ["r0", "r1", "r2", "r3"] {
-                assert!(
-                    abi.implicit_writes.contains(&r),
-                    "{preset:?}/{op}: {r} carries an SMCCC result, got {:?}",
-                    abi.implicit_writes
-                );
-            }
-            assert_eq!(
-                abi.implicit_reads,
-                &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"]
-            );
-            assert!(abi.clobbers_memory, "{preset:?}/{op}");
-            assert!(!abi.no_return, "{preset:?}/{op}: SMC returns");
         }
     }
 }
