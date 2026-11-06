@@ -44,9 +44,11 @@ pub struct Function {
 impl Function {
     /// Builds the `Entry` node. `InitialMemory` is the `FunctionBuilder`'s job.
     ///
-    /// `tracked_vns` keeps only the largest of nested varnodes
-    /// ([`vn_container::dedup_overlapping_largest`]), sorted by space shortcut,
-    /// offset and size. A bare `Endianness` is the order of every space.
+    /// `tracked_vns` folds into disjoint containers, each the largest of
+    /// nested varnodes or the union of partially overlapping ones
+    /// ([`vn_container::dedup_overlapping_largest`]), sorted by space
+    /// shortcut, offset and size. A bare `Endianness` is the order of every
+    /// space.
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         byte_order: impl Into<strider_target::ByteOrder>,
@@ -357,12 +359,12 @@ mod function_skeleton_tests {
         assert_eq!(f.all_vns(), [reg(0, 8), reg(8, 8)]);
     }
 
-    /// Only containment collapses: two partially overlapping varnodes are two
-    /// variables, and a varnode listed twice is tracked once.
+    /// Two partially overlapping varnodes are one variable over their union,
+    /// or a write through one would never reach the other.
     #[test]
-    fn new_keeps_partial_overlaps_and_one_copy_of_a_duplicate() {
-        let f = test_function_tracking(vec![reg(4, 8), reg(0, 8), reg(4, 8)]);
-        assert_eq!(f.all_vns(), [reg(0, 8), reg(4, 8)]);
+    fn new_tracks_partial_overlaps_as_their_union() {
+        let f = test_function_tracking(vec![reg(4, 8), reg(0, 8), reg(4, 8), reg(16, 4)]);
+        assert_eq!(f.all_vns(), [reg(0, 12), reg(16, 4)]);
     }
 
     /// A claim in force keeps the memos; a new one drops them and joins the

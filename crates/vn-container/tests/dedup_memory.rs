@@ -51,32 +51,28 @@ fn reg(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
-/// Peak heap bytes of one call, every input surviving.
-fn peak_of(input: &[rsleigh::Vn]) -> isize {
+/// Peak heap bytes of one call, and how many varnodes it returned.
+fn peak_of(input: &[rsleigh::Vn]) -> (isize, usize) {
     LIVE.with(|c| c.set(0));
     PEAK.with(|c| c.set(0));
     let out = vn_container::dedup_overlapping_largest(input);
-    assert_eq!(
-        out.len(),
-        input.len(),
-        "nothing here strictly encloses anything"
-    );
-    PEAK.with(Cell::get)
+    (PEAK.with(Cell::get), out.len())
 }
 
-/// Byte-identical varnodes never subsume one another (enclosure is STRICT),
-/// so any state kept per survivor holds all of them, where an adjacent
-/// disjoint run keeps it at one. The sweep's two scalars allocate the same
-/// for both.
+/// One run of byte-identical varnodes folds into one result, so any state
+/// kept per run member holds all of them, where a disjoint run keeps it at
+/// one.
 #[test]
 fn dedup_peaks_no_higher_on_byte_identical_varnodes_than_on_disjoint_ones() {
     let identical = vec![reg(0, 4); N as usize];
     let disjoint: Vec<rsleigh::Vn> = (0..N).map(|i| reg(i * 4, 4)).collect();
-    let on_identical = peak_of(&identical);
-    let on_disjoint = peak_of(&disjoint);
+    let (on_identical, kept) = peak_of(&identical);
+    assert_eq!(kept, 1);
+    let (on_disjoint, kept) = peak_of(&disjoint);
+    assert_eq!(kept, N as usize);
     assert!(
         on_identical <= on_disjoint,
         "{N} byte-identical varnodes peaked at {on_identical} bytes against \
-         {on_disjoint} for {N} disjoint ones: the sweep keeps per-survivor state"
+         {on_disjoint} for {N} disjoint ones: the sweep keeps per-member state"
     );
 }

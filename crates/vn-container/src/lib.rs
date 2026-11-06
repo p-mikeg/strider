@@ -29,47 +29,51 @@ pub fn vn_overlaps(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
         && u128::from(b.addr_off) < vn_end(a)
 }
 
-/// Drops each REGISTER / UNIQUE varnode a strictly larger same-space varnode
-/// encloses (`edi` when `rdi` is present); other spaces pass through.
-/// Survivors keep input order. Partially overlapping varnodes both survive.
+/// Folds each run of overlapping REGISTER / UNIQUE varnodes into one: the
+/// member enclosing the rest (`rdi` over `edi`), else their union. Other
+/// spaces pass through. Each result keeps its run's earliest input position.
+///
+/// # Panics
+///
+/// If a union spans more than `u32::MAX` bytes.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
+    let mut out: Vec<Option<rsleigh::Vn>> = Vec::with_capacity(all_used_variables.len());
     for (i, v) in all_used_variables.iter().enumerate() {
         if is_aliasable_space(v.addr_space) {
             by_space.entry(v.addr_space).or_default().push((i, *v));
+            out.push(None);
+        } else {
+            out.push(Some(*v));
         }
     }
 
-    let mut dropped = vec![false; all_used_variables.len()];
+    // `head` starts the run and is its widest member at that offset.
+    let mut emit = |earliest: usize, head: rsleigh::Vn, end: u128| {
+        let size = u32::try_from(end - u128::from(head.addr_off)).expect("union under 4 GiB");
+        out[earliest] = Some(rsleigh::Vn { size, ..head });
+    };
     for (_space, mut bucket) in by_space {
-        // Size descending within an offset so a wider enclosure is seen before
-        // the narrower slices it contains.
         bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
-
-        // Every earlier entry starts at or before `v`, so one reaching `v_end`
-        // encloses `v`, strictly unless it has `v`'s exact range.
-        let mut max_end: u128 = 0;
-        let mut earliest_at_max_end: u64 = u64::MAX;
+        let mut run: Option<(usize, rsleigh::Vn, u128)> = None;
         for (idx, v) in bucket {
-            let v_end = vn_end(&v);
-            let enclosed =
-                max_end > v_end || (max_end == v_end && earliest_at_max_end < v.addr_off);
-            // Advances on strict growth only, or byte-identical varnodes
-            // drop each other.
-            if enclosed {
-                dropped[idx] = true;
-            } else if v_end > max_end {
-                max_end = v_end;
-                earliest_at_max_end = v.addr_off;
+            match &mut run {
+                Some((earliest, _, end)) if u128::from(v.addr_off) < *end => {
+                    *earliest = (*earliest).min(idx);
+                    *end = (*end).max(vn_end(&v));
+                }
+                _ => {
+                    if let Some((earliest, head, end)) = run.replace((idx, v, vn_end(&v))) {
+                        emit(earliest, head, end);
+                    }
+                }
             }
         }
+        if let Some((earliest, head, end)) = run {
+            emit(earliest, head, end);
+        }
     }
-
-    all_used_variables
-        .iter()
-        .enumerate()
-        .filter_map(|(i, v)| (!dropped[i]).then_some(*v))
-        .collect()
+    out.into_iter().flatten().collect()
 }
 
 /// Largest same-space varnode in `vns` containing `vn`, else `vn` itself;

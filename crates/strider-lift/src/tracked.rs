@@ -4,7 +4,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{Lifter, pcode_consts};
 
 impl<R: rsleigh::MemReader> Lifter<R> {
-    /// [`Self::scanned_vns`] plus [`Self::convention_vns`].
+    /// [`Self::scanned_vns`] plus [`Self::convention_vns`], plus the smallest
+    /// declared register enclosing each partially overlapping run
+    /// ([`Self::enclose_partial_overlaps`]).
     pub(crate) fn tracked_vns(
         &self,
         cfg: &strider_cfg::Cfg,
@@ -15,7 +17,40 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ) -> Result<FxHashSet<rsleigh::Vn>> {
         let mut tracked = self.scanned_vns(cfg, cfg_opts, claims);
         tracked.extend(self.convention_vns(cfg, cc, cfg_opts, per_address_ccs)?);
+        self.enclose_partial_overlaps(&mut tracked, cc);
         Ok(tracked)
+    }
+
+    /// Adds the smallest declared register enclosing each union
+    /// `Function::new` would fold a partially overlapping run into (AArch64
+    /// `s21` and the 6-byte tail `ldr h21` zeroes), until none is left or no
+    /// declared register encloses one. Adds `cc`'s argument and return
+    /// registers first, as `FunctionBuilder::new` does.
+    fn enclose_partial_overlaps(
+        &self,
+        tracked: &mut FxHashSet<rsleigh::Vn>,
+        cc: &strider_target::BuiltCallingConvention,
+    ) {
+        tracked.extend(
+            cc.ret_val_regs
+                .iter()
+                .chain(&cc.ret_val_regs_float)
+                .chain(&cc.arg_passing_regs)
+                .chain(&cc.arg_passing_regs_float),
+        );
+        let declared = &self.tables().declared_reg_vns;
+        loop {
+            let all: Vec<rsleigh::Vn> = tracked.iter().copied().collect();
+            let enclosing: Vec<rsleigh::Vn> = vn_container::dedup_overlapping_largest(&all)
+                .into_iter()
+                .filter(|v| !tracked.contains(v))
+                .filter_map(|union| vn_container::smallest_enclosing(declared, &union))
+                .collect();
+            if enclosing.is_empty() {
+                return;
+            }
+            tracked.extend(enclosing);
+        }
     }
 
     /// The varnodes `cfg`'s instructions name: pcode operands, `CallOther` ABI
@@ -165,4 +200,32 @@ fn override_call_targets(
                 _ => None,
             })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use rsleigh::Vn;
+
+    /// A run whose union no smaller declared register encloses widens to the
+    /// first one that does: `s21` and 10 bytes from `h21 + 2` span 12 bytes,
+    /// which only `q21` holds.
+    #[test]
+    fn a_partially_overlapping_run_widens_to_its_enclosing_register() {
+        let lifter = crate::Lifter::new(
+            strider_target::SleighArch::aarch64(),
+            rsleigh::mem_readers::BufMemReader::new(vec![0xc0, 0x03, 0x5f, 0xd6], 0x1000),
+        )
+        .expect("lifter");
+        let regs = lifter.sleigh_regs();
+        let [s21, q21] = ["s21", "q21"].map(|r| regs.name_to_vn(r).expect("register"));
+        let tail = Vn {
+            addr_off: s21.addr_off + 2,
+            size: 10,
+            ..s21
+        };
+        let mut tracked = [s21, tail].into_iter().collect();
+        lifter.enclose_partial_overlaps(&mut tracked, &crate::handler_tests::empty_cc());
+        let all: Vec<Vn> = tracked.into_iter().collect();
+        assert_eq!(vn_container::dedup_overlapping_largest(&all), [q21]);
+    }
 }
