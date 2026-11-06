@@ -38,7 +38,7 @@ pub(super) fn next_pcode_addr(
 /// Why a decode produced no instruction, carried as the `anyhow` payload.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::builder) enum DecodeFailure {
-    /// The reader had no bytes here.
+    /// The reader raised, or served no complete instruction here.
     Unmapped(u64),
     /// No instruction lifts here: Sleigh rejected the bytes or has no p-code
     /// for them, or [`crate::CfgOptions::data_ranges`] marks them as data.
@@ -61,7 +61,7 @@ impl DecodeFailure {
 impl std::fmt::Display for DecodeFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unmapped(addr) => write!(f, "the reader has no bytes at {addr:#x}"),
+            Self::Unmapped(addr) => write!(f, "{addr:#x} classified unmapped"),
             Self::NotCode {
                 addr,
                 marked_data: true,
