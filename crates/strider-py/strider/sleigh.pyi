@@ -45,7 +45,7 @@ class SleighArch:
         ...
     @classmethod
     def arm(cls) -> SleighArch:
-        """32-bit ARM in ARM mode, little-endian."""
+        """32-bit ARM, little-endian. An odd entry decodes as Thumb."""
         ...
     @classmethod
     def arm_be(cls) -> SleighArch:
@@ -61,8 +61,9 @@ class SleighArch:
         ...
     @classmethod
     def arm_thumb(cls) -> SleighArch:
-        """32-bit ARM built `-mthumb`, little-endian only. ARM-state code
-        (veneers, `call_weak_fn`) still decodes, so interworking holds."""
+        """`arm` under the Cortex-M pspec, which differs only in the `TMode`
+        default. The entry's low bit overrides that default under both, so
+        the two decode alike."""
         ...
     @classmethod
     def aarch64(cls) -> SleighArch:

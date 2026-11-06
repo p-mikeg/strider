@@ -130,8 +130,7 @@ def _arch_and_cc_for_elf(
 
     The convention is the userland one except on PowerPC, where an `e_entry`
     at or above `KERNELBASE` selects the kernel one (no vector registers).
-    x86's kernel ABI has no header bit and needs an explicit `cc=`; a Thumb
-    image needs `arch=SleighArch.arm_thumb()`.
+    x86's kernel ABI has no header bit and needs an explicit `cc=`.
     """
     em = header.e_machine
     le = header.is_little_endian
