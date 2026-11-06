@@ -225,10 +225,7 @@ pub(super) fn check_switch(
         return;
     };
     let n_out = graph.node_outputs(node).len();
-    if n_out == 0 {
-        // Also reported as `NodeOutputCountMismatch`; this names the rule.
-        errs.push(ValidationError::EmptySwitchTargets { node });
-    } else if n_out != targets.len() {
+    if n_out != targets.len() {
         errs.push(ValidationError::SwitchTargetArityMismatch {
             node,
             outputs: n_out,

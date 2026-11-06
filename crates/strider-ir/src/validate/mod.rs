@@ -318,9 +318,6 @@ pub enum ValidationError {
         expected_width: usize,
     },
 
-    #[error("Switch {node:?} has no control outputs")]
-    EmptySwitchTargets { node: NodeId },
-
     #[error("node {node:?} is `Switch({id:?})` but the function has no table for that id")]
     DanglingSwitchTableId {
         node: NodeId,
@@ -452,7 +449,6 @@ impl ValidationError {
             | E::StaleInitialVarIndex { node, .. }
             | E::ExtendTruncateWidthDirection { node, .. }
             | E::ArithmeticWidthMismatch { node, .. }
-            | E::EmptySwitchTargets { node }
             | E::DanglingSwitchTableId { node, .. }
             | E::DanglingCcId { node, .. }
             | E::SwitchTargetArityMismatch { node, .. } => smallvec::smallvec![node],

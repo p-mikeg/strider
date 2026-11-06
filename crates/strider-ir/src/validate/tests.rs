@@ -1054,10 +1054,9 @@ fn graph_invariants_comparison_and_bitcast_widths_detected() {
     });
 }
 
-/// A zero-arm `Switch` reports both `EmptySwitchTargets` and the arity
-/// check's `NodeOutputCountMismatch`.
+/// A zero-arm `Switch` fails the arity check.
 #[test]
-fn graph_invariants_empty_switch_targets_detected_beside_the_arity_error() {
+fn graph_invariants_empty_switch_targets_fail_the_arity_check() {
     let mut s = spine();
     let (_, addr) = int_const(&mut s.f, 0x1000, ValueType::int(64));
     let table = s.f.add_switch_table(vec![0x2000]);
@@ -1069,9 +1068,6 @@ fn graph_invariants_empty_switch_targets_detected_beside_the_arity_error() {
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     let _ = sw;
 
-    assert_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::EmptySwitchTargets { .. })
-    });
     assert_validation_err(&s.f, |e| {
         matches!(
             e,
