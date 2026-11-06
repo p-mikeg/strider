@@ -53,6 +53,17 @@ fn lens_at(cfg: &Cfg, start: u64) -> Vec<(u64, u32)> {
         .collect()
 }
 
+/// Every instruction of `cfg` with its length and p-code, sorted.
+fn decodes(cfg: &Cfg) -> Vec<String> {
+    let mut out: Vec<String> = cfg
+        .regions()
+        .flat_map(|r| r.insns.iter())
+        .map(|i| format!("{:?} len={} {:?}", i.addr, i.len, i.insn))
+        .collect();
+    out.sort();
+    out
+}
+
 #[test]
 fn a_mips16_build_at_a_slot_address_does_not_change_the_next_mips32_build() {
     let mut fresh = engine(ABS_VAL.to_vec(), ABS_VAL_BASE);
@@ -63,8 +74,8 @@ fn a_mips16_build_at_a_slot_address_does_not_change_the_next_mips32_build() {
     let again = build(&mut reused, ABS_VAL_BASE, 0, &bounded(24))
         .expect("the same bytes, entry and mode must build on a reused engine");
     assert_eq!(
-        lens_at(&again, ABS_VAL_BASE),
-        lens_at(&clean, ABS_VAL_BASE),
+        decodes(&again),
+        decodes(&clean),
         "the branch and its slot must decode as on a fresh engine",
     );
 }
