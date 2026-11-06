@@ -209,19 +209,7 @@ impl MatcherBuilder {
         out: PatValueRef,
         f: crate::matcher::PostMatchFn,
     ) {
-        // Value-less kinds whose anchor output's kind does not already say so.
-        let untyped_kind = self.kind_of(out).kind.is_variant_in(&[
-            NodeKind::If,
-            NodeKind::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
-            NodeKind::Return,
-            NodeKind::IndirectBranch,
-            NodeKind::Unreachable,
-        ]);
-        let untyped_output = matches!(
-            self.out_of(out).kind,
-            OutputKindSpec::Control | OutputKindSpec::Memory
-        );
-        if untyped_kind || untyped_output {
+        if self.valueless(out.0) {
             self.reject(
                 "`when_match` is typed and this root produces no value output, so the \
                  guard could never run; use `Pattern::with_root_post_match`, which is \
@@ -230,6 +218,29 @@ impl MatcherBuilder {
             );
         }
         self.set_post_match(out, f);
+    }
+
+    /// Whether `out` never carries a value: a valueless kind or output, or an
+    /// alternation every arm of which is.
+    fn valueless(&self, out: ValueId) -> bool {
+        let graph = &self.core.graph;
+        let producer = graph.producer(out);
+        let node = graph.node_kind(producer);
+        if matches!(node.role, Role::OneOf | Role::FirstOf) {
+            let arms: Vec<ValueId> = graph.node_inputs(producer).into_iter().collect();
+            return !arms.is_empty() && arms.into_iter().all(|arm| self.valueless(arm));
+        }
+        // Valueless kinds whose anchor output's kind does not already say so.
+        node.kind.is_variant_in(&[
+            NodeKind::If,
+            NodeKind::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
+            NodeKind::Return,
+            NodeKind::IndirectBranch,
+            NodeKind::Unreachable,
+        ]) || matches!(
+            graph.value_kind_ref(out).kind,
+            OutputKindSpec::Control | OutputKindSpec::Memory
+        )
     }
 
     pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
