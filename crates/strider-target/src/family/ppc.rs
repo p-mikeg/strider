@@ -434,9 +434,10 @@ const CALL_OTHER: &[Row] = &[
         ],
         PPC_CR6,
     ),
-    // Store-conditional and byte-reverse stores write RAM; dcbz zeroes a
-    // block; dcbf/dcbst/icbi and TLB/SLB management are ordering barriers;
-    // icswx/copy-paste and doorbell messages have external memory effects.
+    // Store-conditional and byte-reverse stores (their STORE is p-code; the
+    // clobber over-approximates); dcbz zeroes a block; dcbf/dcbst/icbi and
+    // TLB/SLB management are ordering barriers; icswx/copy-paste and doorbell
+    // messages have external memory effects.
     Row::new(&["MessageClear"], MEM_CLOBBER),
     Row::new(&["MessageSend"], MEM_CLOBBER),
     Row::new(&["StoreDoublewordByteReverseIndexed"], MEM_CLOBBER),
@@ -461,8 +462,7 @@ const CALL_OTHER: &[Row] = &[
     Row::new(&["syscall"], PPC_SYSCALL),
     // A low-power wait, like ARM WFI.
     Row::new(&["waitT"], MEM_CLOBBER),
-    // `ldbrx` reads inside the op. (`stdbrx`'s store is p-code; its clobber
-    // above over-approximates.)
+    // `ldbrx` reads inside the op.
     Row::new(&["LoadDoublewordByteReverseIndexed"], MEM_CLOBBER),
     // `lvsl` and the hardware RNG.
     Row::new(&["loadVectorForShiftLeft"], PURE),
