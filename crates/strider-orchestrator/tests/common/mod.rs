@@ -413,6 +413,22 @@ pub(crate) fn returned(f: &strider_ir::Function) -> Vec<strider_ir::node::ValueI
     f.node_inputs(ret).into_iter().skip(2).collect()
 }
 
+/// The constant return slot 0 folds to once `bytes` at `base` is analysed,
+/// its bytes also the ROM.
+pub(crate) fn folded_return(arch: Arch, bytes: Vec<u8>, base: u64) -> u128 {
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
+        strider_ir_test_utils::MockRom::raw_bytes(base, bytes.clone()),
+    );
+    let (mut strider, cc) = strider_over_bytes(arch, bytes, base, Some(rom));
+    let f = strider
+        .analyze(base, &cc, &Default::default(), None)
+        .expect("analyze")
+        .function;
+    let v = returned(&f)[0];
+    f.int_const_u128(v)
+        .unwrap_or_else(|| panic!("return slot 0 did not fold: {:?}", producer_kind(&f, v)))
+}
+
 /// The kind of `v`'s producer.
 pub(crate) fn producer_kind(
     f: &strider_ir::Function,

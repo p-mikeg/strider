@@ -6,11 +6,6 @@
 //! Byte sequences are GNU `as` output, cross-checked with
 //! `objdump -D -b binary -mi386:x86-64 -M intel`.
 
-use rsleigh::mem_readers::BufMemReader;
-use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
-use strider_target::{CallingConvention, SleighArch};
-
 const BASE: u64 = 0x1000;
 /// Where the vector `movdqu xmm0, [rip + disp]` loads sits.
 const VEC_AT: usize = 0x40;
@@ -38,28 +33,7 @@ fn returned_rax(body: &[&[u8]]) -> u128 {
     assert!(bytes.len() <= VEC_AT, "code overruns the vector");
     bytes.resize(VEC_AT, 0);
     bytes.extend_from_slice(&VEC.to_le_bytes());
-
-    let arch = SleighArch::x86_64();
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
-        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
-    );
-    let mut strider =
-        strider_orchestrator::Strider::new(arch, BufMemReader::new(bytes, BASE), Some(rom))
-            .expect("strider");
-    let cc = CallingConvention::x86_64_systemv()
-        .build(strider.sleigh_regs())
-        .expect("cc");
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
-    let ret = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
-        .expect("one Return");
-    let rax = f.node_inputs(ret).into_iter().nth(2).expect("rax slot");
-    f.int_const_u128(rax)
-        .unwrap_or_else(|| panic!("rax did not fold: {:?}", f.node_kind(f.producer(rax))))
+    crate::common::folded_return(crate::common::Arch::X64, bytes, BASE)
 }
 
 /// The whole 128-bit register after `body`, read one quadword lane at a time.

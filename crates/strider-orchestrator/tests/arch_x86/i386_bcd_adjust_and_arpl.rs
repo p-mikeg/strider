@@ -8,8 +8,6 @@
 
 use crate::common;
 
-use strider_ir::IRViewer;
-
 const BASE: u64 = 0x1000;
 
 fn parity_even(x: u8) -> bool {
@@ -74,14 +72,7 @@ fn arpl(dst: u16, src: u16) -> u32 {
 /// The constant left in EAX.
 fn returned_eax(mut bytes: Vec<u8>) -> u128 {
     bytes.push(0xc3);
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X86, bytes, BASE, None);
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
-    let eax = common::returned(&f)[0];
-    f.int_const_u128(eax)
-        .unwrap_or_else(|| panic!("eax did not fold: {:?}", common::producer_kind(&f, eax)))
+    common::folded_return(common::Arch::X86, bytes, BASE)
 }
 
 /// `mov ah, flags` / `sahf` / `mov al, value` / the adjust / `lahf` /
