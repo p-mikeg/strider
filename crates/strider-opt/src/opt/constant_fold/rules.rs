@@ -343,8 +343,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
     ));
 
     // `Truncate_W(Or(a, And(C, b))) -> Truncate_W(a)` when `C`'s low W bits
-    // are zero (the high half of an x86 register merge). The matcher retries
-    // the `Or`'s other operand order.
+    // are zero: the preserved bits of a sub-register write.
     rules.push({
         let guard = move |edit: &Matcher, ty: ValueType, bnd: &Bindings| {
             let Some(c_val) = bnd.get_uint(c, edit.function()) else {
@@ -443,8 +442,7 @@ fn build_identity_rules() -> Vec<Rule> {
 }
 
 /// Folds an integer node over constant operands through [`eval_node_const`],
-/// absorbing the operands' fingerprints into the result. A root with no uses
-/// falls through to the later rules.
+/// absorbing the operands' fingerprints into the result.
 fn const_eval_rule(edit: &mut EditFunction<'_>, root: NodeId) -> Result<Option<ValueId>> {
     let f = edit.function();
     let Ok((out, ty)) = f.single_value_output(root) else {
