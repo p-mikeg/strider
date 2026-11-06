@@ -41,8 +41,8 @@ def test_a_no_return_halt_ends_the_function_at_the_hlt():
 
 
 def test_halt_follows_every_upstream_user_op_so_no_other_id_moved():
-    """`halt`, `mxcsrRoundingControl`, the x87 remainder ops and
-    `x87RoundingControl`, the fork's own ops, close the list."""
+    """`halt`, `mxcsrRoundingControl`, the x87 remainder ops,
+    `x87RoundingControl` and `xgetbv`, the fork's own ops, close the list."""
     for arch, halt in ((SleighArch.x86_64(), 1757), (SleighArch.x86(), 1631)):
         names = strider.lift.lifter(
             arch, strider.reader.BufferReader(_BASE, _IDLE)
@@ -55,5 +55,6 @@ def test_halt_follows_every_upstream_user_op_so_no_other_id_moved():
             "x87Prem1Status",
             "x87Prem1",
             "x87RoundingControl",
+            "xgetbv",
         ], arch.name()
         assert names.index("swi") == 16, arch.name()
