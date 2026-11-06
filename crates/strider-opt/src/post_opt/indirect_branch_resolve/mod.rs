@@ -50,8 +50,7 @@ pub(crate) struct SiteClassifier<'f> {
 
 impl<'f> SiteClassifier<'f> {
     /// The recogniser for `function`'s dispatch sites. `rom` is the binary's
-    /// read-only image, read only by the rodata jump-table shape; `None`
-    /// disables it.
+    /// read-only image, read only by the table arm; `None` disables it.
     pub(crate) fn new(
         function: &'f strider_ir::Function,
         rom: Option<&'f dyn ReadOnlyMemory>,

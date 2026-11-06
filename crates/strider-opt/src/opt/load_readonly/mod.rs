@@ -35,7 +35,7 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
     }
 }
 
-/// `node_id` MUST be a `Load(VnSpace::RAM)`.
+/// `node_id` is a `Load(VnSpace::RAM)`.
 fn try_fold_const_load_at(
     edit: &mut crate::EditFunction<'_>,
     node_id: NodeId,

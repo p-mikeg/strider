@@ -67,7 +67,7 @@ pub(crate) fn load_slice(
     u32::try_from(bits).ok().map(LoadSlice::Narrow)
 }
 
-/// Whether every tied operand carries the width [`NodeKind::operand_width`]
+/// `Some` when every tied operand carries the width [`NodeKind::operand_width`]
 /// says `kind` evaluates it at; a fold masks to that width, which is only
 /// correct when they already carry it. A free slot (a shift count) is exempt.
 fn operands_carry(

@@ -691,8 +691,10 @@ class FunctionArgPat(NodePat):
     `function_arg(i)`, `function_arg_float(i)`, `any_function_arg()`,
     `function_arg_reg(vn)` and `function_arg_stack(space, offset)`.
 
-    Integer and float arguments are numbered separately: `function_arg(0)` is
-    the first integer argument, `function_arg_float(0)` the first float one.
+    Integer and float arguments are numbered separately in registers:
+    `function_arg(0)` is the first integer argument, `function_arg_float(0)`
+    the first float one. A stack argument takes the next integer index
+    whatever its class.
     """
     def index(self, i: int) -> "FunctionArgPat":
         """Require the argument's position to be `i`."""
