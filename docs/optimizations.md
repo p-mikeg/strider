@@ -92,7 +92,8 @@ In default pipeline order:
 window to the call as ordinary arguments, up to the first slot no whole store
 reaches. A store of the entry value of a register the function's own
 convention preserves (a prologue save), or a call between store and call, also
-ends the arguments; other stores just above them can come along. A slot every
+ends the arguments; other stores just above them can come along (clang
+x86-64's `push rax` alignment slot, MIPS o32's `gp` save). A slot every
 arm of a non-loop join stores whole is collected as the phi of those values.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
@@ -140,9 +141,10 @@ loop grows from; a site holding only your seed is listed as
   (imported-symbol) entry stays unmapped.
 - A label table in writable `.data.rel.ro` (PIC tables on AArch64, ARM, MIPS
   and PowerPC): no ROM serves it without `load_elf(relocated_got_is_rom=True)`.
-- A dispatch in a loop whose arms call a function clobbering the table-base
-  register: once the loop closes the selector no longer derives. Use
-  `per_address_ccs={callee: cc.preserves_regs()}`.
+- A dispatch in a loop whose arms call a function the convention says
+  clobbers the table-base register, which the compiler kept live across the
+  call (GCC `-fipa-ra` on a same-unit callee): once the loop closes the
+  selector no longer derives. Use `per_address_ccs={callee: cc.preserves_regs()}`.
 
 ### Dispatch shapes that do not resolve
 
@@ -157,6 +159,13 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 - An index or table entry read back from a stack slot through a memory phi or
   at a variable index (clang -O0 on aarch64be and arm_be, arm_be8's two-slot
   stack array).
+- A table of more than 4096 entries.
+- An unguarded index whose type already spans the table (`x >> 28` over 16
+  entries).
+- A 64-bit selector on a 32-bit target.
+- A wrapped narrow range (`unsigned short` cases 65529..65535 on x86).
+- PowerPC64 dispatch on a 32-bit parameter: the bound covers only the low
+  word, and the ABI's argument extension is not assumed.
 
 ## Known limits
 
@@ -177,8 +186,8 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   attempts, even when nothing matches; `.ordered()` pins the operand order.
 - Sibling KnownBits folds over one unfolded chain of depth `d` each copy the
   chain's instruction addresses, quadratic in `d`.
-- A jump table whose arms fall into one another, explored lowest first,
-  re-splits one long region per arm, quadratic in the arm count.
+- A return after a stack-clash probe loop (gcc `-fstack-clash-protection`,
+  frames of 64 KiB or more) is reported: the loop's exit SP is not derived.
 
 ## Using a different pipeline
 
