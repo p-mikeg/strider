@@ -118,9 +118,7 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
                 AliasVerdict::MayAlias
             }
         }
-        // Distinct noalias-allocator bases are disjoint, by the
-        // `noalias_allocators` claim. Against an `Anchor` a heap base stays
-        // may-alias (the `_` arm).
+        // Distinct allocations are disjoint (`noalias_allocators`).
         (
             HeapRooted {
                 base: lb,

@@ -133,7 +133,7 @@ impl SpaceStores {
 }
 
 pub(crate) struct StoreIndex {
-    /// Defs that are neither a store nor a call, which clobber every location.
+    /// `CallOther`s, which clobber every location.
     opaque: Vec<u32>,
     /// Calls not declared `preserves_memory`.
     calls: Vec<u32>,

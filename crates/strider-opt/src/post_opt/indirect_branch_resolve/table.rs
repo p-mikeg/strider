@@ -51,7 +51,7 @@ impl SiteClassifier<'_> {
         let targets: Vec<ResolvedTarget> = values
             .into_iter()
             .map(|x| {
-                // One memo for both roots, siblings over one dispatch word.
+                // The target and mode roots share this index's memo.
                 ev.begin_index(pinned, x);
                 let addr = ev.eval_root(&pruned, target_value)?;
                 let isa_bit = match &mode {

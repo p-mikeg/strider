@@ -103,9 +103,8 @@ pub fn run_post(
     apply_post(pass, &mut edit, octx)
 }
 
-/// One post-pass: a pass that changed the graph drops the memos. The
-/// frame-escape verdict goes after every pass, since an edit through
-/// `function_mut` is not counted.
+/// Runs one post-pass. A changing pass drops every memo; the frame-escape
+/// verdict is dropped either way, since `function_mut` edits are not counted.
 fn apply_post(
     pass: &dyn Optimizer,
     edit: &mut crate::EditFunction<'_>,

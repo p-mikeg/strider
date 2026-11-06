@@ -3,10 +3,10 @@
 //!
 //! A strongly connected phi component whose outside value inputs are exactly
 //! one value is replaced by it; with more, the test reruns over its phis that
-//! take no outside value. Dead predecessor edges count. Phis over a `Region`
-//! unreachable from entry are skipped: collapsing there can close a non-phi
-//! data cycle. Then folds `And(phi, C)` when every arm masked by `C` agrees
-//! ([`masked`]).
+//! take no outside value. Inputs on unreachable predecessor slots count as
+//! outside values. Phis over a `Region` unreachable from entry are skipped:
+//! collapsing there can close a non-phi data cycle. Then folds `And(phi, C)`
+//! when every arm masked by `C` agrees ([`masked`]).
 
 use cranelift_entity::SecondaryMap;
 use strider_ir::IRViewer;

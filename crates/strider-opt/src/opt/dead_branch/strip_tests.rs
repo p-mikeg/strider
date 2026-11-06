@@ -371,8 +371,8 @@ fn strip_removes_two_dead_predecessors_then_validates() -> crate::Result<()> {
 
 /// Pins the iteration-set choice: a control-dead Region stays reachable through
 /// backward-data edges (its VarPhi still feeds the live join phi until the slot
-/// goes), so iterating `walk()` rather than the control-only set is what lets
-/// the pass reach it at all.
+/// goes), so iterating the live set rather than the control-reachable set is
+/// what lets the pass reach it at all.
 #[test]
 fn strip_visits_control_dead_but_data_reachable_region() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
