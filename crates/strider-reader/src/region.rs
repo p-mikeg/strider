@@ -63,8 +63,9 @@ pub struct MemRegion {
     bytes: FileBytes,
     offset: usize,
     len: usize,
-    /// The image's relocation patches, sorted by `addr` (the last at a site
-    /// lands), and the range of them that can overlap this region.
+    /// The image's relocation patches, sorted by `addr` (at one site the last
+    /// recorded lands, and a hole beats any value), and the range of them
+    /// that can overlap this region.
     patches: Option<(Arc<[Patch]>, Range<usize>)>,
 }
 
