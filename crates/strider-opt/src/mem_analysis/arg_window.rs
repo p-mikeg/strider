@@ -4,7 +4,7 @@ use rustc_hash::FxHashSet;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
 
-use super::query::{MemQuery, Policy, ReachingSpStore};
+use super::query::{MemQuery, Policy, ReachingSpStore, anchored_store};
 use super::ring::{wrap_to_addr_width, wrapped_ranges};
 
 /// One call's outgoing-argument prefix: the contiguous argument slots from the
@@ -166,9 +166,8 @@ pub(crate) fn merged_slots(
             .phi_data_inputs(phi)
             .map(|arm| {
                 let def = nearest(arm, start, 1);
-                let hit = query
-                    .anchored_store(function, def, base)
-                    .filter(|hit| hit.store_offset == start)?;
+                let hit =
+                    anchored_store(function, def, base).filter(|hit| hit.store_offset == start)?;
                 (nearest(arm, start, hit.size(function)) == def).then_some(hit)
             })
             .collect();
@@ -347,7 +346,7 @@ impl<'a> ArgStoreScan<'a> {
         slot_off: i128,
         slot_end: i128,
     ) -> SlotReach {
-        match self.query.anchored_store(function, def, self.base) {
+        match anchored_store(function, def, self.base) {
             Some(hit) if (slot_off..slot_end).contains(&hit.store_offset) => {
                 let size = hit.size(function);
                 // A path patching the rest of the store shows only to a
@@ -383,7 +382,7 @@ impl<'a> ArgStoreScan<'a> {
         let hit = self
             .seen
             .insert(def)
-            .then(|| self.query.anchored_store(function, def, self.base))
+            .then(|| anchored_store(function, def, self.base))
             .flatten();
         let Some(hit) = hit else {
             self.at = ScanAt::Stopped(def);

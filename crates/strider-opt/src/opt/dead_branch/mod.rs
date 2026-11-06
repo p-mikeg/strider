@@ -2,9 +2,9 @@
 //! dispatch address: the live control output is replaced with the branch's
 //! control input, and the branch (side-effecting, so never culled) is killed.
 //!
-//! A dead subgraph can stay reachable through live data (validation runs
-//! only after convergence); every run strips each join's dead predecessor
-//! slots.
+//! A fold leaves joins fed by the dead arm, which stay reachable through
+//! their phis; every run strips each join's predecessor slots entry no longer
+//! reaches.
 
 use entity_utils::DenseEntitySet;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -67,8 +67,8 @@ impl PeepholePass for DeadBranchElimination {
 /// one. The caller resyncs the live set.
 fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     let entry = edit.entry();
-    // Joins are the live ones: a data-only-reachable join can carry a dead
-    // control slot.
+    // Live, not control-reachable, joins: a join reached only through data
+    // can hold a dead slot.
     let reachable = cfg_reachable(edit.function().graph(), entry);
 
     let regions: Vec<NodeId> = edit
@@ -93,21 +93,9 @@ fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
 
 /// The control output a constant-selector branch takes.
 struct Selection {
-    branch: NodeId,
     /// The constant the branch tests.
     selector: ValueId,
     live: ValueId,
-}
-
-impl Selection {
-    /// The control outputs the branch never takes.
-    fn dead<'a>(&self, edit: &'a crate::EditFunction<'_>) -> impl Iterator<Item = ValueId> + 'a {
-        let live = self.live;
-        edit.node_outputs(self.branch)
-            .iter()
-            .copied()
-            .filter(move |&out| out != live)
-    }
 }
 
 /// The selection of an `If` or `Switch` with a constant selector; `None`
@@ -131,7 +119,6 @@ fn constant_selection(edit: &crate::EditFunction<'_>, node: NodeId) -> Option<Se
         _ => return None,
     };
     Some(Selection {
-        branch: node,
         selector,
         live: edit.node_outputs(node)[live],
     })
@@ -176,8 +163,10 @@ fn escaping_nodes(edit: &crate::EditFunction<'_>) -> DenseEntitySet<NodeId> {
     let nodes: Vec<NodeId> = edit.walk().collect();
     for &node in &nodes {
         if let Some(selection) = constant_selection(edit, node) {
-            for arm in selection.dead(edit) {
-                dead_arms.insert(arm);
+            for &arm in edit.node_outputs(node) {
+                if arm != selection.live {
+                    dead_arms.insert(arm);
+                }
             }
         }
     }

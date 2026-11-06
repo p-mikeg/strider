@@ -1278,9 +1278,8 @@ fn the_shared_climb_reaches_past_a_disjoint_store_across_the_wrap() {
     for (offset, target) in [(0x7FFF_FFFAi128, 0x401190u128), (0x7FFF_FFFE, 0x401180)] {
         let clobber =
             query.nearest_sp_clobber(&f, Policy::strict(&f), mem, base, offset, 4, VnSpace::RAM);
-        let hit = query
-            .anchored_store(&f, clobber, base)
-            .expect("the entry's own store");
+        let hit =
+            crate::mem_analysis::anchored_store(&f, clobber, base).expect("the entry's own store");
         assert_eq!(hit.store_offset, offset, "anchored at the probed entry");
         assert_eq!(
             f.int_const_u128(hit.data(&f)),

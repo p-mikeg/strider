@@ -4,7 +4,8 @@
 //! memory def is a store at the same address covering the load's bytes (a
 //! wider store is sliced). Anything else blocks; no value `Phi` is
 //! synthesized. A `MemPhi` whose arms agree once a constant `If`'s untaken
-//! arms are dropped reads as that one arm.
+//! arms are dropped reads as that one arm. Calls and opaque stores pass per
+//! the function's claims (`Policy::forward`).
 
 use std::cell::Cell;
 
@@ -217,7 +218,11 @@ fn never_taken(f: &Function, mut edge: ValueId) -> bool {
                 let Some(cond) = cone_const(f, f.if_cond(node), &budget) else {
                     return false;
                 };
-                let taken = f.node_outputs(node)[usize::from(cond == UBig::ZERO)];
+                let taken = f.node_outputs(node)[if cond == UBig::ZERO {
+                    NodeKind::IF_FALSE_OUT_SLOT
+                } else {
+                    NodeKind::IF_TRUE_OUT_SLOT
+                }];
                 return edge != taken;
             }
             NodeKind::Region if f.node_inputs(node).len() == 1 => {

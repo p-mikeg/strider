@@ -590,7 +590,7 @@ fn a_ram_store_does_not_reach_a_register_space_probe() -> crate::Result<()> {
         4,
         rsleigh::VnSpace::REGISTER,
     );
-    let hit = query.anchored_store(&f, clobber, base);
+    let hit = super::query::anchored_store(&f, clobber, base);
     assert!(
         hit.is_none(),
         "the RAM store is not the register-space slot's"
