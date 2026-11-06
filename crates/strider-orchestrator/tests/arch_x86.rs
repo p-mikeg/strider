@@ -51,6 +51,9 @@ mod x86_shift_rotate_overflow;
 #[path = "arch_x86/x86_simd_lane_order.rs"]
 mod x86_simd_lane_order;
 
+#[path = "arch_x86/x86_xgetbv_selects_by_ecx.rs"]
+mod x86_xgetbv_selects_by_ecx;
+
 #[path = "arch_x86/x87_fcmov_conditions.rs"]
 mod x87_fcmov_conditions;
 

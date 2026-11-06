@@ -280,17 +280,14 @@ class Lifter:
         ...
     def pcode_at(self, entry: int, addr: int) -> str:
         """The p-code (ops joined `"; "`, empty for none) of the instruction
-        at `addr`, decoding linearly from `entry`.
+        at `addr`, decoding linearly from `entry` on a fresh decoder.
 
         Raises `StriderError` unless `addr` is on the linear stream from
-        `entry`, or once this `Lifter` has pinned more decode modes than a
-        sweep can carry over (sweep from a fresh `Lifter`). On ARM or MIPS
-        `entry`'s low bit selects the ISA mode, the sweep starts at
-        `entry & ~1` and `addr`'s low bit is ignored.
+        `entry`. On ARM or MIPS `entry`'s low bit selects the ISA mode, the
+        sweep starts at `entry & ~1` and `addr`'s low bit is ignored.
 
-        A call with a new `entry`, or the first after an `analyze` or
-        `build_cfg`, clones the whole decoder; for per-function p-code,
-        `build_cfg(entry).pcode_at(addr)` is far cheaper.
+        A call with a new `entry` builds the whole decoder; for per-function
+        p-code, `build_cfg(entry).pcode_at(addr)` is far cheaper.
         """
         ...
 
