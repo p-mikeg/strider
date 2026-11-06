@@ -14,8 +14,7 @@ mod tests;
 /// A slot holding the entry value of a register the function's own convention
 /// preserves (a prologue save) ends it, as does a `Call` on the chain. Slots
 /// past the prefix that every arm of a non-loop `MemPhi` stores whole continue
-/// it as a `Phi` of the stored values. Over-collects other incidental stack
-/// writes.
+/// it as a `Phi` of the stored values.
 fn collect_stack_args(
     edit: &mut crate::EditFunction<'_>,
     call_id: NodeId,
@@ -95,7 +94,10 @@ fn register_arity(
 }
 
 /// Wires positional stack args into each `Call`. A per-`Call` CC override
-/// wins over the convention default.
+/// wins over the convention default. Other writes to the slots past the last
+/// argument are collected too: a local, an alignment push (x86-64 clang's
+/// `push rax`), or o32's `gp` save at `sp+16`, which the IR cannot tell from
+/// an argument without the call-time `gp`.
 pub struct CallStackArgCollect;
 
 impl Optimizer for CallStackArgCollect {
