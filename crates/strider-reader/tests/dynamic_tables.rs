@@ -430,3 +430,52 @@ fn a_copy_object_is_holed_by_its_symbols_size_within_its_mapping() {
         }
     }
 }
+
+/// A `DT_RELA` table running past `u64::MAX` inside a `PT_LOAD` that does
+/// too: the load is refused, without an overflow panic on the way.
+#[test]
+fn a_dynamic_table_wrapping_the_address_space_does_not_panic() {
+    const V: u64 = 0xffff_ffff_ffff_ff80;
+    let mut seg = vec![0u8; 0x100];
+    // DT_RELA at V + 0x60 (three 24-byte entries, the third wrapping),
+    // DT_RELASZ, DT_RELAENT, DT_NULL.
+    for (i, (tag, val)) in [(7u64, V + 0x60), (8, 72), (9, 24), (0, 0)]
+        .into_iter()
+        .enumerate()
+    {
+        put64(&mut seg, 16 * i, tag);
+        put64(&mut seg, 16 * i + 8, val);
+    }
+    let mut elf = b"\x7fELF\x02\x01\x01".to_vec();
+    elf.resize(16, 0);
+    for (v, width) in [
+        (3, 2),  // ET_DYN
+        (62, 2), // EM_X86_64
+        (1, 4),
+        (0, 8),
+        (64, 8), // e_phoff
+        (0, 8),
+        (0, 4),
+        (64, 2),
+        (56, 2),
+        (2, 2), // e_phnum
+        (64, 2),
+        (0, 2),
+        (0, 2),
+    ] {
+        elf.extend_from_slice(&u64::to_le_bytes(v)[..width]);
+    }
+    // PT_LOAD RW and PT_DYNAMIC, both at V from file offset 0x1000.
+    for (p_type, filesz, align) in [(1u32, 0x100u64, 0x1000u64), (2, 0x40, 8)] {
+        elf.extend_from_slice(&p_type.to_le_bytes());
+        elf.extend_from_slice(&6u32.to_le_bytes());
+        for v in [0x1000, V, V, filesz, filesz, align] {
+            elf.extend_from_slice(&u64::to_le_bytes(v));
+        }
+    }
+    elf.resize(0x1000, 0);
+    elf.extend_from_slice(&seg);
+
+    let elf = OwnedElf::parse(elf).unwrap();
+    assert!(ElfFileMemReader::new(&elf, APPLIED).is_err());
+}
