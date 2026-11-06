@@ -53,7 +53,8 @@ These change an answer without an error:
 - A MIPS16 function's `Symbol.address` carries its ISA bit (bit 0), so
   `analyze` of it decodes MIPS16; it decoded MIPS32.
 - A stack argument every arm of a join stores (gcc's cross-jumped calls) is
-  collected as the phi of the stored values: `call().arg(k)` binds it.
+  collected as the phi of the stored values: `call().arg(k)` binds it. Locals
+  stored on both arms at the argument slots come along too.
 - A direct branch into an instruction's interior enters at that instruction,
   not at the start of its region; an x86 `lock`-prefix re-entry is benign
   anywhere in a region and no longer reported.
@@ -64,9 +65,8 @@ These raise:
   and `ValueError` for a non-ELF, as `load_elf` does, where they raised
   `StriderError`.
 - `bytes` where a list of ints is expected (`known_targets` values,
-  `int_const`) raises `TypeError`; it read each byte as an int.
-- `one_of([ret()]).when_match(..)` raises as `ret().when_match(..)` does; it
-  never matched.
+  `no_return_targets`, `noalias_allocators`, `int_const`) raises `TypeError`;
+  it read each byte as an int.
 - An out-of-range int for a fixed-width argument (`int_const_any_width`,
   `float_const`, `stack_offset`, `source_stack`, `function_arg_stack`,
   `custom()`'s stack fields) raises `OverflowError`, where it raised
@@ -163,6 +163,8 @@ replaced the rest.
 - `OptimizerPipeline::run` returns `Ok` at its iteration cap; read
   `Function::optimizer_converged`. A typed `when_match` on a call root inside
   an alternation is refused, as `.build()` refuses it.
+- `one_of![ret()].when_match(..)` is refused as `ret().when_match(..)` is; it
+  never matched. `Region::insns` is a `VecDeque`.
 
 ### Added, Python
 
@@ -245,7 +247,7 @@ replaced the rest.
 Matching and rewriting:
 
 - `rewrite` binds the same match `find_all` lists first at a root under
-  `first_of` / `ignore_casts`.
+  `first_of`.
 - `first_of` and `ignore_casts` settle in a fixed order: at each value the
   first listed arm (or outermost cast level) that matches wins.
 - `int_const_any_width` with a negative value matches `I256` / `I512`
@@ -398,8 +400,8 @@ Loading:
 
 Rendering:
 
-- The explorer shows a failed `/dot` request's error instead of a stale
-  graph.
+- The explorer shows a failed `/dot` request's error and clears the graph;
+  it kept the stale one.
 - The HTML viewer switches to `sfdp` past 2000 nodes; it counted labelled
   edges too.
 

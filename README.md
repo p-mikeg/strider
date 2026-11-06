@@ -90,9 +90,8 @@ changes do too:
 
 - `ConstantFold` turns `x + x*2` into `x*3`, and a `Call`'s outputs are
   numbered per clobbered register.
-- `return_slots_survive_untracked_writes` joins the two claims 0.1.0 already
-  made by default; 0.3.0 adds `msr_register_keeps_mode` and
-  `fp_rounding_mode_is_nearest`, for five.
+- `return_slots_survive_untracked_writes` joins the two claims 0.1.0 made by
+  default (0.3.0 adds two more).
 - `hit[c] is None` is always false: test `c in hit`.
 
 ## Documentation

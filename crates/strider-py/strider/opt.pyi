@@ -102,10 +102,10 @@ class RegionCollapse:
         ...
 
 class DeadBranchElimination:
-    """Folds an `If` or `Switch` on a constant selector naming an arm, when the
-    surviving arm still reaches a terminator, to its live successor, then
-    strips the `Region` predecessors entry can no longer reach, with their
-    `Phi` / `MemPhi` slots."""
+    """Folds an `If` or `Switch` whose constant selector names an arm to that
+    arm, when the arm still reaches a terminator, then strips the `Region`
+    predecessors entry can no longer reach, with their `Phi` / `MemPhi`
+    slots."""
     def __init__(self) -> None:
         ...
 
