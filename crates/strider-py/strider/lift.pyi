@@ -269,9 +269,9 @@ class Lifter:
         bytes Sleigh rejects, which raise `StriderError`.
 
         Releases the GIL unless `mem` or `rom` is a Python reader (anything
-        but a `BufferReader`). A daemon
-        thread inside this call at interpreter shutdown aborts the process;
-        analyse on non-daemon threads and join them.
+        but a `BufferReader`). A daemon thread inside this call at
+        interpreter shutdown aborts the process; analyse on non-daemon
+        threads and join them.
         """
         ...
     def pcode_at(self, entry: int, addr: int) -> str:
