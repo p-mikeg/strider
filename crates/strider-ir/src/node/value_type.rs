@@ -329,6 +329,18 @@ mod tests {
         assert_eq!(ValueType::I1.mask_float_bits(u64::MAX), 1);
     }
 
+    /// A float has no integer bits.
+    #[test]
+    fn mask_at_a_float_type_is_zero() {
+        let v = dashu_int::UBig::from(u128::MAX);
+        for w in [32, 64, 80] {
+            assert_eq!(
+                crate::eval::mask(&v, ValueType::float(w)),
+                dashu_int::UBig::ZERO
+            );
+        }
+    }
+
     /// Agrees with `eval::signed` at every width the carrier holds, on
     /// unmasked inputs too; `None` past the carrier, at `Int(0)` and for a float.
     #[test]
