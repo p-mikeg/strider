@@ -36,14 +36,13 @@ macro_rules! arch_presets {
                 match self { $(Self::$variant => $name,)+ }
             }
 
-            /// The family this preset belongs to.
             #[must_use]
             pub(crate) const fn family(self) -> &'static Family {
                 match self { $(Self::$variant => &family::$family,)+ }
             }
 
-            /// The name of the family this preset belongs to: `"x86"`,
-            /// `"arm32"`, `"aarch64"`, `"mips"` or `"ppc"`.
+            /// The family's name: `"x86"`, `"arm32"`, `"aarch64"`, `"mips"` or
+            /// `"ppc"`.
             #[cfg(any(test, feature = "test-util"))]
             #[must_use]
             pub const fn family_name(self) -> &'static str {

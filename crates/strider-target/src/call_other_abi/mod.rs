@@ -180,7 +180,7 @@ pub fn classify_with<'a>(
 
 /// Classifies a user-op name: the family's exact rows, the arch-independent
 /// rows, then the family's prefixes and fallback. `None` is a name no table
-/// answers yet.
+/// answers.
 pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     let family = preset.family();
     family

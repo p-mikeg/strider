@@ -386,7 +386,7 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
 };
 
 impl CallingConvention {
-    /// Returns the x86-64 System V ABI calling convention.
+    /// The x86-64 System V ABI calling convention.
     #[must_use]
     pub const fn x86_64_systemv() -> Self {
         CallingConvention {
@@ -415,7 +415,7 @@ impl CallingConvention {
         }
     }
 
-    /// Returns the x86 cdecl calling convention. A callee ending in
+    /// The x86 cdecl calling convention. A callee ending in
     /// `ret $imm16` (stdcall, a hidden struct-return pointer) needs a
     /// per-address convention popping `4 + imm16`, and a PC thunk one that
     /// does not preserve its register.
@@ -424,7 +424,7 @@ impl CallingConvention {
         X86_CDECL_BASE
     }
 
-    /// Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
+    /// The Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
     /// Map a variadic (`printk`) or `asmlinkage` callee, which takes every
     /// argument on the stack, to [`Self::x86_cdecl`] in `per_address_ccs`.
     #[must_use]
