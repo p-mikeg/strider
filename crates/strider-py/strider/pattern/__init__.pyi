@@ -170,8 +170,9 @@ class Match:
         ...
     def asm_fingerprint(self, key: CaptureKey) -> list[int]:
         """`Node.asm_fingerprint` of the node bound to `key`: a superset of
-        the instructions behind it. `[]` when `key` is unbound, and possibly
-        for a structural kind (`Entry`, `Region`, `Phi`, ...)."""
+        the instructions behind it, holding every address that used a shared
+        constant folded into it. `[]` when `key` is unbound, and possibly for
+        a structural kind (`Entry`, `Region`, `Phi`, ...)."""
         ...
     def node(self, key: CaptureKey) -> Node:
         """A `Node` handle on what `key` bound to. Raises when `key` is

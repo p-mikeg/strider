@@ -62,7 +62,9 @@ class Node:
         """The machine-instruction addresses recorded on this node, sorted
         and deduplicated: its lift's, each lift that reused it, and those of
         nodes folded into it. A superset of the instructions behind the
-        value: a shared constant carries every address that used it."""
+        value: a shared constant carries every address that used it, and so
+        does a node folded with one, so the set can be far wider than the
+        node's own instructions."""
         ...
     def outputs(self) -> list[Node]:
         """The consumers of this node's outputs, in output-slot then use order
