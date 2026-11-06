@@ -267,7 +267,8 @@ where
     number.insert(root, 0);
     let mut parent = vec![0u32];
     let mut preds: Vec<Vec<u32>> = vec![Vec::new()];
-    // Iterative DFS, so `parent` is a true depth-first spanning tree.
+    // Each frame resumes its own successor list, so `parent` is a true DFS
+    // tree at any depth.
     let mut stack: Vec<(u32, Vec<N>, usize)> = vec![(0, successors(root).into_iter().collect(), 0)];
     while let Some((at, succs, next)) = stack.last_mut() {
         let Some(&succ) = succs.get(*next) else {
@@ -339,8 +340,8 @@ where
 }
 
 /// Enter/exit interval numbering of the dominator tree an
-/// [`immediate_dominators`] result describes, so [`DomIntervals::dominates`] is
-/// O(1).
+/// [`immediate_dominators`] result describes, so dominance is an O(1)
+/// [`DomIntervals::span`] comparison.
 pub struct DomIntervals {
     enter: Vec<u32>,
     exit: Vec<u32>,
@@ -380,13 +381,6 @@ impl DomIntervals {
             exit,
             preorder,
         }
-    }
-
-    /// Reflexive: every vertex dominates itself.
-    #[must_use]
-    pub fn dominates(&self, a: u32, b: u32) -> bool {
-        self.enter[a as usize] <= self.enter[b as usize]
-            && self.exit[b as usize] <= self.exit[a as usize]
     }
 
     /// `v`'s `(enter, exit)` clock, from 0: `a` dominates `b` iff `a`'s
@@ -599,11 +593,15 @@ mod tests {
                 .position(|&x| x == v)
                 .expect("reachable") as u32
         };
+        let dominates = |a, b| {
+            let ((a_in, a_out), (b_in, b_out)) = (iv.span(at(a)), iv.span(at(b)));
+            a_in <= b_in && b_out <= a_out
+        };
         assert_eq!(iv.preorder().len(), 4);
         for v in [1, 2, 3] {
-            assert!(iv.dominates(at(0), at(v)), "the root dominates {v}");
+            assert!(dominates(0, v), "the root dominates {v}");
         }
-        assert!(!iv.dominates(at(1), at(3)) && !iv.dominates(at(1), at(2)));
+        assert!(!dominates(1, 3) && !dominates(1, 2));
         let (enter, exit) = iv.span(at(0));
         assert_eq!(enter, 0, "the clock starts at 0");
         assert!(exit > enter);
