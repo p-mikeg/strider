@@ -34,8 +34,8 @@ pub struct Cc<R, L> {
     /// and PPC32 start a 64-bit argument at an even position, skipping one.
     pub arg_passing_regs: L,
     /// Float / vector argument registers, in positional order; a separate
-    /// vector bank is appended after the floats. An entry renumbers every
-    /// `Call`'s stack arguments and is tracked on every function.
+    /// vector bank is appended after the floats. Each entry is tracked on
+    /// every function.
     pub arg_passing_regs_float: L,
     /// Excludes the stack pointer.
     pub callee_saved_regs: L,

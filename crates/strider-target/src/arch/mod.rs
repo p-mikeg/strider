@@ -212,8 +212,9 @@ impl SleighArch {
     }
 
     /// Whether a `CallOther` writing a sub-register of `container` leaves the
-    /// container's other bytes intact. True on x86 except for the 10-byte x87
-    /// `ST` registers, whose MMX write redefines sign and exponent.
+    /// container's other bytes intact. True on x86, whose sla zero-extends
+    /// every VEX destination, except for the 10-byte x87 `ST` registers, whose
+    /// MMX write redefines sign and exponent.
     #[must_use]
     pub fn callother_output_is_exact_in(&self, container: &rsleigh::Vn) -> bool {
         self.facts().callother_output_exact && container.size != 10

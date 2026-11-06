@@ -102,7 +102,7 @@ impl DecodeTables {
             ram_word_size == 1,
             "{arch:?}: \"ram\" has word size {ram_word_size}, and the lift indexes it in bytes"
         );
-        // Both ways: `name_to_vn` answers a misspelling with `None`.
+        // Checked both ways: a misspelt name would also read as absent.
         let isa_mode_switch_vn = regs.name_to_vn("ISAModeSwitch");
         anyhow::ensure!(
             isa_mode_switch_vn.is_some() == arch.isa_mode_var().is_some(),
