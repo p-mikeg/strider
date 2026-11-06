@@ -30,6 +30,8 @@ struct PinnedIndex {
     rebase: u128,
     /// `index`'s type mask, the width `rebase` wraps at.
     mask: u128,
+    /// Whether a guard narrows `range` below the bounded value's KnownBits.
+    narrowed: bool,
 }
 
 impl SiteClassifier<'_> {
@@ -45,7 +47,8 @@ impl SiteClassifier<'_> {
         if let Some(seated) = self.seat(target_value, mode_value, &domain) {
             return Some(seated);
         }
-        // An index below a cell that seats nothing falls back to the cell's.
+        // An index below a cell that seats nothing falls back to the cell's
+        // when a guard bounds it.
         let shallow = self.dispatch_domain(target_value, site, true)?;
         if shallow == domain {
             return None;
@@ -93,7 +96,8 @@ impl SiteClassifier<'_> {
     /// of the phi every dispatch-cone input passes through, else a bounded
     /// index across its range. With both, constants outside the index range are
     /// dropped; if the index does not fold under some constant, the range wins.
-    /// `shallow` keeps the bounded index nearest the target.
+    /// `shallow` keeps the bounded index nearest the target, and only a
+    /// guard-narrowed one.
     fn dispatch_domain(
         &mut self,
         target: ValueId,
@@ -185,6 +189,9 @@ impl SiteClassifier<'_> {
             .and_then(|cell| chain.iter().position(|&v| v == cell))
             .and_then(|at| first_hit(self, at + 1))
             .unwrap_or(shallowest);
+        if shallow && !hit.narrowed {
+            return None;
+        }
         offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
     }
 
@@ -219,6 +226,7 @@ impl SiteClassifier<'_> {
                 range: iv,
                 rebase: 0,
                 mask,
+                narrowed: iv != self.ranges.kb_bound(v),
             });
         }
         let ranges = &self.ranges;
@@ -243,11 +251,12 @@ impl SiteClassifier<'_> {
             .iter()
             .filter_map(|&(sum, addend)| {
                 let iv = self.ranges.range_of(sum, site);
-                self.enumerable(site, mask, sum, iv).then_some(PinnedIndex {
+                self.enumerable(site, mask, sum, iv).then(|| PinnedIndex {
                     index: v,
                     range: iv,
                     rebase: addend,
                     mask,
+                    narrowed: iv != self.ranges.kb_bound(sum),
                 })
             })
             .min_by_key(|hit| hit.range.count());
