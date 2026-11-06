@@ -27,8 +27,8 @@ These change an answer without an error:
   call to it targets, not at its resolver: its `Symbol.address` changes, its
   `size` is `None`, it is not `is_function`, `functions()` leaves it out, and
   `analyze` of it raises.
-- `asm_fingerprint` of a constant a compare or integer binary op reads
-  through a register no longer includes that instruction's address.
+- A constant's `asm_fingerprint` leaves out the compare or integer binary op
+  that reads it through a register.
 - `symbols()`, `iter_symbols()` and `symbol_at` leave out ARM / AArch64
   mapping symbols (`$a`, `$d`, `$t`, `$x`, `$d.N`).
 - `CallingConvention.name()` of a `preserves_all()` / `preserves_regs()`
@@ -112,7 +112,6 @@ Output that reads differently:
 - `to_dot(pretty=True)` names a `Load` / `Store` space by its sla name.
 - `Node.sint()` and the signed `Match` readers answer past 128 bits where they
   answered `None`; `int_const` takes an `int` of up to 512 bits.
-- `StriderError.backtrace` read off the class is a property.
 
 ### Breaking, Rust
 
@@ -169,7 +168,8 @@ replaced the rest.
   in use"), while `ElfLifter` symbol and memory reads still work.
 - Every typed builder nests in every slot but a memory one; a memory slot
   takes `anything()`, `var(c)` and a bare `Capture`.
-- `load()` / `store()` region filters apply in call order, the last winning.
+- `load()` / `store()` region filters apply in call order: each replaces the
+  earlier one, except that `stack_only()` keeps an earlier `stack_offset`.
 - `function_arg_reg` / `source_register` match a sub-register of the carrier.
 - `Function.rewrite` / `rewrite_all` skip a site whose replacement has
   another width or is not available where it is read, count each site once,
