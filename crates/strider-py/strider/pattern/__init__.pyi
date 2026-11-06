@@ -519,8 +519,8 @@ class CallPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):
         `idx + 4`)."""
         ...
     def res(self) -> "CallPat":
-        """When nested as a value operand, pin it to the declared result
-        output, excluding caller-saved clobbers."""
+        """When nested as a value or raw-slot operand, pin it to the declared
+        result output, excluding caller-saved clobbers."""
         ...
 
 class CallOtherPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):
@@ -540,8 +540,8 @@ class CallOtherPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):
         """Constrain raw `inputs[idx]`, unshifted."""
         ...
     def res(self) -> "CallOtherPat":
-        """When nested as a value operand, pin it to the declared result
-        output, excluding implicit-write clobbers."""
+        """When nested as a value or raw-slot operand, pin it to the declared
+        result output, excluding implicit-write clobbers."""
         ...
 
 class RetPat(NodePat, InputPat, CtrlPat):

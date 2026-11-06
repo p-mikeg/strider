@@ -171,3 +171,21 @@ fn a_root_matches_a_call_with_no_value_output() {
         );
     }
 }
+
+/// `res()` narrows only a value operand: as a control predecessor it still matches.
+#[test]
+fn res_has_no_effect_in_a_control_slot() {
+    let (r0, r1) = (reg_vn(0, 8), reg_vn(8, 8));
+    let mut t = Tb::from_rs(RegisterSet::new().tracked(r0).tracked(r1).ret(r0));
+    let a = t.u64(5);
+    t.call_at(0x1000);
+    let f = t.ret_val(a);
+
+    let m = Matcher::new(&f);
+    let plain = m.find_all(&ret().ctrl(call()).build()).unwrap();
+    assert_eq!(plain.len(), 1);
+    assert_eq!(
+        m.find_all(&ret().ctrl(call().res()).build()).unwrap().len(),
+        1
+    );
+}
