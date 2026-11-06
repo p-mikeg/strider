@@ -55,13 +55,13 @@ impl PyCallOtherAbi {
 
 #[pymethods]
 impl PyCallOtherAbi {
-    /// The op is dropped: no IR node, any pcode result ignored.
+    /// The op is dropped: no IR node, any p-code result ignored.
     #[classmethod]
     fn noop(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::NoOp)
     }
 
-    /// Pure compute: a pcode result, no implicit registers, no memory effect.
+    /// Pure compute: a p-code result, no implicit registers, no memory effect.
     #[classmethod]
     fn pure(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::PURE)
@@ -119,13 +119,13 @@ impl PyCallOtherAbi {
         })
     }
 
-    /// Register names read beyond the pcode-explicit operands.
+    /// Register names read beyond the p-code-explicit operands.
     #[getter]
     fn implicit_reads(&self) -> Vec<String> {
         self.reads.clone()
     }
 
-    /// Register names written beyond the pcode-explicit result.
+    /// Register names written beyond the p-code-explicit result.
     #[getter]
     fn implicit_writes(&self) -> Vec<String> {
         self.writes.clone()

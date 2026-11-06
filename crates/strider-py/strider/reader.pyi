@@ -22,8 +22,8 @@ class BufferReader:
 
 class MemReader:
     """Instruction source backed by Python: subclass and override `read`.
-    Each subclass instance keeps its class alive: define a subclass once, not
-    per call."""
+    Instantiating a subclass leaks a reference to the class (PyO3 0.22), so
+    define a subclass once, not per call."""
 
     def __init__(self, *args, **kwargs) -> None:
         """Base initialiser; subclasses may take whatever arguments they like."""
@@ -37,8 +37,8 @@ class MemReader:
 
 class ReadOnlyMemory:
     """Read-only memory backed by Python: subclass and override `read`. Only
-    RAM loads reach it. Each subclass instance keeps its class alive:
-    define a subclass once, not per call."""
+    RAM loads reach it. Instantiating a subclass leaks a reference to the
+    class (PyO3 0.22), so define a subclass once, not per call."""
 
     def __init__(self, *args, **kwargs) -> None:
         """Base initialiser; subclasses may take whatever arguments they like."""

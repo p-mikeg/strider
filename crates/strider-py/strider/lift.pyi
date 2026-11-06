@@ -80,7 +80,8 @@ class AssumptionOptions:
     def escape_analysis(self) -> bool:
         """When no stack address escapes to a callee, forward a spill load across
         a call (and, under `stack_global_disjoint`, past an opaque store).
-        Default `False`."""
+        Misses a callee reaching the frame through a preserved register, or
+        writing an argument slot above an alignment hole. Default `False`."""
         ...
     @property
     def return_slots_survive_untracked_writes(self) -> bool:
@@ -251,7 +252,9 @@ class Lifter:
         opts: Optional[CfgOptions] = ...,
     ) -> Cfg:
         """The control-flow graph of the function at `entry`, without
-        lifting. Holds the GIL throughout."""
+        lifting. An unmapped or undecodable entry, or a fall-through no call
+        explains into bytes Sleigh rejects, raises `StriderError`. Holds the
+        GIL throughout."""
         ...
     def analyze(
         self,
@@ -264,9 +267,10 @@ class Lifter:
         `ElfLifter.analyze` also takes a symbol name and a default `cc`. A
         non-int `entry` raises `TypeError`, an out-of-range one
         `StriderError`. Incomplete code is reported in `Cfg.incomplete`
-        (check it before trusting an absence, "no store to X"), not raised,
-        except an unmapped entry or a fall-through no call explains into
-        bytes Sleigh rejects, which raise `StriderError`.
+        (check it before trusting an absence, "no store to X"), not raised.
+        These raise `StriderError`: an unmapped or undecodable entry, a
+        fall-through no call explains into bytes Sleigh rejects, and a Sleigh
+        user-op with no `CallOtherAbi` (see `call_other_abi`).
 
         Releases the GIL unless `mem` or `rom` is a Python reader (anything
         but a `BufferReader`). A daemon thread inside this call at
