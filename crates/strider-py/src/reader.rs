@@ -1269,7 +1269,9 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
         Python::with_gil(|py| -> anyhow::Result<()> {
             let result = call_py_read(py, &self.py_obj, (addr, size), "read", |e| {
                 anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}")
-            })?;
+            })
+            // Read as unmapped, so the exception is no later error's cause.
+            .inspect_err(|_| crate::errors::clear_callback_cause())?;
             if result.is_none(py) {
                 anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }
