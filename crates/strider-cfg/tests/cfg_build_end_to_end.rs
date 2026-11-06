@@ -103,44 +103,35 @@ fn split_both_halves_unconditional() {
 }
 
 #[test]
-fn size_bound_forces_forward_jump_to_be_tail_call() {
-    // With a size bound of 0x10 the target 0x1012 is past the bound.
-    let bytes = vec![0xeb, 0x10];
-    let opts = CfgOptions {
-        bound: strider_cfg::FunctionBound::size(0x10),
-        ..CfgOptions::default()
+fn a_forward_jump_out_of_the_size_bound_is_a_tail_call() {
+    let ret_at_0x1010 = || {
+        let mut bytes = vec![0xeb, 0x0e]; // jmp 0x1010
+        bytes.extend(std::iter::repeat_n(0x90u8, 14));
+        bytes.push(0xc3); // 0x1010: ret, decoded were the edge followed
+        bytes
     };
-    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
-    assert_eq!(cfg.region_graph().node_count(), 1);
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall {
-            target: 0x1012.into()
-        }
-    );
-}
-
-#[test]
-fn forward_jump_landing_exactly_at_size_bound_is_tail_call() {
-    // Target 0x1010 lands EXACTLY on `start + size`.  The window is
-    // half-open, so that is out of bounds and must be a tail call.  A `ret`
-    // sits at 0x1010 so the bytes would decode if the edge were followed.
-    let mut bytes = vec![0xeb, 0x0e]; // jmp +0x0e (next insn 0x1002 + 0x0e = 0x1010)
-    bytes.extend(std::iter::repeat_n(0x90u8, 14)); // nop filler to 0x1010
-    bytes.push(0xc3); // 0x1010: ret
-    let opts = CfgOptions {
-        bound: strider_cfg::FunctionBound::size(0x10),
-        ..CfgOptions::default()
-    };
-    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
-    assert_eq!(cfg.region_graph().node_count(), 1);
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall {
-            target: 0x1010.into()
-        },
-        "addr == start + size must already be out-of-range (half-open bound)"
-    );
+    for (bound, bytes, target) in [
+        (0x10, vec![0xeb, 0x10], 0x1012u64), // jmp 0x1012, past the bound
+        // `start + size`: the bound is half-open.
+        (0x10, ret_at_0x1010(), 0x1010),
+        // The jmp crosses a 1-byte bound yet decodes whole: the bound trips
+        // only on sequential fall-through, never mid-instruction.
+        (1, vec![0xeb, 0x10], 0x1012),
+    ] {
+        let opts = CfgOptions {
+            bound: strider_cfg::FunctionBound::size(bound),
+            ..CfgOptions::default()
+        };
+        let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+        assert_eq!(cfg.region_graph().node_count(), 1, "bound {bound:#x}");
+        assert_eq!(
+            cfg.region_graph()[cfg.entry()].terminator,
+            RegionTerminator::TailCall {
+                target: target.into()
+            },
+            "bound {bound:#x}"
+        );
+    }
 }
 
 #[test]
@@ -562,25 +553,16 @@ fn an_x86_conditional_branch_last_reports_its_not_taken_side() {
 }
 
 #[test]
-fn probe_x86_nop_lifts_to_zero_pcode_ops() {
-    // Precondition for the zero-pcode-prefix test below: x86 `nop` lifts to
-    // zero pcode ops here, so a run of them never appends to
-    // `RegionBuilder::insns`.
-    let mut sleigh = make_sleigh_x86_64(vec![0x90u8], 0x1000);
-    let lift = sleigh.lift_one(0x1000).expect("lift_one nop");
-    assert!(
-        lift.insns.is_empty(),
-        "expected x86 nop to lift to zero pcode ops; got {}",
-        lift.insns.len()
-    );
-}
-
-#[test]
 fn zero_pcode_prefix_crossing_size_bound_tail_calls_the_end() {
     // Three nops, then the next function's `ret` at 0x1003. The nops append
     // no pcode op, so `insns` stays empty while decode walks past the 2-byte
     // bound; the fall-through must still stop at 0x1002 rather than absorb
     // the `ret`.
+    let nop = make_sleigh_x86_64(vec![0x90u8], 0x1000).lift_one(0x1000);
+    assert!(
+        nop.expect("lift_one nop").insns.is_empty(),
+        "nop has p-code"
+    );
     let bytes = vec![0x90u8, 0x90, 0x90, 0xc3];
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(2),
@@ -598,28 +580,6 @@ fn zero_pcode_prefix_crossing_size_bound_tail_calls_the_end() {
     assert_eq!(
         incomplete_of(&cfg),
         [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
-    );
-}
-
-#[test]
-fn size_bound_smaller_than_first_terminator_insn_still_builds_tail_call() {
-    // A 2-byte `jmp +0x10` under a size bound of 1 starts in range but its
-    // encoding crosses the bound.  Decoding is NOT length-bounded: the
-    // instruction decodes fully and its OOB target is a tail call.  Contrast
-    // the past-end cases above; the bound trips only on sequential
-    // fall-through, never mid-instruction.
-    let bytes = vec![0xebu8, 0x10]; // jmp +0x10 -> target 0x1012
-    let opts = CfgOptions {
-        bound: strider_cfg::FunctionBound::size(1),
-        ..CfgOptions::default()
-    };
-    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
-    assert_eq!(cfg.region_graph().node_count(), 1);
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall {
-            target: 0x1012.into()
-        }
     );
 }
 
@@ -1116,7 +1076,7 @@ fn re_imposing_a_context_over_an_it_block_builds() {
 /// `vpush {s0-s31}` needs 104). The lift must complete: p-code or a decode
 /// error, never a crash.
 #[test]
-fn thumb_coproc_bytes_that_once_overran_the_parse_state_do_not_crash() {
+fn thumb_coproc_bytes_lift_without_crashing() {
     let arch = SleighArch::arm_thumb();
     for word in [
         0xdeec_3b8au32,
@@ -1179,28 +1139,32 @@ fn oob_taken_target_inside_the_fallthrough_overhang_keeps_its_polarity() {
     }
 }
 
-/// A region whose sequential decode walks off the end of the mapped image
-/// seals at its last decoded instruction and seats the same stub a direct
-/// branch to those bytes gets, rather than failing the whole function.
+/// A region whose sequential decode walks off the end of the mapped image, on
+/// the boundary (`DataUnavailErr`) or mid-instruction
+/// (`PartiallyInitializedInsn`), seals at its last decoded instruction and
+/// seats the stub a direct branch to those bytes gets, rather than failing
+/// the whole function.
 #[test]
 fn fallthrough_off_the_end_of_the_mapped_image_seats_a_stub() {
-    // 0x1000: xor rax,rax (48 31 c0); the fall-through 0x1003 has no bytes.
-    let cfg = build_from_bytes(vec![0x48u8, 0x31, 0xc0], 0x1000);
-
-    assert_eq!(
-        cfg.incomplete()
-            .of(strider_cfg::Reason::UnmappedTarget)
-            .collect::<Vec<_>>(),
-        &[PcodeInsnAddr::at_machine_start(0x1003)],
-        "the unmapped fall-through is reported, not silently dropped"
-    );
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::Unconditional,
-        "the decoded instructions are kept as a sealed region"
-    );
-    assert_tail_call_stub_at(&cfg, 0x1003);
-    assert_eq!(cfg.region_graph().edge_count(), 1);
+    // 0x1000: xor rax,rax (48 31 c0); 0x1003 has no bytes, or one byte of a
+    // three-byte instruction.
+    for bytes in [vec![0x48u8, 0x31, 0xc0], vec![0x48u8, 0x31, 0xc0, 0x48]] {
+        let cfg = build_from_bytes(bytes, 0x1000);
+        assert_eq!(
+            cfg.incomplete()
+                .of(strider_cfg::Reason::UnmappedTarget)
+                .collect::<Vec<_>>(),
+            &[PcodeInsnAddr::at_machine_start(0x1003)],
+            "the unmapped fall-through is reported, not silently dropped"
+        );
+        assert_eq!(
+            cfg.region_graph()[cfg.entry()].terminator,
+            RegionTerminator::Unconditional,
+            "the decoded instructions are kept as a sealed region"
+        );
+        assert_tail_call_stub_at(&cfg, 0x1003);
+        assert_eq!(cfg.region_graph().edge_count(), 1);
+    }
 }
 
 /// A direct branch and a fall-through reaching one unmapped address report it
@@ -1218,31 +1182,6 @@ fn one_unmapped_address_two_edges_reach_is_reported_once() {
             .collect::<Vec<_>>(),
         &[PcodeInsnAddr::at_machine_start(0x1008)],
     );
-}
-
-/// The window ending mid-instruction is the same verdict as it ending on the
-/// boundary: Sleigh raises `PartiallyInitializedInsn` rather than
-/// `DataUnavailErr`, and the region still seals on a stub.
-#[test]
-fn a_fallthrough_straddling_the_end_of_the_mapped_image_seats_a_stub() {
-    // 0x1000: xor rax,rax (48 31 c0); 0x1003 holds one byte of a three-byte
-    // instruction, so its decode reads past the end of the image.
-    let cfg = build_from_bytes(vec![0x48u8, 0x31, 0xc0, 0x48], 0x1000);
-
-    assert_eq!(
-        cfg.incomplete()
-            .of(strider_cfg::Reason::UnmappedTarget)
-            .collect::<Vec<_>>(),
-        &[PcodeInsnAddr::at_machine_start(0x1003)],
-        "the straddling fall-through is reported, not silently dropped"
-    );
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::Unconditional,
-        "the decoded instructions are kept as a sealed region"
-    );
-    assert_tail_call_stub_at(&cfg, 0x1003);
-    assert_eq!(cfg.region_graph().edge_count(), 1);
 }
 
 /// A finished region hands on an exactly-sized instruction vector; the push
