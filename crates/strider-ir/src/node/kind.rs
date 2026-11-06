@@ -74,8 +74,9 @@ pub enum NodeKind {
     /// default arm: an unproven target is reported as an unresolved branch.
     Switch(SwitchTableId),
 
-    /// Clobbers caller-saved registers and memory. `cc: None` is the
-    /// function's default convention.
+    /// Inputs: `[control, memory, target, sp, args...]`. Outputs:
+    /// `[control, memory]`, then the return registers and the clobbers.
+    /// `cc: None` is the function's default convention.
     Call {
         cc: Option<CcId>,
     },

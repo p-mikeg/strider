@@ -111,7 +111,6 @@ impl FunctionBuilder {
             [ValueKind::Control, ValueKind::PhiToken],
         );
         let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
-        // PhiToken goes in MemPhi.inputs[0] exactly as it does for a Phi.
         self.function_mut()
             .graph_mut()
             .add_node_input(memory_node, phi_token);
