@@ -94,7 +94,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
         cc.validate()
             .and_then(|()| cc.check_addr_size(self.arch().names().ram_addr_size()))
-            .map_err(|e| anyhow!("{:?}: {e}", self.arch().preset()))
+            .map_err(|e| anyhow!("{}: {e}", self.arch().preset().name()))
     }
 
     /// [`Self::check_cc`], plus: an override must name the function's own
@@ -108,9 +108,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.check_cc(cc)?;
         if cc.stack_ptr != stack_vn {
             return Err(anyhow!(
-                "{:?}: per-address convention's stack pointer {:?} is not the \
-                 lifted function's {stack_vn:?}",
-                self.arch().preset(),
+                "{}: per-address convention's stack pointer {} is not the \
+                 lifted function's {stack_vn}",
+                self.arch().preset().name(),
                 cc.stack_ptr,
             ));
         }
@@ -237,7 +237,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             let fits = vn.size >= 8 || value >> (8 * vn.size) == 0;
             if vn.addr_space != rsleigh::VnSpace::REGISTER || vn.size == 0 || !fits {
                 return Err(anyhow!(
-                    "entry value {value:#x} for {vn:?}: not a register it fits"
+                    "entry value {value:#x} for {vn}: not a register it fits"
                 ));
             }
         }
