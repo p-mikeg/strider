@@ -18,10 +18,10 @@ pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, siz
                 .map_or(0, |args| args.base_offset)
 }
 
-/// The lowest and highest offset from the entry SP `value` can stand at, or
-/// `None` when no bound follows from its spine. Each alignment mask on the
-/// [`decompose`] chain lowers the value by at most one alignment less a byte.
-/// `None` on overflow.
+/// The lowest and highest offset from the entry SP `value` can stand at;
+/// `None` when no bound follows from its spine or on overflow. Each alignment
+/// mask on the [`decompose`] chain lowers the value by at most one alignment
+/// less a byte.
 pub(crate) fn entry_sp_span(function: &Function, value: ValueId) -> Option<(i128, i128)> {
     let (mut cur, mut acc, mut slack) = (value, 0i128, 0i128);
     loop {
