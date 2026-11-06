@@ -34,6 +34,11 @@ def test_field_known_offset_matches_only_that_offset():
     assert at_zero.capture is None
 
 
+
+def test_field_refuses_a_bool_offset():
+    with pytest.raises(TypeError, match="got bool"):
+        p.field(p.anything(), True)
+
 def test_field_named_capture_is_shared_by_name():
     fn = _analyze("x64", "memory", "struct_field_load")
     f = p.field(p.function_arg(0), offset="off")

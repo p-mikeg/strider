@@ -456,6 +456,8 @@ class FieldPat:
         #: The offset capture, `None` for a known offset.
         self.capture: Optional[CaptureKey] = None
         self._known: Optional[int] = None
+        if isinstance(offset, bool):
+            raise TypeError("offset: expected an int, Capture or name, got bool")
         if isinstance(offset, int):
             self._known = offset
             self.pattern: ValueLike = base if offset == 0 else p.int_add(base, p.int_const(offset))
