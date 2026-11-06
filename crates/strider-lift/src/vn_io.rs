@@ -86,7 +86,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
         let space = vn.addr_space;
         match space {
-            rsleigh::VnSpace::CONST => Err(anyhow!("attempted to write to CONST space: {space:?}")),
+            rsleigh::VnSpace::CONST => Err(anyhow!("write to a CONST varnode {vn:?}")),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.write_reg_vn(vn, val),
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;

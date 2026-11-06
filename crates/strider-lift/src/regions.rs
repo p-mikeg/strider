@@ -40,6 +40,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.bind_entry_registers()?;
         Ok(region_map)
     }
+
     /// Lifts every region's instructions, then its special terminator (whose
     /// own pcode insn the loop skips).
     pub(crate) fn translate_regions(
