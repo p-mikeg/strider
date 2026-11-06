@@ -916,8 +916,8 @@ fn store_99() -> strider_ir::Function {
 }
 
 /// Each builder's `any_input` reaches the operand its fixture holds. An
-/// argument-less `CallOther` offers its control and memory inputs; only a
-/// wildcard reaches an `Unreachable`'s sole control predecessor.
+/// argument-less `CallOther` or an `Unreachable` offers its control and
+/// memory inputs.
 #[test]
 fn any_input_binds_the_fixture_operand() {
     let cases: [(&str, strider_ir::Function, strider_pattern::Pattern, usize); 8] = [
@@ -955,7 +955,7 @@ fn any_input_binds_the_fixture_operand() {
             "unreachable",
             unreachable_fn(),
             unreachable().any_input(var(Capture::new())).build(),
-            1,
+            2,
         ),
         (
             "load",

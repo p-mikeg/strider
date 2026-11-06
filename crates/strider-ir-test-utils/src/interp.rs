@@ -1351,23 +1351,11 @@ mod tests {
         b.build_store(heap, byte, rsleigh::VnSpace::RAM).unwrap();
         let target = b.build_int_const(0x9000u64, ValueType::int(64)).unwrap();
         b.build_call_cc(target, None).unwrap();
+        let at = b.build_int_const(0x5001u64, ValueType::int(64)).unwrap();
+        let byte = b.build_int_const(0xcdu8, ValueType::int(8)).unwrap();
+        b.build_store(at, byte, rsleigh::VnSpace::RAM).unwrap();
         b.build_unreachable().unwrap();
-        let mut f = b.build().unwrap();
-        let only = |f: &Function, kind: fn(&NodeKind) -> bool| f.walk_kind(kind).next().unwrap();
-        let trap = only(&f, |k| matches!(k, NodeKind::Unreachable));
-        let call = only(&f, |k| matches!(k, NodeKind::Call { .. }));
-        // The builder's trap takes no memory; give it a store after the call.
-        let mut edit = strider_ir::EditFunction::new(&mut f);
-        let after_call = edit.function().node_outputs(call)[1];
-        let at = edit.build_int_const(0x5001u64, ValueType::int(64)).unwrap();
-        let byte = edit.build_int_const(0xcdu8, ValueType::int(8)).unwrap();
-        let store = edit.create_node(
-            NodeKind::Store(rsleigh::VnSpace::RAM),
-            [after_call, at, byte],
-            [ValueKind::Memory],
-        );
-        let stored = edit.function().node_outputs(store)[0];
-        edit.add_node_input(trap, stored);
+        let f = b.build().unwrap();
         assert_eq!(
             run(&f, &env(&|_| UBig::ZERO, None)),
             Ok(Outcome::Unreachable {

@@ -920,3 +920,59 @@ fn a_folded_arm_is_not_live_for_the_post_passes() -> Result<()> {
     assert_eq!(STALE_LIVE.with(std::cell::Cell::get), Some(0));
     Ok(())
 }
+
+/// `R0: if (x<3) RA else RJ; RA: if (x==0) RS else RM; RS: [0x100]=x -> RM;
+/// RM: if (x==1) return else RJ; RJ: if (true) unreachable else return`.
+/// The fold leaves the `Unreachable` as RJ's only exit; it still takes the
+/// merged memory, so RJ keeps its `MemPhi`.
+fn store_merged_into_a_folded_trap() -> Result<strider_ir::Function> {
+    use strider_ir::IntCmpOp;
+    let vn = reg_vn(0x1000, 4);
+    let i32t = ValueType::int(32);
+    let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn()?;
+    let mut regions = Vec::new();
+    for _ in 0..8 {
+        regions.push(b.create_region_all()?);
+    }
+    let [r0, ra, rs, rm, r5, rj, r3, r4] = regions[..] else {
+        unreachable!()
+    };
+    b.set_entry_region_all(r0)?;
+    b.set_region(r0);
+    let x = b.read_variable(&vn)?;
+    let three = b.build_int_const(3u64, i32t)?;
+    let c = b.build_int_cmp_operation(x, three, IntCmpOp::Less, i32t)?;
+    b.build_if(c, ra, rj)?;
+    b.set_region(ra);
+    let zero = b.build_int_const(0u64, i32t)?;
+    let c = b.build_int_cmp_operation(x, zero, IntCmpOp::Equal, i32t)?;
+    b.build_if(c, rs, rm)?;
+    b.set_region(rs);
+    let addr = b.build_int_const(0x100u64, ValueType::int(64))?;
+    b.build_store(addr, x, rsleigh::VnSpace::RAM)?;
+    b.build_branch(rm)?;
+    b.set_region(rm);
+    let one = b.build_int_const(1u64, i32t)?;
+    let c = b.build_int_cmp_operation(x, one, IntCmpOp::Equal, i32t)?;
+    b.build_if(c, r5, rj)?;
+    b.set_region(r5);
+    b.build_return(None, &[])?;
+    b.set_region(rj);
+    let t = b.build_boolean_const(true);
+    b.build_if(t, r3, r4)?;
+    b.set_region(r3);
+    b.build_unreachable()?;
+    b.set_region(r4);
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    b.build()
+}
+
+#[test]
+fn a_folded_branch_into_a_trap_keeps_the_merged_memory() -> Result<()> {
+    let mut fg = store_merged_into_a_folded_trap()?;
+    crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &OptCtx::new(None))?;
+    let mut fg = store_merged_into_a_folded_trap()?;
+    crate::default_pipeline().run(&mut fg, &OptCtx::new(None))?;
+    Ok(())
+}
