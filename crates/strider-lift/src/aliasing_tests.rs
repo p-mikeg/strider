@@ -555,7 +555,7 @@ fn write_reg_vn_subregister_accepts_i1_like_direct_arm() {
     });
 }
 
-/// A float sub-register write must raise the SAME "bitcast required first"
+/// A float sub-register write must raise the same "not an integer value"
 /// diagnostic as the direct-container arm.
 #[test]
 fn write_reg_vn_subregister_float_errors_like_direct_arm() {
@@ -567,8 +567,8 @@ fn write_reg_vn_subregister_float_errors_like_direct_arm() {
             .build_float_const(0x4000_0000_0000_0000u64, ValueType::float(64));
         let sub_err = d.write_reg_vn(&sub, f).unwrap_err().to_string();
         assert!(
-            sub_err.contains("bitcast is required first"),
-            "sub-register float write must raise the direct-arm's bitcast error, got: {sub_err}"
+            sub_err.contains("is not an integer value"),
+            "sub-register float write must raise the direct arm's error, got: {sub_err}"
         );
 
         let f2 = d
@@ -576,8 +576,8 @@ fn write_reg_vn_subregister_float_errors_like_direct_arm() {
             .build_float_const(0x4000_0000_0000_0000u64, ValueType::float(64));
         let direct_err = d.write_reg_vn(&container, f2).unwrap_err().to_string();
         assert!(
-            direct_err.contains("bitcast is required first"),
-            "direct-container float write raises the bitcast error, got: {direct_err}"
+            direct_err.contains("is not an integer value"),
+            "direct-container float write raises the integer-value error, got: {direct_err}"
         );
     });
 }

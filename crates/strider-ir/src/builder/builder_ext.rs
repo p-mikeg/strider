@@ -52,35 +52,21 @@ pub trait IRBuilderExt: IRBuilder {
         output_type: ValueType,
         op: ExtendOp,
     ) -> Result<ValueId> {
-        let curr_output_type = self.value_type(value_id)?;
-
-        if !output_type.is_integer() {
-            return Err(anyhow!(
-                "extend target {output_type} is not an integer type"
-            ));
-        }
-        if !curr_output_type.is_integer() {
-            return Err(anyhow!(
-                "cannot integer-extend non-integer value {value_id:?} \
-                 ({curr_output_type}); a bitcast is required first"
-            ));
-        }
-        if curr_output_type.bit_width() > output_type.bit_width() {
+        require_integer_value(self.function(), value_id)?;
+        require_integer_type(output_type)?;
+        let in_ty = self.value_type(value_id)?;
+        if in_ty.bit_width() >= output_type.bit_width() {
             return Ok(value_id);
         }
 
         if let Some(v) = self.int_const(value_id).cloned() {
-            let folded = match op {
-                ExtendOp::SignExtend => eval::sign_extend(&v, curr_output_type, output_type),
-                ExtendOp::ZeroExtend => Some(eval::mask(&v, output_type)),
+            let k = match op {
+                ExtendOp::SignExtend => {
+                    eval::sign_extend(&v, in_ty, output_type).expect("integer types")
+                }
+                ExtendOp::ZeroExtend => v,
             };
-            if let Some(k) = folded {
-                return self.build_int_const(k, output_type);
-            }
-        }
-
-        if curr_output_type.bit_width() == output_type.bit_width() {
-            return Ok(value_id);
+            return self.build_int_const(k, output_type);
         }
         Ok(self.build_single_output_pure(NodeKind::Extend(op), [value_id], output_type))
     }
@@ -91,15 +77,8 @@ pub trait IRBuilderExt: IRBuilder {
         value_id: ValueId,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let curr_output_type = self.value_type(value_id)?;
-        if !curr_output_type.is_integer() {
-            return Err(anyhow!(
-                "cannot convert non-integer value {value_id:?} \
-                 ({curr_output_type}) to an integer; a bitcast is required first"
-            ));
-        }
-        let truncate_id = self.truncate_if_needed(value_id, output_type)?;
-        self.extend_if_needed(truncate_id, output_type, ExtendOp::ZeroExtend)
+        let truncated = self.truncate_if_needed(value_id, output_type)?;
+        self.extend_if_needed(truncated, output_type, ExtendOp::ZeroExtend)
     }
 
     /// Bitcasts an integer; reprecisions a float.
