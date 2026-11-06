@@ -562,8 +562,6 @@ fn interchangeable(
     if let Some(&hit) = memo.get(&(a, b)) {
         return hit;
     }
-    // Placeholder: a shared DAG pair is not re-walked mid-flight.
-    memo.insert((a, b), false);
     let verdict = value_interchangeable(graph.value_kind_ref(a), graph.value_kind_ref(b))
         && node_interchangeable(graph, graph.producer(a), graph.producer(b), memo);
     memo.insert((a, b), verdict);
