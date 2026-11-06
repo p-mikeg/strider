@@ -91,7 +91,7 @@ pub enum NodeKind {
     Load(rsleigh::VnSpace),
     Store(rsleigh::VnSpace),
 
-    /// Read via `IRViewer::int_const_u128`, not the payload.
+    /// Read via `IRViewer::int_const`, not the payload.
     IntConst(crate::node::IntConstId),
     /// Negation only; complement is `Xor(x, all_ones)`.
     IntUnaryOp(crate::node::IntUnaryOp),

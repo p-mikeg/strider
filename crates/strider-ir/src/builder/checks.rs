@@ -47,7 +47,7 @@ pub(crate) fn require_value_type(
         return Err(anyhow!(
             "operand {value_id:?} has type {actual} but the operation \
              requires {expected}; the caller must insert the truncate / \
-             extend / bitcast fix-up (builders no longer auto-coerce)"
+             extend / bitcast"
         ));
     }
     Ok(value_id)
