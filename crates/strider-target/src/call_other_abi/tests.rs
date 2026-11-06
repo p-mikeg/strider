@@ -196,7 +196,7 @@ fn ppc_call_others_classify_by_effect() {
         classify(Ppc64Be, "returnFromInterrupt"),
         Some(CallOtherClass::NO_RETURN)
     );
-    // Conditional traps FALL THROUGH in GHIDRA's model, so they must be
+    // Conditional traps FALL THROUGH in Ghidra's model, so they must be
     // returning (memory-clobbering), never NO_RETURN, or code after a
     // compiler bounds/overflow trap is dropped from the IR.
     for n in ["trapWord", "trapDoubleWord", "trapDoubleWordImmediate"] {

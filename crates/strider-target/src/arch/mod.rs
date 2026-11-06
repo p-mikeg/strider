@@ -105,7 +105,7 @@ arch_presets! {
     /// ARMv6+ big-endian Linux (BE8) use [`SleighArch::arm_be_kernel`]. NEON
     /// lane values are meaningless here: the sla disagrees with itself on order.
     ArmBe => "arm_be", arm_be, ARM32, SLA_SPEC_ARM8_BE, PSPEC_ARMT, Big, Big, "ARM:BE:32:v8";
-    /// **BE8** ARM 32-bit (GHIDRA's `ARM:LEBE:32`): little-endian
+    /// **BE8** ARM 32-bit (Ghidra's `ARM:LEBE:32`): little-endian
     /// instructions, big-endian data; every ARMv6+ big-endian Linux target.
     ArmBeKernel => "arm_be_kernel", arm_be_kernel, ARM32, SLA_SPEC_ARM8_BE8, PSPEC_ARMT, Big, Little, "ARM:LEBE:32:v8LEInstruction";
     /// ARM 32-bit `-mthumb`: Cortex-M pspec defaults over the full-ARM-state

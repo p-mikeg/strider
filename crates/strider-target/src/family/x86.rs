@@ -147,7 +147,7 @@ const CALL_OTHER: &[Row] = &[
             "psraw",
             // `XmmReg = movntdqa(XmmReg, m128)`.
             "movntdqa",
-            // `sha.sinc`; the `sha256*` three are arch-independent rows.
+            // `sha.sinc`; the `sha256*` rows are in `common.rs`.
             "sha1msg1_sha",
             "sha1msg2_sha",
             "sha1nexte_sha",

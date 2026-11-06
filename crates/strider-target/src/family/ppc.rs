@@ -718,7 +718,7 @@ impl CallingConvention {
     #[must_use]
     pub const fn powerpc64_elf_v2() -> Self {
         CallingConvention {
-            // The 32-byte linkage area plus the parameter save area. GHIDRA's
+            // The 32-byte linkage area plus the parameter save area. Ghidra's
             // cspec says 112, the ELFv1 figure.
             stack_args: Some(StackArgs {
                 base_offset: 96,
