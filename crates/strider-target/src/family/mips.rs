@@ -42,11 +42,7 @@ pub(crate) static MIPS: Family = Family {
 const CALL_OTHER: &[Row] = &[
     // `break` and the conditional traps (behind the sla's own branch): Linux
     // spells `BUG()` with them, and `WARN_ON` as a call.
-    Row {
-        names: &["trap"],
-        only: None,
-        class: CallOtherClass::NO_RETURN,
-    },
+    Row::new(&["trap"], CallOtherClass::NO_RETURN),
     // Linux o32 SYSCALL: v0 = number, a0..a3 = args, v0/v1 = return, a3 =
     // error flag. The kernel's partial exit restores neither the temporaries
     // nor `at`, `hi`, `lo` (glibc's `__SYSCALL_CLOBBERS`).
@@ -81,16 +77,15 @@ const CALL_OTHER: &[Row] = &[
     // `mtc0` / `dmtc0` name their CP0 destination as an operand
     // (`setCopReg(0, RD0, rt, sel)`) while `mfc0` reads it directly, so the
     // op writes the whole file. COP2's `setCopReg(2, imm, rt)` shares the name.
-    Row {
-        names: &["setCopReg"],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+    Row::new(
+        &["setCopReg"],
+        CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: CP0_REGISTERS,
             clobbers_memory: true,
             no_return: false,
         }),
-    },
+    ),
 ];
 
 /// The CP0 file in `mips.sinc` order: 32 registers at each select 0..=7.
@@ -162,10 +157,8 @@ const CP0_REGISTERS: &[&str] = &[
     "DataLo.7",      "DataHi.7",      "cop0_reg30.7",  "cop0_reg31.7",
 ];
 
-const MIPS32_BOTH: &[crate::ArchPreset] =
-    &[crate::ArchPreset::MipsBe32, crate::ArchPreset::MipsLe32];
-const MIPS64_BOTH: &[crate::ArchPreset] =
-    &[crate::ArchPreset::MipsBe64, crate::ArchPreset::MipsLe64];
+const MIPS32_BOTH: &[crate::ArchPreset] = &[ArchPreset::MipsBe32, ArchPreset::MipsLe32];
+const MIPS64_BOTH: &[crate::ArchPreset] = &[ArchPreset::MipsBe64, ArchPreset::MipsLe64];
 
 const CALLING_CONVENTIONS: &[CcPreset] = &[
     CcPreset {

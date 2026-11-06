@@ -42,16 +42,12 @@ const CALL_OTHER: &[Row] = &[
     // a stack address passed to `int 0x80` in EBX escapes unseen. `int` is
     // `swi` plus the sla's `call [intloc]`: a `Call` under the default
     // convention, clobbering every register it does not keep.
-    Row {
-        names: &["swi"],
-        only: None,
-        class: MEM_CLOBBER,
-    },
+    Row::new(&["swi"], MEM_CLOBBER),
     // Linux x86_64 syscall: RAX = number, RDI/RSI/RDX/R10/R8/R9 = args, RAX =
     // return; SYSCALL itself writes RCX (rip) and R11 (rflags).
     Row {
         names: &["syscall"],
-        only: Some(&[crate::ArchPreset::X86_64]),
+        only: Some(&[ArchPreset::X86_64]),
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
             implicit_writes: &["RAX", "RCX", "R11"],
@@ -60,58 +56,33 @@ const CALL_OTHER: &[Row] = &[
         }),
     },
     // RDPKRU reads ECX and zeroes EDX; EAX is the op's p-code output.
-    Row {
-        names: &["rdpkru_u32"],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+    Row::new(
+        &["rdpkru_u32"],
+        CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["ECX"],
             implicit_writes: &["EDX"],
             clobbers_memory: false,
             no_return: false,
         }),
-    },
+    ),
     // RDTSC: `tmp:8 = rdtsc(); EDX = tmp(4); EAX = tmp(0);`; RDTSCP also
     // `ECX = tmp(8)` of its 12 bytes. All explicit.
-    Row {
-        names: &["rdtsc", "rdtscp"],
-        only: None,
-        class: PURE,
-    },
+    Row::new(&["rdtsc", "rdtscp"], PURE),
     // RDMSR: `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`, all explicit.
-    Row {
-        names: &["rdmsr"],
-        only: None,
-        class: PURE,
-    },
+    Row::new(&["rdmsr"], PURE),
     // WRMSR: operands explicit; ECX may name IA32_FS_BASE / IA32_GS_BASE, and
     // any MSR can change what later loads read.
-    Row {
-        names: &["wrmsr"],
-        only: None,
-        class: base_write(&["FS_OFFSET", "GS_OFFSET"]),
-    },
+    Row::new(&["wrmsr"], base_write(&["FS_OFFSET", "GS_OFFSET"])),
     // RDFSBASE / RDGSBASE: the destination is the p-code output.
-    Row {
-        names: &["readfsbase", "readgsbase"],
-        only: None,
-        class: PURE,
-    },
+    Row::new(&["readfsbase", "readgsbase"], PURE),
     // WRFSBASE / WRGSBASE: `FS:` / `GS:` addresses read FS_OFFSET / GS_OFFSET.
-    Row {
-        names: &["writefsbase"],
-        only: None,
-        class: base_write(&["FS_OFFSET"]),
-    },
-    Row {
-        names: &["writegsbase"],
-        only: None,
-        class: base_write(&["GS_OFFSET"]),
-    },
+    Row::new(&["writefsbase"], base_write(&["FS_OFFSET"])),
+    Row::new(&["writegsbase"], base_write(&["GS_OFFSET"])),
     // MONITOR / MONITORX: `monitor()` has no operands; RAX = address,
     // ECX = extensions, EDX = hints.
     Row {
         names: &["monitor", "monitorx"],
-        only: Some(&[crate::ArchPreset::X86_64]),
+        only: Some(&[ArchPreset::X86_64]),
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["RAX", "ECX", "EDX"],
             implicit_writes: &[],
@@ -122,7 +93,7 @@ const CALL_OTHER: &[Row] = &[
     // 32-bit MONITOR / MONITORX take the address in EAX.
     Row {
         names: &["monitor", "monitorx"],
-        only: Some(&[crate::ArchPreset::X86]),
+        only: Some(&[ArchPreset::X86]),
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["EAX", "ECX", "EDX"],
             implicit_writes: &[],
@@ -132,39 +103,26 @@ const CALL_OTHER: &[Row] = &[
     },
     // MWAIT / MWAITX wait for the monitored line to be written: EAX = hints,
     // ECX = extensions.
-    Row {
-        names: &["mwait", "mwaitx"],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+    Row::new(
+        &["mwait", "mwaitx"],
+        CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["EAX", "ECX"],
             implicit_writes: &[],
             clobbers_memory: true,
             no_return: false,
         }),
-    },
+    ),
     // HLT resumes after an interrupt, whose handler may write any memory.
-    Row {
-        names: &["halt"],
-        only: None,
-        class: MEM_CLOBBER,
-    },
+    Row::new(&["halt"], MEM_CLOBBER),
     // SYSRET / SYSEXIT leave the kernel for user mode.
-    Row {
-        names: &["sysret", "sysexit"],
-        only: None,
-        class: CallOtherClass::NO_RETURN,
-    },
+    Row::new(&["sysret", "sysexit"], CallOtherClass::NO_RETURN),
     // SWAPGS changes the base of every later `%gs:` access.
-    Row {
-        names: &["swapgs"],
-        only: None,
-        class: base_write(&["GS_OFFSET"]),
-    },
+    Row::new(&["swapgs"], base_write(&["GS_OFFSET"])),
     // Register-to-register SIMD / crypto / x87 ops: every operand is listed,
     // and an `m128` / `m256` / `m512` operand is a dynamic varnode, so its
     // access is a p-code LOAD / STORE beside the op.
-    Row {
-        names: &[
+    Row::new(
+        &[
             // AES-NI: `XmmReg1 = <op>(XmmReg1, XmmReg2_m128)`.
             "aesdec",
             "aesdeclast",
@@ -213,20 +171,15 @@ const CALL_OTHER: &[Row] = &[
             "vmovdqa64_avx512f",
             "vpbroadcastb_avx512bw",
         ],
-        only: None,
-        class: PURE,
-    },
+        PURE,
+    ),
     // Memory the p-code leaves out: `movdir64b(Reg, m512)`'s store to [Reg],
     // and `xsha256(ECX, ESI, EDI)`'s reads from [ESI] and digest at [EDI].
-    Row {
-        names: &["movdir64b", "xsha256"],
-        only: None,
-        class: MEM_CLOBBER,
-    },
+    Row::new(&["movdir64b", "xsha256"], MEM_CLOBBER),
     // FXRSTOR / XRSTOR*: void pcodeops (constructors `FXRSTOR`, `XRSTOR`), so
     // this row is the only model of the state they load.
-    Row {
-        names: &[
+    Row::new(
+        &[
             "_fxrstor",
             "_fxrstor64",
             "xrstor",
@@ -234,18 +187,17 @@ const CALL_OTHER: &[Row] = &[
             "xrstors",
             "xrstors64",
         ],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+        CallOtherClass::Call(CallOtherAbi {
             // XRSTOR's component bitmap; FXRSTOR shares the over-approximation.
             implicit_reads: &["EAX", "EDX"],
             implicit_writes: X86_EXTENDED_STATE,
             clobbers_memory: true,
             no_return: false,
         }),
-    },
+    ),
     // FXSAVE / XSAVE*: the same state, read.
-    Row {
-        names: &[
+    Row::new(
+        &[
             "_fxsave",
             "_fxsave64",
             "xsave",
@@ -257,14 +209,13 @@ const CALL_OTHER: &[Row] = &[
             "xsaves",
             "xsaves64",
         ],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+        CallOtherClass::Call(CallOtherAbi {
             implicit_reads: X86_EXTENDED_STATE,
             implicit_writes: &[],
             clobbers_memory: true,
             no_return: false,
         }),
-    },
+    ),
 ];
 
 /// The x87 / SSE / AVX / AVX-512 / MPX / CET state the FXSAVE and XSAVE
