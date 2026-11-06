@@ -12,7 +12,6 @@ nodes (`v*`: if.true, if.false, Post Call) are not navigation targets.
 from __future__ import annotations
 
 import ast
-import atexit
 import http.server
 import inspect
 import io
@@ -626,10 +625,7 @@ def shutdown(port: int | None = None) -> list[int]:
 
 
 # Not `atexit`: finalization joins non-daemon threads before `atexit` runs.
-if hasattr(threading, "_register_atexit"):
-    threading._register_atexit(shutdown)  # pyright: ignore[reportAttributeAccessIssue]
-else:  # pragma: no cover - CPython has had this since 3.9
-    atexit.register(shutdown)
+threading._register_atexit(shutdown)  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def visualize(
