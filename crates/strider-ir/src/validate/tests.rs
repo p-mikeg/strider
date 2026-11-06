@@ -1854,10 +1854,10 @@ fn memory_order_memphi_free_merge_of_two_store_forks_is_rejected() {
 
     let errs = validate(&s.f).unwrap_err();
     assert!(
-        errs.0
-            .iter()
-            .any(|e| matches!(e, ValidationError::MemoryRewind { effect, .. }
-            if *effect == else_op)),
+        errs.0.iter().any(
+            |e| matches!(e, ValidationError::UnmergedMemoryEffect { region, effect }
+            if *region == merge && *effect == else_op)
+        ),
         "{errs:?}"
     );
 }
