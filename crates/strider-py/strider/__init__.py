@@ -59,9 +59,8 @@ from . import explore as explore  # noqa: E402
 for _sub, _names in ((lift, ("ElfLifter", "load_elf")),
                      (pattern, ("FieldPat", "field", "code_ptr"))):
     for _name in _names:
-        _o = getattr(_mod_api, _name)
-        _o.__module__ = f"strider.{_sub.__name__}"
-        setattr(_sub, _name, _o)
+        getattr(_mod_api, _name).__module__ = f"strider.{_sub.__name__}"
+        setattr(_sub, _name, getattr(_mod_api, _name))
     _export(_sub, *_names)
 
 # The stubs' type aliases, bound at runtime too so they can be imported and
@@ -291,7 +290,7 @@ __all__ = ["StriderError", "ir", "lift", "cfg", "sleigh", "reader",
            "opt", "pattern", "template"]
 
 # Drop import machinery from the public namespace.
-del _importlib, _sys, _ext, _name, _sub, _names, _o, _mod_api, _t, _p, _export
+del _importlib, _sys, _ext, _name, _sub, _names, _mod_api, _t, _p, _export
 del _SUBMODULE_DOCS
 del _S, _NodePat, _InputPat, _CtrlPat, _MemPat, _MemAccessPat, _OrderedPat
 del _OutputPat, _proto, _proto_name
