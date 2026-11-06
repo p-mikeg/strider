@@ -193,7 +193,7 @@ impl OptimizerPipeline {
             if outcome.is_err() {
                 edit.function().invalidate_analyses();
             }
-            crate::mem_analysis::stamp_all(&mut edit);
+            crate::mem_analysis::stamp_all(&edit);
             outcome
         };
         let converged = outcome?;
@@ -815,7 +815,7 @@ mod tests {
         let mut function = sp_store_fn()?;
         let mut edit = crate::EditFunction::new(&mut function);
         edit.cull_dead();
-        crate::mem_analysis::stamp_all(&mut edit);
+        crate::mem_analysis::stamp_all(&edit);
         let rule =
             |edit: &mut crate::EditFunction<'_>, node: NodeId| -> crate::Result<Option<ValueId>> {
                 match edit.node_kind(node) {
