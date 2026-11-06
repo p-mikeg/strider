@@ -9,7 +9,8 @@ use crate::pipeline::Optimizer;
 ///
 /// A candidate is an unshadowed `Load[InitialVar(sp) + K]` with `K` in a stack
 /// slot. Ordinals start at `arg_passing_regs.len()` whatever the argument's
-/// class, so an integer-arg query can bind a stack-passed float.
+/// class, so an integer-arg query can bind a stack-passed float. Only slots
+/// up to the first one no clean load reads are arguments.
 pub struct FunctionArgDetect;
 
 impl Optimizer for FunctionArgDetect {
@@ -73,7 +74,6 @@ fn detect_stack_args(
         else {
             continue;
         };
-        // Incoming stack args sit at fixed offsets from the entry SP.
         if !edit.function().is_entry_sp(base) {
             continue;
         }

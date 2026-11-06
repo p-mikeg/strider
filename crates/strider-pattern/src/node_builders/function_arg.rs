@@ -154,7 +154,8 @@ pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
         .source(FunctionArgSource::Register(vn))
 }
 
-/// The `idx`-th integer argument, stack-passed at `(space, offset)`.
+/// The `idx`-th integer argument, stack-passed at `(space, offset)`. Only
+/// slots up to the first unread one are arguments.
 pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i128, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)
