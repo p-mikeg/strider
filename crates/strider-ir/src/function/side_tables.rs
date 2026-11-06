@@ -36,8 +36,7 @@ pub struct FunctionSideTables {
     /// Per-class CC argument index to the carrier nodes' output values
     /// (`InitialVar` for register args, `Load` for stack args).
     arg_index_to_values: FxHashMap<(ArgClass, u32), Vec<ValueId>>,
-    /// The `InitialVar(id)` node of each id; `validate` re-checks reachable
-    /// entries.
+    /// The `InitialVar(id)` node of each id.
     pub(crate) initial_var_index: SecondaryMap<crate::node::InitialVnId, Option<NodeId>>,
     /// Unsigned values of `IntConst(id)` nodes, deduped after
     /// `crate::eval::mask` to the node's output width.
@@ -48,7 +47,7 @@ pub struct FunctionSideTables {
     call_ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention>,
     /// Sleigh user-op name by `CallOther` `user_op_id`.
     call_other_names: FxHashMap<u64, String>,
-    /// Every tracked varnode in `InitialVnId` order: (space shortcut, offset, size).
+    /// Every tracked varnode, in `InitialVnId` order.
     vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 }
 
