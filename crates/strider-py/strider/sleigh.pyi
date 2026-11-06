@@ -311,8 +311,8 @@ class CallOtherAbi:
         ...
     @classmethod
     def no_return(cls) -> CallOtherAbi:
-        """Control does not pass the op. Empty footprint; use
-        `custom(..., no_return=True)` for one."""
+        """Control does not return; no implicit registers. For a no-return
+        op that has some, use `custom(..., no_return=True)`."""
         ...
     @classmethod
     def custom(

@@ -73,8 +73,8 @@ impl PyCallOtherAbi {
         Self::from_class(CallOtherClass::MEM_CLOBBER)
     }
 
-    /// Control does not pass the op. Empty footprint; use
-    /// `custom(..., no_return=True)` for one.
+    /// Control does not return; no implicit registers. For a no-return op
+    /// that has some, use `custom(..., no_return=True)`.
     #[classmethod]
     fn no_return(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::NO_RETURN)

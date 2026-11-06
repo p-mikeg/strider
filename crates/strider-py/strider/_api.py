@@ -256,9 +256,9 @@ class ElfLifter(Lifter):
     and an `analyze` that accepts a symbol name.
 
     ```python
-    lift = strider.lift.load_elf("path/to/file.elf")
-    for sym in lift.functions():
-        cfg, function, unresolved = lift.analyze(sym.address)
+    prog = strider.lift.load_elf("path/to/file.elf")
+    for sym in prog.functions():
+        cfg, function, unresolved = prog.analyze(sym.address)
     ```
     """
 
