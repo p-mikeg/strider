@@ -96,7 +96,8 @@ pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item =
         .map(|(succ, _use_idx)| succ)
 }
 
-/// A dead CFG input shows up while a live node uses it.
+/// Input producers first, then control consumers; a dead control
+/// predecessor is reached through the live node using it.
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
@@ -187,8 +188,8 @@ fn mem_succs(function: &Function, node: NodeId) -> impl Iterator<Item = NodeId> 
 /// The memory-chain nodes reachable forward from the entry-reachable
 /// `InitialMemory`, in pre-order, root included; empty without one. Excludes
 /// the exits (`Return`, `IndirectBranch`, `Unreachable`); includes `Load`
-/// leaves. Follows raw use-lists, so
-/// on an uncompacted graph it can include a dead `Store` on the live token.
+/// leaves. Follows raw use-lists, so on an uncompacted graph it can include a
+/// dead `Store` on the live token.
 pub fn memory_reachable(function: &Function) -> Vec<NodeId> {
     let graph = function.graph();
     let Some(root) = walk_graph(graph, function.entry())
