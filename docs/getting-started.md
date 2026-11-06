@@ -13,14 +13,11 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 
 1. **Read** the function's bytes from an ELF (executable, shared library or
    `.o`) or a raw buffer ([loading](python-api.md#1-loading-a-binary)).
-   `relocated_got_is_rom=True` also serves the GOT and `.data.rel.ro`, so
-   loads through them fold.
 2. **Lift** each instruction into p-code, the CPU-independent form of GHIDRA's
    Sleigh. An instruction Sleigh leaves opaque (a syscall, a trap) is
-   classified by a built-in ABI table, which `CfgOptions(call_other_abis=...)`
-   overrides. A call is modelled by its calling convention, never by reading
-   the callee; `LifterOptions(per_address_ccs=...)` gives one callee its own,
-   and `load_elf` picks a PowerPC kernel's `*_linux_kernel` convention itself.
+   classified by a built-in ABI table; a call is modelled by its calling
+   convention, never by reading the callee
+   ([options](python-api.md#liftlifteroptions-per-call-tuning)).
 3. Build a **CFG**: which regions (straight runs of instructions) jump to
    which. ARM/Thumb and MIPS16 code decodes in the mode its edge carries.
 4. Build the **IR**, a graph with one node per computed value and one edge per
