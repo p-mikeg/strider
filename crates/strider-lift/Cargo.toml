@@ -20,8 +20,6 @@ rustc-hash.workspace = true
 
 [dev-dependencies]
 petgraph.workspace = true
-# Test-only IR helpers (count_kind, has_kind) used in lift unit tests.
-strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils.workspace = true
 strider-target = { workspace = true, features = ["test-util"] }
 
