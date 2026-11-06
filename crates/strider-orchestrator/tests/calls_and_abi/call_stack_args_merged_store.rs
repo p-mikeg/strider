@@ -51,6 +51,17 @@ fn a_slot_stored_on_both_merging_arms_is_a_phi_argument() {
     assert_eq!(arms, [Some(10), Some(11)]);
 }
 
+#[test]
+fn a_slot_both_arms_store_alike_is_that_value() {
+    // As above, both arms `push 10`.
+    let (function, args) = stack_args(vec![
+        0x85, 0xc9, 0x74, 0x04, 0x6a, 0x0a, 0xeb, 0x02, 0x6a, 0x0a, 0x6a, 0x09, 0xe8, 0x04, 0x00,
+        0x00, 0x00, 0x83, 0xc4, 0x08, 0xc3, 0xc3,
+    ]);
+    let values: Vec<_> = args.iter().map(|&v| function.int_const_u128(v)).collect();
+    assert_eq!(values, [Some(9), Some(10)]);
+}
+
 /// At a loop header the arms are one local's stores across iterations.
 #[test]
 fn a_slot_stored_before_and_around_a_loop_is_no_argument() {
