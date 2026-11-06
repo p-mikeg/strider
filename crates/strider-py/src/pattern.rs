@@ -522,7 +522,8 @@ fn too_deep() -> PyErr {
     into_strider_err(anyhow::anyhow!(
         "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels. That is \
          the loosest bound; this thread's stack budget and the matcher's own \
-         node cap both reject shallower patterns still"
+         node cap both reject shallower patterns still. A builder passed into \
+         its own operand contains itself and never ends"
     ))
 }
 
@@ -560,7 +561,8 @@ impl DepthGuard {
                     return Err(into_strider_err(anyhow::anyhow!(
                         "pattern nesting too deep for this thread's stack ({} KiB \
                          used of a {} KiB compile budget at {next} levels; give the \
-                         thread a larger stack_size, or nest less)",
+                         thread a larger stack_size, or nest less; a builder \
+                         passed into its own operand contains itself and never ends)",
                         used / 1024,
                         budget / 1024,
                     )));

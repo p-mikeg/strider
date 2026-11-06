@@ -181,6 +181,13 @@ def test_the_count_bound_still_answers_for_a_pathological_chain():
         fn.find_all(_chain(4000))
 
 
+
+def test_a_builder_wired_into_itself_is_named_as_a_cycle():
+    b = strider.pattern.load()
+    b.addr(b)
+    with pytest.raises(strider.StriderError, match="contains itself"):
+        _function().find_all(b)
+
 def test_the_count_bound_answers_where_no_other_bound_reaches():
     """Past 512 levels but far under the step cap, on a stack whose budget
     holds even an unoptimised build's frames: only the level count refuses."""
