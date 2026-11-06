@@ -10,11 +10,7 @@ use strider_ir::{ExtendOp, Function, IRViewer, IRWalker, IntBinaryOp};
 const BASE: u64 = 0x10000;
 
 fn analyze(bytes: Vec<u8>) -> Function {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function
+    common::analyze_bytes(common::Arch::X64, bytes, BASE, None, BASE).function
 }
 
 fn returned_rax(f: &Function) -> ValueId {

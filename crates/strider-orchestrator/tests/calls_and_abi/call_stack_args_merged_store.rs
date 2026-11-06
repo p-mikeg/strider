@@ -14,11 +14,7 @@ const CDECL_ARITY: usize = 4;
 
 /// The stack arguments collected onto the one call in `bytes`.
 fn stack_args(bytes: Vec<u8>) -> (strider_ir::Function, Vec<ValueId>) {
-    let (mut strider, cc) = common::strider_over_bytes(Arch::X86, bytes, BASE, None);
-    let function = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
+    let function = common::analyze_bytes(Arch::X86, bytes, BASE, None, BASE).function;
     let call = function
         .walk()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))

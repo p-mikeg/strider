@@ -7,7 +7,7 @@
 
 use strider_cfg::RegionTerminator;
 use strider_ir_test_utils::MockRom;
-use strider_orchestrator::{AnalyzeOptions, Reason};
+use strider_orchestrator::Reason;
 
 use crate::common;
 
@@ -23,15 +23,13 @@ fn analyze(code: &str, arms: &[u64]) -> (Vec<Vec<u64>>, Vec<u64>) {
         .chain([BASE; 8])
         .flat_map(|a| u32::try_from(a).unwrap().to_be_bytes())
         .collect();
-    let (mut strider, cc) = common::strider_over_bytes(
+    let result = common::analyze_bytes(
         common::Arch::Ppc32be,
         common::hex(code),
         BASE,
         Some(Box::new(MockRom::raw_bytes(TABLE, cells))),
+        BASE,
     );
-    let result = strider
-        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
-        .expect("analyze");
     let unresolved = result
         .incomplete()
         .of(Reason::UnresolvedBranch)

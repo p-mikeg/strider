@@ -32,11 +32,7 @@ fn function(mov_w9: u32, store: u32, load: u32) -> Vec<u32> {
 fn returned_x0(arch: common::Arch, words: &[u32]) -> Option<u128> {
     // AArch64 instructions are little-endian on both data endiannesses.
     let bytes = words_image(words, Endianness::Little);
-    let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
+    let f = common::analyze_bytes(arch, bytes, BASE, None, BASE).function;
     let ret = f
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))

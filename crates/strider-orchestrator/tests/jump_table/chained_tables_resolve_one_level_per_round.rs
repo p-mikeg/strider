@@ -181,20 +181,13 @@ fn a_table_the_whole_function_bounds_tighter_seats_the_tighter_answer() {
         tables.extend_from_slice(&(RETS + slot).to_le_bytes());
     }
 
-    let (mut strider, cc) = common::strider_over_bytes(
+    let result = common::analyze_bytes(
         common::Arch::X64,
         text.clone(),
         BASE,
         Some(Box::new(MockRom::regions([(BASE, text), (TABLES, tables)]))),
+        E,
     );
-    let result = strider
-        .analyze(
-            E,
-            &cc,
-            &strider_orchestrator::AnalyzeOptions::default(),
-            None,
-        )
-        .expect("analyze");
     let arms_at = |site: u64| -> Vec<u64> {
         let mut arms: Vec<u64> = result
             .cfg

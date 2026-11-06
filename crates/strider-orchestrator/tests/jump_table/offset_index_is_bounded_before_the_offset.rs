@@ -41,7 +41,7 @@ const RODATA: &[u8] = &[
 fn an_operand_below_an_offset_is_not_enumerated_as_the_index() {
     let mut bytes = TEXT.to_vec();
     bytes.extend(std::iter::repeat_n(0xccu8, 32));
-    let (mut s, cc) = common::strider_over_bytes(
+    let r = common::analyze_bytes(
         common::Arch::X64,
         bytes,
         TEXT_BASE,
@@ -49,15 +49,8 @@ fn an_operand_below_an_offset_is_not_enumerated_as_the_index() {
             (TEXT_BASE, TEXT.to_vec()),
             (RODATA_BASE, RODATA.to_vec()),
         ]))),
+        0x40100d,
     );
-    let r = s
-        .analyze(
-            0x40100d,
-            &cc,
-            &strider_orchestrator::AnalyzeOptions::default(),
-            None,
-        )
-        .expect("analyze");
     let arms: Vec<u64> = r
         .cfg
         .regions()

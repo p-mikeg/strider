@@ -13,11 +13,7 @@ const LOAD_GS0_RDX: [u8; 9] = [0x65, 0x48, 0x8b, 0x14, 0x25, 0, 0, 0, 0];
 
 /// The address operand of each `Load`, in walk order.
 fn load_addresses(bytes: Vec<u8>) -> Vec<strider_ir::node::ValueId> {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
+    let f = common::analyze_bytes(common::Arch::X64, bytes, BASE, None, BASE).function;
     f.walk()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
         .map(|n| f.node_inputs(n)[1])

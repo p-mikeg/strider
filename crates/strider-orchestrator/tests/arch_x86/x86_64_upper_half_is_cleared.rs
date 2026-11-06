@@ -8,7 +8,6 @@
 
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::AnalyzeOptions;
 
 use crate::common;
 
@@ -17,10 +16,7 @@ const BASE: u64 = 0x10000;
 const STALE_UPPER_HALF: u128 = 0xFFFF_FFFF_0000_0000;
 
 fn keeps_the_callers_high_half(bytes: Vec<u8>) -> bool {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    let result = strider
-        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
-        .expect("analyze");
+    let result = common::analyze_bytes(common::Arch::X64, bytes, BASE, None, BASE);
     let f = &result.function;
     f.graph()
         .all_value_ids()
@@ -57,11 +53,7 @@ fn register_after(insn: &[u8], reg: Reg) -> Option<u128> {
 
 /// The constant `bytes` returns in `rax`, if any.
 fn returned_constant(bytes: Vec<u8>) -> Option<u128> {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    let f = strider
-        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
-        .expect("analyze")
-        .function;
+    let f = common::analyze_bytes(common::Arch::X64, bytes, BASE, None, BASE).function;
     let ret = f
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))

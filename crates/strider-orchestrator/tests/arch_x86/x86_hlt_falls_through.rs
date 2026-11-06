@@ -9,10 +9,7 @@ use strider_ir::{Function, IRViewer, IRWalker};
 const BASE: u64 = 0x10000;
 
 fn analyze(bytes: Vec<u8>) -> strider_orchestrator::AnalyzeResult {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
+    common::analyze_bytes(common::Arch::X64, bytes, BASE, None, BASE)
 }
 
 fn count(f: &Function, pred: impl Fn(&NodeKind) -> bool) -> usize {

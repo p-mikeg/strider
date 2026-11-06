@@ -17,15 +17,7 @@ fn machine(set: &strider_orchestrator::Incompleteness) -> Vec<(u64, Reason)> {
 
 #[test]
 fn analyze_reports_an_unresolved_dispatch_through_its_cfg() {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
-    let r = strider
-        .analyze(
-            BASE,
-            &cc,
-            &strider_orchestrator::AnalyzeOptions::default(),
-            None,
-        )
-        .expect("analyze");
+    let r = common::analyze_bytes(common::Arch::X64, jmp_rax(), BASE, None, BASE);
     assert_eq!(
         machine(r.incomplete()),
         [(0x1003, Reason::UnresolvedBranch)]

@@ -14,11 +14,7 @@ const BASE: u64 = 0x1000;
 fn upper_lane_after(arch: common::Arch, insn: u32) -> Option<u128> {
     let words = [0x6f07_e7e0, insn, 0x4e18_3c00, 0xd65f_03c0];
     let bytes = words_image(&words, Endianness::Little);
-    let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
+    let f = common::analyze_bytes(arch, bytes, BASE, None, BASE).function;
     let ret = f
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))

@@ -28,10 +28,7 @@ fn mov_ret() -> Vec<u8> {
 
 #[test]
 fn the_default_returns_an_incomplete_result() {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
-    let r = strider
-        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
-        .expect("an incomplete result is returned");
+    let r = common::analyze_bytes(common::Arch::X64, jmp_rax(), BASE, None, BASE);
     assert_eq!(
         r.incomplete().iter().collect::<Vec<_>>(),
         jmp_rax_incomplete()
@@ -40,10 +37,7 @@ fn the_default_returns_an_incomplete_result() {
 
 #[test]
 fn a_complete_result_names_nothing() {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, mov_ret(), BASE, None);
-    let r = strider
-        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
-        .expect("analyze");
+    let r = common::analyze_bytes(common::Arch::X64, mov_ret(), BASE, None, BASE);
     assert!(r.incomplete().is_empty(), "{}", r.incomplete());
 }
 
