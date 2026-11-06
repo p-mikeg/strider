@@ -13,7 +13,8 @@ IR from a `Cfg`.
   `RegionTerminator`, not necessarily maximal. It can end mid-instruction.
 - `CfgOptions<'a>`: the function `bound` and `fragment_ranges`, borrowed
   target tables (`known_targets`, `derived_targets`, `no_return_targets`,
-  `call_other_overrides`, `local_entries`) and `data_ranges`, never decoded.
+  `call_other_overrides`, `local_entries`), and `data_ranges`, bytes never
+  decoded.
 - Queries on `Cfg` (`regions`, `region_containing`, `region_if`,
   `switch_arm_regions`, ...), Graphviz output (`dot_dumper`,
   `neighborhood_dot`), and `insn_text` for one p-code op.
