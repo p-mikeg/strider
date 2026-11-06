@@ -37,12 +37,13 @@ impl<P> crate::template::template_pat::sealed::Sealed for Captured<P> {}
 
 /// Combinators on every [`MatchPat`].
 pub trait CaptureExt: MatchPat + 'static {
+    /// Binds the matched output; an output-less node (`Return`, ...) binds the node.
     fn capture(self, c: crate::capture::Capture) -> Captured<Self> {
         Captured(self.into_expr().capture(c), PhantomData)
     }
     /// Run `f` after the whole sub-pattern matches; `false` fails the match. Below the root, `f`
-    /// sees only the captures of its own cone and of operands written before it. Refused on a
-    /// root with no value output, which takes
+    /// sees only the captures of its own cone and of operands written before it. Refused where
+    /// the matched output carries no value; a valueless root takes
     /// [`Pattern::with_root_post_match`](crate::Pattern::with_root_post_match).
     fn when_match<F>(self, f: F) -> MatchOnly
     where

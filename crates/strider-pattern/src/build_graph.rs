@@ -88,8 +88,8 @@ impl<N, V> BuildGraph<N, V> {
         self.graph.add_node_output(node, out)
     }
 
-    /// `false`, refused, when `prod` comes from a node built after `consumer` (the only way to
-    /// form a cycle), unless `leaf` says its producer takes no input.
+    /// `false`, refused, when `prod` does not come from a node built before `consumer` (the only
+    /// way to form a cycle), unless `leaf` says its producer takes no input.
     pub(crate) fn add_input(&mut self, consumer: NodeId, prod: ValueId, leaf: bool) -> bool {
         if !leaf && self.graph.producer(prod).as_u32() >= consumer.as_u32() {
             self.reject(
