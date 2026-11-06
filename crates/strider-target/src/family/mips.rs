@@ -233,13 +233,13 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
 };
 
 impl CallingConvention {
-    /// Returns the MIPS O32 calling convention.
+    /// The MIPS O32 calling convention.
     #[must_use]
     pub const fn mips_o32() -> Self {
         MIPS_O32_BASE
     }
 
-    /// Returns the MIPS N64 calling convention.
+    /// The MIPS N64 calling convention.
     #[must_use]
     pub const fn mips_n64() -> Self {
         // `$8`..`$11` are `t0`..`t3` in the sla.

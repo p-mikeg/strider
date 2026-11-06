@@ -410,8 +410,8 @@ impl BuiltCallingConvention {
     }
 }
 
-/// The N-th stack argument is at `base_offset + N * increment` from the
-/// call-time SP.
+/// The N-th stack argument is at `base_offset + N * increment` from the SP
+/// the callee is entered with, past any return address `call` pushed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StackArgs {
     pub base_offset: i128,

@@ -113,7 +113,7 @@ const CALLING_CONVENTIONS: &[CcPreset] = &[CcPreset {
 }];
 
 impl CallingConvention {
-    /// Returns the AArch64 AAPCS64 calling convention.
+    /// The AArch64 AAPCS64 calling convention.
     #[must_use]
     pub const fn aarch64_aapcs64() -> Self {
         // `x8` (indirect result) is not an argument; a stack address in it

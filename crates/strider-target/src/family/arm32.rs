@@ -233,13 +233,13 @@ const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
 };
 
 impl CallingConvention {
-    /// Returns the ARM 32-bit AAPCS hard-float (VFP) calling convention.
+    /// The ARM 32-bit AAPCS hard-float (VFP) calling convention.
     #[must_use]
     pub const fn arm_aapcs() -> Self {
         ARM_AAPCS_VFP_BASE
     }
 
-    /// Returns the ARM 32-bit AAPCS calling convention for a
+    /// The ARM 32-bit AAPCS calling convention for a
     /// `-mfloat-abi=soft` / `softfp` binary.
     #[must_use]
     pub const fn arm_aapcs_soft() -> Self {

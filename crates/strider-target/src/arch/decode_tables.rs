@@ -45,8 +45,9 @@ pub struct DecodeTables {
 impl DecodeTables {
     /// # Errors
     /// When `sleigh` and `arch` disagree: the ISA-mode var does not flow, a
-    /// re-derived var is undeclared, `ISAModeSwitch` pairs differently, or the
-    /// `ram` space is missing, misnamed or not byte-addressed.
+    /// re-derived var is undeclared, `ISAModeSwitch` pairs differently, the
+    /// `ram` space is missing, misnamed or not byte-addressed, or
+    /// [`SleighArch::volatile_register_ranges`] fails.
     pub(super) fn from_sleigh<R: MemReader>(
         arch: SleighArch,
         sleigh: &Sleigh<R>,
