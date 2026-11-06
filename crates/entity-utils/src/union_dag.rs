@@ -12,7 +12,8 @@ struct Node<V> {
     /// `None` for a pure join node, one [`UnionDag::union`] made for a key
     /// that had no value of its own yet.
     own: Option<V>,
-    parents: EntityList<UnionId>,
+    /// The nodes whose values flow into this one.
+    sources: EntityList<UnionId>,
 }
 
 /// Per-key value sets in which [`Self::union`] makes one key's set a live
@@ -51,7 +52,7 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
     /// [`Self::for_each`] then yields it twice.
     pub fn extend(&mut self, n: N, v: V) {
         let root = self.ensure(n);
-        // As `linked` in `union`: keeps `parents` from growing per call.
+        // As `linked` in `union`: keeps `sources` from growing per call.
         if !self.held.insert((root, v)) {
             return;
         }
@@ -59,7 +60,7 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
             self.nodes[root].own = Some(v);
         } else {
             let leaf = self.alloc(Some(v));
-            self.nodes[root].parents.push(leaf, &mut self.links);
+            self.nodes[root].sources.push(leaf, &mut self.links);
         }
     }
 
@@ -71,12 +72,12 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
             return;
         };
         let dst_root = self.ensure(dst);
-        // One `parents` entry per distinct link, however often re-linked, so
+        // One `sources` entry per distinct link, however often re-linked, so
         // `for_each` cost does not grow with the call count.
         if !self.linked.insert((dst_root, src_root)) {
             return;
         }
-        self.nodes[dst_root].parents.push(src_root, &mut self.links);
+        self.nodes[dst_root].sources.push(src_root, &mut self.links);
     }
 
     pub fn is_empty(&self, n: N) -> bool {
@@ -99,9 +100,9 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
             if let Some(v) = node.own {
                 f(v);
             }
-            for &parent in node.parents.as_slice(&self.links) {
-                if seen.insert(parent) {
-                    stack.push(parent);
+            for &source in node.sources.as_slice(&self.links) {
+                if seen.insert(source) {
+                    stack.push(source);
                 }
             }
         }
@@ -138,7 +139,7 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
     fn alloc(&mut self, own: Option<V>) -> UnionId {
         self.nodes.push(Node {
             own,
-            parents: EntityList::new(),
+            sources: EntityList::new(),
         })
     }
 }
@@ -206,7 +207,7 @@ mod tests {
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2, 99]));
     }
 
-    /// Repeating one pair must not grow the parents list: `for_each`'s `seen`
+    /// Repeating one pair must not grow the sources list: `for_each`'s `seen`
     /// hides the repetition in the answer, so only the link count shows it.
     #[test]
     fn repeating_one_union_pair_adds_one_link() {
@@ -217,11 +218,11 @@ mod tests {
             dag.union(Key(0), Key(1));
         }
         let root = dag.roots[Key(0)].expand().expect("dst has a root");
-        assert_eq!(dag.nodes[root].parents.as_slice(&dag.links).len(), 1);
+        assert_eq!(dag.nodes[root].sources.as_slice(&dag.links).len(), 1);
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2]));
     }
 
-    /// Repeating one value must not grow the parents list: `for_each`'s `seen`
+    /// Repeating one value must not grow the sources list: `for_each`'s `seen`
     /// hides the repetition in the answer, so only the visit count shows it.
     #[test]
     fn repeating_one_extend_value_is_visited_once() {
@@ -251,7 +252,7 @@ mod tests {
     }
 
     /// Interleaving two pairs must not defeat the guard either: a
-    /// last-parent-only check pushes a link on every call, so the walk cost
+    /// last-source-only check pushes a link on every call, so the walk cost
     /// grows with the CALL count while the answer stays at three values.
     #[test]
     fn alternating_union_pairs_add_one_link_each() {
@@ -264,7 +265,7 @@ mod tests {
             dag.union(Key(0), Key(2));
         }
         let root = dag.roots[Key(0)].expand().expect("dst has a root");
-        assert_eq!(dag.nodes[root].parents.as_slice(&dag.links).len(), 2);
+        assert_eq!(dag.nodes[root].sources.as_slice(&dag.links).len(), 2);
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2, 3]));
     }
 
