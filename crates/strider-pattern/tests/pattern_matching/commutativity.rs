@@ -771,29 +771,39 @@ fn ordered_pins_the_comparison_a_lowered_float_ne_holds() {
     a::matches(&function, ne(1.0, 2.0).ordered().into_pattern(), 1);
 }
 
-/// `float_le(l, r)` is `Or(FloatLess(l, r), FloatEqual(l, r))`; the `Less`
-/// orders its pair already, so `.ordered()` adds nothing, and an `Or` holding
-/// the two comparisons the other way round still matches.
-#[test]
-fn ordered_is_a_no_op_on_float_le() {
-    let function = {
-        let mut t = Tb::empty();
-        let a = t.f64(1.0);
-        let b = t.f64(2.0);
-        let lt = t.fcmp(a, b, FloatCmpOp::Less);
-        let eq = t.fcmp(a, b, FloatCmpOp::Equal);
-        let le = t.bool_bin(eq, lt, IntBinaryOp::Or);
-        let as_int = t.as_int(le, strider_ir::node::ValueType::int(64));
-        t.ret_val(as_int)
+/// `float_le(l, r)` is `Or(FloatLess(l, r), FloatEqual(l, r))`: both
+/// comparisons hold the written pair, so `.ordered()` pins the `Equal` (the
+/// `Less` orders its pair already). The `Or` is not the pair holder, so its
+/// operands may still come either way round.
+fn lowered_float_le(eq_swapped: bool) -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let a = t.f64(1.0);
+    let b = t.f64(2.0);
+    let lt = t.fcmp(a, b, FloatCmpOp::Less);
+    let eq = if eq_swapped {
+        t.fcmp(b, a, FloatCmpOp::Equal)
+    } else {
+        t.fcmp(a, b, FloatCmpOp::Equal)
     };
+    let le = t.bool_bin(eq, lt, IntBinaryOp::Or);
+    let as_int = t.as_int(le, strider_ir::node::ValueType::int(64));
+    t.ret_val(as_int)
+}
+
+#[test]
+fn ordered_pins_both_comparisons_of_float_le() {
     let le = || {
         float_le(
             float_const(1.0_f64.to_bits()),
             float_const(2.0_f64.to_bits()),
         )
     };
-    a::matches(&function, le().into_pattern(), 1);
-    a::matches(&function, le().ordered().into_pattern(), 1);
+    let written = lowered_float_le(false);
+    a::matches(&written, le().into_pattern(), 1);
+    a::matches(&written, le().ordered().into_pattern(), 1);
+    let swapped = lowered_float_le(true);
+    a::matches(&swapped, le().into_pattern(), 1);
+    a::none(&swapped, le().ordered().into_pattern());
 }
 
 /// `float_is_nan(x)` is `Xor(FloatEqual(x, x), 1)`, one operand in both
