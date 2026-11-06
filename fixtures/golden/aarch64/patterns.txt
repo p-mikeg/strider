@@ -53,7 +53,7 @@ float_arg 7 [%v31]
 %v29:i128 = initial_var[q5]
 %v30:i128 = initial_var[q6]
 %v31:i128 = initial_var[q7]
-%v32:ctrl, %v33:mem, %v34:i64<x0>, %v35:i64<x1>, %v36:i128<q0>, %v37:i128<q1>, %v38:i128<q2>, %v39:i128<q3>, %v40:i64<pc>, %v41:i8<tmpCY>, %v42:i8<tmpOV>, %v43:i8<tmpNG>, %v44:i8<tmpZR>, %v45:i64<x2>, %v46:i64<x3>, %v47:i64<x4>, %v48:i64<x5>, %v49:i64<x6>, %v50:i64<x7>, %v51:i128<q4>, %v52:i128<q5>, %v53:i128<q6>, %v54:i128<q7> = call %v0, %v14, %v15, %v4, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v5, %v9
+%v32:ctrl, %v33:mem, %v34:i64<x0>, %v35:i64<x1>, %v36:i128<q0>, %v37:i128<q1>, %v38:i128<q2>, %v39:i128<q3>, %v40:i64<pc>, %v41:i8<tmpCY>, %v42:i8<tmpOV>, %v43:i8<tmpNG>, %v44:i8<tmpZR>, %v45:i64<x2>, %v46:i64<x3>, %v47:i64<x4>, %v48:i64<x5>, %v49:i64<x6>, %v50:i64<x7>, %v51:i128<q4>, %v52:i128<q5>, %v53:i128<q6>, %v54:i128<q7> = call %v0, %v14, %v15, %v4, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31
 %v55:i32 = load[r] %v33, %v12
 %v56:i32 = truncate %v34
 %v57:i32 = int.xor %v55, %v56
@@ -394,7 +394,7 @@ float_arg 7 [%v38]
 %v36:i128 = initial_var[q5]
 %v37:i128 = initial_var[q6]
 %v38:i128 = initial_var[q7]
-%v39:ctrl, %v40:mem, %v41:i64<x0>, %v42:i64<x1>, %v43:i128<q0>, %v44:i128<q1>, %v45:i128<q2>, %v46:i128<q3>, %v47:i64<pc>, %v48:i8<NG>, %v49:i8<ZR>, %v50:i8<CY>, %v51:i8<OV>, %v52:i8<tmpCY>, %v53:i8<tmpOV>, %v54:i8<tmpNG>, %v55:i8<tmpZR>, %v56:i64<x2>, %v57:i64<x3>, %v58:i64<x4>, %v59:i64<x5>, %v60:i64<x6>, %v61:i64<x7>, %v62:i128<q4>, %v63:i128<q5>, %v64:i128<q6>, %v65:i128<q7> = call %v5, %v16, %v17, %v10, %v20, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v11, %v15
+%v39:ctrl, %v40:mem, %v41:i64<x0>, %v42:i64<x1>, %v43:i128<q0>, %v44:i128<q1>, %v45:i128<q2>, %v46:i128<q3>, %v47:i64<pc>, %v48:i8<NG>, %v49:i8<ZR>, %v50:i8<CY>, %v51:i8<OV>, %v52:i8<tmpCY>, %v53:i8<tmpOV>, %v54:i8<tmpNG>, %v55:i8<tmpZR>, %v56:i64<x2>, %v57:i64<x3>, %v58:i64<x4>, %v59:i64<x5>, %v60:i64<x6>, %v61:i64<x7>, %v62:i128<q4>, %v63:i128<q5>, %v64:i128<q6>, %v65:i128<q7> = call %v5, %v16, %v17, %v10, %v20, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38
 return %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46
 %v66:i64 = extend.zero %v22
 return %v6, %v7, %v66, %v21, %v31, %v32, %v33, %v34

@@ -194,7 +194,7 @@ float_arg 7 [%v38]
 %v36:i64 = initial_var[d5]
 %v37:i64 = initial_var[d6]
 %v38:i64 = initial_var[d7]
-%v39:ctrl, %v40:mem, %v41:i32<r0>, %v42:i32<r1>, %v43:i64<d0>, %v44:i64<d1>, %v45:i64<d2>, %v46:i64<d3>, %v47:i64<d4>, %v48:i64<d5>, %v49:i64<d6>, %v50:i64<d7>, %v51:i32<r2>, %v52:i32<r3>, %v53:i32<pc>, %v54:i8<CY>, %v55:i8<OV>, %v56:i8<tmpNG>, %v57:i8<tmpZR>, %v58:i8<tmpCY>, %v59:i8<tmpOV>, %v60:i8<shift_carry>, %v61:i8<TB>, %v62:i8<ISAModeSwitch>, %v63:i32<mult_addr> = call %v0, %v18, %v28, %v16, %v17, %v26, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v17, %v13, %v9, %v5
+%v39:ctrl, %v40:mem, %v41:i32<r0>, %v42:i32<r1>, %v43:i64<d0>, %v44:i64<d1>, %v45:i64<d2>, %v46:i64<d3>, %v47:i64<d4>, %v48:i64<d5>, %v49:i64<d6>, %v50:i64<d7>, %v51:i32<r2>, %v52:i32<r3>, %v53:i32<pc>, %v54:i8<CY>, %v55:i8<OV>, %v56:i8<tmpNG>, %v57:i8<tmpZR>, %v58:i8<tmpCY>, %v59:i8<tmpOV>, %v60:i8<shift_carry>, %v61:i8<TB>, %v62:i8<ISAModeSwitch>, %v63:i32<mult_addr> = call %v0, %v18, %v28, %v16, %v17, %v26, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v17, %v13
 return %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50
 
 == compute_via_helper @0x350

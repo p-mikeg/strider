@@ -58,7 +58,7 @@ float_arg 7 [%v30]
 %v28:i128 = initial_var[q5]
 %v29:i128 = initial_var[q6]
 %v30:i128 = initial_var[q7]
-%v31:ctrl, %v32:mem, %v33:i64<x0>, %v34:i64<x1>, %v35:i128<q0>, %v36:i128<q1>, %v37:i128<q2>, %v38:i128<q3>, %v39:i64<pc>, %v40:i8<tmpCY>, %v41:i8<tmpOV>, %v42:i8<tmpNG>, %v43:i8<tmpZR>, %v44:i64<x2>, %v45:i64<x3>, %v46:i64<x4>, %v47:i64<x5>, %v48:i64<x6>, %v49:i64<x7>, %v50:i128<q4>, %v51:i128<q5>, %v52:i128<q6>, %v53:i128<q7> = call %v0, %v14, %v15, %v4, %v12, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v5, %v9
+%v31:ctrl, %v32:mem, %v33:i64<x0>, %v34:i64<x1>, %v35:i128<q0>, %v36:i128<q1>, %v37:i128<q2>, %v38:i128<q3>, %v39:i64<pc>, %v40:i8<tmpCY>, %v41:i8<tmpOV>, %v42:i8<tmpNG>, %v43:i8<tmpZR>, %v44:i64<x2>, %v45:i64<x3>, %v46:i64<x4>, %v47:i64<x5>, %v48:i64<x6>, %v49:i64<x7>, %v50:i128<q4>, %v51:i128<q5>, %v52:i128<q6>, %v53:i128<q7> = call %v0, %v14, %v15, %v4, %v12, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30
 %v54:i64 = iconst[0xfffffffffffffff8]
 %v55:i64 = int.add %v2, %v54
 %v56:i32 = truncate %v34
@@ -460,7 +460,7 @@ float_arg 7 [%v76]
 %v74:i128 = initial_var[q5]
 %v75:i128 = initial_var[q6]
 %v76:i128 = initial_var[q7]
-%v77:ctrl, %v78:mem, %v79:i64<x0>, %v80:i64<x1>, %v81:i128<q0>, %v82:i128<q1>, %v83:i128<q2>, %v84:i128<q3>, %v85:i64<pc>, %v86:i8<NG>, %v87:i8<ZR>, %v88:i8<CY>, %v89:i8<OV>, %v90:i8<tmpCY>, %v91:i8<tmpOV>, %v92:i8<tmpNG>, %v93:i8<tmpZR>, %v94:i64<x2>, %v95:i64<x3>, %v96:i64<x4>, %v97:i64<x5>, %v98:i64<x6>, %v99:i64<x7>, %v100:i128<q4>, %v101:i128<q5>, %v102:i128<q6>, %v103:i128<q7> = call %v5, %v57, %v58, %v12, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73, %v74, %v75, %v76, %v13, %v17, %v21
+%v77:ctrl, %v78:mem, %v79:i64<x0>, %v80:i64<x1>, %v81:i128<q0>, %v82:i128<q1>, %v83:i128<q2>, %v84:i128<q3>, %v85:i64<pc>, %v86:i8<NG>, %v87:i8<ZR>, %v88:i8<CY>, %v89:i8<OV>, %v90:i8<tmpCY>, %v91:i8<tmpOV>, %v92:i8<tmpNG>, %v93:i8<tmpZR>, %v94:i64<x2>, %v95:i64<x3>, %v96:i64<x4>, %v97:i64<x5>, %v98:i64<x6>, %v99:i64<x7>, %v100:i128<q4>, %v101:i128<q5>, %v102:i128<q6>, %v103:i128<q7> = call %v5, %v57, %v58, %v12, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73, %v74, %v75, %v76
 %v104:i32 = truncate %v79
 %v105:i32 = int.add %v104, %v3
 %v106:i64 = extend.zero %v105
@@ -561,7 +561,7 @@ float_arg 7 [%v33]
 %v31:i128 = initial_var[q5]
 %v32:i128 = initial_var[q6]
 %v33:i128 = initial_var[q7]
-%v34:ctrl, %v35:mem, %v36:i64<x0>, %v37:i64<x1>, %v38:i128<q0>, %v39:i128<q1>, %v40:i128<q2>, %v41:i128<q3>, %v42:i64<pc>, %v43:i8<tmpCY>, %v44:i8<tmpOV>, %v45:i8<tmpNG>, %v46:i8<tmpZR>, %v47:i64<x2>, %v48:i64<x3>, %v49:i64<x4>, %v50:i64<x5>, %v51:i64<x6>, %v52:i64<x7>, %v53:i128<q4>, %v54:i128<q5>, %v55:i128<q6>, %v56:i128<q7> = call %v0, %v17, %v18, %v4, %v12, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v5, %v9
+%v34:ctrl, %v35:mem, %v36:i64<x0>, %v37:i64<x1>, %v38:i128<q0>, %v39:i128<q1>, %v40:i128<q2>, %v41:i128<q3>, %v42:i64<pc>, %v43:i8<tmpCY>, %v44:i8<tmpOV>, %v45:i8<tmpNG>, %v46:i8<tmpZR>, %v47:i64<x2>, %v48:i64<x3>, %v49:i64<x4>, %v50:i64<x5>, %v51:i64<x6>, %v52:i64<x7>, %v53:i128<q4>, %v54:i128<q5>, %v55:i128<q6>, %v56:i128<q7> = call %v0, %v17, %v18, %v4, %v12, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33
 %v57:i32 = load[r] %v35, %v12
 %v58:i64 = extend.zero %v57
 return %v34, %v35, %v58, %v37, %v38, %v39, %v40, %v41

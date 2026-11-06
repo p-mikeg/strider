@@ -49,7 +49,7 @@ arg 2 [%v30]
 %v28:i32 = int.add %v1, %v27
 %v29:i32 = initial_var[EDX]
 %v30:i32 = initial_var[ECX]
-%v31:ctrl, %v32:mem, %v33:i32<EAX>, %v34:i32<EDX>, %v35:i80<ST0>, %v36:i80<ST1>, %v37:i128<XMM0>, %v38:i32<ECX>, %v39:i8<CF>, %v40:i8<PF>, %v41:i8<ZF>, %v42:i8<SF>, %v43:i8<OF>, %v44:i32<EIP> = call %v5, %v25, %v26, %v23, %v28, %v29, %v30, %v1, %v17, %v13
+%v31:ctrl, %v32:mem, %v33:i32<EAX>, %v34:i32<EDX>, %v35:i80<ST0>, %v36:i80<ST1>, %v37:i128<XMM0>, %v38:i32<ECX>, %v39:i8<CF>, %v40:i8<PF>, %v41:i8<ZF>, %v42:i8<SF>, %v43:i8<OF>, %v44:i32<EIP> = call %v5, %v25, %v26, %v23, %v28, %v29, %v30, %v1
 %v45:i32 = iconst[0x40110e]
 %v46:mem = store[r] %v32, %v23, %v45
 %v47:i32 = iconst[0xfffffffe]
@@ -243,7 +243,7 @@ arg 2 [%v22]
 %v20:i32 = initial_var[EAX]
 %v21:i32 = initial_var[EDX]
 %v22:i32 = initial_var[ECX]
-%v23:ctrl, %v24:mem, %v25:i32<EAX>, %v26:i32<EDX>, %v27:i80<ST0>, %v28:i80<ST1>, %v29:i128<XMM0>, %v30:i32<ECX>, %v31:i8<CF>, %v32:i8<PF>, %v33:i8<ZF>, %v34:i8<SF>, %v35:i8<OF>, %v36:i32<EIP> = call %v0, %v18, %v19, %v16, %v20, %v21, %v22, %v13, %v9, %v5
+%v23:ctrl, %v24:mem, %v25:i32<EAX>, %v26:i32<EDX>, %v27:i80<ST0>, %v28:i80<ST1>, %v29:i128<XMM0>, %v30:i32<ECX>, %v31:i8<CF>, %v32:i8<PF>, %v33:i8<ZF>, %v34:i8<SF>, %v35:i8<OF>, %v36:i32<EIP> = call %v0, %v18, %v19, %v16, %v20, %v21, %v22
 %v37:i32 = iconst[0x4011b7]
 %v38:mem = store[r] %v24, %v16, %v37
 %v39:ctrl, %v40:mem, %v41:i32<EAX>, %v42:i32<EDX>, %v43:i80<ST0>, %v44:i80<ST1>, %v45:i128<XMM0>, %v46:i32<ECX>, %v47:i8<CF>, %v48:i8<PF>, %v49:i8<ZF>, %v50:i8<SF>, %v51:i8<OF>, %v52:i32<EIP> = call %v23, %v38, %v19, %v16, %v21, %v20, %v30

@@ -274,6 +274,41 @@ fn a_global_store_ends_the_walk_only_at_the_floor() -> Result<()> {
     Ok(())
 }
 
+/// `push ebx; push 7; call`: the save of the function's own callee-saved
+/// `ebx` ends the prefix, so only `7` is collected.
+#[test]
+fn a_callee_saved_spill_ends_the_prefix() -> Result<()> {
+    let sp = stack_vn();
+    let ebx = strider_ir_test_utils::reg_vn(0x0c, 4);
+    let i32_ty = ValueType::int(32);
+    let mut b = sp_frame(sp)
+        .tracked(ebx)
+        .callee_saved(ebx)
+        .stack_args(stack_args_at(0, 4))
+        .build_fn_single_region()?;
+    let mut cur = b.read_variable(&sp)?;
+    let saved = b.read_variable(&ebx)?;
+    let seven = b.build_int_const(7u64, i32_ty)?;
+    for data in [saved, seven] {
+        let four = b.build_int_const(4u64, i32_ty)?;
+        cur = b.build_sub_as_add_neg(cur, four, i32_ty)?;
+        b.write_variable(&sp, cur)?;
+        b.build_store(cur, data, rsleigh::VnSpace::RAM)?;
+    }
+    let target = b.build_int_const(0x1000u64, i32_ty)?;
+    b.build_call_cc(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    let inputs = collect_call_inputs(&mut fg)?;
+    let args: Vec<u128> = inputs[4..]
+        .iter()
+        .map(|&v| const_val(&fg, v, "collected arg"))
+        .collect();
+    assert_eq!(args, [7]);
+    Ok(())
+}
+
 /// A per-call override wins over the function default.  The default's first
 /// slot is at +4 and the override's at +0, so the store at `sp + 0` is slot 0
 /// under the override but below the default's first slot.

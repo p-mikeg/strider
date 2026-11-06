@@ -294,7 +294,7 @@ arg 2 [%v24]
 %v22:mem = store[r] %v18, %v20, %v21
 %v23:i32 = iconst[0x401120]
 %v24:i32 = initial_var[ECX]
-%v25:ctrl, %v26:mem, %v27:i32<EAX>, %v28:i32<EDX>, %v29:i80<ST0>, %v30:i80<ST1>, %v31:i128<XMM0>, %v32:i32<ECX>, %v33:i8<CF>, %v34:i8<PF>, %v35:i8<ZF>, %v36:i8<SF>, %v37:i8<OF>, %v38:i32<EIP> = call %v0, %v22, %v23, %v20, %v13, %v17, %v24, %v13, %v9, %v5
+%v25:ctrl, %v26:mem, %v27:i32<EAX>, %v28:i32<EDX>, %v29:i80<ST0>, %v30:i80<ST1>, %v31:i128<XMM0>, %v32:i32<ECX>, %v33:i8<CF>, %v34:i8<PF>, %v35:i8<ZF>, %v36:i8<SF>, %v37:i8<OF>, %v38:i32<EIP> = call %v0, %v22, %v23, %v20, %v13, %v17, %v24, %v13
 %v39:i32 = int.add %v17, %v13
 return %v25, %v26, %v39, %v28, %v29, %v30, %v31
 
