@@ -238,10 +238,10 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
     let mut out = Vec::new();
     let mut run: Option<(u64, Vec<u8>)> = None;
     for (&addr, &(value, width)) in got {
-        // `got_slot` yields 4 or 8; the slices below index blind.
-        if width == 0 || width > 8 {
-            anyhow::bail!("GOT slot at {addr:#x} has width {width}, not 1..=8");
-        }
+        debug_assert!(
+            matches!(width, 4 | 8),
+            "GOT slot at {addr:#x} is {width} bytes"
+        );
         let mut bytes = vec![0u8; width];
         crate::bytes::write_uint(&mut bytes, value, endian_le);
         match &mut run {
