@@ -2730,7 +2730,8 @@ pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
     PyFunctionArgPat::new(sp::FunctionArgClass::Any, None, Some(source))
 }
 
-/// Match a `FunctionArg` whose source is a specific stack slot.
+/// Match a `FunctionArg` whose source is a specific stack slot. Only slots up
+/// to the first unread one are arguments (see `FunctionArgDetect`).
 #[pyfunction]
 pub fn function_arg_stack(
     space: crate::sleigh::PyVnSpace,

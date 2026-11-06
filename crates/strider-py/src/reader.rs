@@ -31,7 +31,8 @@ pub(crate) struct PyBufferReaderInner {
     pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
 }
 
-/// Raw byte reader, usable as both `mem` and `rom`. Clones share state.
+/// Raw byte reader, usable as both `mem` and `rom`.
+// Clones share state.
 #[pyclass(name = "BufferReader", module = "strider.reader")]
 #[derive(Clone)]
 pub struct PyBufferReader {
@@ -84,10 +85,10 @@ impl PyBufferReader {
         )
     }
 
-    /// Up to `size` bytes at `addr` (fewer at a region edge or before an
-    /// uncomputed relocation), or `None` when `addr` is unmapped or inside
-    /// such a relocation's field. Writable, non-executable data serves the
-    /// file's bytes for that field.
+    /// Up to `size` bytes at `addr` (fewer at a region edge), or `None`
+    /// when unmapped. An `ElfLifter` reader also stops before, and gives
+    /// `None` inside, an uncomputed relocation field (writable
+    /// non-executable data serves the file bytes).
     fn read<'py>(
         &self,
         py: Python<'py>,

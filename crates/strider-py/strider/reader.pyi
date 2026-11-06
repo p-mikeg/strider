@@ -7,17 +7,17 @@ from typing import Optional, Protocol, Sequence, Union
 __all__: list[str]
 
 class BufferReader:
-    """Raw byte reader, usable as both `mem` and `rom`. Copies share state."""
+    """Raw byte reader, usable as both `mem` and `rom`."""
     def __init__(self, base_addr: int, data: Union[bytes, bytearray, Sequence[int]]) -> None:
         """Map `data` at `base_addr`. Raises `ValueError` if the region runs
         past the address space, `TypeError` for a buffer whose items are not
         one byte."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Up to `size` bytes at `addr` (fewer at a region edge or before an
-        uncomputed relocation), or `None` when `addr` is unmapped or inside
-        such a relocation's field. Writable, non-executable data serves the
-        file's bytes for that field."""
+        """Up to `size` bytes at `addr` (fewer at a region edge), or `None`
+        when unmapped. An `ElfLifter` reader also stops before, and gives
+        `None` inside, an uncomputed relocation field (writable
+        non-executable data serves the file bytes)."""
         ...
 
 class MemReader:

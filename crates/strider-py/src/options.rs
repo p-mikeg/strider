@@ -78,9 +78,8 @@ impl<'py> FromPyObject<'py> for AddrSetArg {
 
 /// Any mapping, so a getter's read-only proxy round-trips. Items are
 /// collected (`PyDict_Next`, which runs no Python and a `dict` subclass cannot
-/// narrow) before any is extracted:
-/// an `extract` can run Python (`__index__`), and PyO3 panics if the dict
-/// changes size mid-iteration.
+/// narrow) before any is extracted: an `extract` can run Python
+/// (`__index__`), and PyO3 panics if the dict changes size mid-iteration.
 pub struct MapArg<T>(pub T);
 
 impl<'py, K, V, S> FromPyObject<'py> for MapArg<HashMap<K, V, S>>

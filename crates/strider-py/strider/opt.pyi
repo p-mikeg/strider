@@ -90,7 +90,8 @@ class IfCondInversion:
 class PhiCollapse:
     """Removes trivial phis: a `Phi` / `MemPhi`, or a strongly connected group
     of them, whose inputs other than themselves are one value is replaced by
-    that value."""
+    that value. An `and` of a phi with a constant mask becomes the value
+    every arm agrees on under that mask."""
     def __init__(self) -> None:
         ...
 
@@ -101,9 +102,10 @@ class RegionCollapse:
         ...
 
 class DeadBranchElimination:
-    """Folds an `If` or `Switch` on a constant selector to its live successor,
-    then strips the `Region` predecessors entry can no longer reach, with
-    their `Phi` / `MemPhi` slots."""
+    """Folds an `If` or `Switch` on a constant selector naming an arm, when the
+    surviving arm still reaches a terminator, to its live successor, then
+    strips the `Region` predecessors entry can no longer reach, with their
+    `Phi` / `MemPhi` slots."""
     def __init__(self) -> None:
         ...
 
@@ -118,14 +120,16 @@ class LoadForward:
 class FunctionArgDetect:
     """Numbers the incoming stack slots the entry-SP loads read, after the
     register arguments: one ordinal per run of slots one load spans, stopping
-    at the first slot no load reads. An argument read in pieces takes one
-    ordinal per piece. Register arguments are recorded at lift time."""
+    at the first slot no load reads, so no slot past it is an argument, read
+    or not. An argument read in pieces takes one ordinal per piece. Register
+    arguments are recorded at lift time."""
     def __init__(self) -> None:
         ...
 
 class CallStackArgCollect:
-    """Wires the stack slots written before a call in as that call's positional
-    arguments."""
+    """Wires the stores into a call's outgoing argument slots in as its
+    positional arguments, up to the first slot no whole store reaches or a
+    prologue save; incidental stores just above can come along."""
     def __init__(self) -> None:
         ...
 
