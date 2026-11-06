@@ -520,7 +520,8 @@ impl<'g> EditFunction<'g> {
             .clear_arg_values_from(first_index);
     }
 
-    /// Links `from`'s asm-fingerprint under `into`'s: a live alias, not a copy.
+    /// Links `from`'s asm-fingerprint under `into`'s, a live alias once
+    /// `from`'s is non-empty.
     pub fn absorb_node_fingerprint(&mut self, into: NodeId, from: NodeId) {
         self.function
             .side_tables_mut()
