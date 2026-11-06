@@ -103,12 +103,6 @@ impl Function {
         &self.assumptions
     }
 
-    /// Whether some `Call` saw a stack address in a register it clobbers.
-    #[inline]
-    pub fn frame_address_in_call_register(&self) -> bool {
-        self.call_register_frame_reach.is_some()
-    }
-
     /// The highest offset from the entry SP of a stack address some `Call`
     /// saw in a register it clobbers: `i128::MAX` when one has no constant
     /// offset from it, `None` when no call saw one.
