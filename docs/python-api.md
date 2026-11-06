@@ -953,9 +953,11 @@ one of seven reasons (`strider.cfg.INCOMPLETE_REASONS`):
   address is there is reported too unless its target is in
   `no_return_targets`.
 
-A seeded arm that would be unmapped, undecodable or past the end is dropped
-and named. The five target reasons accumulate across resolution rounds; the
-two site reasons are the final round's.
+A seeded arm whose own decode reaches unmapped or undecodable bytes, or
+plainly falls through past the end, is dropped and named; one landing on a
+stub a direct edge already reported keeps it. The five target reasons
+accumulate across resolution rounds; the two site reasons are the final
+round's.
 
 `CfgOptions` (via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
 construction:

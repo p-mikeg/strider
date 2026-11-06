@@ -60,8 +60,9 @@ reasons! {
     /// them, or [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges)
     /// marks them. A branch or a fall-through into data leaves through a
     /// `TailCall` stub, a call falling into them ends `NoReturn`, and any other
-    /// fall-through fails the build. Off a seeded arm the arm is dropped; a
-    /// decode there failing for an unnamed reason is named at its start.
+    /// fall-through fails the build. Off a seeded arm the arm is dropped, unless a
+    /// direct edge already reported the address; then the arm keeps that stub.
+    /// A decode failing for an unnamed reason is named at its start.
     UndecodableTarget => "undecodable_target",
     /// A fall-through, not-taken path or conditional skip ran off a
     /// [`FunctionBound::Size`](crate::FunctionBound::Size) or fragment end

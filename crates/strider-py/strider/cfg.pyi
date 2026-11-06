@@ -100,9 +100,11 @@ class Cfg:
         - `"past_function_end"`: past `function_max_size` or a
           `fragment_ranges` end.
 
-        A seeded arm running into an unmapped, undecodable or past-the-end
-        target is dropped. From `analyze`, target reasons accumulate over the
-        resolver's rounds; site reasons are the final round's.
+        A seeded arm whose own decode reaches unmapped or undecodable bytes,
+        or plainly falls through past the end, is dropped; one landing on a
+        stub a direct edge already reported keeps it. From `analyze`, target
+        reasons accumulate over the resolver's rounds; site reasons are the
+        final round's.
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:
