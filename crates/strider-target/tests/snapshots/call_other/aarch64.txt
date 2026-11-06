@@ -18,8 +18,8 @@ AuthDB UNCLASSIFIED
 AuthIA UNCLASSIFIED
 AuthIB UNCLASSIFIED
 CachePrefetchPredictionRestrictionByContext UNCLASSIFIED
-CallHyperVisor call reads=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"] writes=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"] mem=true noret=false
-CallSecureMonitor call reads=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"] writes=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"] mem=true noret=false
+CallHyperVisor call reads=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"] writes=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"] mem=true noret=false
+CallSecureMonitor call reads=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"] writes=["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"] mem=true noret=false
 CallSupervisor call reads=["x8", "x0", "x1", "x2", "x3", "x4", "x5"] writes=["x0"] mem=true noret=false
 ClearExclusiveLocal call reads=[] writes=[] mem=false noret=false
 ControlFlowPredictionRestrictionByContext UNCLASSIFIED

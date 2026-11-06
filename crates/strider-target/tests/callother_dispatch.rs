@@ -73,7 +73,7 @@ fn soundness_critical_rows_keep_their_footprint() {
                 "{preset:?}/{name} writes {r}"
             );
         }
-        abi.build(&regs_for(preset))
+        abi.build(&preset.arch().probe_regs())
             .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
     }
 }
@@ -202,7 +202,7 @@ fn arm_mode_switch_rows_resolve_their_banked_registers() {
         ArchPreset::ArmBeKernel,
         ArchPreset::ArmThumb,
     ] {
-        let regs = regs_for(preset);
+        let regs = preset.arch().probe_regs();
         for name in ARM_MODE_SWITCH_OPS {
             let abi = classify(preset, name).unwrap_or_else(|| panic!("{preset:?}/{name}"));
             let built = strider_target::call_other_abi::CallOtherLookup::Class(abi)
@@ -241,14 +241,10 @@ fn arm_mode_switch_writes_the_fiq_banked_registers() {
             assert!(!abi.clobbers_memory, "{preset:?}/{name}");
             assert!(!abi.no_return, "{preset:?}/{name}");
             // Every name has to resolve on this preset's own register table.
-            abi.build(&regs_for(preset))
+            abi.build(&preset.arch().probe_regs())
                 .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
         }
     }
-}
-
-fn regs_for(preset: ArchPreset) -> rsleigh::SleighRegs {
-    preset.arch().probe_regs()
 }
 
 const ARM32_PRESETS: [ArchPreset; 4] = [
@@ -290,7 +286,14 @@ fn arm_privileged_state_ops_are_classified_in_pairs() {
 /// resolves to on both x86 widths, and that no other arch answers for them.
 #[test]
 fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
-    let pure = ["rdtsc", "rdtscp", "rdmsr", "readfsbase", "readgsbase"];
+    let pure = [
+        "rdtsc",
+        "rdtscp",
+        "rdmsr",
+        "xgetbv",
+        "readfsbase",
+        "readgsbase",
+    ];
     let mem_clobber = ["swi"];
     for preset in [ArchPreset::X86, ArchPreset::X86_64] {
         for name in pure {
@@ -322,16 +325,18 @@ fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
 #[test]
 fn the_x86_extended_state_footprint_resolves_on_both_widths() {
     for preset in [ArchPreset::X86, ArchPreset::X86_64] {
-        let regs = regs_for(preset);
+        let regs = preset.arch().probe_regs();
         for name in ["_fxrstor", "xrstor64", "_fxsave", "xsaves"] {
             let abi = expect_call(classify(preset, name));
             let built = abi
                 .build(&regs)
                 .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e:?}"));
+            // XSAVE also reads its EDX:EAX component bitmap.
+            let bitmap = if name.starts_with("xsave") { 2 } else { 0 };
             let moved = if name.contains("rstor") {
                 built.implicit_writes.len()
             } else {
-                built.implicit_reads.len()
+                built.implicit_reads.len() - bitmap
             };
             // 8 ST + 32 XMM + 32 YMM_H + 8 K + 4 BND + BNDCFGU + BNDSTATUS
             // + 3 IA32_PL*_SSP + MXCSR + 8 FPU words. An inequality here
@@ -352,7 +357,7 @@ fn the_x86_extended_state_footprint_resolves_on_both_widths() {
             };
             let distinct: rustc_hash::FxHashSet<_> = vns.iter().collect();
             assert_eq!(
-                distinct.len(),
+                distinct.len() - bitmap,
                 98,
                 "{preset:?}/{name}: {} of 98 names resolve to distinct \
                  varnodes, so one is duplicated",
@@ -362,11 +367,41 @@ fn the_x86_extended_state_footprint_resolves_on_both_widths() {
     }
 }
 
+/// Ops whose sla call drops an input register the instruction reads: the
+/// XSAVE family's EDX:EAX bitmap, CPUID's ECX sub-leaf and SMCCC's x1..x17.
+#[test]
+fn ops_read_the_inputs_their_sla_call_drops() {
+    let smccc: Vec<String> = (0..18).map(|i| format!("x{i}")).collect();
+    let smccc: Vec<&str> = smccc.iter().map(String::as_str).collect();
+    let rows: &[(ArchPreset, &str, &[&str])] = &[
+        (ArchPreset::X86_64, "xsave", &["EAX", "EDX"]),
+        (ArchPreset::X86_64, "xsavec64", &["EAX", "EDX"]),
+        (ArchPreset::X86, "xsaveopt", &["EAX", "EDX"]),
+        (ArchPreset::X86, "xsaves", &["EAX", "EDX"]),
+        (ArchPreset::X86_64, "cpuid", &["ECX"]),
+        (ArchPreset::X86, "cpuid_Extended_Topology_info", &["ECX"]),
+        (ArchPreset::Aarch64, "CallHyperVisor", &smccc),
+        (ArchPreset::Aarch64, "CallSecureMonitor", &smccc),
+    ];
+    for &(preset, name, reads) in rows {
+        let abi = expect_call(classify(preset, name));
+        assert!(abi.clobbers_memory, "{preset:?}/{name} clobbers memory");
+        for r in reads {
+            assert!(
+                abi.implicit_reads.contains(r),
+                "{preset:?}/{name} reads {r}"
+            );
+        }
+        abi.build(&preset.arch().probe_regs())
+            .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
+    }
+}
+
 /// A restore writes the state; a save only reads it. A restore that declared
 /// no writes left the incoming value of every one of these live across it.
 #[test]
 fn a_restore_writes_the_state_a_save_reads_it() {
-    let regs = regs_for(ArchPreset::X86_64);
+    let regs = ArchPreset::X86_64.arch().probe_regs();
     let restore = expect_call(classify(ArchPreset::X86_64, "_fxrstor"))
         .build(&regs)
         .expect("fxrstor builds");
@@ -395,7 +430,7 @@ fn ppc_dot_forms_the_sla_leaves_unflagged_declare_cr0() {
         ArchPreset::Ppc64Be,
         ArchPreset::Ppc64Le,
     ] {
-        let regs = regs_for(preset);
+        let regs = preset.arch().probe_regs();
         for name in ["slbfeeDotOp", "icswxDotOp"] {
             let built = expect_call(classify(preset, name))
                 .build(&regs)
@@ -432,7 +467,7 @@ fn ppc_fpscr_and_msr_footprints_resolve_on_every_ppc_preset() {
         ArchPreset::Ppc64Be,
         ArchPreset::Ppc64Le,
     ] {
-        let regs = regs_for(preset);
+        let regs = preset.arch().probe_regs();
         for name in [
             "MoveToFPSCRFields",
             "MoveToFPSCRFields1",
@@ -560,7 +595,9 @@ fn mips_set_cop_reg_writes_every_cp0_register() {
     ] {
         let abi = expect_call(classify(preset, "setCopReg"));
         assert!(abi.clobbers_memory, "{preset:?}");
-        let built = abi.build(&regs_for(preset)).expect("every name resolves");
+        let built = abi
+            .build(&preset.arch().probe_regs())
+            .expect("every name resolves");
         let mut offs: Vec<u64> = built.implicit_writes.iter().map(|vn| vn.addr_off).collect();
         offs.sort_unstable();
         offs.dedup();

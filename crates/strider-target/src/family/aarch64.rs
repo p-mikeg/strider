@@ -63,16 +63,13 @@ const CALL_OTHER: &[Row] = &[
             no_return: false,
         }),
     ),
-    // SMCCC HVC / SMC: x0..x7 in, x0..x3 out.
+    // SMCCC HVC / SMC: x0..x17 in (v1.2), x0..x3 out; v1.0 may leave
+    // x4..x17 unpredictable.
     Row::new(
         &["CallHyperVisor", "CallSecureMonitor"],
         CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-            // SMCCC 1.0 may also leave x4..x17 unpredictable.
-            implicit_writes: &[
-                "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12",
-                "x13", "x14", "x15", "x16", "x17",
-            ],
+            implicit_reads: SMCCC_REGS,
+            implicit_writes: SMCCC_REGS,
             clobbers_memory: true,
             no_return: false,
         }),
@@ -86,6 +83,12 @@ const CALL_OTHER: &[Row] = &[
     // p-code. Other `SVE_ld*` / `SVE_st*` / `SVE_prf*` ops share the shape and
     // stay unclassified, failing the lift.
     Row::new(&["SVE_ldr", "SVE_str"], MEM_CLOBBER),
+];
+
+/// x0..x17.
+const SMCCC_REGS: &[&str] = &[
+    "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14",
+    "x15", "x16", "x17",
 ];
 
 /// `TLBI_` / `DC_` / `IC_` are TLB and cache maintenance; every `NEON_` op is
