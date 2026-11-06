@@ -11,9 +11,7 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 elf = strider.lift.load_elf(str(FIXTURE))
 addr = elf.symbol("array_sum").address
-_cfg, function, _unresolved = elf.analyze(
-    addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
-)
+_cfg, function, _unresolved = elf.analyze(addr)
 
 x = Capture()
 before = len(function.find_all(int_mul(var(x), int_const(4))))
@@ -35,9 +33,7 @@ print(f"after rewrite + reoptimize: {len(function.find_all(int_mul(var(x), int_c
       f"{len(function.find_all(int_shl(var(x), int_const(2))))} `x << 2`")
 
 # rewrite_all tries every rule at every reachable node and returns the total.
-_cfg, fresh, _unresolved = elf.analyze(
-    addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
-)
+_cfg, fresh, _unresolved = elf.analyze(addr)
 y, z = Capture(), Capture()
 total = fresh.rewrite_all([
     (int_mul(var(y), int_const(4)), tpl.int_shl(tpl.var(y), tpl.int_const(2))),

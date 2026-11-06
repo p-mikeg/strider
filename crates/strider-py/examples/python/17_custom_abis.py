@@ -66,9 +66,7 @@ SLOTS = range(2, 7)
 
 def syscall_stub(abis: dict[str, sleigh.CallOtherAbi]) -> ir.Function:
     opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(
-            allow_code_before_start_addr=True, call_other_abis=abis
-        )
+        cfg=strider.cfg.CfgOptions(call_other_abis=abis)
     )
     _cfg, fn, _unresolved = lft.analyze(SYSCALL_ENTRY, cdecl, opts)
     return fn
@@ -137,10 +135,7 @@ reg_abi = sleigh.CallingConvention.custom(
 
 
 def add_routine(cc: sleigh.CallingConvention) -> ir.Function:
-    opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-    )
-    _cfg, fn, _unresolved = lft.analyze(ADD_ENTRY, cc, opts)
+    _cfg, fn, _unresolved = lft.analyze(ADD_ENTRY, cc)
     return fn
 
 

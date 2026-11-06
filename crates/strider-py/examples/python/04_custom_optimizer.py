@@ -12,9 +12,7 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 elf = strider.lift.load_elf(str(FIXTURE))
 addr = elf.symbol("array_sum").address
 
-_cfg, baseline, _unresolved = elf.analyze(
-    addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
-)
+_cfg, baseline, _unresolved = elf.analyze(addr)
 
 
 def shape(g: strider.ir.Function) -> dict[str, int]:
