@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::bigint::Addr;
+use crate::bigint::{Addr, IntSeq};
 use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
@@ -29,7 +29,7 @@ impl<'py> FromPyObject<'py> for KnownTarget {
                 ))),
             };
         }
-        let targets: crate::bigint::IntSeq<Addr> = ob.extract()?;
+        let targets: IntSeq<Addr> = ob.extract()?;
         Ok(KnownTarget::Targets(
             targets.0.into_iter().map(|a| a.0).collect(),
         ))
@@ -69,6 +69,7 @@ pub struct AddrSetArg(pub rustc_hash::FxHashSet<u64>);
 
 impl<'py> FromPyObject<'py> for AddrSetArg {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        crate::bigint::refuse_bytes(ob)?;
         ob.iter()?
             .map(|item| Ok(item?.extract::<Addr>()?.0))
             .collect::<PyResult<_>>()
@@ -376,19 +377,20 @@ impl PyField<bool> for bool {
 }
 
 /// Sorted, so a `repr` reads back.
-impl PyField<Vec<Addr>> for rustc_hash::FxHashSet<u64> {
-    fn to_py(&self) -> Vec<Addr> {
+impl PyField<IntSeq<Addr>> for rustc_hash::FxHashSet<u64> {
+    fn to_py(&self) -> IntSeq<Addr> {
         let mut v: Vec<u64> = self.iter().copied().collect();
         v.sort_unstable();
-        v.into_iter().map(crate::bigint::Unsigned).collect()
+        IntSeq(v.into_iter().map(crate::bigint::Unsigned).collect())
     }
 
-    fn from_py(value: Vec<Addr>) -> Self {
-        value.into_iter().map(|a| a.0).collect()
+    fn from_py(value: IntSeq<Addr>) -> Self {
+        value.0.into_iter().map(|a| a.0).collect()
     }
 
     fn py_repr(&self) -> String {
-        let v: Vec<u64> = PyField::<Vec<Addr>>::to_py(self)
+        let v: Vec<u64> = PyField::<IntSeq<Addr>>::to_py(self)
+            .0
             .iter()
             .map(|a| a.0)
             .collect();
@@ -471,7 +473,7 @@ assumption_fields! {
     /// Callee addresses of pure `malloc`-like allocators, sorted. Each result
     /// overlaps no other allocation, stack slot or constant address, so an arena
     /// allocator does not qualify. Default empty.
-    noalias_allocators: Vec<Addr>,
+    noalias_allocators: IntSeq<Addr>,
 
     /// When no stack address escapes to a callee, forward a spill load across
     /// a call (and, under `stack_global_disjoint`, past an opaque store).

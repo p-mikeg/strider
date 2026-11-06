@@ -362,3 +362,7 @@ def test_bytes_is_no_list_of_ints(seq):
         strider.pattern.int_const(seq)
     with pytest.raises(TypeError):
         strider.pattern.int_const_any_width(seq)
+    with pytest.raises(TypeError):
+        strider.cfg.CfgOptions(no_return_targets=seq)
+    with pytest.raises(TypeError):
+        strider.lift.AssumptionOptions(noalias_allocators=seq)

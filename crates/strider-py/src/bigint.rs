@@ -181,14 +181,26 @@ impl<T: IntoPy<PyObject>> IntoPy<PyObject> for Unsigned<T> {
 /// as the list of its byte values.
 pub struct IntSeq<T>(pub Vec<T>);
 
+/// Refuses the `bytes` / `bytearray` PyO3 would read as a list of ints.
+pub fn refuse_bytes(ob: &Bound<'_, PyAny>) -> PyResult<()> {
+    if ob.is_instance_of::<PyBytes>() || ob.is_instance_of::<pyo3::types::PyByteArray>() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "expected a list of ints, not {}",
+            ob.get_type().name()?
+        )));
+    }
+    Ok(())
+}
+
 impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for IntSeq<T> {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if ob.is_instance_of::<PyBytes>() || ob.is_instance_of::<pyo3::types::PyByteArray>() {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "expected a list of ints, not {}",
-                ob.get_type().name()?
-            )));
-        }
+        refuse_bytes(ob)?;
         ob.extract().map(Self)
+    }
+}
+
+impl<T: IntoPy<PyObject>> IntoPy<PyObject> for IntSeq<T> {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        self.0.into_py(py)
     }
 }
