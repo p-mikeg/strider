@@ -284,7 +284,9 @@ class Lifter:
 
         Raises `StriderError` unless `addr` is on the linear stream from
         `entry`. On ARM or MIPS `entry`'s low bit selects the ISA mode, the
-        sweep starts at `entry & ~1` and `addr`'s low bit is ignored.
+        sweep starts at `entry & ~1` and `addr`'s low bit is ignored. Only
+        `entry`'s mode is pinned; past a mode switch in mixed-mode code use
+        `build_cfg(entry).pcode_at(addr)`.
 
         A call with a new `entry` builds the whole decoder; for per-function
         p-code, `build_cfg(entry).pcode_at(addr)` is far cheaper.
