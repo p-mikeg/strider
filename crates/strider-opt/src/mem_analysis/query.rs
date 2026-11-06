@@ -250,8 +250,7 @@ pub(crate) fn anchored_store(
     })
 }
 
-/// Repoints a `Load`'s memory input onto `clobber`'s memory output. Sound
-/// only for a `Load`, which has no memory output. Returns whether the edge
+/// Repoints `load`'s memory input onto `clobber`'s memory output; whether it
 /// moved.
 pub(crate) fn narrow_load_to(
     edit: &mut crate::EditFunction<'_>,

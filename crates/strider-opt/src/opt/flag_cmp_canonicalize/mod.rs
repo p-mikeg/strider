@@ -25,7 +25,8 @@
 //! `MI`/`PL` stays as lifted: `Sless(a-b, 0)` differs from `Sless(a, b)` on
 //! overflow.
 //!
-//! Also: PowerPC CR-bit tests and Thumb flag tests (`canonicalize_cr_bit_test`).
+//! Also: `Equal(op(x), C)` solving, `Sless(x << C, 0)` as a bit test, and
+//! PowerPC CR-bit / Thumb flag tests (`canonicalize_cr_bit_test`).
 
 use crate::rewrite_rule::{Rule, RuleTable};
 use strider_ir::eval;
@@ -43,6 +44,7 @@ use crate::Result;
 use crate::opt::width_guards::{int_type, same_width, shift_count_in_range};
 use crate::peephole::PeepholePass;
 
+/// Collapses cmp-then-branch flag trees to one comparison on the compared pair.
 pub struct FlagCmpCanonicalize;
 
 thread_local! {

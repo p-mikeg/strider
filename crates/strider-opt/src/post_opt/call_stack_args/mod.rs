@@ -94,10 +94,11 @@ fn register_arity(
 }
 
 /// Wires positional stack args into each `Call`. A per-`Call` CC override
-/// wins over the convention default. Other writes to the slots past the last
-/// argument are collected too: a local, an alignment push (x86-64 clang's
-/// `push rax`), or o32's `gp` save at `sp+16`, which the IR cannot tell from
-/// an argument without the call-time `gp`.
+/// wins over the convention default; a CC without `stack_args` collects none.
+/// Other writes to the slots past the last argument are collected too: a
+/// local, an alignment push (x86-64 clang's `push rax`, Thumb gcc's
+/// `push {r3, lr}`), or o32's `gp` save at `sp+16`, which the IR cannot tell
+/// from an argument without the call-time `gp`.
 pub struct CallStackArgCollect;
 
 impl Optimizer for CallStackArgCollect {
