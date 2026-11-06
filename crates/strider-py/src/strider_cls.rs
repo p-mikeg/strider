@@ -650,12 +650,12 @@ impl PyLifter {
     /// Lift, optimise and resolve the function at address `entry`. Incomplete
     /// code is reported in `Cfg.incomplete`, not raised, except an unmapped
     /// entry or a fall-through no call explains into bytes Sleigh rejects.
-    #[pyo3(signature = (entry, cc=None, opts=None))]
+    #[pyo3(signature = (entry, cc, opts=None))]
     fn analyze(
         slf: Py<Self>,
         py: Python<'_>,
         entry: &Bound<'_, PyAny>,
-        cc: Option<PyCallingConvention>,
+        cc: PyCallingConvention,
         opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<PyObject> {
         Self::analyze_at(slf, py, entry_addr(entry)?, cc, opts, None)
@@ -693,7 +693,7 @@ impl PyLifter {
                 Err(e) => return Err(e),
             }
         };
-        Self::analyze_at(slf, py, addr, Some(cc), opts, Some((elf, size)))
+        Self::analyze_at(slf, py, addr, cc, opts, Some((elf, size)))
     }
 
     /// The p-code (ops joined `"; "`, empty for none) of the instruction at
@@ -851,16 +851,10 @@ impl PyLifter {
         slf: Py<Self>,
         py: Python<'_>,
         entry: u64,
-        cc: Option<PyCallingConvention>,
+        cc: PyCallingConvention,
         opts: Option<Py<PyLifterOptions>>,
         elf: Option<(PyRef<'_, PyLoadedElf>, Option<u64>)>,
     ) -> PyResult<PyObject> {
-        let cc = cc.ok_or_else(|| {
-            into_strider_err(anyhow::anyhow!(
-                "`cc` is required on a plain Lifter (the handle stores no \
-                 default); only ElfLifter derives one from the ELF header"
-            ))
-        })?;
         let opts = match opts {
             Some(o) => o,
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
