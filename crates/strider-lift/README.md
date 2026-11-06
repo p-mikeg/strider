@@ -2,7 +2,7 @@
 
 Turns one function's `strider_cfg::Cfg` into a `strider_ir::Function`: a
 semi-pruned SSA sea-of-nodes graph with one IR `Region` per CFG region and every
-machine register modelled as an SSA variable.
+tracked register modelled as an SSA variable.
 
 ## API
 
@@ -96,5 +96,5 @@ A control cycle with no exit reaches no terminator, so an
 Decompiler-internal opcodes (`Insert`, `Extract`, `PtrAdd`, `PtrSub`,
 `MultiEqual`, `SegmentOp`, `Indirect`) are named errors; the opcode match is
 exhaustive. An unmapped width, a `Subpiece` offset at or past its input's
-width, mismatched signed-shift widths or an unknown ABI register name fails the
-function's lift.
+width, an operand off its op's width (a shift count excepted) or an unknown ABI
+register name fails the function's lift.
