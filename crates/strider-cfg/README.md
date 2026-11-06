@@ -13,8 +13,8 @@ IR from a `Cfg`.
   `RegionTerminator`, not necessarily maximal. It can end mid-instruction.
 - `CfgOptions<'a>`: the function `bound` and `fragment_ranges`, borrowed
   target tables (`known_targets`, `derived_targets`, `no_return_targets`,
-  `call_other_overrides`, `local_entries`), and `data_ranges`, bytes never
-  decoded.
+  `call_other_overrides`, `local_entries`), and `data_ranges`, bytes decoded
+  only at the entry.
 - Queries on `Cfg` (`regions`, `region_containing`, `region_if`,
   `switch_arm_regions`, ...), Graphviz output (`dot_dumper`,
   `neighborhood_dot`), and `insn_text` for one p-code op.
@@ -28,7 +28,7 @@ target off every boundary (overlapping code) cannot be split out and is
 reported as `InteriorTarget`.
 
 A region decodes sequentially, because `Sleigh::lift_one` carries context
-(ARM/Thumb and IT state, MIPS16, ppc `linkreg`) that an instruction can commit
+(ARM/Thumb and IT state, MIPS16) that an instruction can commit
 at a later address. Each queued edge carries the context reaching its target,
 so a seated indirect target or a backward edge decodes in the right mode.
 

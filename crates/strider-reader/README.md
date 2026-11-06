@@ -45,11 +45,14 @@ symbol gets an address in an unmapped range past the image, and a GOT
 reference loads from a synthetic slot. The synthetic link binds every symbol
 locally, so those slots are ROM whatever `got_is_rom` says. An undefined weak
 symbol's address is computed only where it cannot be observed (a branch
-displacement, a GOT slot left unmapped), so `if (&w)` folds neither way. Encodings are applied for x86,
-ARM, AArch64, MIPS and PowerPC. A relocation that cannot be computed (TLS,
-MIPS GP-relative, a branch needing a veneer) makes its field a hole, so a read
-across it fails naming the type; in writable non-executable bytes the
-file-initial bytes stay.
+displacement, a GOT slot left unmapped), so `if (&w)` folds neither way.
+
+Encodings are applied for x86, ARM, AArch64, MIPS and PowerPC. A relocation
+that cannot be computed (TLS, MIPS GP-relative, a branch needing a veneer)
+makes its field a hole, so a read across it fails naming the type; in writable
+non-executable bytes the file-initial bytes stay. A MIPS `-mabicalls` object,
+GCC's default, therefore holes each function's `$gp` setup and GOT loads;
+build with `-mno-abicalls` to analyse a `.o`.
 
 An image whose only PT_LOAD is RWX (the MIPS `vmlinux` shape) has an empty ROM
 view (`got_is_rom`'s sections aside); supply your own `ReadOnlyMemory` over
