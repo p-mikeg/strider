@@ -33,12 +33,11 @@ impl FunctionBuilder {
         ))
     }
 
-    /// Control-only sink after a no-return call; terminates the region. A
-    /// join merging a memory effect sunk straight into it is rejected as
-    /// `UnmergedMemoryEffect`.
+    /// Sink after a no-return call, taking the region's memory; terminates
+    /// the region.
     pub fn build_unreachable(&mut self) -> Result<()> {
         let res = self.terminate_cur_region()?;
-        self.create_node(NodeKind::Unreachable, [res.control], []);
+        self.create_node(NodeKind::Unreachable, [res.control, res.memory], []);
         Ok(())
     }
 
