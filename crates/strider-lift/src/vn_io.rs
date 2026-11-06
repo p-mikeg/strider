@@ -170,27 +170,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             return Ok(None);
         }
         let container_ty: ValueType = container_reg.int_type()?;
-        // Both guards are unreachable for a well-formed spec.
-        let Some(shift_bits) = self
+        let shift_bits = self
             .lifter
             .arch()
             .register_endianness()
             .slice_shift_bits(reg, &container_reg)
-        else {
-            return Err(anyhow!(
-                "{op}: sub-register {reg:?} is not contained in {container_reg:?}"
-            ));
-        };
-        if shift_bits >= (container_reg.size as u64) * 8 {
-            return Err(anyhow!(
-                "{op}: shift {shift_bits} >= container bit width {} \
-                 (container size {} bytes); sub-register {:?} outside container {:?}",
-                (container_reg.size as u64) * 8,
-                container_reg.size,
-                reg,
-                container_reg,
-            ));
-        }
+            .expect("a register's container contains it");
         Ok(Some(SubRegContext {
             container_reg,
             container_ty,
