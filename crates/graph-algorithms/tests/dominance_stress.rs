@@ -18,6 +18,12 @@ use petgraph::graph::NodeIndex;
 use proptest::prelude::*;
 use rustc_hash::FxHashMap;
 
+/// `a` dominates `b`: `a`'s interval encloses `b`'s.
+fn encloses(intervals: &DomIntervals, a: u32, b: u32) -> bool {
+    let ((a_in, a_out), (b_in, b_out)) = (intervals.span(a), intervals.span(b));
+    a_in <= b_in && b_out <= a_out
+}
+
 /// The interval numbering answers exactly the reflexive ancestor relation of
 /// the idom array it was built from.
 #[test]
@@ -37,7 +43,7 @@ fn dom_intervals_answer_the_idom_chain() {
                     climbed = at == a;
                 }
                 prop_assert_eq!(
-                    intervals.dominates(a, b),
+                    encloses(&intervals, a, b),
                     climbed,
                     "dominates({}, {}) over {:?}", a, b, &idom
                 );
@@ -193,7 +199,7 @@ fn check_dominance(c: &Case) {
     let intervals = DomIntervals::new(&raw);
     for &a in &discovery {
         for &b in &discovery {
-            let got = intervals.dominates(num[a as usize], num[b as usize]);
+            let got = encloses(&intervals, num[a as usize], num[b as usize]);
             assert_eq!(
                 got, dom[a as usize][b as usize],
                 "intervals: {a} dom {b}, {c:?}"
