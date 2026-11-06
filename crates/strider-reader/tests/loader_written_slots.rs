@@ -231,6 +231,29 @@ fn a_glob_dat_against_a_defined_ifunc_is_a_hole() {
     );
 }
 
+/// A `-z now` non-PIC executable's `.got` `JUMP_SLOT` against an imported
+/// `ext` whose `st_value` is its canonical PLT entry: the loader's PLT lookup
+/// skips that symbol and stores the library's `ext`, so the slot is a hole.
+#[test]
+fn a_jump_slot_against_an_import_with_a_canonical_plt_is_a_hole() {
+    let elf = open("x64_canonical_plt.elf");
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let jump_slot = object::elf::R_X86_64_JUMP_SLOT;
+    let slot = dynamic_site(&elf, jump_slot, Some("ext"));
+    let obj = elf.checked_file().unwrap();
+    let got = obj.section_by_name(".got").unwrap();
+    assert!(
+        (got.address()..got.address() + got.size()).contains(&slot),
+        "the slot is in .got"
+    );
+    assert_ne!(
+        dynsym_value(&elf, "ext"),
+        0,
+        "ext has a canonical PLT entry"
+    );
+    assert_hole(rom_word(&reader, slot, 8, true), jump_slot, "ext's slot");
+}
+
 /// An unlinked object's GOT reference to a defined IFUNC still addresses its
 /// synthetic slot, which is left unmapped as a weak undefined symbol's is:
 /// the symbol's address there would be the resolver's. `f_ptr`'s

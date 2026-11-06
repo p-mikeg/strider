@@ -51,9 +51,13 @@ pub(crate) enum Value {
     /// A TLS module id, offset, TP offset or descriptor, which only the
     /// loader computes.
     Tls,
-    /// `S` plus the RELA addend: a GOT or PLT slot, whose `SHT_REL` field
-    /// holds the PLT push address rather than an addend.
+    /// `S` plus the RELA addend: a GOT slot. An `SHT_REL` slot's field is no
+    /// addend.
     Slot,
+    /// A `JUMP_SLOT`, as `Slot` but with no value against an undefined
+    /// symbol: the loader's PLT lookup skips an executable's canonical PLT
+    /// entry. An `SHT_REL` one's field holds the PLT push address.
+    PltSlot,
     /// PowerPC `PLTREL24`, `S - P`: a `-fPIC` addend locates the caller's GOT
     /// pointer, not the target.
     PltCall,
@@ -212,7 +216,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_X86_64_COPY => Kind::Copy,
             elf::R_X86_64_RELATIVE => C(V::ImageRelative, data(8, false)),
             elf::R_X86_64_IRELATIVE => C(V::Indirect, data(8, false)),
-            elf::R_X86_64_GLOB_DAT | elf::R_X86_64_JUMP_SLOT => C(V::Slot, data(8, false)),
+            elf::R_X86_64_GLOB_DAT => C(V::Slot, data(8, false)),
+            elf::R_X86_64_JUMP_SLOT => C(V::PltSlot, data(8, false)),
             elf::R_X86_64_GOTPCREL | elf::R_X86_64_GOTPCRELX | elf::R_X86_64_REX_GOTPCRELX => {
                 C(V::GotPcrel, data(4, true))
             }
@@ -234,7 +239,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_386_COPY => Kind::Copy,
             elf::R_386_RELATIVE => C(V::ImageRelative, data(4, false)),
             elf::R_386_IRELATIVE => C(V::Indirect, data(4, false)),
-            elf::R_386_GLOB_DAT | elf::R_386_JMP_SLOT => C(V::Slot, data(4, false)),
+            elf::R_386_GLOB_DAT => C(V::Slot, data(4, false)),
+            elf::R_386_JMP_SLOT => C(V::PltSlot, data(4, false)),
             elf::R_386_GOT32 | elf::R_386_GOT32X => C(V::I386Got, data(4, false)),
             elf::R_386_GOTOFF => C(V::GotRelative, data(4, false)),
             elf::R_386_GOTPC => C(V::GotBasePcrel, data(4, false)),
@@ -246,7 +252,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_AARCH64_COPY => Kind::Copy,
             elf::R_AARCH64_RELATIVE => C(V::ImageRelative, data(8, false)),
             elf::R_AARCH64_IRELATIVE => C(V::Indirect, data(8, false)),
-            elf::R_AARCH64_GLOB_DAT | elf::R_AARCH64_JUMP_SLOT => C(V::Slot, data(8, false)),
+            elf::R_AARCH64_GLOB_DAT => C(V::Slot, data(8, false)),
+            elf::R_AARCH64_JUMP_SLOT => C(V::PltSlot, data(8, false)),
             elf::R_AARCH64_CALL26 | elf::R_AARCH64_JUMP26 => C(V::Pcrel, F::A64Branch26),
             elf::R_AARCH64_CONDBR19 | elf::R_AARCH64_LD_PREL_LO19 => C(V::Pcrel, F::A64Imm19),
             elf::R_AARCH64_GOT_LD_PREL19 => C(V::GotSlotPcrel, F::A64Imm19),
@@ -306,7 +313,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_ARM_COPY => Kind::Copy,
             elf::R_ARM_RELATIVE => C(V::ImageRelative, data(4, false)),
             elf::R_ARM_IRELATIVE => C(V::Indirect, data(4, false)),
-            elf::R_ARM_GLOB_DAT | elf::R_ARM_JUMP_SLOT => C(V::Slot, data(4, false)),
+            elf::R_ARM_GLOB_DAT => C(V::Slot, data(4, false)),
+            elf::R_ARM_JUMP_SLOT => C(V::PltSlot, data(4, false)),
             elf::R_ARM_REL32 => C(V::Pcrel, data(4, true)),
             elf::R_ARM_CALL => C(V::Pcrel, F::ArmBranch24 { call: true }),
             elf::R_ARM_PC24 | elf::R_ARM_JUMP24 | elf::R_ARM_PLT32 => {
@@ -348,7 +356,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
                 // `R_PPC64_*` shares these numbers with `R_PPC_*`.
                 elf::R_PPC_RELATIVE => C(V::ImageRelative, data(word, false)),
                 elf::R_PPC_IRELATIVE => C(V::Indirect, data(word, false)),
-                elf::R_PPC_GLOB_DAT | elf::R_PPC_JMP_SLOT => C(V::Slot, data(word, false)),
+                elf::R_PPC_GLOB_DAT => C(V::Slot, data(word, false)),
+                elf::R_PPC_JMP_SLOT => C(V::PltSlot, data(word, false)),
                 elf::R_PPC_REL32 => C(V::Pcrel, data(4, true)),
                 elf::R_PPC64_REL64 if ppc64 => C(V::Pcrel, data(8, true)),
                 elf::R_PPC64_REL24 if ppc64 => C(V::Ppc64Call { notoc: false }, F::PpcBranch24),
@@ -390,7 +399,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
         A::Mips | A::Mips64 => {
             let word = if arch == A::Mips64 { 8 } else { 4 };
             match r_type {
-                elf::R_MIPS_GLOB_DAT | elf::R_MIPS_JUMP_SLOT => C(V::Slot, data(word, false)),
+                elf::R_MIPS_GLOB_DAT => C(V::Slot, data(word, false)),
+                elf::R_MIPS_JUMP_SLOT => C(V::PltSlot, data(word, false)),
                 // MIPS64 composes it with `R_MIPS_64` into one 64-bit word.
                 elf::R_MIPS_REL32 => C(
                     if r.sym.is_none() {
