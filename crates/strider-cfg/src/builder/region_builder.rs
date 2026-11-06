@@ -31,7 +31,7 @@ pub(crate) enum InsnOutcome {
     Continue,
 }
 
-/// Builds one [`Region`], decoding pcode instructions one at a time.
+/// Builds one [`Region`], decoding one machine instruction at a time.
 pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
     builder: &'b mut Builder<'a, R>,
     start_addr: PcodeInsnAddr,
