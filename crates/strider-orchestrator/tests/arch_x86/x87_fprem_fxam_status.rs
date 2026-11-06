@@ -164,13 +164,13 @@ fn the_fprem_loop_tests_the_status_word_fprem_leaves() {
 }
 
 /// The remainder ops close the list on both x86 presets, only
-/// `x87RoundingControl` after them, so no other id moved.
+/// `x87RoundingControl` and `xgetbv` after them, so no other id moved.
 #[test]
 fn the_remainder_ops_are_the_last_user_ops() {
     for arch in [common::Arch::X86, common::Arch::X64] {
         let (strider, _) = common::strider_over_bytes(arch, vec![0xc3], BASE, None);
         let names = strider.user_op_names();
-        let tail: Vec<&str> = names[names.len() - 6..]
+        let tail: Vec<&str> = names[names.len() - 7..]
             .iter()
             .map(String::as_str)
             .collect();
@@ -182,7 +182,8 @@ fn the_remainder_ops_are_the_last_user_ops() {
                 "x87Prem",
                 "x87Prem1Status",
                 "x87Prem1",
-                "x87RoundingControl"
+                "x87RoundingControl",
+                "xgetbv"
             ],
             "{arch:?}"
         );
