@@ -2,7 +2,7 @@ use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
 
 use strider_ir::node::{NodeId, NodeKind, ValueType};
-use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntUnaryOp};
 
 use strider_ir_test_utils::reg_vn;
 
@@ -383,6 +383,18 @@ fn plain_opcodes_lower_to_their_ir_shape() {
             "Extend(ZeroExtend):i8(IntBinaryOp(Xor):i1(IntCmpOp(Sless):i1(r4, r0), 0x1:i1))",
         ),
         (
+            Opcode::IntLessEqual,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Xor):i1(IntCmpOp(Less):i1(r4, r0), 0x1:i1))",
+        ),
+        (
+            Opcode::IntNeg,
+            r8,
+            &[r0],
+            "IntBinaryOp(Xor):i32(r0, 0xffffffff:i32)",
+        ),
+        (
             Opcode::FloatSub,
             r8,
             &[r0, r4],
@@ -520,38 +532,11 @@ fn a_narrow_shift_count_zero_extends() {
     }
 }
 
-/// Narrow `IntNeg` lowers to `Xor(x, all_ones)` with the constant inline.
-#[test]
-fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::IntNeg,
-            output: Some(reg(0)),
-            inputs: vec![const_vn(0x1234, 4)].into(),
-        };
-        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
-        assert!(
-            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
-            "narrow IntNeg must lower to an Xor"
-        );
-        assert!(
-            find_int_const_node(&d.builder, 0xFFFF_FFFF).is_some(),
-            "narrow IntNeg must materialise the I32 all-ones constant"
-        );
-    });
-}
-
-/// A YMM/ZMM-wide `IntNeg` is a well-defined bitwise complement and must lift,
-/// with the all-ones operand routed through the wide-const path rather than
-/// `build_int_const`, which rejects I256/I512.
+/// A YMM/ZMM-wide `IntNeg` lowers to Xor with a wide all-ones constant.
 #[test]
 fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
-    let cases: [(&str, u32, strider_ir::ValueType); 2] = [
-        ("ymm_i256", 32, strider_ir::ValueType::int(256)),
-        ("zmm_i512", 64, strider_ir::ValueType::int(512)),
-    ];
-    for (label, width, _ty) in cases {
+    let cases: [(&str, u32); 2] = [("ymm_i256", 32), ("zmm_i512", 64)];
+    for (label, width) in cases {
         // Its own container, so direct access with no sub-register masking.
         // Offset clear of the default regs at 0/4/8, and tracked so the read
         // resolves to its InitialVar.
@@ -831,50 +816,6 @@ fn lift_dedup_unions_two_addresses() {
             fp,
             rustc_hash::FxHashSet::from_iter([0x1000, 0x2000]),
             "both addresses should be unioned"
-        );
-    });
-}
-
-/// The canonical shape is `Xor(IntLess(b, a), IntConst(1)):I1`, operands
-/// SWAPPED.  Two distinct register operands are needed to see the swap: a
-/// const-fed lift cannot catch a dropped one.
-#[test]
-fn lift_int_less_equal_lowers_to_xor_of_a_swapped_less() {
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::IntLessEqual,
-                output: Some(reg(8)),
-                inputs: vec![reg(0), reg(4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
-            ),
-            "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap)"
-        );
-        let less = find_first_node(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Less))
-            .expect("IntLessEqual must lower to an IntLess cmp");
-        let [cmp_lhs, cmp_rhs] = d
-            .builder
-            .function()
-            .node_inputs_exact::<2>(less)
-            .expect("Less has two inputs");
-        // An entry-region register read materialises as a Phi whose
-        // source-varnode tag names the register.
-        assert_eq!(
-            d.builder.function().get_vn_for_value(cmp_lhs),
-            Some(reg(4)),
-            "Less first operand must be the SWAPPED rhs (read of b = reg(4))"
-        );
-        assert_eq!(
-            d.builder.function().get_vn_for_value(cmp_rhs),
-            Some(reg(0)),
-            "Less second operand must be the SWAPPED lhs (read of a = reg(0))"
         );
     });
 }
