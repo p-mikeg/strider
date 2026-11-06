@@ -26,8 +26,9 @@ reached it. An address reached in two modes is listed in `cfg.incomplete` as
 
 ## Control flow
 
-**Region.** A straight run of instructions left at the bottom; elsewhere
-called a "basic block". Strider says region in both the CFG and the IR.
+**Region.** A straight run of instructions, entered at the top and left at the
+bottom (a basic block, not necessarily maximal). Strider says region in both
+the CFG and the IR.
 
 **CFG (control flow graph).** The regions and the jumps between them.
 

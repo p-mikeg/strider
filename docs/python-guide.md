@@ -49,8 +49,8 @@ addr = prog.symbol("array_sum").address
 cfg, function, unresolved = prog.analyze(addr, opts=opts)
 ```
 
-By name, the symbol's size bounds the lift and drops
-`allow_code_before_start_addr`; hence the address.
+By name, the symbol's size bounds the lift and `allow_code_before_start_addr`
+is ignored, so pass the address.
 
 Other options:
 [LifterOptions](python-api.md#liftlifteroptions-per-call-tuning).

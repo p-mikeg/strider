@@ -23,7 +23,7 @@ register outside it fails the function. It holds:
 - every REGISTER / UNIQUE varnode the pcode names,
 - the convention's stack pointer, argument and return registers, plus the
   argument registers of the `per_address_ccs` overrides this CFG's direct
-  calls select,
+  calls and tail calls select,
 - each `CallOther`'s ABI footprint (x86-64 `syscall` reads `R10`, writes `R11`),
 - the declared register enclosing each resolved register-space LOAD / STORE
   address,
@@ -83,10 +83,11 @@ bit (p-code: the whole byte); every vendored spec feeds them 0/1.
 ## Terminators
 
 `Return` and a link-register `BranchIndirect` (ARM `pop {pc}`) emit a convention
-`Return`. A resolved `Switch` gets one control output per arm and keeps its
-selector live; a `TailCall` becomes `Call` + `Return`; an unresolved indirect
-branch becomes an `IndirectBranch` anchoring the dispatch varnode and, on ARM
-and MIPS, the ISA-mode bit, so a resolver decodes each target in the right mode.
+`Return`. A `NoReturn` call or `CallOther` ends in `Unreachable`. A resolved
+`Switch` gets one control output per arm and keeps its selector live; a
+`TailCall` becomes `Call` + `Return`; an unresolved indirect branch becomes an
+`IndirectBranch` anchoring the dispatch varnode and, on ARM and MIPS, the
+ISA-mode bit, so a resolver decodes each target in the right mode.
 
 A control cycle with no exit reaches no terminator, so an
 `If(true) { back edge } { Unreachable }` is seated on each to keep it valid.

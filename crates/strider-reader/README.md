@@ -14,7 +14,7 @@ the section walk).
 - `load_elf(path)` / `OwnedElf::parse(bytes)`; `OwnedElf::image(source, mode)`
   gives the fetch and ROM region sets and the writable addresses from one
   parse, sharing one buffer.
-- `ElfFileMemReader::new(&elf, mode)` implements both reader traits.
+- `ElfFileMemReader` (`new(&elf, mode)`) implements both reader traits.
   `RelocationMode::Unapplied` serves file-initial bytes;
   `RelocationMode::Applied { got_is_rom }` serves relocated fields, and with
   `got_is_rom` also `.got`, PPC32 `.got2` and `.data.rel.ro` as ROM.
@@ -26,7 +26,8 @@ the section walk).
 ## Loading is lazy
 
 A region is a window into the mapped file, and relocations are a sorted patch
-list applied as a read crosses a site, so loading touches headers, not bytes.
+list applied as a read crosses a site, so loading reads headers and relocated
+fields, not whole mappings.
 
 The file must not change on disk while mapped. `check_unchanged` (on
 `OwnedElf`, `ElfFileMemReader`, `MemRegion` and `MemRegionsLookupTable`)

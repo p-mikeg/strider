@@ -53,14 +53,17 @@ strider.explore.shutdown(port)
 
 - `cfg.incomplete`: every address the analysis cannot vouch for, with its
   reason. `analyze` and `build_cfg` report it rather than raise.
-- `Function.optimize`; `Function.assumptions`, the claims in force, which
-  accumulate on the function; `Function.optimizer_converged`.
+- `Function.optimize`, `Function.assumptions` (claims accumulate on the
+  function) and `Function.optimizer_converged`.
+- Two lift-time claims, `fp_rounding_mode_is_nearest` and
+  `msr_register_keeps_mode`; float-to-integer conversions round and saturate
+  as each ISA does.
 - Target presets: `SleighArch.preset`, `CallingConvention.preset`,
   `CC_PRESETS`.
-- Constants of any width up to 512 bits.
+- `int_const` and the signed readers handle values up to 512 bits.
 - Handles usable from any thread.
-- GCC `.cold` fragments; a ppc64 ELFv1 function enters with `r2` holding its
-  TOC.
+- GCC `.cold` fragments (`CfgOptions.fragment_ranges`); a ppc64 ELFv1
+  function enters with `r2` holding its TOC.
 
 **0.2.0**
 
