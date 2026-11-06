@@ -5,9 +5,10 @@
 //!
 //! The generators emit integer arithmetic (`I1` included), compares, shifts
 //! (counts of any width), casts, popcount/lzcount, phis and `If` / `Return` /
-//! `Unreachable` control only: no memory, call, `Switch` or float node. The
-//! DAG generator draws every width of [`TYPES`]; the CFG generator draws `I8`,
-//! `I32` and `I256`.
+//! `Unreachable` control; the CFG generator adds constant-address RAM loads
+//! and stores and a `Switch`. No call or float node. The DAG generator draws
+//! every width of [`TYPES`]; the CFG generator draws `I8`, `I32` and `I256`.
+//! The CFG test also runs each pass alone, validating its output.
 //!
 //! Environment: `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS`
 //! nodes per DAG, and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone.
@@ -1045,8 +1046,18 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
             } else {
                 other
             };
+            // Two RAM slots, for loads and stores across joins.
+            let slot = 0x100 + 0x40 * rng.below(2) as u64;
+            if rng.chance(15) {
+                let addr = b.build_int_const(slot, ValueType::int(64)).ok()?;
+                b.build_store(addr, vj, rsleigh::VnSpace::RAM).ok()?;
+                continue;
+            }
             let nv = if rng.chance(20) {
                 b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?
+            } else if rng.chance(15) {
+                let addr = b.build_int_const(slot, ValueType::int(64)).ok()?;
+                b.build_load(addr, rsleigh::VnSpace::RAM, ty).ok()?
             } else if rng.chance(15) && ty == ValueType::int(32) {
                 // A truncate / extend round trip, for the cast ladder.
                 let narrow =
@@ -1071,9 +1082,22 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 b.build_return(None, &vals).ok()?;
             }
             2 => b.build_unreachable().ok()?,
-            3 | 4 => {
+            3 => {
                 let t = regions[rng.below(nregions)];
                 b.build_branch(t).ok()?;
+            }
+            4 => {
+                let vj = b.read_variable(&vns[rng.below(nvars)]).ok()?;
+                let ty = b.function().value_type_opt(vj)?;
+                let three = b.build_int_const(3u64, ty).ok()?;
+                let sel = if rng.chance(25) {
+                    three
+                } else {
+                    b.build_int_binary_operation(vj, three, IntBinaryOp::And, ty)
+                        .ok()?
+                };
+                let arms: Vec<_> = (0..4).map(|k| (regions[rng.below(nregions)], k)).collect();
+                b.build_switch(sel, &arms).ok()?;
             }
             _ => {
                 let j = rng.below(nvars);
@@ -1117,71 +1141,114 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
     Some(f)
 }
 
+/// Whether `f`, optimised by `what`, keeps each of `outcomes` on its input
+/// vector; the count of returning runs compared.
+fn check_outcomes(
+    seed: u64,
+    what: &str,
+    f: &strider_ir::Function,
+    vecs: &[Vec<u64>],
+    outcomes: &[Outcome],
+    before_text: &str,
+) -> Result<usize, String> {
+    let mut cmp = 0;
+    for (vec, want) in vecs.iter().zip(outcomes) {
+        let dump = |why: String| {
+            format!(
+                "seed {seed} {what}: inputs {vec:?} {why}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                f.to_text(false)
+            )
+        };
+        let got = run_cfg(f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty))
+            .map_err(|why| dump(format!("after: {why:?}")))?;
+        match want {
+            Outcome::Return { .. } => {
+                cmp += 1;
+                if !refines(want, &got).map_err(dump)? {
+                    return Err(dump(format!("want {want:?} got {got:?}")));
+                }
+            }
+            Outcome::Unreachable { .. } => {
+                if !matches!(got, Outcome::Unreachable { .. }) {
+                    return Err(dump(format!("unreachable became {got:?}")));
+                }
+            }
+            // Folding a non-terminating loop into a sink is a miscompile; no
+            // pass here constructs an `Unreachable`.
+            Outcome::Diverge(_) => {
+                if !matches!(got, Outcome::Diverge(_)) {
+                    return Err(dump(format!("a non-terminating run became {got:?}")));
+                }
+            }
+        }
+    }
+    Ok(cmp)
+}
+
 /// Random CFGs: every return value agrees with a control-flow interpreter
-/// over the sea of nodes before and after the pipeline.
+/// over the sea of nodes before and after the pipeline, and after each of
+/// its passes alone, whose output must validate.
 #[test]
 fn the_pipeline_preserves_cfg_semantics() {
     let (n, seeds) = fuzz_seeds();
     let (mut built, mut compared) = (0, 0);
     sweep(seeds, |seed| {
-        let Some(mut f) = build_random_cfg(seed) else {
+        let Some(f0) = build_random_cfg(seed) else {
             return Ok(());
         };
-        let before_text = f.to_text(false);
+        let before_text = f0.to_text(false);
         let mut outcomes = Vec::new();
         let mut rng = Rng(seed | 1);
         let vecs: Vec<Vec<u64>> = (0..16)
             .map(|_| (0..4).map(|_| rng.next_u64()).collect())
             .collect();
         for vec in &vecs {
-            let want =
-                run_cfg(&f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty)).map_err(|why| {
+            let want = run_cfg(&f0, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty)).map_err(
+                |why| {
                     format!(
                         "seed {seed}: inputs {vec:?} before the pipeline: {why:?}\n{before_text}"
                     )
-                })?;
+                },
+            )?;
             outcomes.push(want);
         }
+        let passes: [&dyn crate::Optimizer; 9] = [
+            &crate::ConstantFold,
+            &crate::LoadReadOnly,
+            &crate::KnownBits,
+            &crate::FlagCmpCanonicalize,
+            &crate::IfCondInversion,
+            &crate::PhiCollapse,
+            &crate::RegionCollapse,
+            &crate::DeadBranchElimination,
+            &crate::LoadForward,
+        ];
+        for pass in passes {
+            let mut f = f0.clone();
+            crate::run_one_unvalidated(pass, &mut f, &crate::OptCtx::new(None))
+                .map_err(|e| format!("seed {seed} {}: error {e:#}\n{before_text}", pass.name()))?;
+            if let Err(errors) = strider_ir::validate::validate(&f) {
+                return Err(format!(
+                    "seed {seed} {}: invalid IR {}\n{before_text}",
+                    pass.name(),
+                    errors.report(&f)
+                ));
+            }
+            // A quarter of the vectors keeps the per-pass runs cheap.
+            check_outcomes(
+                seed,
+                pass.name(),
+                &f,
+                &vecs[..4],
+                &outcomes[..4],
+                &before_text,
+            )?;
+        }
+        let mut f = f0;
         crate::default_pipeline()
             .run(&mut f, &crate::OptCtx::new(None))
             .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
-        let mut cmp = 0;
-        for (vec, want) in vecs.iter().zip(&outcomes) {
-            let dump = |what: String| {
-                format!(
-                    "seed {seed}: inputs {vec:?} {what}\nBEFORE:\n{before_text}\nAFTER:\n{}",
-                    f.to_text(false)
-                )
-            };
-            let got = run_cfg(&f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty))
-                .map_err(|why| dump(format!("after the pipeline: {why:?}")))?;
-            match want {
-                Outcome::Return { .. } => {
-                    cmp += 1;
-                    if !refines(want, &got).map_err(dump)? {
-                        return Err(dump(format!("want {want:?} got {got:?}")));
-                    }
-                }
-                Outcome::Unreachable { .. } => {
-                    if !matches!(got, Outcome::Unreachable { .. }) {
-                        return Err(format!(
-                            "seed {seed}: unreachable became {got:?}\n{before_text}"
-                        ));
-                    }
-                }
-                // Folding a non-terminating loop into a sink is a
-                // miscompile; no pass here constructs an `Unreachable`.
-                Outcome::Diverge(_) => {
-                    if !matches!(got, Outcome::Diverge(_)) {
-                        return Err(format!(
-                            "seed {seed}: a non-terminating run became \
-                                     {got:?}\n{before_text}\nAFTER:\n{}",
-                            f.to_text(false)
-                        ));
-                    }
-                }
-            }
-        }
+        let cmp = check_outcomes(seed, "pipeline", &f, &vecs, &outcomes, &before_text)?;
         built += 1;
         compared += cmp;
         Ok(())
