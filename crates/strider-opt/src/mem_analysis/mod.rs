@@ -15,7 +15,9 @@ pub(crate) use alias::Loc;
 pub(crate) use arg_window::{ArgPrefix, merged_slots};
 pub(crate) use decompose::{alignment_masked_operand, decompose};
 pub(crate) use frame::entry_sp_span;
-pub(crate) use query::{MemQuery, Policy, ReachingDef, narrow_load_to, store_value_byte_size};
+pub(crate) use query::{
+    MemQuery, Policy, ReachingDef, anchored_store, narrow_load_to, store_value_byte_size,
+};
 pub(crate) use ring::{reduce, ring_overlap, wrap_to_addr_width};
 pub use stamp::refresh_memory_classes;
 pub(crate) use stamp::stamp_all;
@@ -54,7 +56,7 @@ pub(crate) enum AddrClass {
     /// Rooted at a `Phi` of heap bases: an allocation, but which one is
     /// unknown, so its offsets compare with nothing.
     HeapOpaque,
-    /// Literal `.data` / `.rodata` / `.bss` / MMIO pointer.
+    /// A constant address.
     Constant { addr: i128 },
     /// Anything else. Only `ValueId` equality proves two equal.
     Anchor { value: ValueId },

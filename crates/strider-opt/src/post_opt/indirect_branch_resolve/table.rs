@@ -41,7 +41,7 @@ impl SiteClassifier<'_> {
         target_value: ValueId,
         mode_value: Option<ValueId>,
     ) -> Option<ResolvedTargets> {
-        let function = self.function();
+        let function = self.function;
         let (pinned, values) = self.dispatch_domain(target_value, site)?;
 
         let ev = &mut self.eval;
@@ -76,7 +76,7 @@ impl SiteClassifier<'_> {
     /// index across its range. With both, constants outside the index range are
     /// dropped; if the index does not fold under some constant, the range wins.
     fn dispatch_domain(&mut self, target: ValueId, site: NodeId) -> Option<(ValueId, Vec<u128>)> {
-        let function = self.function();
+        let function = self.function;
         let chain = dominator_chain(function, target)?;
         let source = chain.last().copied().unwrap_or(target);
         let constants = super::index_range::phi_constants(
@@ -120,7 +120,7 @@ impl SiteClassifier<'_> {
         hit: PinnedIndex,
         source: ValueId,
     ) -> Option<Vec<u128>> {
-        let order = super::eval::cone_order_pruned(self.function(), hit.index, source);
+        let order = super::eval::cone_order_pruned(self.function, hit.index, source);
         let mut kept = Vec::new();
         for k in constants {
             self.eval.begin_index(source, k);
@@ -139,7 +139,7 @@ impl SiteClassifier<'_> {
     /// in its variability cone. Dominance excludes a bypassed sub-branch: in a
     /// rotate `(x<<2) | (x>>30)`, `x>>30` is tightest but does not dominate.
     fn decompose_index(&mut self, chain: &[ValueId], site: NodeId) -> Option<PinnedIndex> {
-        let function = self.function();
+        let function = self.function;
         let first_hit = |this: &mut Self, from: usize| {
             chain
                 .iter()
@@ -175,7 +175,7 @@ impl SiteClassifier<'_> {
     /// guarded sibling `v + k` outside the dispatch cone (a `switch` over a
     /// negative case base, once `k` folds into the table base).
     fn bounded_index(&mut self, site: NodeId, v: ValueId) -> Option<PinnedIndex> {
-        let function = self.function();
+        let function = self.function;
         debug_assert!(
             function.int_const_u128(v).is_none(),
             "the dominator chain skips constants"
@@ -192,7 +192,7 @@ impl SiteClassifier<'_> {
             });
         }
         let ranges = &self.ranges;
-        let sums = self.sums.entry(v).or_insert_with(|| {
+        let sums = std::mem::take(self.sums.entry(v).or_insert_with(|| {
             function
                 .value_uses(v)
                 .filter_map(|(user, _)| {
@@ -208,10 +208,10 @@ impl SiteClassifier<'_> {
                     .then_some((sum, addend))
                 })
                 .collect()
-        });
-        sums.clone()
-            .into_iter()
-            .filter_map(|(sum, addend)| {
+        }));
+        let best = sums
+            .iter()
+            .filter_map(|&(sum, addend)| {
                 let iv = self.ranges.range_of(sum, site);
                 self.enumerable(site, mask, sum, iv).then_some(PinnedIndex {
                     index: v,
@@ -220,7 +220,9 @@ impl SiteClassifier<'_> {
                     mask,
                 })
             })
-            .min_by_key(|hit| hit.range.count())
+            .min_by_key(|hit| hit.range.count());
+        self.sums.insert(v, sums);
+        best
     }
 
     /// Does `iv` cover every value `v`'s cell can produce (the [`strip_to_cell`]
@@ -228,7 +230,7 @@ impl SiteClassifier<'_> {
     /// an index? An uncountable step or a strip past [`MAX_WALK`] answers `true`;
     /// a field read through a pointer asks `cell_test_left_unread` instead.
     fn is_width_only(&mut self, site: NodeId, v: ValueId, iv: Interval, narrowed: bool) -> bool {
-        let function = self.function();
+        let function = self.function;
         let Some(strip) = strip_to_cell(function, v, |and| {
             self.ranges.identity_mask_operand(and).is_some()
         }) else {
@@ -282,7 +284,7 @@ impl SiteClassifier<'_> {
     /// whose added terms is bounded at `site` like a table index or is a
     /// constant the ROM serves at or past [`FIRST_PAGE_END`], a table base.
     fn loads_a_field(&mut self, site: NodeId, v: ValueId) -> bool {
-        let function = self.function();
+        let function = self.function;
         if !matches!(function.kind_of_value(v), NodeKind::Load(_)) {
             return false;
         }

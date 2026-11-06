@@ -64,17 +64,13 @@ impl<'f> SiteClassifier<'f> {
         }
     }
 
-    pub(crate) fn function(&self) -> &'f strider_ir::Function {
-        self.function
-    }
-
     /// The target set of `site`, an `IndirectBranch` or a seated `Switch`
     /// (never a return), from the first recogniser to match: a literal
     /// address, an `InitialVar(lr)` or [`ReturnTargets::returns_to_caller`]
     /// return, then the table arm. `None` defers the site.
     #[must_use]
     pub(crate) fn classify(&mut self, site: NodeId) -> Option<ResolvedTargets> {
-        let f = self.function();
+        let f = self.function;
         let switch = matches!(f.node_kind(site), NodeKind::Switch(_));
         // The ISA mode an interworking branch commits for its targets.
         let (target_value, mode_value) = if switch {
@@ -100,7 +96,7 @@ impl<'f> SiteClassifier<'f> {
         target_value: ValueId,
         mode_value: Option<ValueId>,
     ) -> Option<ResolvedTargets> {
-        let function = self.function();
+        let function = self.function;
         let k = function.int_const_u128(target_value)?;
         // A committed mode that does not fold defers the branch.
         let isa_bit = match mode_value {
@@ -121,7 +117,7 @@ impl<'f> SiteClassifier<'f> {
         branch: NodeId,
         target_value: ValueId,
     ) -> Option<ResolvedTargets> {
-        let function = self.function();
+        let function = self.function;
         let lr = function.default_cc().link_register?;
         match *function.kind_of_value(strip_isa_mode_mask(function, target_value)) {
             NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {

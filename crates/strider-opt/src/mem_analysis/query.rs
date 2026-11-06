@@ -228,27 +228,26 @@ impl MemQuery {
         let probe = sp_slot(function, base, offset, probe_size, space);
         self.nearest(function, function.producer(mem_start), probe, policy)
     }
+}
 
-    /// `clobber` as a `Store` whose address shares SP terminal `base`.
-    pub(crate) fn anchored_store(
-        &self,
-        function: &Function,
-        clobber: NodeId,
-        base: ValueId,
-    ) -> Option<ReachingSpStore> {
-        if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
-            return None;
-        }
-        let MemExpr {
-            base: store_base,
-            offset: store_offset,
-            ..
-        } = decompose(function, function.store_addr(clobber))?;
-        (store_base == base).then_some(ReachingSpStore {
-            node: clobber,
-            store_offset,
-        })
+/// `clobber` as a `Store` whose address shares SP terminal `base`.
+pub(crate) fn anchored_store(
+    function: &Function,
+    clobber: NodeId,
+    base: ValueId,
+) -> Option<ReachingSpStore> {
+    if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
+        return None;
     }
+    let MemExpr {
+        base: store_base,
+        offset: store_offset,
+        ..
+    } = decompose(function, function.store_addr(clobber))?;
+    (store_base == base).then_some(ReachingSpStore {
+        node: clobber,
+        store_offset,
+    })
 }
 
 /// Repoints a `Load`'s memory input onto `clobber`'s memory output. Sound
@@ -316,7 +315,7 @@ impl ReachingDef {
     }
 }
 
-/// Result of [`MemQuery::anchored_store`].
+/// Result of [`anchored_store`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReachingSpStore {
     node: NodeId,

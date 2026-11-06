@@ -95,7 +95,6 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
     if load.space != store.space {
         return AliasVerdict::Disjoint;
     }
-    let distinct_sp_bases_disjoint = policy.distinct_sp_bases_disjoint;
     match (load.class, store.class) {
         // Different SP bases differ by an unknown amount. Under
         // `distinct_sp_bases_disjoint` the probe is at the entry SP
@@ -113,7 +112,7 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
         ) => {
             if lb == sb {
                 offset_range_verdict(load, lo, store, so)
-            } else if distinct_sp_bases_disjoint {
+            } else if policy.distinct_sp_bases_disjoint {
                 AliasVerdict::Disjoint
             } else {
                 AliasVerdict::MayAlias

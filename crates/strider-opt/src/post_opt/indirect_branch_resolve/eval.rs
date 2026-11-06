@@ -147,7 +147,7 @@ impl<'a> Evaluator<'a> {
                     size,
                     space,
                 );
-                let hit = self.mem_index.anchored_store(f, clobber, base)?;
+                let hit = crate::mem_analysis::anchored_store(f, clobber, base)?;
                 // The store must sit exactly at the probed offset.
                 let data = (hit.store_offset == offset).then(|| hit.data(f))?;
                 let raw = f.int_const(data)?.clone();
