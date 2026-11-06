@@ -34,18 +34,10 @@ const CODE: &[&str] = &[
     "ff5a5b5dc3",
 ];
 
-fn code() -> Vec<u8> {
-    let hex: String = CODE.concat();
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
 /// Mutation: drop the phi's truncated guard, or count it as unconnected.
 #[test]
 fn a_loop_carried_switch_under_a_truncated_guard_resolves() {
-    let bytes = code();
+    let bytes = common::hex(&CODE.concat());
     assert_eq!(bytes.len(), 0xc5);
     let rom = Box::new(MockRom::strided(TABLE, 8, SLOTS.to_vec(), 8))
         as Box<dyn strider_orchestrator::opt::ReadOnlyMemory>;

@@ -24,6 +24,14 @@ pub(crate) mod quad;
 
 pub(crate) mod round;
 
+/// Bytes from a string of hex digit pairs.
+pub(crate) fn hex(s: &str) -> Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Arch {
     X86,

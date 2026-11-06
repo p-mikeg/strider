@@ -62,18 +62,10 @@ const CODE: &[&str] = &[
     "c9e83ca1ffffb8020000005b415e415fc3",
 ];
 
-fn code() -> Vec<u8> {
-    let hex: String = CODE.concat();
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
 /// Mutation: count a field load's width-only range as a table cell's.
 #[test]
 fn a_table_indexed_by_a_loaded_field_resolves_to_its_slots() {
-    let bytes = code();
+    let bytes = common::hex(&CODE.concat());
     assert_eq!(bytes.len(), 0x211);
     let rodata = [STATE_SLOTS.as_slice(), SLOTS.as_slice()].concat();
     let rom = Box::new(MockRom::strided(RODATA, 8, rodata, 8))
