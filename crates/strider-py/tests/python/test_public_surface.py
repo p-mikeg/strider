@@ -1,6 +1,7 @@
 """The published namespaces: `__all__` completeness and annotation
 resolvability."""
 
+import types
 import typing
 
 import pytest
@@ -57,3 +58,13 @@ def test_the_pattern_protocols_are_published():
         "NodePat", "InputPat", "CtrlPat", "MemPat", "MemAccessPat",
         "OrderedPat", "OutputPat",
     ]
+
+
+@pytest.mark.parametrize("mod", MODULES, ids=lambda m: m.__name__)
+def test_exports_name_a_public_module(mod):
+    """`help()`, tracebacks and pickling name an object's `__module__`, so
+    a class or function re-exported from `strider._api` must not report it."""
+    for name in mod.__all__:
+        obj = getattr(mod, name)
+        if isinstance(obj, (type, types.FunctionType)):
+            assert not obj.__module__.startswith("strider._"), (name, obj.__module__)

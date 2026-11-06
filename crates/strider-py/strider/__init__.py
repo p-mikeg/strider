@@ -56,13 +56,13 @@ from . import _api as _mod_api  # noqa: E402
 # So `strider.explore` works without an explicit import.
 from . import explore as explore  # noqa: E402
 
-lift.ElfLifter = _mod_api.ElfLifter          # type: ignore[attr-defined]
-lift.load_elf = _mod_api.load_elf            # type: ignore[attr-defined]
-_export(lift, "ElfLifter", "load_elf")
-pattern.FieldPat = _mod_api.FieldPat         # type: ignore[attr-defined]
-pattern.field = _mod_api.field               # type: ignore[attr-defined]
-pattern.code_ptr = _mod_api.code_ptr         # type: ignore[attr-defined]
-_export(pattern, "FieldPat", "field", "code_ptr")
+for _sub, _names in ((lift, ("ElfLifter", "load_elf")),
+                     (pattern, ("FieldPat", "field", "code_ptr"))):
+    for _name in _names:
+        _o = getattr(_mod_api, _name)
+        _o.__module__ = f"strider.{_sub.__name__}"
+        setattr(_sub, _name, _o)
+    _export(_sub, *_names)
 
 # The stubs' type aliases, bound at runtime too so they can be imported and
 # evaluated in annotations.
@@ -291,7 +291,7 @@ __all__ = ["StriderError", "ir", "lift", "cfg", "sleigh", "reader",
            "opt", "pattern", "template"]
 
 # Drop import machinery from the public namespace.
-del _importlib, _sys, _ext, _name, _sub, _mod_api, _t, _p, _export
+del _importlib, _sys, _ext, _name, _sub, _names, _o, _mod_api, _t, _p, _export
 del _SUBMODULE_DOCS
 del _S, _NodePat, _InputPat, _CtrlPat, _MemPat, _MemAccessPat, _OrderedPat
 del _OutputPat, _proto, _proto_name
