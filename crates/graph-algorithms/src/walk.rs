@@ -89,7 +89,7 @@ impl<G: GraphRef> Iterator for PreOrder<G> {
         visited.insert(node);
 
         graph.successors(node, |succ| {
-            // Not a substitute for the pop-time check.
+            // A pruning only: a node can still be pushed twice before its visit.
             if !visited.contains(succ) {
                 stack.push(succ);
             }
@@ -136,7 +136,7 @@ impl<G: GraphRef> PostOrder<G> {
                         visited.insert(node);
                         stack.push((WalkPhase::Post, node));
                         graph.successors(node, |succ| {
-                            // Not a substitute for the pop-time check.
+                            // A pruning only: a node can still be pushed twice before its visit.
                             if !visited.contains(succ) {
                                 stack.push((WalkPhase::Pre, succ));
                             }
