@@ -182,6 +182,44 @@ impl MatcherBuilder {
         self.out_of(out).identity = Some(crate::capture::Capture::internal());
     }
 
+    /// [`Self::capture_output`], except that an output-less producer (`Return`,
+    /// `IndirectBranch`, `Unreachable`), also as an alternation arm, binds its node.
+    pub(crate) fn capture(&mut self, out: PatValueRef, c: crate::capture::Capture) {
+        let graph = &self.core.graph;
+        let producer = graph.producer(out.0);
+        let node = graph.node_kind(producer);
+        if matches!(node.role, Role::OneOf | Role::FirstOf) {
+            let arms: Vec<ValueId> = graph.node_inputs(producer).into_iter().collect();
+            if arms.iter().any(|&arm| self.has_output_less_arm(arm)) {
+                for arm in arms {
+                    self.capture(PatValueRef(arm), c);
+                }
+                return;
+            }
+        } else if self.has_output_less_arm(out.0) {
+            return self.capture_node(PatNodeRef(producer), c);
+        }
+        self.capture_output(out, c);
+    }
+
+    /// Whether `out`'s producer has no outputs, or is an alternation with such an arm.
+    fn has_output_less_arm(&self, out: ValueId) -> bool {
+        let graph = &self.core.graph;
+        let producer = graph.producer(out);
+        let node = graph.node_kind(producer);
+        if matches!(node.role, Role::OneOf | Role::FirstOf) {
+            return graph
+                .node_inputs(producer)
+                .into_iter()
+                .any(|arm| self.has_output_less_arm(arm));
+        }
+        node.kind.is_variant_in(&[
+            NodeKind::Return,
+            NodeKind::IndirectBranch,
+            NodeKind::Unreachable,
+        ])
+    }
+
     /// Binds the matched node (`Binding::Node`). Additive, like [`Self::capture_output`].
     pub fn capture_node(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
         self.core.graph.node_kind_mut(node.0).captures.push(c);

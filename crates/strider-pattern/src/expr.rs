@@ -537,7 +537,7 @@ fn annotate(b: &mut MatcherBuilder, out: PatValueRef, d: Deco, slot: Slot) -> Pa
         b.set_output_control(out);
     }
     match d {
-        Deco::Capture(c) => b.capture_output(out, c),
+        Deco::Capture(c) => b.capture(out, c),
         Deco::Filter(f) => b.set_node_predicate(out, f),
         Deco::Guard(f) => b.set_post_match_typed(out, f),
         Deco::PostMatch(f) => b.set_post_match(out, f),
