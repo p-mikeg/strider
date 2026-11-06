@@ -1,7 +1,7 @@
 //! Address-width arithmetic: offsets wrap at the address's bit width. Where
 //! the width is unknown or past the `i128` carrier, a reduction leaves the
-//! offset as it is and an overlap test answers `true`; at or past the carrier,
-//! a split leaves the range whole.
+//! offset as it is and an overlap test answers `true`; from 127 bits up, a
+//! split leaves the range whole.
 
 use strider_ir::eval::mask_below;
 use strider_ir::node::{ValueId, ValueType};
