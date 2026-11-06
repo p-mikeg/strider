@@ -428,18 +428,13 @@ pub struct PyLifter {
     rom_obj: Option<std::sync::Arc<Py<PyAny>>>,
     /// `mem` or `rom` is a Python callback.
     reader_calls_python: bool,
-    /// Kept between calls: a `Sleigh::clone` is a whole `Sleigh::new` plus a
-    /// commit replay.
+    /// Kept between calls: a `Sleigh::clone` is a whole `Sleigh::new`.
     sweep_sleigh: std::cell::RefCell<Option<SweepSleigh>>,
-    /// Bumped by `analyze` and `build_cfg`, which can commit context, to
-    /// retire a cached sweep engine.
-    context_gen: std::cell::Cell<u64>,
 }
 
 /// A forward-only sweep: a passed address is answered from `answers`, since
 /// re-decoding it could see a mode a later instruction pinned.
 struct SweepSleigh {
-    context_gen: u64,
     entry: u64,
     sleigh: rsleigh::Sleigh<AnyMemReader>,
     /// `sleigh`'s own.
@@ -466,10 +461,6 @@ impl PyLifter {
     fn target(&self) -> PyResult<strider_target::SleighArch> {
         Ok(self.strider()?.arch())
     }
-
-    fn bump_context_gen(&self) {
-        self.context_gen.set(self.context_gen.get().wrapping_add(1));
-    }
 }
 
 fn build_lifter(
@@ -485,7 +476,6 @@ fn build_lifter(
         rom_obj: rom.as_ref().map(|r| std::sync::Arc::clone(&r.obj)),
         inner: Some(build_strider(arch, mem, rom)?),
         sweep_sleigh: std::cell::RefCell::new(None),
-        context_gen: std::cell::Cell::new(0),
     })
 }
 
@@ -697,9 +687,9 @@ impl PyLifter {
     }
 
     /// The p-code (ops joined `"; "`, empty for none) of the instruction at
-    /// `addr`, decoding linearly from `entry`. A new `entry`, or the first
-    /// call after `analyze` / `build_cfg`, clones the whole decoder;
-    /// `build_cfg(entry).pcode_at(addr)` is far cheaper per function.
+    /// `addr`, decoding linearly from `entry` on a fresh decoder. A new
+    /// `entry` builds that decoder; `build_cfg(entry).pcode_at(addr)` is far
+    /// cheaper per function.
     fn pcode_at(
         slf: &Bound<'_, Self>,
         entry: &Bound<'_, PyAny>,
@@ -720,36 +710,24 @@ impl PyLifter {
                 "pcode_at: addr {addr:#x} is before entry {entry:#x}"
             )));
         }
-        // A clone replaying the pinned commits, so the persistent Sleigh's
-        // context stays clean and the sweep decodes in the analysis's mode.
-        let context_gen = this.context_gen.get();
         // Taken out of the cell: a Python `read` can re-enter `pcode_at`.
         let cached = this
             .sweep_sleigh
             .try_borrow_mut()
             .ok()
             .and_then(|mut slot| slot.take())
-            .filter(|s| s.context_gen == context_gen && s.entry == entry);
+            .filter(|s| s.entry == entry);
         let mut sweep = match cached {
             Some(s) => s,
             None => {
-                let sleigh = this.sleigh()?;
-                if !sleigh.clone_would_replay_context() {
-                    return Err(into_strider_err(anyhow::anyhow!(
-                        "pcode_at: this Lifter has pinned more decode modes than a sweep \
-                         engine can carry over, so {addr:#x} would decode in the pspec \
-                         default mode rather than the one the analysis used; build a \
-                         fresh Lifter to sweep from"
-                    )));
-                }
-                let mut sleigh = sleigh.clone();
+                // A fresh engine, pinned as a cold `build_cfg` pins its entry.
+                let mut sleigh = this.sleigh()?.clone();
                 if let Some((var, value)) = entry_mode {
                     sleigh
                         .set_context_at(start, var, value)
                         .map_err(|e| into_strider_err(anyhow::anyhow!("pcode_at: {e:#}")))?;
                 }
                 SweepSleigh {
-                    context_gen,
                     entry,
                     space_ids: sleigh.space_ids(),
                     sleigh,
@@ -837,7 +815,6 @@ impl PyLifter {
         let cfg_opts = cfg_options_from(opts_ref, &overrides, seat.as_ref());
         let inner = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(bound)?;
-            lifter.bump_context_gen();
             lifter
                 .strider_mut()?
                 .build_cfg(entry, &cfg_opts)
@@ -903,7 +880,6 @@ impl PyLifter {
         // A Python reader keeps the GIL so finalisation waits for the analysis.
         let result = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(slf.bind(py))?;
-            lifter.bump_context_gen();
             let reader_calls_python = lifter.reader_calls_python;
             // A plain `&mut Strider`, not the `!Ungil` `PyRefMut`.
             let inner = lifter.strider_mut()?;

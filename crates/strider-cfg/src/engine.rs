@@ -66,8 +66,8 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             entry.addr
         };
         // The context this mode last produced, not the defaults: several vars
-        // alias the mode bit, so re-pinning defaults would log a commit per
-        // build in rsleigh's bounded Clone-replay log.
+        // alias the mode bit, so re-pinning defaults would commit, flushing
+        // Sleigh's parse cache, on every build.
         let mode_key = entry_mode.map(|(_, value)| value);
         let tables = self.tables;
         // A cold mode pins the pspec defaults.

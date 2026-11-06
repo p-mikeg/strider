@@ -70,8 +70,9 @@ const CALL_OTHER: &[Row] = &[
     // RDTSC: `tmp:8 = rdtsc(); EDX = tmp(4); EAX = tmp(0);`; RDTSCP also
     // `ECX = tmp(8)` of its 12 bytes. All explicit.
     Row::new(&["rdtsc", "rdtscp"], PURE),
-    // RDMSR: `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`, all explicit.
-    Row::new(&["rdmsr"], PURE),
+    // RDMSR: `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`, all explicit;
+    // XGETBV the same over `xgetbv(ECX)`.
+    Row::new(&["rdmsr", "xgetbv"], PURE),
     // WRMSR: operands explicit; ECX may name IA32_FS_BASE / IA32_GS_BASE, and
     // any MSR can change what later loads read.
     Row::new(&["wrmsr"], base_write(&["FS_OFFSET", "GS_OFFSET"])),
