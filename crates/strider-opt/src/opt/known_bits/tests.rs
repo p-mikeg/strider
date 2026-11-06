@@ -1082,6 +1082,27 @@ fn an_i1_lzcount_may_set_bit_3() -> Result<()> {
     Ok(())
 }
 
+/// A known one at bit `h` caps a 32-bit `lzcount` at `31 - h`; known zeros
+/// cap a `popcount` at the bits left.
+#[test]
+fn known_input_bits_tighten_a_count() -> Result<()> {
+    let i32t = ValueType::int(32);
+    for (op, zeros) in [(IntBinaryOp::Or, !0x1Fu128), (IntBinaryOp::And, !0xF)] {
+        let (fg, _) = make_fn_with_var(reg_vn(0x80, 4), |b, x| {
+            if op == IntBinaryOp::Or {
+                let y = b.build_const_binop(1u64, x, op, i32t)?;
+                b.build_lzcount(y, i32t)
+            } else {
+                let y = b.build_const_binop(0xFFu64, x, op, i32t)?;
+                b.build_popcount(y, i32t)
+            }
+        })?;
+        let kb = analyze(&fg)[fg.returned()];
+        assert_eq!((kb.ones, kb.zeros), (0, zeros & 0xFFFF_FFFF), "{op:?}");
+    }
+    Ok(())
+}
+
 /// Two stacked redundant masks both drop in one run, whichever the pass
 /// visits first.
 #[test]

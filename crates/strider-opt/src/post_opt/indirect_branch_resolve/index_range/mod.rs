@@ -744,6 +744,28 @@ fn add_guard(
         .or_insert(interval);
 }
 
+/// The largest result of a `Popcount` / `Lzcount` `node`, or of a
+/// zero-extend of one, finer than the count's known bits.
+fn count_max(function: &strider_ir::Function, node: NodeId, known: &KnownBitsMap) -> Option<u128> {
+    let kind = *function.node_kind(node);
+    if !matches!(
+        kind,
+        NodeKind::Extend(ExtendOp::ZeroExtend) | NodeKind::Popcount | NodeKind::Lzcount
+    ) {
+        return None;
+    }
+    let [input] = function.graph().node_inputs_exact::<1>(node).ok()?;
+    if kind == NodeKind::Extend(ExtendOp::ZeroExtend) {
+        return count_max(function, function.producer(input), known);
+    }
+    let input_ty = function.value_type_opt(input)?;
+    Some(crate::opt::known_bits::count_max(
+        kind,
+        known[input],
+        input_ty,
+    ))
+}
+
 fn build<'f>(
     function: &'f strider_ir::Function,
     doms: DominatorTree<NodeId>,
@@ -753,9 +775,10 @@ fn build<'f>(
     let mut masks = MaskOperands::default();
     for node in function.walk() {
         masks.record(function, node, &known);
+        let count_max = count_max(function, node, &known);
         for &value_id in function.node_outputs(node) {
             let kb: KnownBitsFacts = known[value_id];
-            if kb.ones == 0 && kb.zeros == 0 {
+            if kb.ones == 0 && kb.zeros == 0 && count_max.is_none() {
                 continue;
             }
             let Some(ty) = function.value_type_opt(value_id) else {
@@ -764,7 +787,7 @@ fn build<'f>(
             let Some(type_mask) = ty.int_mask_u128() else {
                 continue;
             };
-            let max_val = kb.max_value(type_mask);
+            let max_val = kb.max_value(type_mask).min(count_max.unwrap_or(type_mask));
             // `k` trailing known-zero bits means a multiple of `2^k`, capped to
             // the range so the stride stays a valid divisor.
             let tz = kb.zeros.trailing_ones().min(127);
