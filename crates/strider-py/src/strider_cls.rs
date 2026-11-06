@@ -687,9 +687,10 @@ impl PyLifter {
     }
 
     /// The p-code (ops joined `"; "`, empty for none) of the instruction at
-    /// `addr`, decoding linearly from `entry` on a fresh decoder. A new
-    /// `entry` builds that decoder; `build_cfg(entry).pcode_at(addr)` is far
-    /// cheaper per function.
+    /// `addr`, decoding linearly from `entry` on a fresh decoder with only
+    /// `entry`'s ISA mode pinned. A new `entry` builds that decoder;
+    /// `build_cfg(entry).pcode_at(addr)` is far cheaper per function and
+    /// follows a mode switch in mixed-mode code.
     fn pcode_at(
         slf: &Bound<'_, Self>,
         entry: &Bound<'_, PyAny>,
