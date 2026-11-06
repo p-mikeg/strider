@@ -207,6 +207,16 @@ fn truncate_emits_truncate_node_for_non_const() -> Result<()> {
 }
 
 #[test]
+fn truncate_rejects_a_float_operand_or_target() -> Result<()> {
+    let mut b = empty_builder()?;
+    let float = b.build_float_const(0u64, ValueType::float(64));
+    assert!(b.truncate_if_needed(float, ValueType::int(32)).is_err());
+    let add = non_const_add(&mut b, ValueType::int(64))?;
+    assert!(b.truncate_if_needed(add, ValueType::float(32)).is_err());
+    Ok(())
+}
+
+#[test]
 fn extend_const_folds_to_wider_const() -> Result<()> {
     let cases: [(&str, ExtendOp, u128); 2] = [
         (
