@@ -63,7 +63,7 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) work_queue: Vec<WorkItem>,
     /// LIFO for seeded arms, drained only once no direct edge is left.
     pub(super) seeded_queue: Vec<WorkItem>,
-    /// This function's ISA mode, the base context of a resolved target.
+    /// The entry's flow context, the base context of a resolved target.
     pub(super) function_mode: FlowContext,
     /// `inst_next` of every instruction this build decoded, kept or not: the
     /// addresses where the engine's context comes from this build's bytes.
