@@ -10,6 +10,41 @@ pub(crate) mod write_object;
 
 use std::path::PathBuf;
 
+/// `fixtures/loader/out/<name>`, built by `make -C fixtures/loader`.
+pub(crate) fn loader_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/loader/out")
+        .join(name)
+}
+
+pub(crate) fn le32(b: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
+}
+
+pub(crate) fn le64(b: &[u8], at: usize) -> u64 {
+    u64::from_le_bytes(b[at..at + 8].try_into().unwrap())
+}
+
+/// The ROM view's little-endian `width`-byte word at `addr`, or why it
+/// serves none.
+pub(crate) fn rom_word(
+    reader: &strider_reader::ElfFileMemReader,
+    addr: u64,
+    width: usize,
+) -> Result<u64, String> {
+    let mut buf = vec![0u8; width];
+    strider_reader::ReadOnlyMemory::read(reader, addr, &mut buf).map_err(|e| e.to_string())?;
+    Ok(buf.iter().rev().fold(0, |a, &b| (a << 8) | u64::from(b)))
+}
+
+/// Panics unless `got` is a hole naming relocation type `r_type`.
+pub(crate) fn assert_hole(got: Result<u64, String>, r_type: u32, what: &str) {
+    match got {
+        Err(e) if e.contains(&format!("relocation of type {r_type} ")) => {}
+        other => panic!("{what}: expected a type-{r_type} hole, got {other:?}"),
+    }
+}
+
 /// `fixtures/out`, where `make -C fixtures` writes the built images.
 pub(crate) fn fixtures_out() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/out")

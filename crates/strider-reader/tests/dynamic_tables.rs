@@ -7,16 +7,13 @@
 use object::{Object, ObjectSection, ObjectSymbol};
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::RelocationMode;
-use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
+use strider_reader::{ElfFileMemReader, OwnedElf};
+
+mod common;
+use common::{assert_hole, le32, le64, loader_fixture as path, rom_word};
 
 const APPLIED: RelocationMode = RelocationMode::Applied { got_is_rom: false };
 const GOT_IS_ROM: RelocationMode = RelocationMode::Applied { got_is_rom: true };
-
-fn path(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/loader/out")
-        .join(name)
-}
 
 fn open(name: &str) -> OwnedElf {
     strider_reader::load_elf(path(name))
@@ -29,28 +26,12 @@ fn patched(name: &str, edit: impl FnOnce(&mut Vec<u8>)) -> OwnedElf {
     OwnedElf::parse(bytes).unwrap()
 }
 
-fn le32(b: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
-}
-
-fn le64(b: &[u8], at: usize) -> u64 {
-    u64::from_le_bytes(b[at..at + 8].try_into().unwrap())
-}
-
 fn put32(b: &mut [u8], at: usize, v: u32) {
     b[at..at + 4].copy_from_slice(&v.to_le_bytes());
 }
 
 fn put64(b: &mut [u8], at: usize, v: u64) {
     b[at..at + 8].copy_from_slice(&v.to_le_bytes());
-}
-
-/// The ROM view's little-endian `width`-byte word at `addr`, or why it
-/// serves none.
-fn rom_word(reader: &ElfFileMemReader, addr: u64, width: usize) -> Result<u64, String> {
-    let mut buf = vec![0u8; width];
-    ReadOnlyMemory::read(reader, addr, &mut buf).map_err(|e| e.to_string())?;
-    Ok(buf.iter().rev().fold(0, |a, &b| (a << 8) | u64::from(b)))
 }
 
 /// The fetch view's 4 bytes at `addr`, `None` when it serves them not.
@@ -63,13 +44,6 @@ fn fetch_u32(reader: &ElfFileMemReader, addr: u64) -> Option<u32> {
     match MemReader::read(reader, at, &mut buf) {
         Ok(4) => Some(u32::from_le_bytes(buf)),
         _ => None,
-    }
-}
-
-fn assert_hole(got: Result<u64, String>, r_type: u32, what: &str) {
-    match got {
-        Err(e) if e.contains(&format!("relocation of type {r_type} ")) => {}
-        other => panic!("{what}: expected a type-{r_type} hole, got {other:?}"),
     }
 }
 
