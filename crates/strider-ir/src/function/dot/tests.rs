@@ -1324,10 +1324,10 @@ fn raw_neighborhood_declares_its_nodes_in_id_order() {
     );
 }
 
-/// A budgeted raw neighbourhood draws no edge to a node it did not declare:
-/// Graphviz would otherwise mint an unlabelled box for the missing end.
+/// A budgeted neighbourhood, raw or pretty, draws no edge to a node it did not
+/// declare: Graphviz would otherwise mint an unlabelled box for the missing end.
 #[test]
-fn raw_neighborhood_draws_no_edge_out_of_view() {
+fn neighborhood_draws_no_edge_out_of_view() {
     use crate::node::IntBinaryOp;
 
     let mut f = test_function();
@@ -1353,79 +1353,32 @@ fn raw_neighborhood_draws_no_edge_out_of_view() {
         .create_node(NodeKind::Return, [ctrl, memv, prev], []);
 
     // A budget well under the function's node count, so the walk is cut.
-    let dot = f
+    let raw = f
         .raw_neighborhood_dot(center, 40, 1000, 6, true)
         .expect("raw neighborhood");
-    let declared: Vec<&str> = node_decls(&dot)
-        .iter()
-        .filter_map(|l| l.trim().split('"').nth(1))
-        .collect();
-    assert!(declared.len() <= 6, "budget not honoured: {declared:?}");
-    let edges = edge_lines(&dot);
-    assert!(
-        !edges.is_empty(),
-        "the cut neighbourhood kept no edge:\n{dot}"
-    );
-    for edge in edges {
-        let mut ends = edge.split('"').skip(1).step_by(2);
-        let (from, to) = (ends.next().expect("from"), ends.next().expect("to"));
-        assert!(
-            declared.contains(&from),
-            "edge from undeclared {from}: {edge}"
-        );
-        assert!(declared.contains(&to), "edge to undeclared {to}: {edge}");
-    }
-}
-
-/// [`raw_neighborhood_draws_no_edge_out_of_view`] for the pretty dumper.
-#[test]
-fn pretty_neighborhood_draws_no_edge_out_of_view() {
-    use crate::node::IntBinaryOp;
-
-    let mut f = test_function();
-    let ty = ValueType::int(32);
-    let c0 = int_const_node(&mut f, 1, ty);
-    let mut prev = f.node_outputs(c0)[0];
-    for k in 2u128..24 {
-        let cn = int_const_node(&mut f, k, ty);
-        let c = f.node_outputs(cn)[0];
-        let add = f.graph_mut().create_node(
-            NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            [prev, c],
-            [ValueKind::Typed(ty)],
-        );
-        prev = f.node_outputs(add)[0];
-    }
-    let center = f.producer(prev);
-    let entry = f.entry();
-    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = crate::function::test_initial_memory(&f);
-    let [memv] = f.node_outputs_exact::<1>(mem).unwrap();
-    f.graph_mut()
-        .create_node(NodeKind::Return, [ctrl, memv, prev], []);
-
-    // A budget well under the function's node count, so the walk is cut.
-    let dot = make_dumper(&f)
+    let pretty = make_dumper(&f)
         .neighborhood_dot(center, 40, 1000, 6, true)
         .expect("pretty neighborhood");
-    let declared: Vec<&str> = node_decls(&dot)
-        .iter()
-        .filter_map(|l| l.trim().split('"').nth(1))
-        .collect();
-    assert!(declared.len() <= 6, "budget not honoured: {declared:?}");
-    let edges = edge_lines(&dot);
-    assert!(
-        !edges.is_empty(),
-        "the cut neighbourhood kept no edge:\n{dot}"
-    );
-    for edge in edges {
-        let mut ends = edge.split('"').skip(1).step_by(2);
-        let (from, to) = (ends.next().expect("from"), ends.next().expect("to"));
+    for dot in [raw, pretty] {
+        let declared: Vec<&str> = node_decls(&dot)
+            .iter()
+            .filter_map(|l| l.trim().split('"').nth(1))
+            .collect();
+        assert!(declared.len() <= 6, "budget not honoured: {declared:?}");
+        let edges = edge_lines(&dot);
         assert!(
-            declared.contains(&from),
-            "edge from undeclared {from}: {edge}"
+            !edges.is_empty(),
+            "the cut neighbourhood kept no edge:\n{dot}"
         );
-        assert!(declared.contains(&to), "edge to undeclared {to}: {edge}");
+        for edge in edges {
+            let mut ends = edge.split('"').skip(1).step_by(2);
+            let (from, to) = (ends.next().expect("from"), ends.next().expect("to"));
+            assert!(
+                declared.contains(&from),
+                "edge from undeclared {from}: {edge}"
+            );
+            assert!(declared.contains(&to), "edge to undeclared {to}: {edge}");
+        }
     }
 }
 

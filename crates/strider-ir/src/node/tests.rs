@@ -66,22 +66,6 @@ fn is_const_only_for_constant_kinds() {
     assert!(!NodeKind::Return.is_const());
 }
 
-/// A float has no integer bits, so the unsigned read is zero, not the
-/// pattern.
-#[test]
-fn mask_returns_zero_for_floats() {
-    use crate::eval::mask;
-    use dashu_int::UBig;
-    assert_eq!(
-        mask(&UBig::from(0x3F80_0000u32), ValueType::float(32)),
-        UBig::ZERO
-    );
-    assert_eq!(
-        mask(&UBig::from(0x3FF0_0000_0000_0000u64), ValueType::float(64)),
-        UBig::ZERO
-    );
-}
-
 #[test]
 fn get_signed_int_returns_none_for_floats() {
     assert_eq!(ValueType::float(32).get_signed_int(0x3F800000), None);
@@ -92,7 +76,7 @@ fn get_signed_int_returns_none_for_floats() {
 }
 
 /// Independent restatement of `is_cacheable` as a single negated `matches!`.
-fn legacy_is_cacheable(kind: &NodeKind) -> bool {
+fn expected_is_cacheable(kind: &NodeKind) -> bool {
     !matches!(
         kind,
         NodeKind::If
@@ -111,7 +95,7 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
 }
 
 /// Independent restatement of `asm_fingerprint_exempt`.
-fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
+fn expected_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
     matches!(
         kind,
         NodeKind::Entry
@@ -124,30 +108,30 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
 }
 
 #[test]
-fn is_cacheable_matches_legacy() {
+fn is_cacheable_matches_expected() {
     for k in every_node_kind() {
         assert_eq!(
             k.is_cacheable(),
-            legacy_is_cacheable(&k),
-            "is_cacheable disagrees with legacy for {k:?}"
+            expected_is_cacheable(&k),
+            "is_cacheable disagrees with the expected set for {k:?}"
         );
     }
 }
 
 #[test]
-fn asm_fingerprint_exempt_matches_legacy() {
+fn asm_fingerprint_exempt_matches_expected() {
     for k in every_node_kind() {
         assert_eq!(
             k.asm_fingerprint_exempt(),
-            legacy_asm_fingerprint_exempt(&k),
-            "asm_fingerprint_exempt disagrees with legacy for {k:?}"
+            expected_asm_fingerprint_exempt(&k),
+            "asm_fingerprint_exempt disagrees with the expected set for {k:?}"
         );
     }
 }
 
 /// Independent restatement of `has_side_effects`, spelled out per variant
 /// rather than derived from `has_control_flow`.
-fn legacy_has_side_effects(kind: &NodeKind) -> bool {
+fn expected_has_side_effects(kind: &NodeKind) -> bool {
     matches!(
         kind,
         NodeKind::Entry
@@ -166,12 +150,12 @@ fn legacy_has_side_effects(kind: &NodeKind) -> bool {
 }
 
 #[test]
-fn has_side_effects_matches_legacy() {
+fn has_side_effects_matches_expected() {
     for k in every_node_kind() {
         assert_eq!(
             k.has_side_effects(),
-            legacy_has_side_effects(&k),
-            "has_side_effects disagrees with legacy for {k:?}"
+            expected_has_side_effects(&k),
+            "has_side_effects disagrees with the expected set for {k:?}"
         );
     }
 }

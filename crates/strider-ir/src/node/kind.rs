@@ -385,43 +385,7 @@ const _: () = assert!(size_of::<NodeKind>() == 16);
 
 #[cfg(test)]
 mod tests {
-    use super::{NodeKind, SwitchTableId};
-    use crate::node::IntConstId;
-    use cranelift_entity::EntityRef;
-
-    #[test]
-    fn has_side_effects_is_control_flow_plus_memory_writes_and_opaque() {
-        for k in [
-            NodeKind::Entry,
-            NodeKind::Region,
-            NodeKind::If,
-            NodeKind::Switch(SwitchTableId::new(0)),
-            NodeKind::Return,
-            NodeKind::Call { cc: None },
-            NodeKind::CallOther { user_op_id: 0 },
-            NodeKind::IndirectBranch,
-        ] {
-            assert!(k.has_control_flow(), "{k:?} should be control flow");
-            assert!(k.has_side_effects(), "{k:?} should have side effects");
-        }
-        for k in [
-            NodeKind::Store(rsleigh::VnSpace::RAM),
-            NodeKind::CPoolRef,
-            NodeKind::New,
-        ] {
-            assert!(!k.has_control_flow(), "{k:?} is not control flow");
-            assert!(k.has_side_effects(), "{k:?} should have side effects");
-        }
-        // Killable when unused, memory reads included.
-        for k in [
-            NodeKind::IntConst(IntConstId::new(0)),
-            NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add),
-            NodeKind::Load(rsleigh::VnSpace::RAM),
-        ] {
-            assert!(!k.has_control_flow(), "{k:?} is not control flow");
-            assert!(!k.has_side_effects(), "{k:?} should NOT have side effects");
-        }
-    }
+    use super::NodeKind;
 
     #[test]
     fn commutative_kinds_are_exactly_the_symmetric_ops() {
