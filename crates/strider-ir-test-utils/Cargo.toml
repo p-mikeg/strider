@@ -23,7 +23,8 @@ anyhow.workspace = true
 proptest = { workspace = true, optional = true }
 
 [features]
-# Gates `proptest_gen`, so a workspace build skips proptest.
+# Gates `proptest_gen`, so tests of a crate that does not enable it skip
+# proptest.
 proptest-gen = ["dep:proptest"]
 
 [lints]
