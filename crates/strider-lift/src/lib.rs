@@ -53,11 +53,12 @@ pub struct LiftSites {
     /// Seated `Switch` sites, keyed like `unresolved_branches`.
     pub switch_anchors: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 
-    /// Every Sleigh `RETURN` lifted to a `Return`.
+    /// Every lifted `Return`: a Sleigh `RETURN`, or a `BranchIndirect` seated
+    /// `LinkRegister`.
     pub return_sites: Vec<ReturnSite>,
 }
 
-/// A `RETURN`'s pcode address, its `Return` node, and its target, which the
+/// A return's pcode address, its `Return` node, and its target, which the
 /// node does not consume (dead until something anchors it).
 pub type ReturnSite = (
     strider_cfg::PcodeInsnAddr,
