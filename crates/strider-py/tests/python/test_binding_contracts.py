@@ -130,6 +130,16 @@ def test_pcode_at_takes_a_thumb_address_with_its_mode_bit():
     assert prog.pcode_at(entry, entry) == prog.pcode_at(entry, entry & ~1)
 
 
+def test_cfg_pcode_at_takes_a_thumb_address_with_its_mode_bit():
+    """`Cfg.pcode_at` reads a Thumb symbol address as `Lifter.pcode_at` does."""
+    prog = strider.lift.load_elf(fixture_path("arm_thumb", "arithmetic"))
+    entry = next(s for s in prog.functions() if s.is_thumb).address
+    cfg = prog.build_cfg(entry)
+    assert cfg.pcode_at(entry & ~1)
+    assert cfg.pcode_at(entry) == cfg.pcode_at(entry & ~1)
+    assert cfg.pcode_at(entry) == prog.pcode_at(entry, entry)
+
+
 @pytest.mark.parametrize("addr", [0x1000, 0x1004, 0x1008, 0x100C])
 def test_pcode_at_does_not_depend_on_earlier_calls(addr):
     """`pcode_at` answers the same whatever order the calls came in, a
