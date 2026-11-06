@@ -68,7 +68,9 @@ pub fn close_over_control_preds(
 
 pub use graph_algorithms::walk::{FnSuccs, PostOrder, PreOrder, WalkPhase};
 
-/// Successors follow every input backward and control edges forward.
+/// Successors: every input's producer, then the control consumers (so
+/// `PreOrder` visits consumers first). A dead control predecessor is reached
+/// through the live node using it.
 #[derive(Clone, Copy)]
 pub struct GraphWalkSuccs<'a>(&'a Graph);
 
@@ -95,9 +97,6 @@ pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item =
         .map(|(succ, _use_idx)| succ)
 }
 
-/// Pushes input producers, then control consumers (so `PreOrder` visits
-/// consumers first); a dead control predecessor is reached through the live
-/// node using it.
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 

@@ -10,7 +10,7 @@ use crate::iter::Inputs;
 use crate::storage::{Node, RawStore, UseData, ValueData};
 
 /// Nodes, their input/output slots, the dedup cache, and a generation counter
-/// bumped on every arena-reshuffling operation.
+/// (bumped by compaction and `bump_generation`).
 #[derive(Clone)]
 pub struct Graph<N, V, C: NodeCacheable<N, V>> {
     pub(crate) store: RawStore<N, V>,
@@ -329,7 +329,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         if !any {
             return;
         }
-        // Only once something is removed: this path never re-inserts.
+        // Invalidated only on a real removal.
         self.cache.invalidate(node_id);
 
         let old_uses: SmallVec<[UseId; 4]> = self.store.node_input_uses(node_id).into();
