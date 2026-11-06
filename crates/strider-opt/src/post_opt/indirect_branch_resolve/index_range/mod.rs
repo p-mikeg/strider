@@ -6,11 +6,12 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use strider_ir::DominatorTree;
 use strider_ir::eval;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{CtrlKey, DominatorTree};
 use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp};
 
+use super::feasible::FeasibleArms;
 use crate::opt::known_bits::{KnownBitsFacts, KnownBitsMap};
 
 mod bit_field;
@@ -85,6 +86,8 @@ pub(crate) struct RangeMap<'f> {
     /// Per index and range, where [`Self::cell_test_left_unread`] finds an
     /// unread test, as sorted disjoint preorder ranges.
     cell_test_spans: FxHashMap<(ValueId, Interval), Vec<(u32, u32)>>,
+    /// The phi arms a query region can be reached through.
+    feasible: FeasibleArms<'f>,
 }
 
 impl<'f> RangeMap<'f> {
@@ -160,14 +163,14 @@ impl<'f> RangeMap<'f> {
         result
     }
 
-    /// The union of the arms' ranges, each queried at the producer of its
-    /// edge, met with a guard on the phi's own output at `region` and with a
+    /// The union of the ranges of the arms `region` can be reached through,
+    /// each queried at the producer of its edge, met with a guard on the phi's own output at `region` and with a
     /// guard on any field of it the union fits in.
     fn resolve_phi(&mut self, value: ValueId, mask: u128, region: NodeId) -> Interval {
         let top = Interval::top(mask);
         let phi_node = self.function.producer(value);
         debug_assert_eq!(self.function.node_outputs(phi_node).first(), Some(&value));
-        let Some((_, arms)) = self.phi_arms(phi_node) else {
+        let Some((_, arms)) = self.phi_arms(phi_node, region) else {
             return top;
         };
 
@@ -283,16 +286,17 @@ impl<'f> RangeMap<'f> {
         field
     }
 
-    /// The union over a phi's arms of a constant arm's value or the interval
-    /// its `If` edge proves of the arm; `None` unless every arm is one of the
-    /// two. Covers a loop back edge whose guard sits below the header.
-    fn phi_arm_bound(&self, value: ValueId, region: NodeId) -> Option<Interval> {
+    /// The union over the phi arms `region` can be reached through of a
+    /// constant arm's value or the interval its `If` edge proves of the arm;
+    /// `None` unless every arm is one of the two. Covers a loop back edge
+    /// whose guard sits below the header.
+    fn phi_arm_bound(&mut self, value: ValueId, region: NodeId) -> Option<Interval> {
         let f = self.function;
         let phi_node = f.producer(value);
         if !matches!(f.node_kind(phi_node), NodeKind::Phi) {
             return None;
         }
-        let (joining, arms) = self.phi_arms(phi_node)?;
+        let (joining, arms) = self.phi_arms(phi_node, region)?;
         if !self.doms.dominates(joining, region) {
             return None;
         }
@@ -360,12 +364,24 @@ impl<'f> RangeMap<'f> {
         carries.then(|| (x, step, width_mask(f, value)))
     }
 
-    /// `phi_node`'s `Region` and its `(edge, arm)` pairs; `None` for fewer
-    /// than two arms.
-    fn phi_arms(&self, phi_node: NodeId) -> Option<(NodeId, Vec<(ValueId, ValueId)>)> {
+    /// `phi_node`'s `Region` and the `(edge, arm)` pairs `region` can be
+    /// reached through; `None` for fewer than two arms.
+    fn phi_arms(
+        &mut self,
+        phi_node: NodeId,
+        region: NodeId,
+    ) -> Option<(NodeId, Vec<(ValueId, ValueId)>)> {
         let f = self.function;
         let arms: Vec<(ValueId, ValueId)> = f.phi_arms(phi_node).collect();
-        (arms.len() >= 2).then(|| (f.phi_region(phi_node), arms))
+        if arms.len() < 2 {
+            return None;
+        }
+        let joining = f.phi_region(phi_node);
+        let arms = match self.feasible.only_arm(CtrlKey::Node(region), joining) {
+            Some(only) => vec![arms[only]],
+            None => arms,
+        };
+        Some((joining, arms))
     }
 
     /// Whether `sum`, an `Add` output, may range narrower than its type at
@@ -949,6 +965,7 @@ fn build<'f>(
         known,
         excluded,
         cell_test_spans: FxHashMap::default(),
+        feasible: FeasibleArms::new(function),
     }
 }
 

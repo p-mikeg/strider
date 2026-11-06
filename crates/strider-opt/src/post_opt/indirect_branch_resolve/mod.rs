@@ -8,6 +8,7 @@ use strider_cfg::ResolvedTargets;
 use crate::ReadOnlyMemory;
 
 pub(crate) mod eval;
+mod feasible;
 pub(crate) mod index_range;
 mod return_target;
 pub(crate) mod table;

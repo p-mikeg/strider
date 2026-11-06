@@ -1,10 +1,11 @@
 mod claims;
-mod feasible;
 mod stack;
 
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, ValueId};
-use strider_ir::{CtrlKey, DominatorTree, Function};
+use strider_ir::{CtrlKey, Function, IRViewer};
+
+use super::feasible::FeasibleArms;
 
 /// Verifies that a function's return sites jump to the address it was entered
 /// with: the entry link register, or on a stack-push ISA the entry-SP slot a
@@ -16,11 +17,9 @@ pub struct ReturnTargets<'f> {
     function: &'f Function,
     /// Every claim a query has decided, shared across sites.
     settled: FxHashMap<Claim, bool>,
-    doms: Option<DominatorTree<CtrlKey>>,
-    feasible: FxHashMap<(CtrlKey, NodeId), Option<usize>>,
+    feasible: FeasibleArms<'f>,
     guesses: FxHashMap<(Path, ValueId), Option<i128>>,
     stored: FxHashMap<(ValueId, StackAddr, i128), Option<ValueId>>,
-    guards: FxHashMap<ValueId, Vec<(NodeId, bool)>>,
 }
 
 /// Where a claim is observed: `Some(point)` each time control passes `point`,
@@ -74,12 +73,23 @@ impl<'f> ReturnTargets<'f> {
         Self {
             function,
             settled: FxHashMap::default(),
-            doms: None,
-            feasible: FxHashMap::default(),
+            feasible: FeasibleArms::new(function),
             guesses: FxHashMap::default(),
             stored: FxHashMap::default(),
-            guards: FxHashMap::default(),
         }
+    }
+
+    /// Each arm of `phi` control can have taken to reach `path`, observed on
+    /// the edge it enters by; see [`FeasibleArms`].
+    fn arms(&mut self, path: Path, phi: NodeId) -> impl Iterator<Item = (Path, ValueId)> + 'f {
+        let function = self.function;
+        let feasible =
+            path.and_then(|point| self.feasible.only_arm(point, function.phi_region(phi)));
+        function
+            .phi_arms(phi)
+            .enumerate()
+            .filter(move |&(arm, _)| feasible.is_none_or(|only| only == arm))
+            .map(|(_, (edge, value))| (Some(CtrlKey::Edge(edge)), value))
     }
 
     /// Whether `target`, the address `ret` jumps to, is the address the

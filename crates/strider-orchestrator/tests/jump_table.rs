@@ -18,6 +18,9 @@ mod field_offset_in_a_mapped_first_page;
 #[path = "jump_table/interworking_table_widens_in_arm_mode.rs"]
 mod interworking_table_widens_in_arm_mode;
 
+#[path = "jump_table/it_block_return_prunes_a_phi_arm.rs"]
+mod it_block_return_prunes_a_phi_arm;
+
 #[path = "jump_table/jump_table_byte_cell.rs"]
 mod jump_table_byte_cell;
 
