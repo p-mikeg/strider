@@ -60,8 +60,8 @@ pub struct EditFunction<'g> {
     /// Edits that added or removed a use of a `Control` value, plus every
     /// [`Self::function_mut`] borrow.
     control_edits: u64,
-    /// [`Self::control_dominator_tree`] and the [`Self::control_edits`]
-    /// reading it was built at.
+    /// [`Self::control_dominator_tree`] and the `control_edits` reading it
+    /// was built at.
     dom_memo: std::cell::RefCell<Option<(u64, DominatorTree<NodeId>)>>,
     /// Dominator trees built.
     #[cfg(any(test, feature = "test-util"))]
@@ -119,14 +119,8 @@ impl<'g> EditFunction<'g> {
         self.generation + self.live_entries
     }
 
-    /// Two equal readings bracket no change to the control graph.
-    /// [`Self::function_mut`] counts as a change.
-    pub fn control_edits(&self) -> u64 {
-        self.control_edits
-    }
-
-    /// [`crate::control_dominator_tree`], built once per
-    /// [`Self::control_edits`] reading.
+    /// [`crate::control_dominator_tree`], built once per control-graph edit
+    /// count.
     pub fn control_dominator_tree(&self) -> std::cell::Ref<'_, DominatorTree<NodeId>> {
         let at = self.control_edits;
         if self

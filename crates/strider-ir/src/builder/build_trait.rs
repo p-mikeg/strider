@@ -4,8 +4,8 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 /// Node creation over a readable function.
 pub trait IRBuilder: crate::IRViewer {
     /// Bypasses [`crate::EditFunction`]'s live/roots bookkeeping: use it for
-    /// side-table work only. On an `EditFunction` each borrow counts as one of
-    /// its [`control_edits`](crate::EditFunction::control_edits).
+    /// side-table work only. On an `EditFunction` each borrow counts as a
+    /// control edit.
     fn function_mut(&mut self) -> &mut crate::Function;
 
     /// Masks to `ty`; no structural edit.
