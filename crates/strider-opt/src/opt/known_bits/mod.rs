@@ -335,7 +335,7 @@ impl Optimizer for KnownBits {
                 if absorbed.contains(n) || !propagates_known_bits(edit.node_kind(n)) {
                     continue;
                 }
-                stack.extend(crate::peephole::input_producers_iter(edit, n));
+                stack.extend(edit.node_inputs(n).into_iter().map(|v| edit.producer(v)));
             }
             absorbed.insert(old_producer);
         }

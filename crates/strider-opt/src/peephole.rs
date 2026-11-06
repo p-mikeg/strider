@@ -4,15 +4,6 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;
 
-/// The producer of each input of `node`, in slot order, control and memory
-/// inputs included.
-pub(crate) fn input_producers_iter<V: IRViewer>(
-    edit: &V,
-    node: NodeId,
-) -> impl Iterator<Item = NodeId> + '_ {
-    edit.node_inputs(node).into_iter().map(|v| edit.producer(v))
-}
-
 pub(crate) trait PeepholePass {
     /// Per-sweep memo: built empty when a sweep starts, dropped when it ends.
     type Sweep: Default;
