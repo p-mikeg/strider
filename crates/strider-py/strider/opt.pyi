@@ -137,7 +137,8 @@ class LoadReadOnly:
     """Folds a load from a constant address into a constant read from the
     read-only memory image (`rom=`); a no-op without one.
 
-    The fold ignores the load's memory chain, so the rom must map only
-    runtime-immutable memory: code and `.rodata`, never `.data` / `.got`."""
+    The fold ignores the load's memory chain, so the rom must map only memory
+    the program never writes: code, `.rodata`, and a relocated GOT only under
+    `relocated_got_is_rom`."""
     def __init__(self) -> None:
         ...
