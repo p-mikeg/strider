@@ -48,8 +48,8 @@ pub(super) fn check_function_invariants_data_cycles(
     }
 }
 
-/// The first two live [`NodeKind::Entry`] and [`NodeKind::InitialMemory`]
-/// nodes of each kind.
+/// The first two reachable [`NodeKind::Entry`] and [`NodeKind::InitialMemory`]
+/// nodes.
 #[derive(Default)]
 pub(super) struct UniqueKinds {
     entry: (Option<NodeId>, Option<NodeId>),
@@ -276,7 +276,7 @@ pub(super) fn check_phis(
         errs.push(ValidationError::PhiTokenNotFromRegion {
             phi: node,
             producer: owner,
-            producer_kind: token_kind,
+            token_kind,
         });
         return;
     }
@@ -352,7 +352,7 @@ pub(super) fn check_memory_chain(
             .value_uses(out)
             .any(|(consumer, _)| reachable.contains(consumer));
         if !anchored {
-            errs.push(ValidationError::OrphanedMemoryOutput { node, kind: *kind });
+            errs.push(ValidationError::OrphanedMemoryOutput { node });
         }
     }
 }
@@ -784,7 +784,8 @@ fn check_memory_order(
 
     // Each call floods the control nodes it reaches before an effect, deepest
     // token first, so a node an earlier flood claimed needs only its claimer's
-    // token to build on this one. A node is expanded once per claim.
+    // token to build on this one. Every node is expanded at most once, and
+    // each call also once as its own flood's seed.
     let mut claimed: SecondaryMap<NodeId, Option<ValueId>> = SecondaryMap::new();
     let mut stack: Vec<NodeId> = Vec::new();
     for &(call, token) in &reads {

@@ -259,16 +259,16 @@ impl<'g> EditFunction<'g> {
 
     /// Call before rewiring: enqueues the producer if this is the value's last use.
     fn will_detach_value(&mut self, value: ValueId) {
-        // At most one use remains, the one being detached.
+        // Only the use being detached.
         if self.value_uses(value).nth(1).is_none() {
             let def = self.function.producer(value);
             self.enqueue_killed_def_node(def);
         }
     }
 
-    /// `value` is about to gain a use from a live consumer: marks its producer's
-    /// input cone live (input-less ones as roots). Control-flow producers are
-    /// never resurrected.
+    /// `value` is about to gain a use: marks its producer's input cone live
+    /// (input-less ones as roots). Control-flow producers are never
+    /// resurrected.
     fn will_attach_value(&mut self, value: ValueId) {
         let producer = self.function.producer(value);
         if self.state.live_nodes.contains(producer) {

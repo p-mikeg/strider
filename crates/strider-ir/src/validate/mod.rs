@@ -150,13 +150,13 @@ pub enum ValidationError {
     InputNotAvailable { node: NodeId, input_idx: usize },
 
     #[error(
-        "phi node {phi:?} input[0] token producer {producer:?} has kind \
-         {producer_kind:?}; expected PhiToken from a Region"
+        "phi {phi:?} input[0] is {token_kind:?} from {producer:?}; expected \
+         a Region's PhiToken"
     )]
     PhiTokenNotFromRegion {
         phi: NodeId,
         producer: NodeId,
-        producer_kind: ValueKind,
+        token_kind: ValueKind,
     },
 
     #[error(
@@ -231,13 +231,10 @@ pub enum ValidationError {
     },
 
     #[error(
-        "reachable Store {node:?} (kind {kind:?}): its Memory output lists no \
-         reachable consumer, so its use-list is severed"
+        "reachable Store {node:?}: its Memory output lists no reachable \
+         consumer, so its use-list is severed"
     )]
-    OrphanedMemoryOutput {
-        node: NodeId,
-        kind: crate::node::NodeKind,
-    },
+    OrphanedMemoryOutput { node: NodeId },
 
     #[error(
         "reachable Store {node:?} is off the memory chain: no Return, \
@@ -442,7 +439,7 @@ impl ValidationError {
             | E::FloatConstWidthMismatch { node, .. }
             | E::FloatConstUnrepresentableType { node, .. }
             | E::DataCycle { node, .. }
-            | E::OrphanedMemoryOutput { node, .. }
+            | E::OrphanedMemoryOutput { node }
             | E::LostStore { node }
             | E::DanglingInitialVnId { node, .. }
             | E::InitialVarTypeMismatch { node, .. }
