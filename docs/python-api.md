@@ -1025,9 +1025,9 @@ unsupported arch or ABI (microMIPS included). A malformed ELF is a
 `allow_code_before_start_addr=True`, a `known_targets` string other than
 `"return"`, a string `call_other_abis` value, an empty `data_ranges` or
 `fragment_ranges` range, a `BufferReader` region past the address space. Every
-other bad value is a `StriderError`: an unknown `style=`, a reserved capture name, an unknown node id, an
-unbound capture read without `_opt`, and a `Match` read after `compact`,
-`optimize`, `rewrite` or `rewrite_all`.
+other bad value is a `StriderError`: an unknown `style=`, a reserved capture
+name, an unknown node id, an unbound capture read without `_opt`, and a `Match`
+read after `compact`, `optimize`, `rewrite` or `rewrite_all`.
 
 The message is the error and its causes; `.backtrace` adds the Rust
 backtrace:
