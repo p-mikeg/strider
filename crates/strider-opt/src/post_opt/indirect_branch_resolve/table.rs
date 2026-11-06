@@ -41,16 +41,34 @@ impl SiteClassifier<'_> {
         target_value: ValueId,
         mode_value: Option<ValueId>,
     ) -> Option<ResolvedTargets> {
-        let function = self.function;
-        let (pinned, values) = self.dispatch_domain(target_value, site)?;
+        let domain = self.dispatch_domain(target_value, site, false)?;
+        if let Some(seated) = self.seat(target_value, mode_value, &domain) {
+            return Some(seated);
+        }
+        // An index below a cell that seats nothing falls back to the cell's.
+        let shallow = self.dispatch_domain(target_value, site, true)?;
+        if shallow == domain {
+            return None;
+        }
+        self.seat(target_value, mode_value, &shallow)
+    }
 
+    /// The table `target_value` and `mode_value` fold to per value of the
+    /// pinned index; `None` when one does not fold or no table results.
+    fn seat(
+        &mut self,
+        target_value: ValueId,
+        mode_value: Option<ValueId>,
+        &(pinned, ref values): &(ValueId, Vec<u128>),
+    ) -> Option<ResolvedTargets> {
+        let function = self.function;
         let ev = &mut self.eval;
         let pruned = super::eval::cone_order_pruned(function, target_value, pinned);
         // An interworking branch's committed mode, evaluated per arm.
         let mode = mode_value.map(|mv| (mv, super::eval::cone_order_pruned(function, mv, pinned)));
         let targets: Vec<ResolvedTarget> = values
-            .into_iter()
-            .map(|x| {
+            .iter()
+            .map(|&x| {
                 // The target and mode roots share this index's memo.
                 ev.begin_index(pinned, x);
                 let addr = ev.eval_root(&pruned, target_value)?;
@@ -75,7 +93,13 @@ impl SiteClassifier<'_> {
     /// of the phi every dispatch-cone input passes through, else a bounded
     /// index across its range. With both, constants outside the index range are
     /// dropped; if the index does not fold under some constant, the range wins.
-    fn dispatch_domain(&mut self, target: ValueId, site: NodeId) -> Option<(ValueId, Vec<u128>)> {
+    /// `shallow` keeps the bounded index nearest the target.
+    fn dispatch_domain(
+        &mut self,
+        target: ValueId,
+        site: NodeId,
+        shallow: bool,
+    ) -> Option<(ValueId, Vec<u128>)> {
         let function = self.function;
         let chain = dominator_chain(function, target)?;
         let source = chain.last().copied().unwrap_or(target);
@@ -89,7 +113,7 @@ impl SiteClassifier<'_> {
             constants.retain(|&k| site_range.contains(k) && !self.ranges.excludes(source, k, site));
             constants
         });
-        let Some(hit) = self.decompose_index(&chain, site) else {
+        let Some(hit) = self.decompose_index(&chain, site, shallow) else {
             return constants.map(|values| (source, values));
         };
         if let Some(values) = constants.and_then(|k| self.constants_in_range(k, hit, source)) {
@@ -138,7 +162,12 @@ impl SiteClassifier<'_> {
     /// The bounded index nearest the target in `chain`, the target's dominators
     /// in its variability cone. Dominance excludes a bypassed sub-branch: in a
     /// rotate `(x<<2) | (x>>30)`, `x>>30` is tightest but does not dominate.
-    fn decompose_index(&mut self, chain: &[ValueId], site: NodeId) -> Option<PinnedIndex> {
+    fn decompose_index(
+        &mut self,
+        chain: &[ValueId],
+        site: NodeId,
+        shallow: bool,
+    ) -> Option<PinnedIndex> {
         let function = self.function;
         let first_hit = |this: &mut Self, from: usize| {
             chain
@@ -152,6 +181,7 @@ impl SiteClassifier<'_> {
         // table DATA; the index is a bounded value below that load, in its
         // address.
         let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
+            .filter(|_| !shallow)
             .and_then(|cell| chain.iter().position(|&v| v == cell))
             .and_then(|at| first_hit(self, at + 1))
             .unwrap_or(shallowest);

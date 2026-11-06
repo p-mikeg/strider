@@ -66,6 +66,9 @@ mod seated_arm_loss;
 #[path = "jump_table/table_seat_rules.rs"]
 mod table_seat_rules;
 
+#[path = "jump_table/table_index_below_a_pruned_phi.rs"]
+mod table_index_below_a_pruned_phi;
+
 #[path = "jump_table/thumb_byte_table_unbounded_index.rs"]
 mod thumb_byte_table_unbounded_index;
 
