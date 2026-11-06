@@ -49,7 +49,7 @@ def test_a_short_read_ends_in_the_unmapped_verdict():
     lift = strider.lift.lifter(SleighArch.x86_64(), Short())
     with pytest.raises(StriderError) as excinfo:
         lift.analyze(0x1000, CallingConvention.x86_64_systemv())
-    assert str(excinfo.value).endswith(": 0x1000 classified unmapped")
+    assert str(excinfo.value).endswith(": 0x1000 is unmapped")
 
 def test_reader_exception_is_chained_as_cause():
     """The message survives, but only the original exception carries a
