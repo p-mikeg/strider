@@ -1,5 +1,5 @@
-"""An address, node id or operand index outside its unsigned range raises
-`StriderError`, and a `bool` is not taken for one."""
+"""An address, node id, operand index, size or count outside its unsigned
+range raises `StriderError`, and a `bool` is not taken for one."""
 
 import pytest
 
@@ -38,6 +38,10 @@ _TAKES = {
     "symbol_at": lambda n: _elf().symbol_at(n),
     "add_symbols": lambda n: _elf().add_symbols({"x": n}),
     "ElfLifter.read": lambda n: _elf().read(n, 4),
+    "ElfLifter.read size": lambda n: _elf().read(0x1000, n),
+    "BufferReader.read size": lambda n: reader.BufferReader(0, b"ab").read(0, n),
+    "bit_width": lambda n: p.load().bit_width(n),
+    "of_width": lambda n: p.anything().of_width(n),
     "function_arg": lambda n: p.function_arg(n),
     "call().arg": lambda n: p.call().arg(n, p.anything()),
     "Function.node": lambda n: lift_bytes(_RET).node(n),
@@ -46,6 +50,16 @@ _TAKES = {
     "Cfg.pcode_at": lambda n: _cfg().pcode_at(n),
     "Cfg.region_at": lambda n: _cfg().region_at(n),
     "Cfg.neighborhood_dot": lambda n: _cfg().neighborhood_dot(n),
+    "Function.neighborhood_dot depth": lambda n: lift_bytes(_RET).neighborhood_dot(0, n),
+    "Function.neighborhood_dot hub_cap": lambda n: lift_bytes(_RET).neighborhood_dot(
+        0, hub_cap=n
+    ),
+    "Function.neighborhood_dot max_nodes": lambda n: lift_bytes(
+        _RET
+    ).neighborhood_dot(0, max_nodes=n),
+    "Cfg.neighborhood_dot depth": lambda n: _cfg().neighborhood_dot(0, n),
+    "Cfg.neighborhood_dot max_nodes": lambda n: _cfg().neighborhood_dot(0, max_nodes=n),
+    "function_max_size": lambda n: cfg.CfgOptions(function_max_size=n),
     "function_arg().index": lambda n: p.any_function_arg().index(n),
     "Vn off": lambda n: Vn(VnSpace.REGISTER, n, 8),
 }

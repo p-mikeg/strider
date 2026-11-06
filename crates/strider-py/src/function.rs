@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use strider_ir::IRWalker;
 use strider_ir::node::NodeKind;
 
+use crate::bigint::Unsigned;
 use crate::cfg::PyCfg;
 use crate::dot::Pretty;
 use crate::errors::into_strider_err;
@@ -165,18 +166,18 @@ impl PyFunction {
     /// DOT for the nodes within `depth` hops of `center`, at most
     /// `max_nodes`; a hub past `hub_cap` consumers is not followed.
     /// `pretty` as in `to_dot`.
-    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60, count_producers=false, *, pretty=false))]
+    #[pyo3(signature = (center, depth=Unsigned(5), hub_cap=Unsigned(12), max_nodes=Unsigned(60), count_producers=false, *, pretty=false))]
     #[allow(clippy::too_many_arguments)]
     fn neighborhood_dot(
         &self,
         center: crate::bigint::Unsigned<u32>,
-        depth: usize,
-        hub_cap: usize,
-        max_nodes: usize,
+        depth: Unsigned<usize>,
+        hub_cap: Unsigned<usize>,
+        max_nodes: Unsigned<usize>,
         count_producers: bool,
         pretty: bool,
     ) -> PyResult<String> {
-        let center = center.0;
+        let (center, depth, hub_cap, max_nodes) = (center.0, depth.0, hub_cap.0, max_nodes.0);
         let arch = pretty.then(|| self.cfg.get().arch);
         let function = self.read()?;
         let nid = function

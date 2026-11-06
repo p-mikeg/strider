@@ -445,7 +445,7 @@ pub(crate) struct Width {
 
 impl<'py> FromPyObject<'py> for Width {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        width_arg(ob.extract()?).map(|bits| Self { bits })
+        width_arg(ob.extract::<crate::bigint::Unsigned<u32>>()?.0).map(|bits| Self { bits })
     }
 }
 
@@ -995,8 +995,8 @@ impl PyPat {
     }
 
     /// Constrain the matched node's value output to `n` bits. Match-only.
-    fn of_width(slf: &Bound<'_, Self>, n: u32) -> PyResult<PyPat> {
-        derive(slf, Wrap::OfWidth(width_arg(n)?), None)
+    fn of_width(slf: &Bound<'_, Self>, n: Width) -> PyResult<PyPat> {
+        derive(slf, Wrap::OfWidth(n.bits), None)
     }
 
     /// Constrain the matched node's value output to type `ty` (`"i64"`,
@@ -2067,8 +2067,8 @@ impl PyOutputSlot {
     }
 
     /// Require this output to be `bits` wide.
-    fn of_width(&self, py: Python<'_>, bits: u32) -> PyResult<Py<PyAny>> {
-        self.commit(py, OutputAspect::Width(width_arg(bits)?))
+    fn of_width(&self, py: Python<'_>, bits: Width) -> PyResult<Py<PyAny>> {
+        self.commit(py, OutputAspect::Width(bits.bits))
     }
 
     /// Require this output's type to be `ty`, e.g. `"i64"`.
