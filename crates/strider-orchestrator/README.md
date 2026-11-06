@@ -25,8 +25,8 @@ seated `Switch`, which can still widen. The answers fold into the seats, so
 one round seats one level of discovery.
 
 It converges when no site is left, or a round changes no seat and refuses
-none. 256 folds is the cap; sites still growing there are reported. Two
-verdicts freeze a site:
+none. 256 folds is the cap; sites still growing there are reported. These
+freeze a site:
 
 - A site that narrows twice is withdrawn.
 - A seat naming a target that does not decode, or that reaches code that does

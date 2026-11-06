@@ -9,8 +9,8 @@ use crate::pipeline::Optimizer;
 mod tests;
 
 /// The contiguous prefix of stack-arg slots the call's [`ArgPrefix`] anchors,
-/// stopping at the first slot no whole store of its own reaches. Offsets are
-/// relative to the call-time SP; a store wider than one slot is one argument.
+/// stopping at the first slot no whole store of its own reaches. A store
+/// wider than one slot is one argument.
 /// A slot holding the entry value of a register the function's own convention
 /// preserves (a prologue save) ends it, as does a `Call` on the chain. Slots
 /// past the prefix that every arm of a non-loop `MemPhi` stores whole continue
@@ -97,8 +97,9 @@ fn register_arity(
 /// wins over the convention default; a CC without `stack_args` collects none.
 /// Other writes to the slots past the last argument are collected too: a
 /// local, an alignment push (x86-64 clang's `push rax`, Thumb gcc's
-/// `push {r3, lr}`), or o32's `gp` save at `sp+16`, which the IR cannot tell
-/// from an argument without the call-time `gp`.
+/// `push {r3, lr}`), or o32's `gp` save just above the outgoing arguments
+/// (`sp+16` when there are none), which the IR cannot tell from an argument
+/// without the call-time `gp`.
 pub struct CallStackArgCollect;
 
 impl Optimizer for CallStackArgCollect {

@@ -39,8 +39,8 @@ pub(super) struct Round {
 }
 
 impl Round {
-    /// No dispatch site is left for a fold to change. A seated `Switch` is
-    /// one: it is re-derived, and widens, every round.
+    /// No dispatch site is left for a fold to change. A seated `Switch`
+    /// counts: every round re-derives it.
     pub(super) fn is_settled(&self) -> bool {
         self.placeholders.is_empty() && self.switches.is_empty()
     }
@@ -147,9 +147,9 @@ where
     }
 }
 
-/// The live return sites whose target, anchored last on the `Return` by
-/// [`Strider::build_round`], is not the entry return address. Verified under
-/// the claims the round was optimized with.
+/// Strips the target [`Strider::build_round`] anchored last on each live
+/// `Return`; returns the sites whose target is not provably the entry return
+/// address under the round's claims.
 pub(super) fn settle_return_sites(
     function: &mut strider_ir::Function,
     sites: &[strider_lift::ReturnSite],

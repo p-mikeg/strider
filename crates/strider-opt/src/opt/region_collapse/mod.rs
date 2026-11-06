@@ -41,8 +41,7 @@ fn try_collapse(edit: &mut crate::EditFunction<'_>, root: NodeId) {
         .node_outputs_exact::<2>(root)
         .expect("a Region has a control output and a phi token");
 
-    // Phis first: a Region still attached after the rewire below would be a
-    // second consumer of `sole_ctrl_value`.
+    // Phis first: they can refuse, and a refusal leaves the Region untouched.
     if !collapse_region_phis(edit, phi_token) {
         return;
     }
