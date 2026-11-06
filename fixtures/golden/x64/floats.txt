@@ -530,7 +530,7 @@ return %v0, %v1, %v2, %v3, %v12, %v13, %v14, %v15
 cfg
   0x4012a0 0 ops goto -> [0x4012a4]
   0x4012a4 37 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, MXCSR, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x374200:4, u:0x374300:4, u:0x374600:1, u:0x374700:1, u:0x374800:1, u:0x374900:1, u:0x374a00:1, u:0x374c00:1, u:0x374d00:1, u:0x374e00:1, u:0x374f00:1, u:0x375000:1, u:0x375200:1, u:0x375300:1, u:0x375400:1, u:0x375500:1, u:0x375700:1, u:0x375800:1, u:0x375900:1, u:0x375a00:1, u:0x375c00:1, u:0x375d00:4, u:0x375e00:4, u:0x375f00:4, u:0x377400:8, u:0x377600:4, u:0x377700:8, u:0x377900:1, u:0x377a00:1, u:0x377b00:1, u:0x37b300:4]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, MXCSR, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x374000:4, u:0x374100:4, u:0x374400:1, u:0x374500:1, u:0x374600:1, u:0x374700:1, u:0x374800:1, u:0x374a00:1, u:0x374b00:1, u:0x374c00:1, u:0x374d00:1, u:0x374e00:1, u:0x375000:1, u:0x375100:1, u:0x375200:1, u:0x375300:1, u:0x375500:1, u:0x375600:1, u:0x375700:1, u:0x375800:1, u:0x375a00:1, u:0x375b00:4, u:0x375c00:4, u:0x375d00:4, u:0x377200:8, u:0x377400:4, u:0x377500:8, u:0x377700:1, u:0x377800:1, u:0x377900:1, u:0x37b100:4]
 arg 2 [%v3]
 float_arg 0 [%v4]
 float_arg 1 [%v13]
@@ -556,7 +556,7 @@ return %v0, %v1, %v2, %v3, %v12, %v13, %v14, %v15
 cfg
   0x4012b0 0 ops goto -> [0x4012b4]
   0x4012b4 46 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, MXCSR, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x374200:4, u:0x374300:4, u:0x374600:1, u:0x374700:1, u:0x374800:1, u:0x374900:1, u:0x374a00:1, u:0x374c00:1, u:0x374d00:1, u:0x374e00:1, u:0x374f00:1, u:0x375000:1, u:0x375200:1, u:0x375300:1, u:0x375400:1, u:0x375500:1, u:0x375700:1, u:0x375800:1, u:0x375900:1, u:0x375a00:1, u:0x375c00:1, u:0x375d00:4, u:0x375e00:4, u:0x375f00:4, u:0x376100:4, u:0x376300:4, u:0x376400:4, u:0x376500:4, u:0x376600:4, u:0x376900:1, u:0x376a00:4, u:0x376c00:1, u:0x376e00:1, u:0x376f00:1, u:0x377000:1, u:0x377200:1, u:0x377300:1, u:0x37b600:4]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, MXCSR, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x374000:4, u:0x374100:4, u:0x374400:1, u:0x374500:1, u:0x374600:1, u:0x374700:1, u:0x374800:1, u:0x374a00:1, u:0x374b00:1, u:0x374c00:1, u:0x374d00:1, u:0x374e00:1, u:0x375000:1, u:0x375100:1, u:0x375200:1, u:0x375300:1, u:0x375500:1, u:0x375600:1, u:0x375700:1, u:0x375800:1, u:0x375a00:1, u:0x375b00:4, u:0x375c00:4, u:0x375d00:4, u:0x375f00:4, u:0x376100:4, u:0x376200:4, u:0x376300:4, u:0x376400:4, u:0x376700:1, u:0x376800:4, u:0x376a00:1, u:0x376c00:1, u:0x376d00:1, u:0x376e00:1, u:0x377000:1, u:0x377100:1, u:0x37b400:4]
 arg 0 [%v4]
 arg 2 [%v3]
 float_arg 1 [%v9]
@@ -714,7 +714,7 @@ return %v29, %v32, %v31, %v33, %v7, %v1, %v34, %v35
 cfg
   0x401310 0 ops goto -> [0x401314]
   0x401314 8 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x187f00:16]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x187d00:16]
 arg 2 [%v3]
 float_arg 0 [%v4]
 float_arg 1 [%v36]
