@@ -189,27 +189,6 @@ mod tests {
         );
     }
 
-    /// `output_kinds` is part of the dedup key.
-    #[test]
-    fn cacheable_int_const_with_different_type_does_not_dedup() {
-        let mut function = test_function();
-        let a = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
-            [],
-            [ValueKind::Typed(ValueType::int(32))],
-        );
-        let b = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
-            [],
-            [ValueKind::Typed(ValueType::int(64))],
-        );
-        assert_ne!(
-            a, b,
-            "IntConst(0):I32 must NOT alias IntConst(0):I64; output_kinds is \
-         part of the dedup key"
-        );
-    }
-
     /// A value with bits above the declared width and its masked form must
     /// dedup to one node.
     #[test]

@@ -1104,103 +1104,36 @@ fn graph_invariants_dangling_cc_id_detected() {
     assert_validation_err(&s.f, |e| matches!(e, ValidationError::DanglingCcId { .. }));
 }
 
+/// An `IntConst` whose interned value sets a bit above its declared width is
+/// rejected. A width ending inside a limb keeps that limb's low bits, so
+/// `0xFF << 64` fits `I72` exactly and one more bit does not.
 #[test]
-fn graph_invariants_wide_const_width_mismatch_detected() {
+fn graph_invariants_const_width_mismatch_is_bits_above_the_width() {
     use dashu_int::UBig;
-    let mut s = spine();
-    // A 4-limb wide value under an I64 output: bits set above the width.
-    let id =
-        s.f.side_tables_mut()
-            .const_interner
-            .intern(UBig::from_words(&[0, 0, 0, 1]));
-    let bad = s.f.graph_mut().create_node(
-        NodeKind::IntConst(id),
-        [],
-        [ValueKind::Typed(ValueType::int(64))],
-    );
-    let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret =
+    let cases = [
+        (UBig::from_words(&[0, 0, 0, 1]), 64, true),
+        (UBig::from(0x1FFu64), 8, true),
+        (UBig::from_words(&[0, 0xFF]), 72, false),
+        (UBig::from_words(&[0, 0x1FF]), 72, true),
+    ];
+    for (value, width, rejected) in cases {
+        let mut s = spine();
+        let id = s.f.side_tables_mut().const_interner.intern(value.clone());
+        let node = s.f.graph_mut().create_node(
+            NodeKind::IntConst(id),
+            [],
+            [ValueKind::Typed(ValueType::int(width))],
+        );
+        let [out] = s.f.node_outputs_exact::<1>(node).unwrap();
         s.f.graph_mut()
-            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
-
-    assert_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::ConstWidthMismatch { .. })
-    });
-}
-
-#[test]
-fn graph_invariants_const_bits_above_declared_width_detected() {
-    use dashu_int::UBig;
-    let mut s = spine();
-    // An unmasked value overflowing its declared I8 width.
-    let id =
-        s.f.side_tables_mut()
-            .const_interner
-            .intern(UBig::from(0x1FFu64));
-    let bad = s.f.graph_mut().create_node(
-        NodeKind::IntConst(id),
-        [],
-        [ValueKind::Typed(ValueType::int(8))],
-    );
-    let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret =
-        s.f.graph_mut()
-            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
-
-    assert_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::ConstWidthMismatch { .. })
-    });
-}
-
-/// A width that ends inside a limb keeps that limb's low bits. Comparing whole
-/// limbs against the width rejects `0xFF << 64` at `I72`, which fits exactly.
-#[test]
-fn graph_invariants_wide_const_filling_a_partial_top_limb_is_accepted() {
-    use dashu_int::UBig;
-    let mut s = spine();
-    let id =
-        s.f.side_tables_mut()
-            .const_interner
-            .intern(UBig::from_words(&[0, 0xFF]));
-    let ok = s.f.graph_mut().create_node(
-        NodeKind::IntConst(id),
-        [],
-        [ValueKind::Typed(ValueType::int(72))],
-    );
-    let ok_value = s.f.node_outputs(ok).iter().copied().next().unwrap();
-    let _ret =
-        s.f.graph_mut()
-            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, ok_value], []);
-
-    let errs = crate::validate::validate(&s.f);
-    assert!(
-        !format!("{errs:?}").contains("ConstWidthMismatch"),
-        "0xFF << 64 spans exactly 72 bits: {errs:?}"
-    );
-}
-
-/// One bit above the declared width, in the same partial top limb.
-#[test]
-fn graph_invariants_wide_const_one_bit_over_a_partial_width_detected() {
-    use dashu_int::UBig;
-    let mut s = spine();
-    let id =
-        s.f.side_tables_mut()
-            .const_interner
-            .intern(UBig::from_words(&[0, 0x1FF]));
-    let bad = s.f.graph_mut().create_node(
-        NodeKind::IntConst(id),
-        [],
-        [ValueKind::Typed(ValueType::int(72))],
-    );
-    let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret =
-        s.f.graph_mut()
-            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
-
-    assert_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::ConstWidthMismatch { .. })
-    });
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, out], []);
+        let errs = validate(&s.f).err();
+        let hit = errs.as_ref().is_some_and(|e| {
+            e.0.iter()
+                .any(|e| matches!(e, ValidationError::ConstWidthMismatch { .. }))
+        });
+        assert_eq!(hit, rejected, "{value:#x} at I{width}: {errs:?}");
+    }
 }
 
 /// Returns `(store, mem_out)`.

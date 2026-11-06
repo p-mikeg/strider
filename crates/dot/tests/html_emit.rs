@@ -188,7 +188,11 @@ impl GraphDotDumper for LabelledChain {
     ) -> anyhow::Result<()> {
         out.node(&format!("n{node}"), "x", "box", &[]);
         if node > 0 {
-            out.edge(&format!("n{}", node - 1), &format!("n{node}"), &[("label", "e")]);
+            out.edge(
+                &format!("n{}", node - 1),
+                &format!("n{node}"),
+                &[("label", "e")],
+            );
         }
         Ok(())
     }

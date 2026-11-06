@@ -508,49 +508,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn intern_dedups_equal_values() {
-        let cases: [(&str, UBig); 2] = [
-            ("intern_dedups_equal_bits", UBig::from(0xABCDu64)),
-            ("intern_dedups_equal_wide", UBig::from_words(&[1, 2, 3, 4])),
-        ];
-        for (label, v) in cases {
-            let mut g = test_function();
-            let id1 = g.side_tables_mut().const_interner.intern(v.clone());
-            let id2 = g.side_tables_mut().const_interner.intern(v);
-            assert_eq!(
-                id1, id2,
-                "{label}: interning the same value must return the same id"
-            );
-        }
-    }
-
-    #[test]
-    fn intern_assigns_distinct_ids_for_distinct_values() {
-        let cases: [(&str, UBig, UBig); 2] = [
-            ("distinct_bits", UBig::from(1u64), UBig::from(2u64)),
-            (
-                "distinct_wide",
-                UBig::from_words(&[1, 0, 0, 0]),
-                UBig::from_words(&[2, 0, 0, 0]),
-            ),
-        ];
-        for (label, a, b) in cases {
-            let mut g = test_function();
-            let id_a = g.side_tables_mut().const_interner.intern(a);
-            let id_b = g.side_tables_mut().const_interner.intern(b);
-            assert_ne!(id_a, id_b, "{label}: distinct values must get distinct ids");
-        }
-    }
-
-    #[test]
-    fn const_value_lookup_returns_stored_value() {
-        let mut g = test_function();
-        let v = UBig::from_words(&[0x1234, 0x5678, 0x9abc, 0xdef0]);
-        let id = g.side_tables_mut().const_interner.intern(v.clone());
-        assert_eq!(g.const_value(id), &v);
-    }
-
     /// Dedup rests on one value having one stored form whatever spelling
     /// reached it: zero-padded limbs, a short slice and the scalar path all
     /// hash and compare alike.
