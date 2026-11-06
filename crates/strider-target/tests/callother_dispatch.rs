@@ -28,7 +28,6 @@ fn unknown_name_returns_none_on_every_preset() {
 #[test]
 fn arch_independent_rows_resolve_on_every_preset() {
     for &preset in ArchPreset::ALL {
-        // `setISAMode` is covered by `set_isa_mode_is_noop_on_every_arch`.
         let setend = expect_call(classify(preset, "setEndianState"));
         assert!(
             setend.clobbers_memory,
@@ -37,6 +36,45 @@ fn arch_independent_rows_resolve_on_every_preset() {
         let yield_op = expect_call(classify(preset, "Yield"));
         assert!(!yield_op.no_return, "{preset:?}/Yield");
         assert!(!yield_op.clobbers_memory, "{preset:?}/Yield");
+    }
+}
+
+/// Rows a misclassification would miscompile, asserted by intent: each
+/// returns (a NO_RETURN conditional trap drops the code after it), clobbers
+/// memory (the vsx forms' access is missing from their p-code) and writes at
+/// least the listed registers, resolving on the preset's own table.
+#[test]
+fn soundness_critical_rows_keep_their_footprint() {
+    use ArchPreset::{Arm, ArmThumb, MipsBe32, MipsBe64, Ppc32Be, Ppc64Be};
+    let mips_syscall: &[&str] = &["v0", "a3", "at", "hi", "lo"];
+    let smccc: &[&str] = &["r0", "r1", "r2", "r3"];
+    let rows: &[(ArchPreset, &str, &[&str])] = &[
+        (Ppc32Be, "trapWord", &[]),
+        (Ppc64Be, "trapWord", &[]),
+        (Ppc64Be, "trapDoubleWord", &[]),
+        (Ppc64Be, "trapDoubleWordImmediate", &[]),
+        (Ppc64Be, "vsx300_15", &[]),
+        (Ppc64Be, "vsx300_20", &[]),
+        (Ppc64Be, "vsx300_22", &[]),
+        (Ppc64Be, "vsx300_9", &[]),
+        (Ppc64Be, "vsx207_1", &[]),
+        (Arm, "software_smc", smccc),
+        (ArmThumb, "software_hvc", smccc),
+        (MipsBe32, "syscall", mips_syscall),
+        (MipsBe64, "syscall", mips_syscall),
+    ];
+    for &(preset, name, writes) in rows {
+        let abi = expect_call(classify(preset, name));
+        assert!(!abi.no_return, "{preset:?}/{name} returns");
+        assert!(abi.clobbers_memory, "{preset:?}/{name} clobbers memory");
+        for r in writes {
+            assert!(
+                abi.implicit_writes.contains(r),
+                "{preset:?}/{name} writes {r}"
+            );
+        }
+        abi.build(&regs_for(preset))
+            .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
     }
 }
 
