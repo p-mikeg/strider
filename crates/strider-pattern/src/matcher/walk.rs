@@ -12,8 +12,8 @@ use either::Either;
 use rustc_hash::FxHashMap;
 use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
 use strider_ir::IRViewer;
+use strider_ir::node::{CastMask, cast_mask_of};
 use strider_ir::node::{NodeId, ValueId, ValueKind};
-use strider_ir::walk::{CastMask, cast_mask_of};
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{InputSlot, Matcher, OutputKindSpec, PatValue, Pattern, Role, SlotMode};
