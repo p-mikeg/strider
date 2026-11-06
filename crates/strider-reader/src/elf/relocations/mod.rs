@@ -161,8 +161,7 @@ impl<'a> Ctx<'a, '_> {
     /// [`holding`](Self::holding), or `None` when the field runs past
     /// `site.avail` into a neighbouring section.
     fn holder(&self, site: RelocSite, addr: u64, width: usize) -> Option<&'a MemRegion> {
-        // Saturating keeps a malformed MIPS pair on the `None` path.
-        if addr.wrapping_sub(site.addr).saturating_add(width as u64) > site.avail {
+        if !site.holds(addr, width) {
             return None;
         }
         self.holding(addr, width)
@@ -178,9 +177,7 @@ impl<'a> Ctx<'a, '_> {
         r_type: u32,
     ) -> Option<&'a MemRegion> {
         let holder = self.holder(site, addr, width);
-        if holder.is_none()
-            && addr.wrapping_sub(site.addr).saturating_add(width as u64) <= site.avail
-        {
+        if holder.is_none() && site.holds(addr, width) {
             let first = self.holding(addr, 1);
             self.unmodelled(first, addr, width, r_type);
         }
@@ -231,6 +228,13 @@ impl<'a> Ctx<'a, '_> {
 struct RelocSite {
     addr: u64,
     avail: u64,
+}
+
+impl RelocSite {
+    /// Whether `width` bytes at `addr` (at or past `self.addr`) fit `avail`.
+    fn holds(self, addr: u64, width: usize) -> bool {
+        addr.wrapping_sub(self.addr).saturating_add(width as u64) <= self.avail
+    }
 }
 
 /// The referenced GOT slots, adjacent ones sharing a region.

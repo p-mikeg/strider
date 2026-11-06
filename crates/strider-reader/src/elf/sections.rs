@@ -174,7 +174,7 @@ impl Walk {
     fn without_writable_except(self, served: &AddressSet) -> LoadedImage {
         let writable = AddressSet::merged_without(self.writable, served);
         LoadedImage {
-            // Mappings the cut ends inside all leave a piece at its end.
+            // Overlapping mappings cut at one address leave pieces with equal starts.
             regions: crate::collapse_equal_starts(without_ranges(self.regions, &writable)),
             writable,
             executable: AddressSet::merged(self.executable),
@@ -273,7 +273,7 @@ impl AddressSet {
 }
 
 /// Where each ET_REL section is loaded, whose `sh_addr`s are all 0: in index
-/// order, a section below the watermark moves to
+/// order, an allocated non-TLS section below the watermark moves to
 /// `align_up(watermark, sh_addralign)`, starting at a base that leaves 0
 /// unmapped. Identity for a linked image. Independent of the filter, so every
 /// view agrees on where a section is.
@@ -336,8 +336,6 @@ impl ElfSectionLayout {
             } else {
                 align_up(watermark, sec.align())
             };
-            // An overflowing `sh_size` leaves the watermark put and the
-            // section unseated.
             if alloc {
                 match base.checked_add(size) {
                     Some(end) => watermark = end,
