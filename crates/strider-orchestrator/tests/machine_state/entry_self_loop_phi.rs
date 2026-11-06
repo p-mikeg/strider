@@ -5,9 +5,9 @@
 //! branch resolved back to the entry all reach the lifter as a loop whose
 //! header IS the entry.
 //!
-//! `dominance_frontiers` must keep the root: `immediate_dominator() == None`
-//! marks both the root and the unreachable nodes, and skipping it leaves
-//! `phi_placement` with nothing for the entry region.  `MemPhi` is placed
+//! `phi_placement` must keep the root in the frontier of its predecessors:
+//! `immediate_dominator() == None` marks both the root and the unreachable
+//! nodes, and skipping it places nothing at the entry region.  `MemPhi` is placed
 //! unconditionally, so memory stays correct while values lose their
 //! loop-carried dependence:
 //!
