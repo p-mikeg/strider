@@ -331,19 +331,11 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
 
     // The offsets override is derived from this stored CC.
     let override_cc = strider_target::BuiltCallingConvention {
-        arg_passing_regs: vec![],
-        callee_saved_regs: vec![],
-        ret_val_regs: vec![],
-        ret_val_regs_float: vec![],
         stack_ptr: sp,
         stack_args: Some(strider_target::StackArgs {
             base_offset: 0,
             increment: 4,
         }),
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     };
     override_cc.validate().unwrap();
