@@ -181,10 +181,9 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Bypasses the live/roots bookkeeping: after a structural edit, call
-    /// [`Self::resync_live_set`] before reading an order. Rewriting a cacheable
-    /// node's kind needs a [`Function::compact`], which rebuilds the dedup
-    /// cache over live nodes only (`graph.rebuild_cache()` re-keys killed
-    /// ones). Counts as a control edit.
+    /// [`Self::resync_live_set`] before reading an order. A cacheable node
+    /// whose kind is rewritten keeps its old dedup key (missed dedups only)
+    /// until [`Function::compact`]. Counts as a control edit.
     pub fn function_mut(&mut self) -> &mut Function {
         self.control_edits += 1;
         self.function

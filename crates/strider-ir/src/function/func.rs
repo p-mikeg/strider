@@ -142,8 +142,8 @@ impl Function {
         &self.default_cc
     }
 
-    /// The data byte order. A register-space access follows
-    /// [`Self::byte_order`]'s instead.
+    /// The data byte order; a register-space access uses
+    /// `byte_order().register`.
     #[inline]
     pub fn endianness(&self) -> strider_target::Endianness {
         self.byte_order.data

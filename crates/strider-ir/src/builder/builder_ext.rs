@@ -210,7 +210,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::Popcount, [input_id], output_type))
     }
 
-    /// Counts over the input's width, as [`Self::build_popcount`].
+    /// Counts over the input's bytes (`I1` counts 8), as Sleigh does.
     fn build_lzcount(&mut self, input_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         require_integer_type(self.value_type(input_id)?)?;
         require_integer_type(output_type)?;
