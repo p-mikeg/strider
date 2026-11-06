@@ -148,27 +148,15 @@ mod tests {
         PcodeInsnAddr::at_machine_start(addr)
     }
 
-    /// `ALL` is generated from the roster rows, so it cannot miss a variant;
-    /// what the rows still fix is the ORDER, and the doc promises the site
-    /// reasons are the leading run of it. Not `ALL == sorted`: `Ord` is
-    /// derived from the same row order, so that would hold whatever it is.
+    /// The site reasons are the leading run of `ALL`, and the names are
+    /// distinct.
     #[test]
-    fn the_site_reasons_are_the_leading_run_of_all() {
-        let sites = Reason::ALL.iter().filter(|r| r.is_site()).count();
-        assert!(sites > 0, "no site reason");
-        assert!(
-            Reason::ALL[..sites].iter().all(|r| r.is_site()),
-            "the site reasons must lead: {:?}",
-            Reason::ALL
-        );
-    }
-
-    #[test]
-    fn names_are_distinct_and_the_first_two_are_sites() {
+    fn names_are_distinct_and_the_sites_lead() {
         let names: std::collections::BTreeSet<_> = Reason::ALL.map(Reason::name).into();
         assert_eq!(names.len(), Reason::ALL.len());
         let sites: Vec<_> = Reason::ALL.into_iter().filter(|r| r.is_site()).collect();
         assert_eq!(sites, [Reason::UnresolvedBranch, Reason::UnverifiedSeed]);
+        assert_eq!(Reason::ALL[..2], sites[..]);
     }
 
     /// One round's site verdicts are that round's alone; its target reasons
