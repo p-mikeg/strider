@@ -164,7 +164,10 @@ replaced the rest.
   `Function::optimizer_converged`. A typed `when_match` on a call root inside
   an alternation is refused, as `.build()` refuses it.
 - `one_of![ret()].when_match(..)` is refused as `ret().when_match(..)` is; it
-  never matched. `Region::insns` is a `VecDeque`.
+  never matched.
+- `Region::insns` is a `VecDeque`.
+- `Function::frame_address_in_call_register` is gone: read
+  `call_register_frame_reach().is_some()`.
 
 ### Added, Python
 
@@ -199,7 +202,6 @@ replaced the rest.
   `frame_address_in_call_register` lines, and a REGISTER-space byte order
   that differs from the data order.
 - `Function.optimizer_converged`.
-- `Lifter.pcode_at` takes a Thumb or MIPS16 address with its mode bit set.
 
 ### Changed, Python
 
@@ -241,6 +243,11 @@ replaced the rest.
   names, spell value types as `i64`, and name the first unbound capture.
 - A pattern compile reads its stack budget from the real thread stack on
   Windows and the BSDs too.
+- `CfgOptions(function_max_size=)` and the neighborhood `depth` /
+  `hub_cap` / `max_nodes` refuse a `bool` (`TypeError`); a negative value
+  raises `StriderError`, not `OverflowError`.
+- The explorer's CFG search highlights nothing for an address outside u64;
+  it showed an error.
 
 ### Fixed
 
@@ -268,6 +275,9 @@ Matching and rewriting:
 - `int_sub(x, K)` and `float_sub(x, K)` with an uncaptured constant `K` (a
   value, a list, `int_const_any_width`, bare or under one `of_width`) also
   match the folded `x + (-K)`.
+- A capture on `ret()`, `unreachable()` or `indirect_branch()`, or on an
+  alternation with such an arm (`one_of([ret(), unreachable()]).capture(c)`),
+  binds the node; it matched nothing.
 
 Analysis:
 
@@ -352,8 +362,9 @@ Lifting and decoding (most in the vendored Sleigh):
 - CFG decoding of a run of `nop`s is deterministic. A call followed by a
   `nop` and decodable non-code (Thumb `bl __stack_chk_fail; nop` before a
   literal pool) ends `NoReturn` where it failed the build.
-- `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb), and keeps the
-  Thumb mode after many builds on one handle.
+- `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb or MIPS16), and
+  keeps the mode after many builds on one handle. `Cfg.pcode_at` takes the
+  same address.
 - A branch into the middle of an instruction with internal p-code branches
   (`lock cmpxchg`, `rep movs`) edges to its first op, not its last p-code
   slice, and is still `"interior_target"`; glibc's `je 0f; lock; 0:`
@@ -363,7 +374,16 @@ Lifting and decoding (most in the vendored Sleigh):
 - `Function.optimizer_converged` is `False` after a failed run, not the
   previous run's value.
 - A fall-through or Duff's-device switch of n arms builds its CFG in linear
-  time in n; it was quadratic (`analyze` of 4000 arms: 6.7 s before, 1.5 s after).
+  time in n; it was quadratic.
+- `LoadForward` is linear on a run of `if (c) call()` joins; it was
+  quadratic.
+- An ARM NEON saturating op (`vqadd`, ...) writes `fpscr`, so a later
+  `vmrs` no longer reads the earlier FPSCR.
+- An ARM `vld2` / `vld3` / `vld4` clobbers only the NEON registers; it
+  clobbered every register, losing SP and the return.
+- The decoder refuses a context region that ends before it starts, where
+  it crashed, and reports a reader that panics on its second byte read as
+  `MemReaderPanicked`.
 
 Loading:
 
