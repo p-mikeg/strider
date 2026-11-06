@@ -180,9 +180,11 @@ impl OptimizerPipeline {
     /// each post-pass once, then validates; every exit drains the graph and
     /// restamps memory classes. Errs with the first pass error (unvalidated,
     /// `function` mutated up to it), else a validation error. Records whether
-    /// the loop converged in [`strider_ir::Function::optimizer_converged`].
+    /// the loop converged in [`strider_ir::Function::optimizer_converged`],
+    /// `false` after an error.
     pub fn run(&self, function: &mut strider_ir::Function, ctx: &OptCtx<'_>) -> crate::Result<()> {
         function.invalidate_analyses();
+        function.set_optimizer_converged(false);
         let outcome = {
             let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
@@ -433,6 +435,18 @@ mod tests {
         pipeline = OptimizerPipeline::new();
         pipeline.run(&mut function, &OptCtx::new(None)).unwrap();
         assert!(function.optimizer_converged(), "a converged run resets it");
+    }
+
+    /// A failed run leaves the graph part-optimized, so it is not converged.
+    #[test]
+    fn a_failed_run_is_not_converged() -> crate::Result<()> {
+        let mut function = sp_store_fn()?;
+        assert!(function.optimizer_converged());
+        let mut pipeline = super::OptimizerPipeline::new();
+        pipeline.add(&StampsMovesThenFails);
+        assert!(pipeline.run(&mut function, &OptCtx::new(None)).is_err());
+        assert!(!function.optimizer_converged());
+        Ok(())
     }
 
     /// A capped run validates the graph it hands back.
