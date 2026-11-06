@@ -3,11 +3,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
 
-/// An empty target table, for a `CfgOptions` literal naming every field.
+/// An empty target table.
 pub static NO_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
-/// No local entries, for a `CfgOptions` literal naming every field.
+/// No local entries.
 pub static NO_LOCAL_ENTRIES: LocalEntries = LocalEntries(Vec::new());
 
 /// The extent of the function being built.
@@ -126,7 +126,7 @@ impl DataRanges {
 pub struct LocalEntries(Vec<(u64, u64)>);
 
 impl LocalEntries {
-    /// `(global, local)` pairs in any order; one whose two entries meet is
+    /// `(global, local)` pairs in any order; one whose entries are equal is
     /// dropped.
     pub fn new(entries: impl IntoIterator<Item = (u64, u64)>) -> Self {
         let mut by_local: Vec<(u64, u64)> = entries
