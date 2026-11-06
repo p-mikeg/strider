@@ -272,7 +272,7 @@ impl BuiltCallingConvention {
             && !self.callee_saved_regs.contains(&lr)
         {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: link_register {lr:?} must also \
+                "BuiltCallingConvention: link_register {lr} must also \
                  be present in callee_saved_regs, the deliberate tradeoff \
                  that makes InitialVar(lr) propagate through call sites; only \
                  a per-address convention may clobber it",
@@ -309,7 +309,7 @@ impl BuiltCallingConvention {
         ] {
             if let Some(vn) = first_overlapping(list, &self.callee_saved_regs) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {vn:?} in {list_name} shares \
+                    "BuiltCallingConvention: varnode {vn} in {list_name} shares \
                      bytes with callee_saved_regs (a single register cannot \
                      both carry a value and be callee-preserved)",
                 ));
@@ -317,14 +317,14 @@ impl BuiltCallingConvention {
         }
         if let Some(vn) = first_overlapping(&self.ret_val_regs, &self.ret_val_regs_float) {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: varnode {vn:?} in ret_val_regs shares \
+                "BuiltCallingConvention: varnode {vn} in ret_val_regs shares \
                  bytes with ret_val_regs_float (integer and float return \
                  registers are physically distinct)",
             ));
         }
         if let Some(vn) = first_overlapping(&self.arg_passing_regs, &self.arg_passing_regs_float) {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: varnode {vn:?} in arg_passing_regs \
+                "BuiltCallingConvention: varnode {vn} in arg_passing_regs \
                  shares bytes with arg_passing_regs_float (integer and float \
                  argument registers are physically distinct)",
             ));
@@ -338,15 +338,15 @@ impl BuiltCallingConvention {
         ] {
             if let Some(vn) = first_overlapping(list, std::slice::from_ref(&self.stack_ptr)) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {vn:?} in {list_name} shares \
-                     bytes with the stack pointer {:?} (the SP is implicit and must \
+                    "BuiltCallingConvention: varnode {vn} in {list_name} shares \
+                     bytes with the stack pointer {} (the SP is implicit and must \
                      not be in any reg list)",
                     self.stack_ptr,
                 ));
             }
             if let Some(vn) = first_dup(list) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: duplicate varnode {vn:?} in {list_name}",
+                    "BuiltCallingConvention: duplicate varnode {vn} in {list_name}",
                 ));
             }
         }
@@ -385,7 +385,7 @@ impl BuiltCallingConvention {
         let sp = self.stack_ptr.size;
         if sp != addr_size {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: stack pointer {:?} is {sp} bytes, and this \
+                "BuiltCallingConvention: stack pointer {} is {sp} bytes, and this \
                  arch's addresses are {addr_size}: the convention describes another arch",
                 self.stack_ptr,
             ));

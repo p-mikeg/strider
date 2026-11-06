@@ -192,3 +192,14 @@ def test_custom_cc_rejects_geometry_of_another_width_at_construction(
             link_register=None,
             preserves_memory=False,
         )
+
+
+def test_a_preset_of_another_arch_is_named_as_python_spells_it():
+    """The arch by its preset name and the stack pointer as `Vn.__repr__`
+    spells it, not as Rust `Debug`."""
+    arch = strider.sleigh.SleighArch.x86_64()
+    lift = strider.lift.lifter(arch, strider.reader.BufferReader(0x1000, b"\xc3"))
+    with pytest.raises(strider.StriderError) as excinfo:
+        lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_cdecl())
+    msg = str(excinfo.value)
+    assert "x86_64: " in msg and "stack pointer %[0x20]:4 is 4 bytes" in msg, msg
