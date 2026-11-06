@@ -65,7 +65,7 @@ pub trait CaptureExt: MatchPat + 'static {
     }
     /// Pin the operand order of the node holding the pair this pattern was
     /// written with: the root, except where a lowering added the root over it
-    /// (`int_ne` pins its `int_eq`).
+    /// (`int_ne` pins its `int_eq`, `float_le` both its comparisons).
     fn ordered(self) -> MatchOnly {
         MatchOnly(self.into_expr().deco(Deco::Ordered))
     }

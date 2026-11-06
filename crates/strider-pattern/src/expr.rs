@@ -31,6 +31,9 @@ pub(crate) enum Slot {
     Root,
 }
 
+/// [`Inner::Shared`]'s body: the pinned operands and `ordered` to the pattern over them.
+type SharedBody = fn(&[PatValueRef], bool) -> Expr;
+
 /// One pattern, lowered once into either side's builder.
 #[doc(hidden)]
 pub struct Expr(Inner);
@@ -63,8 +66,8 @@ enum Inner {
     /// Arms tried at the same IR node: all enumerated, or with `first` only the first that matches.
     Alt(Vec<Expr>, bool),
     /// Operands lowered once and pinned to one IR value each, then read at every slot of `body`
-    /// naming them, so `float_eq(x, x)` needs the same value twice.
-    Shared(Vec<Expr>, fn(&[PatValueRef]) -> Expr),
+    /// naming them, so `float_eq(x, x)` needs the same value twice. `body`'s flag is `ordered`.
+    Shared(Vec<Expr>, SharedBody),
     /// An operand [`Inner::Shared`] lowered.
     At(PatValueRef),
     /// A constant computed at rewrite time.
@@ -325,7 +328,7 @@ impl Expr {
         Self(Inner::Alt(arms, first))
     }
 
-    pub(crate) fn shared(operands: Vec<Expr>, body: fn(&[PatValueRef]) -> Expr) -> Self {
+    pub(crate) fn shared(operands: Vec<Expr>, body: SharedBody) -> Self {
         Self(Inner::Shared(operands, body))
     }
 
@@ -361,7 +364,7 @@ impl Expr {
                 .expect("a nested node has an output"),
             Inner::Deco(d) => lower_deco(b, *d, slot, ordered),
             Inner::Alt(arms, first) => lower_alt(b, arms, first, slot, ordered),
-            Inner::Shared(operands, body) => lower_shared(b, operands, body, slot),
+            Inner::Shared(operands, body) => lower_shared(b, operands, body, slot, ordered),
             Inner::At(v) => v,
             Inner::Built(_) => b.refuse(BUILD_SIDE),
             Inner::Sided(s) => s.0.lower(b, slot, ordered),
@@ -487,8 +490,9 @@ fn lower_alt(
 fn lower_shared(
     b: &mut MatcherBuilder,
     operands: Vec<Expr>,
-    body: fn(&[PatValueRef]) -> Expr,
+    body: SharedBody,
     slot: Slot,
+    ordered: bool,
 ) -> PatValueRef {
     let mut at = Vec::with_capacity(operands.len());
     for e in operands {
@@ -496,7 +500,7 @@ fn lower_shared(
         b.pin_shared_identity(v);
         at.push(v);
     }
-    body(&at).lower(b, slot, false)
+    body(&at, ordered).lower(b, slot, false)
 }
 
 /// The output the decorated expression lowers to, annotated.
@@ -578,8 +582,8 @@ impl Expr {
         Self::op(KindSpec::Exact(kind), operands, Some(ValueType::I1))
     }
 
-    /// `int_add(l, int_neg(r))`; when matching an uncaptured constant `r` (under an `of_width`
-    /// or not), also `int_add(l, -r)`, the shape `ConstantFold` leaves.
+    /// `int_add(l, int_neg(r))`; when matching an [`Inner::Const`] `r` (under an `of_width` or
+    /// not), also `int_add(l, -r)`, the shape `ConstantFold` leaves.
     pub(crate) fn int_sub(l: Expr, r: Expr) -> Self {
         let neg = |e: Expr| Self::exact(NodeKind::IntUnaryOp(IntUnaryOp::Neg), [e]);
         let r = match r.under_width() {

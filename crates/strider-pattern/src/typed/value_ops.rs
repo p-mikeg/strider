@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::expr::{Expr, IntoExpr};
+use crate::expr::{Deco, Expr, IntoExpr};
 use crate::matcher::KindSpec;
 use crate::matcher::match_pat::MatchPat;
 use crate::template::template_pat::TemplatePat;
@@ -103,17 +103,24 @@ pub fn any_bool_binary<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R)
 
 /// The lifter's `FloatLessEqual`: `bool_or(float_lt(l, r), float_eq(l, r))` at `I1`.
 pub fn float_le<L: MatchPat + 'static, R: MatchPat + 'static>(lhs: L, rhs: R) -> MatchOnly {
-    MatchOnly(Expr::shared(vec![lhs.into_expr(), rhs.into_expr()], |v| {
-        let cmp = |op| NodeKind::FloatCmpOp(op);
-        let less = Expr::exact_i1(cmp(FloatCmpOp::Less), [Expr::at(v[0]), Expr::at(v[1])]);
-        let equal = Expr::exact_i1(cmp(FloatCmpOp::Equal), [Expr::at(v[0]), Expr::at(v[1])]);
-        Expr::exact_i1(NodeKind::IntBinaryOp(IntBinaryOp::Or), [less, equal])
-    }))
+    MatchOnly(Expr::shared(
+        vec![lhs.into_expr(), rhs.into_expr()],
+        |v, ordered| {
+            // Both comparisons hold the written pair, so `ordered` pins both.
+            let cmp = |op| {
+                let e = Expr::exact_i1(NodeKind::FloatCmpOp(op), [Expr::at(v[0]), Expr::at(v[1])]);
+                if ordered { e.deco(Deco::Ordered) } else { e }
+            };
+            let (less, equal) = (cmp(FloatCmpOp::Less), cmp(FloatCmpOp::Equal));
+            Expr::exact_i1(NodeKind::IntBinaryOp(IntBinaryOp::Or), [less, equal])
+        },
+    ))
 }
 
 /// `int_xor(float_eq(x, x), 1):I1`.
 pub fn float_is_nan<I: MatchPat + 'static>(inner: I) -> MatchOnly {
-    MatchOnly(Expr::shared(vec![inner.into_expr()], |v| {
+    // One operand in both slots, so `ordered` has nothing to pin.
+    MatchOnly(Expr::shared(vec![inner.into_expr()], |v, _| {
         let eq = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
         Expr::bool_not(Expr::exact_i1(eq, [Expr::at(v[0]), Expr::at(v[0])]))
     }))
@@ -186,8 +193,10 @@ pub(crate) mod ops {
     bin! { int_sshr, exact, NodeKind::IntBinaryOp(IntBinaryOp::SShiftRight),
     "Arithmetic right-shift `(signed)lhs >> rhs`." }
 
-    /// Subtraction `lhs - rhs`: `Add(lhs, Neg(rhs))`, and for an uncaptured constant `rhs`
-    /// (bare or under one `of_width`) also the folded `Add(lhs, -K)`.
+    /// Subtraction `lhs - rhs`: `Add(lhs, Neg(rhs))`, and for an `rhs` that is
+    /// `int_const(..)`, `int_const_any_width(..)`, `bool_const(b)` or `int_const_all_ones()`
+    /// (bare or under one `of_width`) also the folded `Add(lhs, -K)`. A captured or
+    /// `any_int_const()` `rhs` matches only the `Neg` form.
     pub fn int_sub<L: IntoExpr + 'static, R: IntoExpr + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
         Op::new(Expr::int_sub(lhs.into_expr(), rhs.into_expr()))
     }
