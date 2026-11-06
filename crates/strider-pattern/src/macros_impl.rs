@@ -88,7 +88,7 @@ macro_rules! __const_with_bind_one {
         let _ = &$hy;
     };
     ($ctx:ident, in_ty, $hy:ident) => {
-        let $hy = $crate::first_value_input_type($ctx);
+        let $hy = $crate::slot0_input_type($ctx);
         let _ = &$hy;
     };
 }
