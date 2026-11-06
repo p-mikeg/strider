@@ -8,12 +8,12 @@ use crate::rewrite_rule::Rule;
 use smallvec::SmallVec;
 use strider_ir::UBig;
 use strider_ir::eval;
-use strider_ir::node::{IntUnaryOp, NodeId, NodeKind, ValueId};
+use strider_ir::node::{IntUnaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer};
 use strider_pattern::{
-    Capture, CaptureExt, any_float_binary, any_float_cmp, any_float_unary, bool_const_with,
-    capture_typed, float_bits_to_int, float_const, float_const_with, int_add, int_and,
-    int_bits_to_float, int_const, int_const_with, int_mul, int_neg, int_or, int_sborrow,
+    Bindings, Capture, CaptureExt, Matcher, any_float_binary, any_float_cmp, any_float_unary,
+    bool_const_with, capture_typed, float_bits_to_int, float_const, float_const_with, int_add,
+    int_and, int_bits_to_float, int_const, int_const_with, int_mul, int_neg, int_or, int_sborrow,
     int_scarry, int_shl, int_shr, int_sign_extend, int_sshr, int_sub, int_truncate, int_xor,
     int_zero_extend, one_of, template, var,
 };
@@ -44,13 +44,9 @@ pub(super) fn build_rules() -> Vec<Rule> {
 }
 
 /// Whether `cap` is not an `IntConst` (true when unbound).
-pub(super) fn binds_no_int_const(
-    b: &strider_pattern::Bindings,
-    f: &strider_ir::Function,
-    cap: Capture,
-) -> bool {
+pub(super) fn binds_no_int_const(b: &Bindings, f: &strider_ir::Function, cap: Capture) -> bool {
     !b.get_node(cap, f.graph())
-        .is_some_and(|n| matches!(f.node_kind(n), strider_ir::node::NodeKind::IntConst(_)))
+        .is_some_and(|n| matches!(f.node_kind(n), NodeKind::IntConst(_)))
 }
 
 /// Collects a value against itself: each side of an `Add` (or `Add(a, Neg(b))`)
@@ -75,9 +71,7 @@ fn build_factor_rules() -> Vec<Rule> {
     };
     // A coefficient must be as wide as the root and a shift count below its
     // width; each check is vacuous where its arm did not fire.
-    let widths = move |edit: &strider_pattern::Matcher,
-                       ty: strider_ir::node::ValueType,
-                       binds: &strider_pattern::Bindings| {
+    let widths = move |edit: &Matcher, ty: ValueType, binds: &Bindings| {
         let f = edit.function();
         let w = ty.bit_width();
         at_root_width(f, binds, ty, &[x])
@@ -285,8 +279,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
     ));
 
     // A bitcast of a constant, up to the `u64` a `FloatConst` carries.
-    let fits_u64 =
-        |_: &strider_pattern::Matcher, ty: strider_ir::node::ValueType, _: &_| ty.byte_size() <= 8;
+    let fits_u64 = |_: &Matcher, ty: ValueType, _: &_| ty.byte_size() <= 8;
     rules.push(Rule::rewrite(
         int_bits_to_float(int_const(c)).when_match(fits_u64),
         float_const_with!([c: uint] => u64::try_from(&c).map_err(|_| strider_pattern::skip())?),
@@ -301,9 +294,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
     macro_rules! trunc_of_ext {
         ($ext:ident) => {{
             let x_width_is = move |ord: std::cmp::Ordering| {
-                move |edit: &strider_pattern::Matcher,
-                      ty: strider_ir::node::ValueType,
-                      bnd: &strider_pattern::Bindings| {
+                move |edit: &Matcher, ty: ValueType, bnd: &Bindings| {
                     bnd.get_type(x, edit.function())
                         .is_some_and(|x_ty| x_ty.bit_width().cmp(&ty.bit_width()) == ord)
                 }
@@ -355,9 +346,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
     // are zero (the high half of an x86 register merge). The matcher retries
     // the `Or`'s other operand order.
     rules.push({
-        let guard = move |edit: &strider_pattern::Matcher,
-                          ty: strider_ir::node::ValueType,
-                          bnd: &strider_pattern::Bindings| {
+        let guard = move |edit: &Matcher, ty: ValueType, bnd: &Bindings| {
             let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
@@ -371,9 +360,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
 
     // `Truncate_W(And(C, x)) -> Truncate_W(x)` when `C` covers the low W bits.
     rules.push({
-        let guard = move |edit: &strider_pattern::Matcher,
-                          ty: strider_ir::node::ValueType,
-                          bnd: &strider_pattern::Bindings| {
+        let guard = move |edit: &Matcher, ty: ValueType, bnd: &Bindings| {
             let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
@@ -390,9 +377,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
     // bits read only its operands' low W bits, `a` and `b` of the root type.
     let ext = |v| one_of![int_zero_extend(var(v)), int_sign_extend(var(v))];
     let of_root_type = move |caps: [Capture; 2]| {
-        move |edit: &strider_pattern::Matcher,
-              ty: strider_ir::node::ValueType,
-              bnd: &strider_pattern::Bindings| {
+        move |edit: &Matcher, ty: ValueType, bnd: &Bindings| {
             caps.iter()
                 .all(|&v| bnd.get_type(v, edit.function()) == Some(ty))
         }
@@ -422,9 +407,7 @@ fn build_bitcast_extend_rules() -> Vec<Rule> {
 fn build_identity_rules() -> Vec<Rule> {
     let (x, c) = (Capture::new(), Capture::new());
     // All-ones at the matched output width.
-    let is_all_ones = move |edit: &strider_pattern::Matcher,
-                            ty: strider_ir::node::ValueType,
-                            b: &strider_pattern::Bindings| {
+    let is_all_ones = move |edit: &Matcher, ty: ValueType, b: &Bindings| {
         b.get_uint(c, edit.function()) == Some(eval::all_ones(ty))
     };
     // x & all_ones -> x
