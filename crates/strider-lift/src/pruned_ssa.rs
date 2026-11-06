@@ -188,7 +188,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 }
             }
             Opcode::Return | Opcode::BranchIndirect => self.record_cc_return_reads(scan),
-            Opcode::Branch | Opcode::CondBranch | Opcode::Nop | Opcode::MultiEqual => {}
+            Opcode::Branch | Opcode::CondBranch | Opcode::Nop => {}
             // Only their pcode output.
             Opcode::Copy
             | Opcode::Load
@@ -241,6 +241,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             | Opcode::FloatFloor
             | Opcode::FloatRound
             | Opcode::Indirect
+            | Opcode::MultiEqual
             | Opcode::Piece
             | Opcode::Subpiece
             | Opcode::Cast
