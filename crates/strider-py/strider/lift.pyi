@@ -184,7 +184,9 @@ class LifterOptions:
 
 class Lifter:
     """Lifts, optimises and resolves functions for one architecture. Build
-    one with `strider.lift.lifter(arch, mem, rom=None)`."""
+    one with `strider.lift.lifter(arch, mem, rom=None)`. While an `analyze`,
+    `build_cfg` or `add_elf` is in flight, every `Lifter` method raises
+    `StriderError`."""
 
     def __init__(
         self, arch: SleighArch, mem: MemLike, rom: Optional[RomLike] = ...
@@ -226,8 +228,7 @@ class Lifter:
     @property
     def arch(self) -> SleighArch:
         """The `SleighArch` this handle decodes with. With `reader()` and
-        `rom()`, enough to build a second handle for another thread. Raises
-        while an `analyze`, `build_cfg` or `add_elf` is in flight."""
+        `rom()`, enough to build a second handle for another thread."""
         ...
     def reader(self) -> MemLike:
         """The `mem` this handle was built with."""
@@ -284,12 +285,10 @@ class Lifter:
 
         Raises `StriderError` unless `addr` is on the linear stream from
         `entry`. On ARM or MIPS `entry`'s low bit selects the ISA mode, the
-        sweep starts at `entry & ~1` and `addr`'s low bit is ignored. Only
-        `entry`'s mode is pinned; past a mode switch in mixed-mode code use
-        `build_cfg(entry).pcode_at(addr)`.
+        sweep starts at `entry & ~1` and `addr`'s low bit is ignored.
 
-        A call with a new `entry` builds the whole decoder; for per-function
-        p-code, `build_cfg(entry).pcode_at(addr)` is far cheaper.
+        A new `entry` clones the decoder; `build_cfg(entry).pcode_at(addr)`
+        is far cheaper and follows a mode switch.
         """
         ...
 

@@ -86,8 +86,7 @@ impl<'py> FromPyObject<'py> for PyBigInt {
 pub(crate) fn py_big_int(ob: &Bound<'_, PyAny>) -> PyResult<Option<PyBigInt>> {
     let py = ob.py();
     // Only `TypeError` / `OverflowError` mean "not an integer"; any other
-    // (a raising `__index__`) propagates, or a re-entrant one retries
-    // exponentially.
+    // error (a raising `__index__`) propagates.
     let wrong_kind = |e: &PyErr| {
         e.is_instance_of::<pyo3::exceptions::PyTypeError>(py)
             || e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py)

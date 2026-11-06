@@ -418,7 +418,9 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 }
 
 /// Lifts, optimises and resolves functions for one architecture. Build one
-/// with `strider.lift.lifter(arch, mem, rom=None)`.
+/// with `strider.lift.lifter(arch, mem, rom=None)`. While an `analyze`,
+/// `build_cfg` or `add_elf` is in flight, every `Lifter` method raises
+/// `StriderError`.
 #[pyclass(name = "Lifter", module = "strider.lift", subclass, weakref)]
 pub struct PyLifter {
     /// `None` once `__clear__` has released it.
@@ -481,8 +483,7 @@ fn build_lifter(
 
 #[pymethods]
 impl PyLifter {
-    /// The `SleighArch` this handle decodes with. Raises while an `analyze`,
-    /// `build_cfg` or `add_elf` is in flight.
+    /// The `SleighArch` this handle decodes with.
     #[getter]
     fn arch(slf: &Bound<'_, Self>) -> PyResult<crate::arch::PySleighArch> {
         let inner = try_borrow_lifter(slf)?.target()?;
@@ -688,9 +689,9 @@ impl PyLifter {
 
     /// The p-code (ops joined `"; "`, empty for none) of the instruction at
     /// `addr`, decoding linearly from `entry` on a fresh decoder with only
-    /// `entry`'s ISA mode pinned. A new `entry` builds that decoder;
-    /// `build_cfg(entry).pcode_at(addr)` is far cheaper per function and
-    /// follows a mode switch in mixed-mode code.
+    /// `entry`'s ISA mode pinned. A new `entry` clones the decoder;
+    /// `build_cfg(entry).pcode_at(addr)` is far cheaper and follows a mode
+    /// switch.
     fn pcode_at(
         slf: &Bound<'_, Self>,
         entry: &Bound<'_, PyAny>,

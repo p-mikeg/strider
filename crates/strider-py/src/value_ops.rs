@@ -79,7 +79,7 @@ macro_rules! value_ops {
     ($ty:ident, $verb:literal, $mode:ident) => {
         $crate::value_ops::emit_value_ops! { $ty, $verb, $mode,
             [binary int_add, "integer addition.", " Commutative."]
-            [binary int_sub, "integer subtraction.", " An `r` that is an int, `int_const(K)`, `int_const([..])`, `int_const_any_width(..)` or `bool_const(b)`, bare or under one `.of_width(w)`, also matches the folded `int_add(l, -r)`. Any other `r`, a `.capture()`d constant included, matches only `int_add(l, int_neg(r))`; `int_add(l, int_const(c))` binds `-K`."]
+            [binary int_sub, "integer subtraction.", " An `r` that is an int, `int_const(K)`, `int_const([..])`, `int_const_any_width(..)` or `bool_const(b)`, bare or under one `.of_width(w)`, also matches the folded `int_add(l, -r)`. Any other `r`, a `.capture()`d constant included, matches only `int_add(l, int_neg(r))`. To capture a folded constant, match `int_add(l, int_const(c))`: `c` binds `-K`."]
             [binary int_mul, "integer multiplication.", " Commutative."]
             [binary int_div, "unsigned integer division."]
             [binary int_sdiv, "signed integer division."]
