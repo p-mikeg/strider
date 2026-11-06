@@ -916,3 +916,50 @@ fn a_ppc_tls_marker_leaves_its_instruction_served() {
         assert_eq!(u32::from_be_bytes(w), 0x4800_0001, "{arch:?} {r_type}");
     }
 }
+
+/// The 16-bit Thumb fields `object` does not size (`THM_JUMP11`,
+/// `THM_JUMP8`, ...) hole only their halfword, leaving the next instruction
+/// fetchable; `ABS8` holes one byte.
+#[test]
+fn an_uncomputed_narrow_arm_field_holes_only_its_bytes() {
+    let types = [
+        (elf::R_ARM_ABS16, 2),
+        (elf::R_ARM_THM_ABS5, 2),
+        (elf::R_ARM_ABS8, 1),
+        (elf::R_ARM_THM_PC8, 2),
+        (elf::R_ARM_THM_SWI8, 2),
+        (elf::R_ARM_THM_JUMP6, 2),
+        (elf::R_ARM_THM_PC11, 2),
+        (elf::R_ARM_THM_PC9, 2),
+    ];
+    for (r_type, width) in types {
+        let mut obj = Object::new(BinaryFormat::Elf, Architecture::Arm, Endianness::Little);
+        let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+        // b .; bne .; movs r0, #1; bx lr
+        let code: Vec<u8> = [0xe7feu16, 0xd1fe, 0x2001, 0x4770]
+            .iter()
+            .flat_map(|h| h.to_le_bytes())
+            .collect();
+        obj.append_section_data(text, &code, 4);
+        let ext = undefined(&mut obj, "ext_fn");
+        reloc(&mut obj, text, 2, ext, 0, r_type);
+        let bytes = obj.write().expect("write");
+
+        let table = relocated(&bytes);
+        let insn = common::section_base(&bytes, ".text");
+        let mut byte = [0u8; 1];
+        assert_eq!(
+            table.read(insn + 2, &mut byte),
+            None,
+            "type {r_type}: the field"
+        );
+        assert_eq!(
+            table.read(insn + 2 + width, &mut byte),
+            Some(1),
+            "type {r_type}: past the field"
+        );
+        let mut half = [0u8; 2];
+        assert_eq!(table.read(insn + 4, &mut half), Some(2), "type {r_type}");
+        assert_eq!(u16::from_le_bytes(half), 0x2001, "type {r_type}");
+    }
+}

@@ -159,7 +159,7 @@ pub(super) fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo)
 /// Field width of a relocation `object` does not size: 8 for a MIPS64
 /// composite with `R_MIPS_64`, a ppc64 doubleword64 or prefixed instruction,
 /// or an x86-64 64-bit word; 2 for a PowerPC half16 (`r_offset` names the
-/// halfword); else 4.
+/// halfword) or an ARM 16-bit field; 1 for ARM `ABS8`; else 4.
 pub(super) fn unknown_field_bytes(arch: A, r: &RelocInfo) -> usize {
     match arch {
         A::Mips64 if [r.r_type, r.r_type2, r.r_type3].contains(&object::elf::R_MIPS_64) => 8,
@@ -198,6 +198,18 @@ pub(super) fn unknown_field_bytes(arch: A, r: &RelocInfo) -> usize {
             // UADDR64, PLT64, PLTREL64, ADDR64_LOCAL, the prefixed
             // `*34` / `*28` types.
             43 | 45 | 46 | 117 | 128..=135 | 144..=151 => 8,
+            _ => 4,
+        },
+        A::Arm => match r.r_type {
+            object::elf::R_ARM_ABS8 => 1,
+            object::elf::R_ARM_ABS16
+            | object::elf::R_ARM_THM_ABS5
+            | object::elf::R_ARM_THM_PC8
+            | object::elf::R_ARM_THM_SWI8
+            | object::elf::R_ARM_THM_JUMP6
+            // `THM_JUMP11`, `THM_JUMP8`.
+            | object::elf::R_ARM_THM_PC11
+            | object::elf::R_ARM_THM_PC9 => 2,
             _ => 4,
         },
         A::X86_64 => match r.r_type {
@@ -497,8 +509,7 @@ pub(super) fn resolve_symbol_target(
         weak_undefined: sym.is_weak() && sym.is_undefined(),
         ifunc: is_ifunc(&sym) && !sym.is_undefined(),
         gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
-        // An extern address is no descriptor. Arch test first: the name
-        // lookup runs once per relocation.
+        // An extern address is no descriptor.
         in_opd: arch == A::PowerPc64
             && extern_addr.is_none()
             && sym
