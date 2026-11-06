@@ -56,10 +56,10 @@ SHA256ScheduleUpdate0 call reads=[] writes=[] mem=false noret=false
 SHA256ScheduleUpdate1 call reads=[] writes=[] mem=false noret=false
 SHA256hash UNCLASSIFIED
 SIMDExpandImmediate UNCLASSIFIED
-SatQ call reads=[] writes=[] mem=false noret=false
+SatQ call reads=["fpscr"] writes=["fpscr"] mem=false noret=false
 SendEvent call reads=[] writes=[] mem=false noret=false
 SignedDoesSaturate call reads=[] writes=[] mem=false noret=false
-SignedSatQ call reads=[] writes=[] mem=false noret=false
+SignedSatQ call reads=["fpscr"] writes=["fpscr"] mem=false noret=false
 SignedSaturate call reads=[] writes=[] mem=false noret=false
 TT UNCLASSIFIED
 TTA UNCLASSIFIED
