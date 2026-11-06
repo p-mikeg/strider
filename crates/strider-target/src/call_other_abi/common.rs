@@ -1,8 +1,8 @@
 use super::{CallOtherClass, MEM_CLOBBER, PURE};
 use CallOtherClass::NoOp;
 
-/// Rows matched by name on every family; no name here means two things on
-/// two slas.
+/// Rows matched by name on every family: each name is the same op on every
+/// sla that declares it.
 ///
 /// Invariant: no entry names a register, which would resolve on one arch only.
 pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
@@ -26,27 +26,6 @@ pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
     ("ExclusiveMonitorsStatus", PURE),
     ("Hint_Prefetch", PURE),
     ("Yield", PURE),
-    // CPUID serializes, a full memory barrier; its register writes are p-code.
-    ("cpuid", MEM_CLOBBER),
-    (
-        "cpuid_Architectural_Performance_Monitoring_info",
-        MEM_CLOBBER,
-    ),
-    ("cpuid_Deterministic_Cache_Parameters_info", MEM_CLOBBER),
-    ("cpuid_Direct_Cache_Access_info", MEM_CLOBBER),
-    ("cpuid_Extended_Feature_Enumeration_info", MEM_CLOBBER),
-    ("cpuid_Extended_Topology_info", MEM_CLOBBER),
-    ("cpuid_MONITOR_MWAIT_Features_info", MEM_CLOBBER),
-    ("cpuid_Processor_Extended_States_info", MEM_CLOBBER),
-    ("cpuid_Quality_of_Service_info", MEM_CLOBBER),
-    ("cpuid_Thermal_Power_Management_info", MEM_CLOBBER),
-    ("cpuid_Version_info", MEM_CLOBBER),
-    ("cpuid_basic_info", MEM_CLOBBER),
-    ("cpuid_brand_part1_info", MEM_CLOBBER),
-    ("cpuid_brand_part2_info", MEM_CLOBBER),
-    ("cpuid_brand_part3_info", MEM_CLOBBER),
-    ("cpuid_cache_tlb_info", MEM_CLOBBER),
-    ("cpuid_serial_info", MEM_CLOBBER),
     // SIMD ops with every operand listed (SHA256RNDS2 lists XMM0).
     ("pblendw", PURE),
     ("pshufb", PURE),
