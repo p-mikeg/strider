@@ -335,7 +335,7 @@ fn mips_syscall_carries_the_linux_footprint() {
         abi.build(&regs_for(preset))
             .unwrap_or_else(|e| panic!("{preset:?}: {e}"));
     }
-    // n64 passes eight arguments; GHIDRA's MIPS spec spells a4..a7 as t0..t3.
+    // n64 passes eight arguments; Ghidra's MIPS spec spells a4..a7 as t0..t3.
     let n64 = expect_call(classify(ArchPreset::MipsBe64, "syscall"));
     assert!(n64.implicit_reads.contains(&"t3"));
     let o32 = expect_call(classify(ArchPreset::MipsBe32, "syscall"));

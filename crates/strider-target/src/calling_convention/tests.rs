@@ -974,7 +974,7 @@ fn validate_rejects_negative_stack_arg_base_offset() {
     );
 }
 
-/// GHIDRA's ARM sla lays `d0`-`d3` inside `q0`/`q1` (`q0` and `d0` share
+/// Ghidra's ARM sla lays `d0`-`d3` inside `q0`/`q1` (`q0` and `d0` share
 /// offset 0x300), so a function touching `q0`/`q1` tracks those as the
 /// containers.  Mapping the return list through `container_of` then yields
 /// `q0, q0, q1, q1`, which the lifter concatenates into a `Call`'s output
@@ -1093,7 +1093,7 @@ fn arm_tracked_q4_stays_preserved() {
     assert_eq!(
         container_in(&[q4], &d8),
         q4,
-        "d8 sits in q4 in GHIDRA's ARM register table",
+        "d8 sits in q4 in Ghidra's ARM register table",
     );
     assert_eq!(container_in(&[q4], &d9), q4, "d9 sits in q4");
     let r4 = vn_for_name(&regs, "r4").expect("ARM sla defines r4");

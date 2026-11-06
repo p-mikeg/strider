@@ -33,8 +33,8 @@ pub(crate) struct Family {
     pub(crate) rounding_ops: &'static [&'static str],
     /// The op [`crate::call_other_abi::is_msr_register_mode`] names.
     pub(crate) msr_mode_op: Option<&'static str>,
-    /// `(op, register)`: the input-less rounding op and the register it is,
-    /// per [`crate::call_other_abi::rounding_mode_register`].
+    /// `(op, register)`: an input-less rounding op and the register it reads
+    /// ([`crate::call_other_abi::rounding_mode_register`]).
     pub(crate) rounding_register: Option<(&'static str, &'static str)>,
     /// Exact rows, the first whose `only` admits the preset winning; consulted
     /// before the common rows and the stems ([`crate::call_other_abi::classify`]).
