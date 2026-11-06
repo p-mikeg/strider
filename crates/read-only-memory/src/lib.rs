@@ -12,7 +12,7 @@ pub trait ReadOnlyMemory: Send {
     /// When the range is not wholly mapped or `addr + buf.len()` overflows `u64`.
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()>;
 
-    /// [`Self::read`] without building the error.
+    /// [`Self::read`] as a `bool`; override to skip building the error.
     fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
         self.read(addr, buf).is_ok()
     }
