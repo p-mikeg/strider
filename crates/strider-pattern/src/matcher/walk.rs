@@ -1,6 +1,7 @@
 //! Backtracking, continuation-passing match engine.
 //!
-//! A pat node's inputs are an injective assignment to IR input slots ([`match_assignments`]).
+//! Fixed operands read their own slot; existentials and a swapped commutative pair take distinct
+//! slots ([`match_assignments`]).
 //! [`try_match_at`] calls `k` per configuration, so a guard rejecting one re-drives the orderings
 //! below it; `k` returning `true` stops the search. Under a [`CastMask`] an operand is also
 //! tried through each masked cast, outermost first.
