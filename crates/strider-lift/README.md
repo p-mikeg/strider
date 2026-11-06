@@ -90,7 +90,8 @@ bit (p-code: the whole byte); every vendored spec feeds them 0/1.
 `Switch` gets one control output per arm and keeps its selector live; a
 `TailCall` becomes `Call` + `Return`; an unresolved indirect branch becomes an
 `IndirectBranch` anchoring the dispatch varnode and, on ARM and MIPS, the
-ISA-mode bit, so a resolver decodes each target in the right mode.
+ISA-mode bit the branch commits, if any, so a resolver decodes each target in
+the right mode.
 
 A control cycle with no exit reaches no terminator, so an
 `If(true) { back edge } { Unreachable }` is seated on each to keep it valid.
@@ -100,5 +101,6 @@ A control cycle with no exit reaches no terminator, so an
 Decompiler-internal opcodes (`Insert`, `Extract`, `PtrAdd`, `PtrSub`,
 `MultiEqual`, `SegmentOp`, `Indirect`) are named errors; the opcode match is
 exhaustive. An unmapped width, a `Subpiece` offset at or past its input's
-width, an operand off its op's width (a shift count and a BOOL input excepted)
-or an unknown ABI register name fails the function's lift.
+width, an operand off its op's width (a shift count, a BOOL input and a
+`POPCOUNT` / `LZCOUNT` input excepted) or an unknown ABI register name fails
+the function's lift.

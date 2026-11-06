@@ -15,7 +15,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, value)
     }
 
-    /// Requires `output.size >= input.size`.
     pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
         let in0_size = nth_input_or_err(insn, 0)?.size;
