@@ -815,7 +815,8 @@ def int_sub(l: ValueLike, r: ValueLike) -> Pat:
     """Match integer subtraction. An `r` that is an int, `int_const(K)`, `int_const([..])`,
     `int_const_any_width(..)` or `bool_const(b)`, bare or under one `.of_width(w)`, also
     matches the folded `int_add(l, -r)`. Any other `r`, a `.capture()`d constant included,
-    matches only `int_add(l, int_neg(r))`; `int_add(l, int_const(c))` binds `-K`."""
+    matches only `int_add(l, int_neg(r))`. To capture a folded constant, match
+    `int_add(l, int_const(c))`: `c` binds `-K`."""
 def int_mul(l: ValueLike, r: ValueLike) -> Pat:
     """Match integer multiplication. Commutative."""
 def int_div(l: ValueLike, r: ValueLike) -> Pat:
