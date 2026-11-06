@@ -1377,3 +1377,40 @@ fn a_fall_through_past_a_fragment_above_the_entry_is_past_function_end() {
         );
     }
 }
+
+/// A branch into the middle of an instruction enters at that instruction,
+/// whether or not another edge also splits there.
+#[test]
+fn an_interior_target_enters_at_its_containing_instruction() {
+    // 0x1000 xor eax, eax
+    // 0x1002 mov eax, 1        (5 bytes)
+    // 0x1007 je 0x1003         interior to the mov
+    // 0x1009 ret, or jne 0x1002; ret
+    let alone = [0x31, 0xc0, 0xb8, 1, 0, 0, 0, 0x74, 0xfa, 0xc3];
+    let split_too = [0x31, 0xc0, 0xb8, 1, 0, 0, 0, 0x74, 0xfa, 0x75, 0xf7, 0xc3];
+    for bytes in [&alone[..], &split_too[..]] {
+        let cfg = build_from_bytes(bytes.to_vec(), 0x1000);
+        let graph = cfg.region_graph();
+        let je = graph
+            .node_indices()
+            .find(|&n| {
+                graph[n]
+                    .insns
+                    .last()
+                    .is_some_and(|i| i.addr.machine() == 0x1007)
+            })
+            .expect("the region ending at the je");
+        let taken = cfg.region_if(je).expect("CondBranch").if_true_region;
+        assert_eq!(
+            taken.map(|t| graph[t].start_addr.machine()),
+            Some(0x1002),
+            "{bytes:x?}: the taken edge enters at the mov, not before it",
+        );
+        let interior: Vec<_> = cfg
+            .incomplete()
+            .of(strider_cfg::Reason::InteriorTarget)
+            .map(|a| a.machine())
+            .collect();
+        assert_eq!(interior, [0x1003], "{bytes:x?}");
+    }
+}

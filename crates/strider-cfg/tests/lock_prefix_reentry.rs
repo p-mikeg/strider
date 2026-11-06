@@ -1,8 +1,7 @@
 //! An x86 branch to an address one byte into a `lock`-prefixed instruction
-//! re-enters the same instruction's decode. The edge is exact, and not
-//! reported as interior, only while the region owning those bytes STARTS at
-//! the `lock` instruction, which is glibc's `je 0f; lock; 0:` shape. An owner
-//! starting earlier runs instructions the taken path never executes.
+//! (glibc's `je 0f; lock; 0:`) re-enters the same instruction's decode. The
+//! edge enters at the `lock` instruction, split out of its region, so it is
+//! exact and not reported as interior.
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
@@ -51,20 +50,19 @@ fn a_branch_over_a_lock_prefix_its_own_region_starts_at_is_not_interior() {
 }
 
 #[test]
-fn a_branch_over_a_lock_prefix_an_earlier_region_owns_is_reported() {
-    // An instruction between the branch's fall-through and the `lock` puts the
-    // owner's start before the containing instruction, so the taken path would
-    // run that instruction too.
+fn a_branch_over_a_lock_prefix_mid_region_enters_at_the_lock_instruction() {
+    // An instruction between the branch's fall-through and the `lock`: the
+    // taken edge splits it off and enters at the `lock` instruction.
     //
     // 0x1000 je 0x1005              (74 03)
-    // 0x1002 xor %eax,%eax          (31 c0)  fall-through, and the owner's start
+    // 0x1002 xor %eax,%eax          (31 c0)
     // 0x1004 lock xadd %ecx,(%eax)  (f0 0f c1 08) -- target 0x1005
     // 0x1008 ret                    (c3)
     let cfg = build_x86(vec![0x74, 0x03, 0x31, 0xc0, 0xf0, 0x0f, 0xc1, 0x08, 0xc3]);
+    assert!(interior(&cfg).is_empty(), "{:?}", interior(&cfg));
     assert_eq!(
-        interior(&cfg),
-        vec![0x1005],
-        "an owner starting before the `lock` instruction is not an exact edge",
+        taken_start(&cfg),
+        strider_cfg::PcodeInsnAddr::at_machine_start(0x1004)
     );
 }
 
@@ -151,9 +149,9 @@ fn a_lock_reentry_report_is_independent_of_visit_order() {
 }
 
 #[test]
-fn a_lock_reentry_behind_an_earlier_instruction_is_reported_in_either_order() {
-    // As above, with `xor %eax,%eax` at 0x1004 heading the `lock` region, so
-    // neither order may call the 0x1007 re-entry benign.
+fn a_lock_reentry_behind_an_earlier_instruction_is_benign_in_either_order() {
+    // As above, with `xor %eax,%eax` at 0x1004 heading the `lock` region:
+    // either order splits at the `lock`, so the 0x1007 re-entry is benign.
     //
     // 0x1000 jne 0x100b; 0x1002 jmp 0x1007; 0x1004 xor; 0x1006 lock cmpxchg;
     // 0x100a ret; 0x100b jmp 0x1004
@@ -165,8 +163,6 @@ fn a_lock_reentry_behind_an_earlier_instruction_is_reported_in_either_order() {
         0x75, 0x09, 0xeb, 0x00, 0x31, 0xc0, 0xf0, 0x0f, 0xb1, 0x0f, 0xc3, 0xeb, 0xfa,
     ];
     for bytes in [unlocked_first, locked_first] {
-        let mut got = interior(&build_x86(bytes));
-        got.dedup();
-        assert_eq!(got, vec![0x1007]);
+        assert_eq!(interior(&build_x86(bytes)), Vec::<u64>::new());
     }
 }
