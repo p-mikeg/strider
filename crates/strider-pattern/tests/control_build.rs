@@ -11,8 +11,8 @@ use strider_ir_test_utils::{RegisterSet, mem_phi_with_two_stores};
 use strider_pattern::matcher::{KindSpec, MatcherBuilder};
 use strider_pattern::{
     Capture, CaptureExt, CastMask, MatchPat, Matcher, WithOutput, any_int_const, anything, call,
-    call_other, entry, if_else, indirect_branch, int_add, int_const, load, mem_phi, phi, region,
-    ret, store, switch, unreachable, var,
+    call_other, entry, first_of, if_else, indirect_branch, int_add, int_const, load, mem_phi,
+    one_of, phi, region, ret, store, switch, unreachable, var,
 };
 
 /// The convention a `Call` carries is not part of `call()`.
@@ -161,6 +161,70 @@ fn unreachable_captures_node() {
         function.node_kind(node),
         strider_ir::node::NodeKind::Unreachable
     ));
+}
+
+/// A capture on an output-less producer, reached through an alternation or
+/// `CaptureExt`, binds the node as the inherent `capture` does.
+#[test]
+fn a_capture_over_output_less_producers_binds_the_node() {
+    let function = return_const(7);
+    let ret_node = |hits: &[strider_pattern::Match], c| {
+        let n = hits[0].node(c, function.graph()).expect("node bound");
+        assert!(matches!(function.node_kind(n), NodeKind::Return));
+    };
+    let c = Capture::new();
+    ret_node(
+        &a::matches(&function, CaptureExt::capture(ret(), c).into_pattern(), 1),
+        c,
+    );
+    let c = Capture::new();
+    let alt = one_of![ret(), unreachable()].capture(c).into_pattern();
+    ret_node(&a::matches(&function, alt, 1), c);
+    let c = Capture::new();
+    let alt = first_of![unreachable(), ret()].capture(c).into_pattern();
+    ret_node(&a::matches(&function, alt, 1), c);
+    let c = Capture::new();
+    let nested = one_of![one_of![ret()], unreachable()]
+        .capture(c)
+        .into_pattern();
+    ret_node(&a::matches(&function, nested, 1), c);
+
+    let function = unreachable_fn();
+    let c = Capture::new();
+    a::matches(
+        &function,
+        one_of![ret(), unreachable()].capture(c).into_pattern(),
+        1,
+    );
+}
+
+/// In a mixed alternation the output-less arm binds its node and the other
+/// arm keeps binding its output.
+#[test]
+fn a_capture_over_a_mixed_alternation_keeps_both_arms() {
+    let (function, if_id) = if_then_else();
+    let c = Capture::new();
+    let hits = Matcher::new(&function)
+        .find_all(&one_of![if_else(), ret()].capture(c).into_pattern())
+        .unwrap();
+    let kinds: Vec<_> = hits
+        .iter()
+        .map(|h| {
+            function
+                .node_kind(h.node(c, function.graph()).unwrap())
+                .clone()
+        })
+        .collect();
+    let returns = kinds
+        .iter()
+        .filter(|k| matches!(k, NodeKind::Return))
+        .count();
+    assert_eq!(returns, 2, "{kinds:?}");
+    assert!(
+        hits.iter().any(
+            |h| h.value(c).is_some() && function.graph().producer(h.value(c).unwrap()) == if_id
+        )
+    );
 }
 
 fn switch_fn(addr: u64) -> strider_ir::Function {
