@@ -1248,6 +1248,13 @@ mod scaling {
         assert_near_linear("call diamonds", shapes::call_diamonds)
     }
 
+    /// Each reload's climb decides every merge by its call arm, not by
+    /// descending the skipping arm through the merges below.
+    #[test]
+    fn a_call_ladder_costs_near_linear_work() -> crate::Result<()> {
+        assert_near_linear("call ladder", shapes::call_ladder)
+    }
+
     #[test]
     fn an_accumulator_loop_costs_near_linear_work() -> crate::Result<()> {
         assert_near_linear("accumulator loop", shapes::accumulator_loop)

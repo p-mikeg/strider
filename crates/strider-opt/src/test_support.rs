@@ -310,6 +310,41 @@ pub(crate) mod memory_shapes {
         })
     }
 
+    /// GCC's jump-threaded `n` times `if (c) call();`: a hot chain of tests
+    /// and a cold chain of calls, each call's block testing again, so every
+    /// test and call block merges the two and its dominator is the entry.
+    /// Then reloads of `n` distinct slots, so no reload's memo serves another.
+    pub(crate) fn call_ladder(n: usize) -> crate::Result<strider_ir::Function> {
+        shape(|b| {
+            let hot = (0..=n)
+                .map(|_| b.create_region_all())
+                .collect::<Result<Vec<_>, _>>()?;
+            let cold = (0..n)
+                .map(|_| b.create_region_all())
+                .collect::<Result<Vec<_>, _>>()?;
+            b.build_branch(hot[0])?;
+            for i in 0..n {
+                b.set_region(hot[i]);
+                let cond = b.build_boolean_const(true);
+                b.build_if(cond, cold[i], hot[i + 1])?;
+                b.set_region(cold[i]);
+                let target = b.build_int_const(0x1000u64, TY)?;
+                b.build_call(target, &[], &[], 0)?;
+                if i + 1 < n {
+                    let cond = b.build_boolean_const(true);
+                    b.build_if(cond, cold[i + 1], hot[i + 1])?;
+                } else {
+                    b.build_branch(hot[n])?;
+                }
+            }
+            b.set_region(hot[n]);
+            for i in 0..n {
+                read(b, i)?;
+            }
+            Ok(())
+        })
+    }
+
     /// One loop whose body updates each of `n` accumulators from the next.
     pub(crate) fn accumulator_loop(n: usize) -> crate::Result<strider_ir::Function> {
         shape(|b| {
