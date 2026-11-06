@@ -649,32 +649,68 @@ fn check_memory_order(
         found
     };
 
-    // Whether `memory`, stepped back through `Store`s, reaches `token`;
-    // memoized per `Store` for the last token it reached.
-    let mut reaches: SecondaryMap<NodeId, Option<ValueId>> = SecondaryMap::new();
+    // Whether `memory`, stepped back through `Store`s, reaches `token`. A
+    // Store's depth is its count of Stores down to the chain's base, so a walk
+    // stops at `token`'s depth; `jump` skips to a token a Store already reached.
+    let mut sdepth: SecondaryMap<NodeId, Option<u32>> = SecondaryMap::new();
+    {
+        let mut chain = Vec::new();
+        for node in &ctx.live {
+            let mut producer = node;
+            let mut d = 0;
+            while matches!(graph.node_kind(producer), NodeKind::Store(_)) {
+                if let Some(k) = sdepth[producer] {
+                    d = k;
+                    break;
+                }
+                chain.push(producer);
+                producer = graph.producer(
+                    graph
+                        .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                        .expect("mem"),
+                );
+            }
+            for st in chain.drain(..).rev() {
+                d += 1;
+                sdepth[st] = Some(d);
+            }
+        }
+    }
+    let vdepth = |v: ValueId, sdepth: &SecondaryMap<NodeId, Option<u32>>| {
+        let p = graph.producer(v);
+        if matches!(graph.node_kind(p), NodeKind::Store(_)) {
+            sdepth[p].unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    let mut jump: SecondaryMap<NodeId, Option<ValueId>> = SecondaryMap::new();
     let mut walked: Vec<NodeId> = Vec::new();
     let mut builds_on = |memory: ValueId, token: ValueId| {
+        let td = vdepth(token, &sdepth);
         let mut value = memory;
         let found = loop {
             if value == token {
                 break true;
             }
-            let producer = graph.producer(value);
-            if !matches!(graph.node_kind(producer), NodeKind::Store(_)) {
+            if vdepth(value, &sdepth) <= td {
                 break false;
             }
-            if reaches[producer] == Some(token) {
-                break true;
-            }
+            let producer = graph.producer(value);
             walked.push(producer);
-            value = graph
-                .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
-                .expect("a Store has memory");
+            value = match jump[producer] {
+                Some(u) if vdepth(u, &sdepth) >= td => u,
+                _ => graph
+                    .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                    .expect("a Store has memory"),
+            };
         };
-        for store in walked.drain(..) {
-            if found {
-                reaches[store] = Some(token);
+        if found {
+            for store in walked.drain(..) {
+                jump[store] = Some(token);
             }
+        } else {
+            walked.clear();
         }
         found
     };
@@ -743,35 +779,11 @@ fn check_memory_order(
         }
     }
 
-    // How many `Store`s a token's chain steps through, memoized per `Store`.
-    let mut store_depth: SecondaryMap<NodeId, Option<u32>> = SecondaryMap::new();
-    let mut chain: Vec<NodeId> = Vec::new();
-    let mut depth = |value: ValueId| {
-        let mut producer = graph.producer(value);
-        let mut depth = 0;
-        while matches!(graph.node_kind(producer), NodeKind::Store(_)) {
-            if let Some(known) = store_depth[producer] {
-                depth = known;
-                break;
-            }
-            chain.push(producer);
-            producer = graph.producer(
-                graph
-                    .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
-                    .expect("a Store has memory"),
-            );
-        }
-        for store in chain.drain(..).rev() {
-            depth += 1;
-            store_depth[store] = Some(depth);
-        }
-        depth
-    };
-    reads.sort_by_cached_key(|&(_, token)| std::cmp::Reverse(depth(token)));
+    reads.sort_by_key(|&(_, token)| std::cmp::Reverse(vdepth(token, &sdepth)));
 
     // Each call floods the control nodes it reaches before an effect, deepest
     // token first, so a node an earlier flood claimed needs only its claimer's
-    // token to build on this one. Every node is expanded once.
+    // token to build on this one. A node is expanded once per claim.
     let mut claimed: SecondaryMap<NodeId, Option<ValueId>> = SecondaryMap::new();
     let mut stack: Vec<NodeId> = Vec::new();
     for &(call, token) in &reads {
