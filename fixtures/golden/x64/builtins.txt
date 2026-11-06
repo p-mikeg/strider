@@ -276,7 +276,7 @@ cfg
   0x4011f6.2 3 ops cbranch 0x4011f6.9 -> [0x4011f6.5, 0x4011f6.9]
   0x4011f6.5 4 ops goto -> [0x4011f6.2]
   0x4011f6.9 7 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x59400:4, u:0x59500:1, u:0x59600:1, u:0x356400:4, u:0x356500:4, u:0x356600:4, u:0x356700:1, u:0x356900:4]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x59400:4, u:0x59500:1, u:0x59600:1, u:0x357500:4, u:0x357600:4, u:0x357700:4, u:0x357800:1, u:0x357a00:4]
 arg 0 [%v1]
 arg 2 [%v19]
 float_arg 0 [%v20]
@@ -286,8 +286,8 @@ float_arg 1 [%v21]
 %v2:i32 = truncate %v1
 
 %v3:ctrl, %v4:token = region %v0, %v11
-%v5:i32<u:0x356500:4> = phi %v4, %v2, %v15
-%v6:i32<u:0x356400:4> = phi %v4, %v9, %v16
+%v5:i32<u:0x357600:4> = phi %v4, %v2, %v15
+%v6:i32<u:0x357500:4> = phi %v4, %v9, %v16
 %v7:i32 = iconst[0x1]
 %v8:i32 = int.and %v5, %v7
 %v9:i32 = iconst[0x0]
