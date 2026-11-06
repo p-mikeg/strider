@@ -13,10 +13,8 @@
 pub(crate) mod classify;
 pub(crate) mod orchestrator;
 
-// Each integration test compiles this module independently and uses only a
-// subset of the helpers, so the rest read as unused re-exports. The
-// definitions in the `classify` / `orchestrator` sub-modules stay subject to
-// dead-code analysis.
+// Each integration test uses a subset of these helpers, so the re-exports are
+// `allow(unused_imports)`.
 #[allow(unused_imports)]
 pub(crate) use classify::{
     build_bx_lr_scenario, build_initial_var_target_scenario_x86_64,
@@ -26,4 +24,4 @@ pub(crate) use classify::{
     build_push_target_pop_pc_scenario, build_stack_array_dispatch_scenario,
 };
 #[allow(unused_imports)]
-pub(crate) use orchestrator::{run_pipeline_x86_64, target_value_input};
+pub(crate) use orchestrator::target_value_input;

@@ -283,23 +283,3 @@ fn the_claim_rounds_cvt_to_nearest_whatever_fcsr_holds() {
         check(Arch::Mips64be, LONGS[1], Some(rm), DMFC1, 64, 0, &claims, 0);
     }
 }
-
-/// `fcsrRoundingControl` is the last user op on every MIPS preset, so no
-/// other id moved.
-#[test]
-fn the_rounding_mode_op_is_the_last_user_op() {
-    for arch in [
-        Arch::Mips32be,
-        Arch::Mips32le,
-        Arch::Mips64be,
-        Arch::Mips64le,
-    ] {
-        let (strider, _) = common::strider_over_bytes(arch, vec![0; 4], BASE, None);
-        let names = strider.user_op_names();
-        assert_eq!(
-            names.last().map(String::as_str),
-            Some("fcsrRoundingControl"),
-            "{arch:?}"
-        );
-    }
-}

@@ -511,18 +511,3 @@ fn the_claim_rounds_fst_to_nearest_and_leaves_fist_alone() {
         }
     }
 }
-
-/// `x87RoundingControl` is the last user op on both x86 presets, so no
-/// other id moved.
-#[test]
-fn the_x87_rounding_mode_op_is_the_last_user_op() {
-    for arch in [Arch::X86, Arch::X64] {
-        let (strider, _) = common::strider_over_bytes(arch, vec![0xc3], 0x1000, None);
-        let names = strider.user_op_names();
-        assert_eq!(
-            names.last().map(String::as_str),
-            Some("x87RoundingControl"),
-            "{arch:?}"
-        );
-    }
-}

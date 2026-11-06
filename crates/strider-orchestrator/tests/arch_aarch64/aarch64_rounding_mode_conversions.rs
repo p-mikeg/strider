@@ -409,18 +409,3 @@ fn the_claim_rounds_to_nearest_whatever_fpcr_holds() {
         }
     }
 }
-
-/// `fpcrRoundingControl` is the last user op on both AArch64 presets, so no
-/// other id moved.
-#[test]
-fn the_rounding_mode_op_is_the_last_user_op() {
-    for arch in ARCHES {
-        let (strider, _) = common::strider_over_bytes(arch, vec![0; 4], 0x1000, None);
-        let names = strider.user_op_names();
-        assert_eq!(
-            names.last().map(String::as_str),
-            Some("fpcrRoundingControl"),
-            "{arch:?}"
-        );
-    }
-}

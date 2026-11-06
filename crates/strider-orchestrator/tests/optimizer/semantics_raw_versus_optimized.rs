@@ -632,35 +632,13 @@ fixture_sweeps! {
     every_ppc64le_function_survives_the_pipeline => Ppc64le, 88, ServingGot,
 }
 
-/// Arches the sweep leaves out, each with the reason.
-const NOT_SWEPT: &[(Arch, &str)] = &[];
-
 #[test]
 fn the_sweep_covers_every_fixture_arch() {
-    for (i, &(arch, _)) in NOT_SWEPT.iter().enumerate() {
-        assert!(
-            common::ALL_ARCHES.contains(&arch),
-            "{}: not a fixture arch",
-            arch.name()
-        );
-        assert!(
-            NOT_SWEPT[..i].iter().all(|&(a, _)| a != arch),
-            "{}: listed twice in NOT_SWEPT",
-            arch.name()
-        );
-    }
     for &arch in common::ALL_ARCHES {
-        let rows = SWEPT.iter().filter(|&&a| a == arch).count();
-        assert!(
-            rows <= 1,
-            "{}: listed twice in fixture_sweeps!",
-            arch.name()
-        );
-        let swept = rows == 1;
-        let excluded = NOT_SWEPT.iter().any(|&(a, _)| a == arch);
-        assert!(
-            swept != excluded,
-            "{}: must be in exactly one of SWEPT and NOT_SWEPT",
+        assert_eq!(
+            SWEPT.iter().filter(|&&a| a == arch).count(),
+            1,
+            "{}: must be in fixture_sweeps! exactly once",
             arch.name()
         );
     }

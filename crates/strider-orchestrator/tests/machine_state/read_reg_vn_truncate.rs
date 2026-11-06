@@ -5,11 +5,8 @@ use crate::common::*;
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
 
-/// `f32_arith(float, float)` performs four float binary ops (+-x/) via
-/// soft-float library calls (ARM/MIPS without FPU) or native FP
-/// instructions (hardware-FPU arches). Hardware-FPU arches aren't part of
-/// this guard: ConstantFold collapses the register-merge chain before the
-/// FloatBinaryOp assertion would apply.
+/// `f32_arith`'s four float ops lift to `FloatBinaryOp`s (hardware FPU) or
+/// library calls (soft-float).
 fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
     assert!(count_returns(function) >= 1, "f32_arith must have a Return");
 
@@ -47,14 +44,12 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
 }
 
 // An untruncated sub-register read fails IR validation here with
-// "Typed(I64), expected AnyInt(I32)" from IntBitsToFloat's signature.
-
-// PPC FPRs (f0-f31) are natively 8 bytes, the whole register being the only
-// view of it, so the I32-input assertion doesn't apply: PPC correctly produces
-// I64 there, which the assertion would reject.
-per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid, ignore = {
-    Ppc32be: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
-    Ppc32le: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
-    Ppc64be: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
-    Ppc64le: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
-});
+// "Typed(I64), expected AnyInt(I32)" from IntBitsToFloat's signature. PPC
+// FPRs are natively 8 bytes, so PPC rightly produces I64 there.
+#[test]
+fn f32_arith_truncates_sub_register_reads() {
+    let ppc = [Arch::Ppc32be, Arch::Ppc32le, Arch::Ppc64be, Arch::Ppc64le];
+    for &arch in ALL_ARCHES.iter().filter(|a| !ppc.contains(a)) {
+        f32_arith_graph_is_valid(&analyze(arch, "floats", "f32_arith"));
+    }
+}

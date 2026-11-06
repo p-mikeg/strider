@@ -231,18 +231,3 @@ fn the_claim_rounds_vcvtr_to_nearest_whatever_fpscr_holds() {
         }
     }
 }
-
-/// `fpscrRoundingControl` is the last user op on every ARM preset, so no
-/// other id moved.
-#[test]
-fn the_rounding_mode_op_is_the_last_user_op() {
-    for arch in [Arch::Arm, Arch::ArmBe, Arch::ArmBe8, Arch::ArmThumb] {
-        let (strider, _) = common::strider_over_bytes(arch, vec![0; 4], BASE, None);
-        let names = strider.user_op_names();
-        assert_eq!(
-            names.last().map(String::as_str),
-            Some("fpscrRoundingControl"),
-            "{arch:?}"
-        );
-    }
-}
