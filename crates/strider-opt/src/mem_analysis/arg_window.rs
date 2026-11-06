@@ -41,7 +41,8 @@ impl ArgPrefix {
         let mem = function
             .memory_input_of(call)
             .expect("a Call has a memory input");
-        // The arity is unknown, so the window is `[first slot, inf)`.
+        // The arity is unknown: probe everything from the first slot up (on
+        // the address ring, every offset from `base`).
         let mut scan = ArgStoreScan::new(
             function,
             query,

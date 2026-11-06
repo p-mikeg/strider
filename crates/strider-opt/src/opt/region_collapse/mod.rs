@@ -1,6 +1,6 @@
 //! Collapses a `Region` with exactly one control input: its control output is
 //! replaced by that input, every phi over it by the phi's single value input,
-//! and the Region is killed (culling never reaches it).
+//! and the Region is killed (it is never culled).
 //!
 //! An unreachable `Region` is skipped: its sole predecessor can be its own
 //! `If`, and collapsing a phi there builds a data cycle.

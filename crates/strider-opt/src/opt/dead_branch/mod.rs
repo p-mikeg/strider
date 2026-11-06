@@ -2,9 +2,8 @@
 //! dispatch address: the live control output is replaced with the branch's
 //! control input, and the branch (side-effecting, so never culled) is killed.
 //!
-//! A fold leaves joins fed by the dead arm, which stay reachable through
-//! their phis; every run strips each join's predecessor slots entry no longer
-//! reaches.
+//! A fold leaves joins with dead predecessor slots; every run strips the
+//! slots entry no longer reaches, with their phi inputs.
 
 use entity_utils::DenseEntitySet;
 use strider_ir::node::{NodeId, NodeKind, ValueId};

@@ -11,7 +11,8 @@
 //! The CFG test also runs each pass alone, validating its output.
 //!
 //! Environment: `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS`
-//! nodes per DAG, and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone.
+//! nodes per DAG, and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone in the DAG
+//! test.
 
 use crate::post_opt::indirect_branch_resolve::index_range;
 use rustc_hash::FxHashMap;
