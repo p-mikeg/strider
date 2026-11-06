@@ -63,7 +63,7 @@ where
 ///
 /// Sreedhar-Gao over the DJ graph: each def's dominator subtree is walked
 /// deepest def first, and a join edge into a node no deeper than the def is
-/// in the IDF. `O(N + E)` per variable, no frontier is built.
+/// in the IDF. `O(N log N + E)` per variable; no frontier is built.
 ///
 /// Returns, per node, the variables needing a phi there.
 #[must_use]

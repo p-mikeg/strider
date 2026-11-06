@@ -123,8 +123,7 @@ fn split_succs(graph: &Graph, a: CtrlKey) -> SmallVec<[CtrlKey; 2]> {
                 .value_uses(value)
                 .map(|(succ, _)| CtrlKey::Node(succ))
                 .collect();
-            // Zero consumers would make every query past it answer `false`;
-            // the validator rejects that as `UnusedControlOutput`.
+            // Valid IR gives each control edge exactly one consumer.
             debug_assert_eq!(
                 succs.len(),
                 1,

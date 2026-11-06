@@ -14,8 +14,7 @@ mod tests;
 
 pub type NodeIdSet = DenseEntitySet<NodeId>;
 
-/// The CFG skeleton: only `Control` edges are followed, so the result holds
-/// control-flow nodes alone.
+/// The control nodes `entry` reaches over `Control` edges.
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
     let mut walk = PreOrder::new(FnSuccs::new(|n| cfg_succs(graph, n)), iter::once(entry));
     walk.by_ref().for_each(drop);
@@ -96,8 +95,9 @@ pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item =
         .map(|(succ, _use_idx)| succ)
 }
 
-/// Input producers first, then control consumers; a dead control
-/// predecessor is reached through the live node using it.
+/// Pushes input producers, then control consumers (so `PreOrder` visits
+/// consumers first); a dead control predecessor is reached through the live
+/// node using it.
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
