@@ -14,15 +14,8 @@ fn validate_rejects_sp_in_arg_passing_regs() {
     let sp = vn(0x40);
     let cc = BuiltCallingConvention {
         arg_passing_regs: vec![vn(0x10), sp, vn(0x20)],
-        callee_saved_regs: vec![],
         ret_val_regs: vec![vn(0x18)],
-        ret_val_regs_float: vec![],
         stack_ptr: sp,
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     };
     let res = cc.validate();
@@ -76,14 +69,7 @@ fn validate_rejects_arg_overlapping_callee_saved() {
     let cc = BuiltCallingConvention {
         arg_passing_regs: vec![shared],
         callee_saved_regs: vec![shared],
-        ret_val_regs: vec![],
-        ret_val_regs_float: vec![],
         stack_ptr: vn(0x40),
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     };
     let res = cc.validate();
@@ -107,11 +93,6 @@ fn validate_rejects_ret_int_overlapping_ret_float() {
         ret_val_regs: vec![shared],
         ret_val_regs_float: vec![shared],
         stack_ptr: vn(0x40),
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     };
     let res = cc.validate();
@@ -129,13 +110,7 @@ fn validate_accepts_clean_layout() {
         arg_passing_regs: vec![vn(0x10), vn(0x18)],
         callee_saved_regs: vec![vn(0x20)],
         ret_val_regs: vec![vn(0x28)],
-        ret_val_regs_float: vec![],
         stack_ptr: vn(0x40),
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     }
     .validate()

@@ -33,20 +33,11 @@ fn test_addr() -> strider_cfg::PcodeInsnAddr {
 /// Struct-literal construction skips ABI-disjointness validation, fine here.
 pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
     strider_target::BuiltCallingConvention {
-        arg_passing_regs: Vec::new(),
-        callee_saved_regs: Vec::new(),
-        ret_val_regs: Vec::new(),
-        ret_val_regs_float: Vec::new(),
         stack_ptr: Vn {
             size: 4,
             addr_off: 0x9000,
             addr_space: VnSpace::REGISTER,
         },
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     }
 }

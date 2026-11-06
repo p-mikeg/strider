@@ -11,16 +11,9 @@ fn make_cc(
     stack_vn: Vn,
 ) -> strider_target::BuiltCallingConvention {
     strider_target::BuiltCallingConvention {
-        arg_passing_regs: Vec::new(),
         callee_saved_regs,
         ret_val_regs,
-        ret_val_regs_float: Vec::new(),
         stack_ptr: stack_vn,
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     }
 }
