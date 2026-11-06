@@ -229,7 +229,7 @@ class Function:
         """The single `Match` for `pat` after dedup, else `StriderError`.
         Arguments as in `find_all`, so an ambiguous commutative capture
         raises; pin it with `.ordered()`. With `ignore_root=True` a pattern
-        binding no captures succeeds on any number of occurrences, returning
+        binding no captures succeeds on one or more occurrences, returning
         an arbitrary one."""
         ...
     def find_unique_value(
