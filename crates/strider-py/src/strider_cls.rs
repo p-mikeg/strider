@@ -61,7 +61,11 @@ fn build_cc(
     match &cc.inner {
         crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
             into_strider_err(match addr {
-                None => e,
+                None => e.context(format!(
+                    "calling convention {} does not fit the {} register table",
+                    cc.name(),
+                    target.preset().name()
+                )),
                 Some(addr) => e.context(format!("per-address CC at {addr:#x} unresolved")),
             })
         }),
