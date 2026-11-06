@@ -81,8 +81,8 @@ Generic:
   `EntityInterner`, `UnionDag`). Prefer these over `std` sets and maps keyed
   by `NodeId` / `ValueId`.
 - `graph-algorithms`: traversal (`walk`) and dominance (Lengauer-Tarjan,
-  frontiers, dominator-tree preorder, iterated-DF phi placement). The
-  brute-force `oracle` is behind `test-util`.
+  interval numbering, dominator-tree preorder, Sreedhar-Gao phi placement).
+  Frontiers and the brute-force `oracle` are behind `test-util`.
 - `strider-graph`: the payload-agnostic bipartite sea-of-nodes
   `Graph<N, V, C: NodeCacheable<N, V>>`; dedup lives in the `C` policy.
 - `read-only-memory`: the `ReadOnlyMemory` trait.
