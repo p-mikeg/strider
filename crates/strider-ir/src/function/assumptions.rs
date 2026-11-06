@@ -97,7 +97,8 @@ claims! {
         pub stack_global_disjoint: bool = true,
         /// A `Call` leaves the incoming stack-argument slots as it found them. Decides only
         /// which loads are incoming arguments, never a memory edge; any call blocks once an
-        /// address into the area escapes, but one spilled and reloaded is missed. Default on.
+        /// address into the area escapes, but one rebuilt from a reloaded frame address below
+        /// it is missed. Default on.
         /// Needs [`reg_args_adjoin_stack_args`](strider_target::BuiltCallingConvention::reg_args_adjoin_stack_args)
         /// where register arguments adjoin the stack ones.
         pub assume_incoming_args_survive_calls: bool = true,
