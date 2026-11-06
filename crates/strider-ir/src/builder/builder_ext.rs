@@ -30,6 +30,8 @@ pub trait IRBuilderExt: IRBuilder {
 
     /// No-op when `value_id` is no wider than `output_type`.
     fn truncate_if_needed(&mut self, value_id: ValueId, output_type: ValueType) -> Result<ValueId> {
+        require_integer_value(self.function(), value_id)?;
+        require_integer_type(output_type)?;
         let curr_output_type = self.value_type(value_id)?;
 
         if curr_output_type.bit_width() <= output_type.bit_width() {
