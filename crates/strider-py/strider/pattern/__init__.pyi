@@ -789,7 +789,8 @@ def function_arg_reg(vn: Vn) -> FunctionArgPat:
     it."""
 def function_arg_stack(space: VnSpace, offset: int) -> FunctionArgPat:
     """Match a function argument arriving on the stack at `(space,
-    offset)`."""
+    offset)`. Only slots up to the first unread one are arguments (see
+    `FunctionArgDetect`)."""
 def phi() -> PhiPat:
     """Start a value-phi pattern builder."""
 def phi_for(vn: Vn) -> PhiPat:
