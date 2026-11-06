@@ -7,7 +7,6 @@
 use crate::common;
 
 use crate::common::Arch;
-use strider_ir::IRViewer;
 
 const BASE: u64 = 0x1000;
 const SEED: u64 = 0x1122_3344_5566_7788;
@@ -26,21 +25,7 @@ const MOVABS_RBX: u8 = 0xbb;
 
 /// The constant folded into return slot 0 of `arch`'s calling convention.
 fn returned_const(arch: Arch, bytes: Vec<u8>) -> u128 {
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
-        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
-    );
-    let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, Some(rom));
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
-    let v = common::returned(&f)[0];
-    f.int_const_u128(v).unwrap_or_else(|| {
-        panic!(
-            "return slot 0 did not fold: {:?}",
-            f.node_kind(f.producer(v))
-        )
-    })
+    common::folded_return(arch, bytes, BASE)
 }
 
 fn x64(parts: &[&[u8]]) -> u128 {

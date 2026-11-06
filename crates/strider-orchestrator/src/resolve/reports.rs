@@ -127,7 +127,7 @@ pub(super) fn caller_seeded_return(settled: &SiteTable<'_>, site: PcodeInsnAddr)
     matches!(settled.seed(site), Some(ResolvedTargets::LinkRegister))
 }
 
-/// The two non-placeholder channels `live_unresolved_branches` merges.
+/// The derived reasons a site is unresolved, besides a live placeholder.
 #[derive(Clone, Copy)]
 pub(super) struct DerivedChannels<'a> {
     /// Sites still growing when the iteration cap ran out.

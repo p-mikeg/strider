@@ -5,11 +5,6 @@
 //! Reading only the low doubleword, or truncating the count to the lane
 //! width, would turn a huge count into a small one or zero.
 
-use rsleigh::mem_readers::BufMemReader;
-use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
-use strider_target::{CallingConvention, SleighArch};
-
 const BASE: u64 = 0x1000;
 /// Where the shifted vector and the count vector sit, reached rip-relative.
 const VALUE_AT: usize = 0x20;
@@ -78,28 +73,7 @@ fn operands(mut v: Vec<u8>, value: u128, count: u128) -> Vec<u8> {
 
 /// The constant left in `rax`, which is return value slot 0 under System V.
 fn returned_rax(bytes: Vec<u8>) -> u128 {
-    let arch = SleighArch::x86_64();
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
-        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
-    );
-    let mut strider =
-        strider_orchestrator::Strider::new(arch, BufMemReader::new(bytes, BASE), Some(rom))
-            .expect("strider");
-    let cc = CallingConvention::x86_64_systemv()
-        .build(strider.sleigh_regs())
-        .expect("cc");
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
-    let ret = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
-        .expect("one Return");
-    // Return inputs: Control, Memory, then one per return register.
-    let rax = f.node_inputs(ret).into_iter().nth(2).expect("rax slot");
-    f.int_const_u128(rax)
-        .unwrap_or_else(|| panic!("rax did not fold: {:?}", f.node_kind(f.producer(rax))))
+    crate::common::folded_return(crate::common::Arch::X64, bytes, BASE)
 }
 
 /// `count >= 64` empties a quadword lane whatever the count's magnitude.

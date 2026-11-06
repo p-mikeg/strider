@@ -11,9 +11,6 @@
 
 use crate::common;
 
-use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
-
 const BASE: u64 = 0x1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,18 +113,7 @@ fn reference(
 
 /// The constant left in `rax`.
 fn returned_rax(bytes: Vec<u8>) -> u128 {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
-    let ret = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
-        .expect("one Return");
-    let rax = f.node_inputs(ret).into_iter().nth(2).expect("rax slot");
-    f.int_const_u128(rax)
-        .unwrap_or_else(|| panic!("rax did not fold: {:?}", f.node_kind(f.producer(rax))))
+    common::folded_return(common::Arch::X64, bytes, BASE)
 }
 
 fn check(op: Op, counts: &[Count]) {
