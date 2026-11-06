@@ -3,7 +3,7 @@
 Strider answers questions about a compiled function without source or debug
 symbols: write a pattern in Python, get back every place it matches. The
 [README](../README.md#quickstart) shows this end to end; this page maps the
-pipeline.
+pipeline. New since 0.1.0: [README](../README.md#whats-new-since-010).
 
 ## How it works
 

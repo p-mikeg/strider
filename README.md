@@ -47,23 +47,24 @@ strider.explore.shutdown(port)
 
 ## What's new since 0.1.0
 
-[CHANGELOG.md](CHANGELOG.md) has the details, breaking changes first.
+Releases 0.2.0 and 0.3.0. [CHANGELOG.md](CHANGELOG.md) has the details,
+breaking changes first.
 
-- **Inputs.** Unlinked `.o` files, ppc64 ELFv1, symbols for a stripped image
-  (`add_symbol_file`, `add_symbols`), GCC `.cold` fragments, and
-  `load_elf(relocated_got_is_rom=True)` to fold loads through the GOT and
-  `.data.rel.ro` (PIC jump tables need it).
+- **Inputs.** ppc64 ELFv1 (`.opd` descriptors, `r2` set to the TOC on entry),
+  symbols for a stripped image (`add_symbol_file`, `add_symbols`), GCC
+  `.cold` fragments, ARM / AArch64 `$d` literal pools left undecoded, `.o`
+  files linked at a synthetic base, and `load_elf(relocated_got_is_rom=True)`
+  to fold loads through the GOT and `.data.rel.ro` (PIC jump tables need it).
 - **Completeness.** `cfg.incomplete`: every address the analysis cannot vouch
   for, and why.
 - **Mixed ISAs.** ARM/Thumb and MIPS16 code decodes in the mode its edge
   carries.
 - **Your own answers.** Branch targets, no-return callees, data ranges and
-  user-op ABIs (`CfgOptions`); per-callee conventions
-  (`LifterOptions(per_address_ccs=...)`, with `cc.preserves_all()` /
-  `preserves_regs()`), needed for a callee-cleanup `ret $imm16` or a PC thunk;
+  user-op ABIs (`CfgOptions`); `cc.preserves_all()` / `preserves_regs()` for
+  a `per_address_ccs` callee (a callee-cleanup `ret $imm16`, a PC thunk);
   target presets (`SleighArch.preset`, `CallingConvention.preset`).
-- **Kernels.** `*_linux_kernel` calling conventions; `load_elf` picks the
-  PowerPC ones from the entry address.
+- **Kernels.** PowerPC `*_linux_kernel` conventions, which `load_elf` picks
+  from the entry address.
 - **Assumptions.** `AssumptionOptions`: nine claims the analysis cannot check,
   five on by default; `none()` is the sound floor.
 - **Queries.** `one_of` / `first_of` in any slot, `field`, `code_ptr`, joins
@@ -72,11 +73,16 @@ strider.explore.shutdown(port)
 - **Tooling.** `Function.optimize`, `Function.to_text`, a background explorer,
   and handles usable from any thread.
 
+New in 0.3.0: `Function.optimize`, the `preset` constructors, constants past
+128 bits, handles usable from any thread, `.cold` fragments and the ELFv1 TOC
+on entry; see the [0.3.0 section](CHANGELOG.md#030-unreleased).
+
 ## Upgrading
 
 Most renames and removals raise, and [CHANGELOG.md](CHANGELOG.md) says how to
 port each. Its [0.3.0 section](CHANGELOG.md#breaking-python) opens with the
-changes that alter an answer without an error. From 0.1.0, these do too:
+changes that alter an answer without an error. From 0.1.0, these 0.2.0
+changes do too:
 
 - `ConstantFold` turns `x + x*2` into `x*3`, and a `Call`'s outputs are
   numbered per clobbered register.
