@@ -82,8 +82,8 @@ strider.explore.shutdown(port)
   address.
 - `AssumptionOptions`: the claims the analysis cannot check; `none()` is the
   sound floor.
-- Queries: `one_of` / `first_of` in any slot, `field`, `code_ptr`, joins and
-  `JoinPredicate`, heap / non-stack filters, float and stack arguments.
+- Queries: `first_of`, alternation in any slot, `field`, `code_ptr`, joins
+  and `JoinPredicate`, heap / non-stack filters, float and stack arguments.
 - `Function.to_text` and a background explorer.
 
 ## Upgrading
