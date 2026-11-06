@@ -1550,6 +1550,132 @@ fn memory_order_non_clobbering_call_other_validates() {
     validate(&s.f).expect("a non-clobbering CallOther is no memory effect");
 }
 
+/// `Store -> CallOther -> Return` where the non-clobbering `CallOther` reads
+/// the `Store` and the `Return` takes the token from before it.
+#[test]
+fn memory_order_return_behind_a_non_clobbering_call_other_is_rejected() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
+    stamp(&mut s.f, addr_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let op = s.f.graph_mut().create_node(
+        NodeKind::CallOther { user_op_id: 0 },
+        [s.entry_ctrl, st_mem],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, op);
+    let [op_ctrl, _] = s.f.node_outputs_exact::<2>(op).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [op_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
+            if *node == ret && *effect == op),
+        "{errs:?}"
+    );
+}
+
+/// The same behind a memory-preserving `Call`.
+#[test]
+fn memory_order_return_behind_a_preserving_call_is_rejected() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
+    stamp(&mut s.f, addr_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let (call, [call_ctrl, _]) = call(&mut s.f, s.entry_ctrl, st_mem);
+    let cc = strider_target::BuiltCallingConvention {
+        preserves_memory: true,
+        ..Default::default()
+    };
+    s.f.set_call_cc(call, cc);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [call_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
+            if *node == ret && *effect == call),
+        "{errs:?}"
+    );
+}
+
+/// A `MemPhi` arm from before the token a non-clobbering `CallOther` on its
+/// edge read.
+#[test]
+fn memory_order_mem_phi_arm_behind_a_non_clobbering_call_other_is_rejected() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
+    stamp(&mut s.f, addr_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let op = s.f.graph_mut().create_node(
+        NodeKind::CallOther { user_op_id: 0 },
+        [then_edge, st_mem],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, op);
+    let [op_ctrl, _] = s.f.node_outputs_exact::<2>(op).unwrap();
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [op_ctrl, else_edge],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, token] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let mem_phi = s.f.graph_mut().create_node(
+        NodeKind::MemPhi,
+        [token, s.mem_value, st_mem],
+        [ValueKind::Memory],
+    );
+    let [merged] = s.f.node_outputs_exact::<1>(mem_phi).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [merge_ctrl, merged], []);
+    stamp(&mut s.f, ret);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
+            if *node == mem_phi && *effect == op),
+        "{errs:?}"
+    );
+}
+
+/// A `Store` after a non-clobbering `CallOther` builds on its input token.
+#[test]
+fn memory_order_store_past_a_non_clobbering_call_other_validates() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
+    stamp(&mut s.f, addr_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let op = s.f.graph_mut().create_node(
+        NodeKind::CallOther { user_op_id: 0 },
+        [s.entry_ctrl, st_mem],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, op);
+    let [op_ctrl, _] = s.f.node_outputs_exact::<2>(op).unwrap();
+    let (_, st2_mem) = store(&mut s.f, st_mem, addr, addr);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [op_ctrl, st2_mem], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f).expect("a Store chain on the CallOther's token");
+}
+
 /// Builds `kind(IntConst:in_ty) -> out_ty` into a returned spine and asserts
 /// the validator rejects it as a width-direction violation.
 fn assert_width_direction_rejected(

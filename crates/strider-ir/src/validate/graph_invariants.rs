@@ -537,8 +537,10 @@ pub(super) fn check_function_invariants_memory_linearity(
 /// A control node's state is the nearest dominating memory effect: the entry,
 /// a `Region` with a `MemPhi` on the chain, a non-memory-preserving `Call`, or
 /// a `Call` / `CallOther` on the chain. A memory input, stepped back through
-/// `Store`s, must reach the state before its consumer. A `MemPhi` arm must be
-/// its edge's state; at a `Region` with no `MemPhi`, every live edge carries
+/// `Store`s, must reach the state before its consumer. A non-effect `Call` /
+/// `CallOther` passes its input token on: a memory read it dominates before
+/// the next effect must reach that token through `Store`s. A `MemPhi` arm must
+/// be its edge's state; at a `Region` with no `MemPhi`, every live edge carries
 /// its immediate dominator's state.
 fn check_memory_order(
     ctx: &ScheduleContext<'_>,
@@ -649,9 +651,41 @@ fn check_memory_order(
         found
     };
 
+    // Whether `memory`, stepped back through `Store`s, reaches `token`;
+    // memoized per `Store` for the last token it reached.
+    let mut reaches: SecondaryMap<NodeId, Option<ValueId>> = SecondaryMap::new();
+    let mut walked: Vec<NodeId> = Vec::new();
+    let mut builds_on = |memory: ValueId, token: ValueId| {
+        let mut value = memory;
+        let found = loop {
+            if value == token {
+                break true;
+            }
+            let producer = graph.producer(value);
+            if !matches!(graph.node_kind(producer), NodeKind::Store(_)) {
+                break false;
+            }
+            if reaches[producer] == Some(token) {
+                break true;
+            }
+            walked.push(producer);
+            value = graph
+                .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                .expect("a Store has memory");
+        };
+        for store in walked.drain(..) {
+            if found {
+                reaches[store] = Some(token);
+            }
+        }
+        found
+    };
+
     // Pre-order with a stack of ancestors: the top that dominates a node is its
-    // immediate dominator.
+    // immediate dominator. `read` is the nearest dominating non-effect `Call` /
+    // `CallOther` after `state`, with the token it read.
     let mut state: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
+    let mut read: SecondaryMap<NodeId, Option<(NodeId, ValueId)>> = SecondaryMap::new();
     let mut idom: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
     let mut ancestors: Vec<NodeId> = Vec::new();
     for &node in tree.preorder() {
@@ -661,13 +695,32 @@ fn check_memory_order(
         let parent = ancestors.last().copied();
         idom[node] = parent;
         let before = parent.and_then(|p| state[p]);
-        state[node] = if is_effect(node) { Some(node) } else { before };
+        let read_before = parent.and_then(|p| read[p]);
+        let memory = ctrl_memory_input(graph, node);
+        if is_effect(node) {
+            state[node] = Some(node);
+        } else {
+            state[node] = before;
+            let is_call = matches!(
+                graph.node_kind(node),
+                NodeKind::Call { .. } | NodeKind::CallOther { .. }
+            );
+            read[node] = memory
+                .filter(|_| is_call)
+                .map(|m| (node, m))
+                .or(read_before);
+        }
         ancestors.push(node);
 
-        if let (Some(memory), Some(effect)) = (ctrl_memory_input(graph, node), before)
+        let Some(memory) = memory else { continue };
+        if let Some(effect) = before
             && origin(memory) != effect
         {
             errs.push(ValidationError::MemoryRewind { node, effect });
+        } else if let Some((call, token)) = read_before
+            && !builds_on(memory, token)
+        {
+            errs.push(ValidationError::MemoryRewind { node, effect: call });
         }
     }
 
@@ -678,21 +731,29 @@ fn check_memory_order(
         let edge_states = graph
             .node_inputs(region)
             .into_iter()
-            .map(|edge| state[graph.producer(edge)]);
+            .map(|edge| graph.producer(edge))
+            .map(|pred| (state[pred], read[pred]));
         if is_effect(region) {
             for phi in chain_mem_phis(region) {
                 let arms = graph.node_inputs(phi).into_iter().skip(1);
-                for (arm, edge_state) in arms.zip(edge_states.clone()) {
+                for (arm, (edge_state, edge_read)) in arms.zip(edge_states.clone()) {
                     if let Some(effect) = edge_state
                         && origin(arm) != effect
                     {
                         errs.push(ValidationError::MemoryRewind { node: phi, effect });
+                    } else if let Some((call, token)) = edge_read
+                        && !builds_on(arm, token)
+                    {
+                        errs.push(ValidationError::MemoryRewind {
+                            node: phi,
+                            effect: call,
+                        });
                     }
                 }
             }
         } else {
             let merged = idom[region].and_then(|d| state[d]);
-            for effect in edge_states.flatten() {
+            for effect in edge_states.filter_map(|(effect, _)| effect) {
                 if Some(effect) != merged {
                     errs.push(ValidationError::UnmergedMemoryEffect { region, effect });
                 }
