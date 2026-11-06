@@ -3,6 +3,8 @@
 Loads a binary and serves its bytes: the fetch image as a Sleigh instruction
 source (`rsleigh::MemReader`), and the runtime-immutable mappings as
 `ReadOnlyMemory`, which must not include a mapping the program can write.
+Writability is `p_flags` for the segment walk (`sh_flags` and `p_flags` for
+the section walk).
 
 ## What's here
 
@@ -15,7 +17,7 @@ source (`rsleigh::MemReader`), and the runtime-immutable mappings as
 - `ElfFileMemReader::new(&elf, mode)` implements both reader traits.
   `RelocationMode::Unapplied` serves file-initial bytes;
   `RelocationMode::Applied { got_is_rom }` serves relocated fields, and with
-  `got_is_rom` also `.got` / `.data.rel.ro` as ROM.
+  `got_is_rom` also `.got`, PPC32 `.got2` and `.data.rel.ro` as ROM.
 - Under `elf::`: `RegionSource`, `ElfSectionLayout` (an ET_REL's section
   placement and each undefined symbol's `extern_address`), `OpdTable` (ppc64
   ELFv1 descriptors) and `mapping_symbol_data_ranges` / `mapping_symbol_kind` (ARM / AArch64
@@ -46,7 +48,8 @@ computed only where it cannot be observed (a branch displacement, a GOT slot
 left unmapped), so `if (&w)` folds neither way. Encodings are applied for x86,
 ARM, AArch64, MIPS and PowerPC. A relocation that cannot be computed (TLS,
 MIPS GP-relative, a branch needing a veneer) makes its field a hole, so a read
-across it fails naming the type.
+across it fails naming the type; in writable non-executable bytes the
+file-initial bytes stay.
 
 An image whose only PT_LOAD is RWX (the MIPS `vmlinux` shape) has an empty ROM
 view (`got_is_rom`'s sections aside); supply your own `ReadOnlyMemory` over
