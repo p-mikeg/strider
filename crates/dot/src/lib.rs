@@ -169,6 +169,7 @@ fn json_quote(s: &str) -> String {
 /// Accumulates a Graphviz `digraph { ... }` string.
 pub struct DotEmitter {
     out: String,
+    nodes: usize,
 }
 
 impl DotEmitter {
@@ -183,7 +184,7 @@ impl DotEmitter {
         emit_attr_block(&mut s, "node", &style.node);
         emit_attr_block(&mut s, "edge", &style.edge);
 
-        Self { out: s }
+        Self { out: s, nodes: 0 }
     }
 
     /// `id`, `label`, `shape` and every `extra` value are escaped and quoted,
@@ -193,6 +194,7 @@ impl DotEmitter {
     }
 
     fn node_inner(&mut self, id: &str, escaped_label: &str, shape: &str, extra: &[(&str, &str)]) {
+        self.nodes += 1;
         let id = escape_dot_label(id);
         self.out.push_str("  \"");
         self.out.push_str(&id);
@@ -292,11 +294,6 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
 /// layout stalls the browser on large graphs.
 const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
 
-/// Approximate: counting `[label=` also counts labelled edges.
-pub(crate) fn dot_node_count(dot: &str) -> usize {
-    dot.matches("[label=").count()
-}
-
 /// Wraps a [`GraphDotDumper`] and produces DOT / HTML output.
 pub struct GraphDot<G: GraphDotDumper> {
     dumper: G,
@@ -312,6 +309,10 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// # Errors
     /// From [`GraphDotDumper::dump_as_dot`].
     pub fn as_dot(&self) -> anyhow::Result<String> {
+        Ok(self.emit()?.finish())
+    }
+
+    fn emit(&self) -> anyhow::Result<DotEmitter> {
         let mut dot = DotEmitter::new("G", &self.style);
         let mut state = G::State::default();
         let mut dump = |node| {
@@ -323,8 +324,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
             Some(view) => view.nodes.iter().try_for_each(|&node| dump(node))?,
             None => self.dumper.iter_nodes().into_iter().try_for_each(dump)?,
         }
-
-        Ok(dot.finish())
+        Ok(dot)
     }
 
     /// A self-contained interactive HTML page rendering the DOT client-side.
@@ -332,13 +332,13 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// # Errors
     /// Same as [`Self::as_dot`].
     pub fn as_html_from_dot(&self) -> anyhow::Result<String> {
-        let dot_src = self.as_dot()?;
-        let engine = if dot_node_count(&dot_src) > DEFAULT_SFDP_NODE_THRESHOLD {
+        let dot = self.emit()?;
+        let engine = if dot.nodes > DEFAULT_SFDP_NODE_THRESHOLD {
             "sfdp"
         } else {
             "dot"
         };
-        let dot_json = json_quote(&dot_src);
+        let dot_json = json_quote(&dot.finish());
         // In template order; each occurs once.
         let subs = [
             ("__VIZ_STANDALONE_JS__", VIZ_STANDALONE_JS),

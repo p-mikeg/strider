@@ -166,3 +166,43 @@ fn html_emit_inlines_vendored_payloads() {
         html.len()
     );
 }
+
+/// A chain whose edges each carry a label, as every IR DOT edge does.
+struct LabelledChain {
+    n: usize,
+}
+
+impl GraphDotDumper for LabelledChain {
+    type Node = usize;
+    type State = ();
+
+    fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
+        0..self.n
+    }
+
+    fn dump_as_dot(
+        &self,
+        node: Self::Node,
+        out: &mut DotEmitter,
+        _state: &mut Self::State,
+    ) -> anyhow::Result<()> {
+        out.node(&format!("n{node}"), "x", "box", &[]);
+        if node > 0 {
+            out.edge(&format!("n{}", node - 1), &format!("n{node}"), &[("label", "e")]);
+        }
+        Ok(())
+    }
+}
+
+/// The `sfdp` switch counts nodes only, past 2000.
+#[test]
+fn html_emit_sfdp_threshold_counts_nodes_not_edge_labels() {
+    let engine_of = |n| {
+        let html = GraphDot::new(LabelledChain { n }, DotStyle::dark())
+            .as_html_from_dot()
+            .expect("html emit succeeded");
+        html.contains("const e=\"sfdp\"")
+    };
+    assert!(!engine_of(2000), "2000 nodes stay on `dot`");
+    assert!(engine_of(2001), "2001 nodes switch to `sfdp`");
+}
