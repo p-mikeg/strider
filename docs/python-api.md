@@ -190,7 +190,8 @@ answer wrong. Each field's risky value is the positive one:
   call argument, a stored value, a return or a clobbered register), a spill
   load forwards across a call and, under `stack_global_disjoint`, past a store
   through a pointer strider cannot place. It misses a callee reading an address
-  from a preserved register, and is inert on a frame that stores its entry
+  from a preserved register or writing a stack argument above an unwritten
+  (alignment) slot, and is inert on a frame that stores its entry
   stack pointer (every PowerPC frame, an ARM APCS frame).
 - `noalias_allocators` (empty): the listed callees return fresh pointers that
   overlap no live allocation, stack slot or global, so an arena allocator does
@@ -481,9 +482,10 @@ XMM0; on PPC64 the first stack argument is `8+25` (userland) or `8+13`
 (`*_linux_kernel`). `function_arg` / `function_arg_float` index the two
 classes separately. An incoming stack ordinal counts slots, not C arguments:
 one per run of slots one load spans, so a `long long` read as two 4-byte loads
-takes two. Only slots up to the first one no load reads are arguments, for
-`function_arg_stack` and `.source_stack` too: on i386, a function that ignores
-its first parameter has no stack arguments.
+takes two. Only slots up to the first one no clean load reads are arguments,
+for `function_arg_stack` and `.source_stack` too; a load a store or call may
+have overwritten is not clean. On i386, a function that ignores its first
+parameter has no stack arguments.
 
 If slots: `.cond(p)`, `.ctrl(p)`, `.capture_true(c)` / `.capture_false(c)`.
 To match what an edge leads to, join on the edge:
@@ -995,7 +997,8 @@ which adds its own findings, so it composes with
 `resolve_indirect_branches=False`. A seeded site leaves `unresolved` unless the
 CFG cannot seat it. One target outside the function is a tail call; several
 with one outside or off an instruction boundary defer the site. A wrong seed
-can hide the real arms, so seeded sites are `"unverified_seed"`.
+can hide the real arms, so seeded sites are `"unverified_seed"`. On ARM and
+MIPS give each target as `addr & ~1`; it decodes in the dispatch's mode.
 
 `data_ranges` marks bytes as data (an ARM literal pool). `ElfLifter.analyze`
 and `build_cfg` fill it from the ELF's `$d` mapping symbols unless the options
