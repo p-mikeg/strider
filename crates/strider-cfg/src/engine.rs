@@ -47,8 +47,8 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     ///
     /// # Errors
     ///
-    /// An unmapped entry, or a fall-through into bytes Sleigh rejects that no
-    /// call explains.
+    /// An unmapped or undecodable entry, or a fall-through no call explains
+    /// into bytes Sleigh rejects.
     pub fn build_cfg(&mut self, entry: MachineInsnAddr, opts: &CfgOptions) -> Result<Cfg> {
         self.builder(entry, opts)?.build()
     }
