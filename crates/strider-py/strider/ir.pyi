@@ -62,9 +62,10 @@ class Node:
         """The machine-instruction addresses recorded on this node, sorted
         and deduplicated: its lift's, each lift that reused it, and those of
         nodes folded into it. A superset of the instructions behind the
-        value: a shared constant carries every address that used it, and so
-        does a node folded with one, so the set can be far wider than the
-        node's own instructions."""
+        value: a shared constant or initial register (the stack pointer, say)
+        carries every address that used it, and so does a node folded with
+        one, so the set can span most of the function and costs that much to
+        read."""
         ...
     def outputs(self) -> list[Node]:
         """The consumers of this node's outputs, in output-slot then use order
@@ -145,7 +146,8 @@ class Function:
     def to_text(self, fingerprints: bool = ...) -> str:
         """The canonical text form: a header, then one line per node
         reachable from entry, `outs = op[payload] ins`. `fingerprints=True`
-        appends each node's asm addresses `  @{..}`. Values are numbered
+        appends each node's asm addresses `  @{..}`, which can make the text
+        quadratic in the function's size. Values are numbered
         `%v0`, `%v1`, ... in print order, so equal graphs print equal text."""
         ...
     def neighborhood_dot(
