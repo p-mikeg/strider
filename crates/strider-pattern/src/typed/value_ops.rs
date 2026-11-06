@@ -101,7 +101,7 @@ pub fn any_bool_binary<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R)
     variant(kind, [l.into_expr(), r.into_expr()], true)
 }
 
-/// NaN-aware `bool_or(float_lt(l, r), float_eq(l, r))` at `I1`.
+/// The lifter's `FloatLessEqual`: `bool_or(float_lt(l, r), float_eq(l, r))` at `I1`.
 pub fn float_le<L: MatchPat + 'static, R: MatchPat + 'static>(lhs: L, rhs: R) -> MatchOnly {
     MatchOnly(Expr::shared(vec![lhs.into_expr(), rhs.into_expr()], |v| {
         let cmp = |op| NodeKind::FloatCmpOp(op);
@@ -239,7 +239,7 @@ pub(crate) mod ops {
     bin! { int_scarry, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Scarry),
     "Signed addition overflow. Commutative." }
     bin! { int_sborrow, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Sborrow),
-    "Signed subtraction borrow." }
+    "Signed subtraction overflow." }
 
     /// `lhs != rhs`: `int_xor(int_eq(l, r), 1):I1`; `.ordered()` pins the `int_eq`.
     pub fn int_ne<L: IntoExpr + 'static, R: IntoExpr + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {

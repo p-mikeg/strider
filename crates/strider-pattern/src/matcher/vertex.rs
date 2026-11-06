@@ -47,7 +47,8 @@ pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool + Send>;
 
 /// Runs once the node's inputs have matched. Below the root it sees the
 /// captures of its own cone and of operands written before it. The type is the
-/// matched output's, `None` for a control, memory or `PhiToken` edge or a
+/// anchored output's (a root with several output vertices is anchored at each
+/// output in turn), `None` for a control, memory or `PhiToken` edge or a
 /// zero-output node.
 pub type PostMatchFn =
     Box<dyn Fn(&Matcher, NodeId, Option<ValueType>, &crate::bindings::Bindings) -> bool + Send>;

@@ -241,7 +241,7 @@ impl MatcherBuilder {
     }
 
     /// [`Self::set_post_match`] for a guard needing the output's `ValueType` (`when_match`).
-    /// Refused on a root that produces no value output.
+    /// Refused where `out` carries no value.
     pub(crate) fn set_post_match_typed(
         &mut self,
         out: PatValueRef,
@@ -249,9 +249,9 @@ impl MatcherBuilder {
     ) {
         if self.valueless(out.0) {
             self.reject(
-                "`when_match` is typed and this root produces no value output, so the \
-                 guard could never run; use `Pattern::with_root_post_match`, which is \
-                 handed the missing type"
+                "`when_match` is typed and this output carries no value, so the guard \
+                 could never run; at a root, `Pattern::with_root_post_match` is handed \
+                 the missing type"
                     .into(),
             );
         }

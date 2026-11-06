@@ -58,7 +58,8 @@ impl Match {
         self.bindings.is_bound(c)
     }
 
-    /// The varnode of a bound `InitialVar` or `Call` / `CallOther` clobber output; else `None`.
+    /// The varnode of a bound `InitialVar` or tagged `Call` / `CallOther` output (result or
+    /// clobber); else `None`.
     #[cfg(any(test, feature = "test-util"))]
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         use crate::bindings::Binding;

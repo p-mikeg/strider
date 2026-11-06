@@ -43,8 +43,9 @@ impl CallPat {
         Self(self.0.input_mem(NodeKind::CTRL_MEM_SLOT, p))
     }
 
-    /// As a value or raw-slot operand, matches only the result output (raw slot 2), not a
-    /// clobber. No effect on a root, a control predecessor or a memory producer.
+    /// As a value or raw-slot operand, matches only output slot 2: the first return register's
+    /// value, or the first clobber under a convention with none. No effect on a root, a control
+    /// predecessor or a memory producer.
     pub fn res(self) -> Self {
         Self(self.0.pin_anchor_slot())
     }
@@ -232,7 +233,7 @@ pub fn region() -> RegionPat {
 
 delegate_node_pat! { RegionPat, 0, [capture, build, any_input], with_output }
 
-/// A `Switch`: inputs `[ctrl, selector]`, one control output per arm.
+/// A `Switch`: inputs `[ctrl, selector]` plus an optional ISA mode, one control output per arm.
 pub struct SwitchPat(Node);
 
 impl SwitchPat {
