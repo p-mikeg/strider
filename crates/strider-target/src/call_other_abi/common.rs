@@ -1,7 +1,8 @@
 use super::{CallOtherClass, MEM_CLOBBER, PURE};
 use CallOtherClass::NoOp;
 
-/// Names meaning the same on every arch that emits them.
+/// Rows matched by name on every family; no name here means two things on
+/// two slas.
 ///
 /// Invariant: no entry names a register, which would resolve on one arch only.
 pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
@@ -20,7 +21,7 @@ pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
     // x86 `ud0` / `ud1` / `ud2`; `ud2` is Linux's `BUG()` and `WARN_ON()`, the
     // same tradeoff.
     ("invalidInstructionException", CallOtherClass::NO_RETURN),
-    // The exclusive monitor; LDREX / STREX accesses are p-code.
+    // AArch64 STXR's monitor check and status; the access is p-code.
     ("ExclusiveMonitorPass", PURE),
     ("ExclusiveMonitorsStatus", PURE),
     ("Hint_Prefetch", PURE),
@@ -54,7 +55,7 @@ pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
     ("sha256msg2_sha", PURE),
     ("MP_INT_ABS", PURE),
     ("SVE_fnmla", PURE),
-    // ARM unmodelled sysreg read.
+    // AArch64 `mrs` of an unmodelled sysreg.
     ("UnkSytemRegRead", PURE),
     // ARM UDF: `BUG()` / `WARN()`, as `SoftwareBreakpoint`.
     ("software_udf", CallOtherClass::NO_RETURN),

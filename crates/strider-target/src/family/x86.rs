@@ -40,10 +40,9 @@ const fn base_write(base: &'static [&'static str]) -> CallOtherClass {
 }
 
 const CALL_OTHER: &[Row] = &[
-    // `swi` is every INT vector (0x80, INT3, ...), so it names no registers:
-    // a stack address passed to `int 0x80` in EBX escapes unseen. `int` is
-    // `swi` plus the sla's `call [intloc]`: a `Call` under the default
-    // convention, clobbering every register it does not keep.
+    // `swi` is every INT vector (0x80, INT3, ...), so it names no registers.
+    // `int` is `swi` plus the sla's `call [intloc]`, a `Call` under the
+    // default convention.
     Row::new(&["swi"], MEM_CLOBBER),
     // Linux x86_64 syscall: RAX = number, RDI/RSI/RDX/R10/R8/R9 = args, RAX =
     // return; SYSCALL itself writes RCX (rip) and R11 (rflags).
