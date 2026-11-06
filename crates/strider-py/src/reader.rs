@@ -144,6 +144,11 @@ fn symbol_place<'d, S: ObjectSymbol<'d>>(sym: &S, layout: &ElfSectionLayout) -> 
     }
 }
 
+/// A MIPS symbol `st_other` marks `STO_MIPS16`.
+fn is_mips16<'d, S: ObjectSymbol<'d>>(sym: &S) -> bool {
+    matches!(sym.flags(), object::SymbolFlags::Elf { st_other, .. } if st_other & 0xf0 == 0xf0)
+}
+
 /// One file's ppc64 ELFv1 descriptors: its own `.opd`, or, where that is
 /// `SHT_NOBITS` as a debug file's is, the loaded ELFs'.
 enum Opds<'a, 'd> {
@@ -295,7 +300,8 @@ pub struct PySymbol {
     #[pyo3(get)]
     name: String,
     /// `st_value`; for a ppc64 ELFv1 function, the code its `.opd`
-    /// descriptor names. A Thumb function keeps the Thumb bit. An object
+    /// descriptor names. A Thumb function keeps the Thumb bit, and a MIPS16
+    /// one (`STO_MIPS16`) gets the ISA bit. An object
     /// file's undefined, common or defined IFUNC symbol has an unmapped
     /// address past the image.
     #[pyo3(get)]
@@ -305,18 +311,26 @@ pub struct PySymbol {
     #[pyo3(get)]
     pub(crate) size: Option<u64>,
     is_function: bool,
-    /// An ARM Thumb function, whose `address` keeps the ISA bit.
-    thumb: bool,
+    /// The ISA bit `address` carries.
+    isa_bit: IsaBit,
     /// `address` plus the ppc64 ELFv2 local-entry offset, else `address`.
     #[pyo3(get)]
     local_entry: u64,
     pub(crate) region: Option<(u64, u64)>,
 }
 
+/// The ISA-mode bit a function's address carries.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum IsaBit {
+    None,
+    Thumb,
+    Mips16,
+}
+
 impl PySymbol {
-    /// The first byte the symbol covers: `address` without a Thumb bit.
+    /// The first byte the symbol covers: `address` without its ISA bit.
     fn start(&self) -> u64 {
-        self.address & !u64::from(self.thumb)
+        self.address & !u64::from(self.isa_bit != IsaBit::None)
     }
 
     /// One past the last address covered; an unsized symbol covers one byte.
@@ -335,7 +349,7 @@ impl PySymbol {
         self.is_function
     }
 
-    /// One past the last byte, or `None` when `size` is. Ignores the Thumb
+    /// One past the last byte, or `None` when `size` is. Ignores the ISA
     /// bit.
     #[getter]
     fn end(&self) -> Option<u64> {
@@ -346,7 +360,7 @@ impl PySymbol {
     /// enters in Thumb mode at `address & ~1`.
     #[getter]
     fn is_thumb(&self) -> bool {
-        self.thumb
+        self.isa_bit == IsaBit::Thumb
     }
 
     /// `(start, end)` of the loaded region holding the symbol, or `None`.
@@ -676,6 +690,12 @@ impl PyLoadedElf {
             };
             let layout = ElfSectionLayout::new(&file);
             let arm = file.architecture() == object::Architecture::Arm;
+            let mips = matches!(
+                file.architecture(),
+                object::Architecture::Mips
+                    | object::Architecture::Mips64
+                    | object::Architecture::Mips64_N32
+            );
             let marks_spans = arm
                 || matches!(
                     file.architecture(),
@@ -723,7 +743,18 @@ impl PyLoadedElf {
                 let measures_opd = || {
                     matches!(sym.size(), 16 | 24) || dot_names.contains(format!(".{name}").as_str())
                 };
-                let address = followed.unwrap_or(declared);
+                let isa_bit = if arm && is_function && declared & 1 == 1 {
+                    IsaBit::Thumb
+                } else if mips
+                    && is_function
+                    && matches!(place, SymbolPlace::Defined)
+                    && is_mips16(&sym)
+                {
+                    IsaBit::Mips16
+                } else {
+                    IsaBit::None
+                };
+                let address = followed.unwrap_or(declared) | u64::from(isa_bit == IsaBit::Mips16);
                 let size =
                     (sym.size() != 0 && !ifunc_extern && !(followed.is_some() && measures_opd()))
                         .then(|| sym.size());
@@ -736,7 +767,7 @@ impl PyLoadedElf {
                     address,
                     size,
                     is_function,
-                    thumb: arm && is_function && address & 1 == 1,
+                    isa_bit,
                     local_entry: match place {
                         SymbolPlace::Defined => address
                             .wrapping_add(strider_reader::elf::local_entry_offset(&file, &sym)),
@@ -996,7 +1027,7 @@ impl PyLoadedElf {
                 address,
                 size,
                 is_function,
-                thumb: false,
+                isa_bit: IsaBit::None,
                 local_entry: address,
                 region: None,
             });

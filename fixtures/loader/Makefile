@@ -4,10 +4,10 @@
 # not hold, and objects whose GOT references strider resolves, for the ELF
 # reader's tests, plus a ppc64 ELFv2 image whose calls enter at local
 # entries, GCC hot/cold splits (`foo` and `foo.cold`), a microMIPS image the
-# loader refuses, an object whose R_X86_64_32 values must zero-extend, a
-# MIPS library and an x86-64 PIE with a relro pointer, a ppc64 ELFv1 image
-# and a ppc32 library whose table bases sit in `.got2`, and executables with
-# an R_*_COPY object:
+# loader refuses, a MIPS16 function in a MIPS32 image, an object whose
+# R_X86_64_32 values must zero-extend, a MIPS library and an x86-64 PIE with
+# a relro pointer, a ppc64 ELFv1 image and a ppc32 library whose table bases
+# sit in `.got2`, and executables with an R_*_COPY object:
 # out/<name>.{elf,o}, from src/.
 #
 # Not per-arch like ../Makefile: each image needs a link of its own (a shared
@@ -50,7 +50,7 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           x64_ifunc_extern.o \
           x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o \
           ppc64le_local_entry.elf ppc64le_local_entry_stripped.elf \
-          x64_nodynsym.elf mips32be_micromips.elf x64_abs32.o \
+          x64_nodynsym.elf mips32be_micromips.elf mips32be_mips16.elf x64_abs32.o \
           mips32be_relro.elf x64_relro_pie.elf ppc64be_elfv1.elf \
           ppc32be_got2.elf x64_copy_lib.elf x64_copy_pie.elf \
           aarch64_copy_lib.elf aarch64_copy.elf \
@@ -125,6 +125,9 @@ $(OUTDIR)/x64_nodynsym.elf: src/nodynsym.s src/nodynsym.lds | $(OUTDIR)
 $(OUTDIR)/mips32be_micromips.elf: src/micromips.c | $(OUTDIR)
 	$(MICROMIPS) $(filter-out -fPIC,$(CFLAGS)) -fno-pic -mno-abicalls -no-pie \
 	  -Wl,-e,min $< -o $@
+$(OUTDIR)/mips32be_mips16.elf: src/mips16.c | $(OUTDIR)
+	$(MIPS32) $(filter-out -fPIC,$(CFLAGS)) -fno-pic -mno-abicalls -no-pie \
+	  -Wl,-e,min16 $< -o $@
 
 $(OUTDIR)/x64_abs32.o: src/x64_abs32.s | $(OUTDIR)
 	$(X64) -c $< -o $@

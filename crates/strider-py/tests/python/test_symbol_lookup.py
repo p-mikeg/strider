@@ -38,6 +38,20 @@ def test_an_arm_function_is_not_thumb():
     assert add.end == add.address + add.size
 
 
+def test_a_mips16_function_enters_in_mips16_mode():
+    """STO_MIPS16 marks the ISA in `st_other`, and `st_value` is even:
+    `address` carries the ISA bit, as a Thumb one does, so `analyze` decodes
+    MIPS16. Built by `make -C fixtures/loader`."""
+    lift = strider.lift.load_elf("fixtures/loader/out/mips32be_mips16.elf")
+    sym = lift.symbol("min16")
+    assert sym.address == 0x4000F1
+    assert sym.end == 0x4000F0 + 10
+    assert _name_at(lift, 0x4000F0) == "min16"
+    result = lift.analyze("min16")
+    assert result.cfg.incomplete == []
+    assert "Return" in (result.cfg.pcode_at(0x4000F8) or ""), "jrc ra decodes"
+
+
 def test_a_symbol_defined_at_address_zero_is_kept(tmp_path):
     path = tmp_path / "zero.elf"
     eb.Elf(
