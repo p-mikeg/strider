@@ -5,10 +5,6 @@
 
 use strider_target::{CallingConvention, SleighArch};
 
-fn regs_for(arch: SleighArch) -> rsleigh::SleighRegs {
-    arch.probe_regs()
-}
-
 /// `(arch, cc)` for every PowerPC preset, ELFv1 included (which no
 /// `SleighArch` picks on its own).
 fn ppc_presets() -> Vec<(&'static str, SleighArch, CallingConvention)> {
@@ -72,7 +68,7 @@ fn only_the_userland_presets_name_a_vector_argument_or_return() {
     let is_vector = |vn: &rsleigh::Vn| vn.size == 16;
     for (name, arch, cc) in ppc_presets() {
         let built = cc
-            .build(&regs_for(arch))
+            .build(&arch.probe_regs())
             .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         assert!(
             built.arg_passing_regs_float.iter().any(is_vector),
@@ -85,7 +81,7 @@ fn only_the_userland_presets_name_a_vector_argument_or_return() {
     }
     for (name, arch, cc) in ppc_kernel_presets() {
         let built = cc
-            .build(&regs_for(arch))
+            .build(&arch.probe_regs())
             .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         built.validate().unwrap_or_else(|e| panic!("{name}: {e:?}"));
         assert!(
@@ -108,7 +104,7 @@ fn only_the_userland_presets_name_a_vector_argument_or_return() {
 fn the_kernel_presets_keep_every_non_vector_position() {
     for ((name, arch, user), (_, _, kernel)) in ppc_presets().into_iter().zip(ppc_kernel_presets())
     {
-        let regs = regs_for(arch);
+        let regs = arch.probe_regs();
         let user = user
             .build(&regs)
             .unwrap_or_else(|e| panic!("{name}: {e:?}"));
@@ -149,7 +145,7 @@ fn the_kernel_presets_keep_every_non_vector_position() {
 fn only_the_ppc64_kernel_presets_clobber_r13() {
     for ((name, arch, user), (_, _, kernel)) in ppc_presets().into_iter().zip(ppc_kernel_presets())
     {
-        let regs = regs_for(arch);
+        let regs = arch.probe_regs();
         let r13 = regs.name_to_vn("r13").expect("r13");
         let saves = |cc: CallingConvention| {
             let built = cc.build(&regs).unwrap_or_else(|e| panic!("{name}: {e:?}"));
@@ -167,7 +163,7 @@ fn only_the_ppc64_kernel_presets_clobber_r13() {
 #[test]
 fn the_vector_bank_is_byte_disjoint_from_the_float_bank() {
     for (name, arch, _) in ppc_presets() {
-        let regs = regs_for(arch);
+        let regs = arch.probe_regs();
         let vn = |n: &str| regs.name_to_vn(n).unwrap_or_else(|| panic!("{name}: {n}"));
         for n in 32..64u64 {
             let v = vn(&format!("vs{n}"));
@@ -194,7 +190,7 @@ fn the_vector_bank_is_byte_disjoint_from_the_float_bank() {
 #[test]
 fn every_ppc_preset_preserves_v20_v31() {
     for (name, arch, cc) in ppc_presets().into_iter().chain(ppc_kernel_presets()) {
-        let regs = regs_for(arch);
+        let regs = arch.probe_regs();
         let built = cc.build(&regs).unwrap_or_else(|e| panic!("{name}: {e:?}"));
         for n in 52..=63u32 {
             let vn = regs.name_to_vn(&format!("vs{n}")).expect("vs name");
