@@ -274,7 +274,7 @@ The `.pyi` stubs are the typed surface.
 `LifterOptions.per_address_ccs` read back as memoized `MappingProxyType`s and
 `no_return_targets` as a `frozenset`. A `CfgOptions` converts its tables once
 and every `analyze` borrows them; `per_address_ccs` is resolved per arch on
-first use. `ElfLifter.analyze` adds a `str` entry's symbol size bound; it
-and `build_cfg` add the ELF's `$d` data ranges, its `.cold` fragment ranges
-and its ppc64 local entries, which every per-address table is looked up
-through (`strider_cfg::CfgOptions.local_entries`).
+first use. `ElfLifter.analyze` bounds a `str` entry by its symbol size; it
+and `build_cfg` fill empty `data_ranges` / `fragment_ranges` from the ELF's
+`$d` and `.cold` symbols and add its ppc64 local entries, through which
+every per-address table is looked up (`strider_cfg::CfgOptions.local_entries`).

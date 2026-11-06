@@ -19,7 +19,7 @@ In default pipeline order:
 **ConstantFold.** Computes constant expressions, applies algebraic identities
 (`x + 0`, `x * 1`, ...) and folds constant truncations and extensions. Any sum
 or difference of `x`, `x*C` and `x<<C` becomes one `x * K`: `x + x*2` and
-`x + (x<<1)` are both `x*3`; search for `int_mul(x, int_const_any_width(K))`.
+`x + (x<<1)` are both `x*3`; search for `int_mul(x, int_const(k))`, `k` a value or a `Capture`.
 Also:
 
 - a truncate of an add, mul, and, or or xor of two extends (or an extend and a

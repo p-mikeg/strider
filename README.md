@@ -66,6 +66,11 @@ strider.explore.shutdown(port)
 - Handles usable from any thread.
 - GCC `.cold` fragments (`CfgOptions.fragment_ranges`); a ppc64 ELFv1
   function enters with `r2` holding its TOC.
+- Decoder fixes in the vendored Sleigh on every arch (x87 / SSE / VEX
+  conversions, PowerPC FPSCR, AArch64 narrow-register writes, ARM NEON
+  loads, MIPS64 sign extension).
+- Rewrites take only a `strider.template` right-hand side, and the explorer
+  is `strider.explore.visualize`.
 
 **0.2.0**
 
