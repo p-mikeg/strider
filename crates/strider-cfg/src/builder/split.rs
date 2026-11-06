@@ -70,22 +70,10 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
             .map(|e| (e.id(), e.source()))
             .collect();
 
-        // Incoming edges move to the first half, except a
-        // `seat_non_boundary_target` edge, which stays with the half holding
-        // its seated address.
+        // Incoming edges move to the first half. A `StableDiGraph` edge id
+        // survives another edge's removal.
         for (edge_id, parent_id) in parent_edges {
-            if self
-                .non_boundary_seats
-                .get(&edge_id)
-                .is_some_and(|&seated| seated >= addr)
-            {
-                continue;
-            }
-            // A `StableDiGraph` edge id survives another edge's removal.
-            let moved = self.region_graph.add_edge(parent_id, first_region, ());
-            if let Some(seated) = self.non_boundary_seats.remove(&edge_id) {
-                self.non_boundary_seats.insert(moved, seated);
-            }
+            self.region_graph.add_edge(parent_id, first_region, ());
             self.region_graph.remove_edge(edge_id);
         }
         self.region_graph.add_edge(first_region, region_id, ());

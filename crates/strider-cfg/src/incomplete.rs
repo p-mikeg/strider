@@ -47,8 +47,8 @@ reasons! {
     IsaModeConflict => "isa_mode_conflict",
     /// Inside a region but off every boundary (a MIPS delay slot too), or a
     /// region start a later decode stepped over. A direct branch edges to the
-    /// region holding the containing instruction's first op; a `Switch` arm is
-    /// dropped. A branch past an x86 `lock` prefix heading its region is exact.
+    /// containing instruction; a `Switch` arm is dropped. A branch past an x86
+    /// `lock` prefix is exact.
     InteriorTarget => "interior_target",
     /// No bytes back the instruction here (a MIPS branch with an unmapped
     /// delay slot names itself); the edge leaves through a `TailCall` stub.

@@ -10,7 +10,6 @@ use region_builder::{DecodeFailure, RegionBuilder, decode_failure, is_call};
 pub(crate) use strider_target::FlowCommit;
 
 use petgraph::graph::NodeIndex;
-use petgraph::stable_graph::EdgeIndex;
 
 use crate::Cfg;
 use crate::DecodeEngine;
@@ -71,9 +70,6 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// The seeded arm the region under construction descends from.
     pub(super) descent: Option<ArmSeed>,
     pub(super) report: crate::BuildReport,
-    /// The first op of the instruction each [`Self::seat_non_boundary_target`]
-    /// edge points into; only the split half keeping it may keep the edge.
-    pub(super) non_boundary_seats: rustc_hash::FxHashMap<EdgeIndex, PcodeInsnAddr>,
     /// `(head, addr)`: an edge or a decode reached `addr` strictly inside the
     /// instruction at `head`. [`Self::finish`] reports each as
     /// [`Reason::InteriorTarget`] unless it is a benign prefix re-entry.
@@ -107,7 +103,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             refused_arms: Vec::new(),
             sealed_into_no_code: Vec::new(),
             report: crate::BuildReport::default(),
-            non_boundary_seats: rustc_hash::FxHashMap::default(),
             interior_candidates: Vec::new(),
             committed_next: rustc_hash::FxHashSet::default(),
             function_mode,
@@ -323,7 +318,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
     /// Seats an edge for a target inside `owner` but off every instruction
     /// boundary. A `Switch` drops the arm. Any other terminator edges to the
-    /// region holding the first op of the containing instruction, reported
+    /// containing instruction, split out of its region, reported
     /// [`Reason::InteriorTarget`] unless it is a benign prefix re-entry.
     fn seat_non_boundary_target(
         &mut self,
@@ -346,8 +341,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             let owner = self
                 .find_region_containing_addr(head)
                 .map_or(owner, |(id, _)| id);
-            let edge = self.region_graph.add_edge(parent, owner, ());
-            self.non_boundary_seats.insert(edge, head);
+            let target = if self.region_graph[owner].contains_insn_at(head) {
+                self.split_region(owner, head)?
+            } else {
+                owner
+            };
+            self.region_graph.add_edge(parent, target, ());
             self.interior_candidates.push((head.machine(), addr));
             return Ok(());
         }
@@ -364,9 +363,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         Ok(())
     }
 
-    /// Whether `addr` skips a prefix of `owner`'s first instruction (glibc's
-    /// `je 0f; lock; 0:`): decoding from `addr` ends where that instruction
-    /// does and carries the same p-code less the `LOCK` / `UNLOCK` markers.
+    /// Whether `addr` skips a prefix of the `owner` instruction holding it
+    /// (glibc's `je 0f; lock; 0:`): decoding from `addr` ends where that
+    /// instruction does and carries the same p-code less the `LOCK` / `UNLOCK`
+    /// markers.
     fn is_benign_prefix_reentry(&mut self, owner: NodeIndex, addr: PcodeInsnAddr) -> bool {
         if !self.may_reenter_prefix() {
             return false;
@@ -384,9 +384,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let start = insn.addr.machine();
         let full_end = start.saturating_add(u64::from(insn.len));
         if !(start < target && target < full_end) {
-            return false;
-        }
-        if region.start_addr != PcodeInsnAddr::at_machine_start(start) {
             return false;
         }
         let (Ok(tail), Ok(full)) = (
@@ -553,7 +550,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         };
         while let Some(edge) = self.region_graph.find_edge(site, arm) {
             self.region_graph.remove_edge(edge);
-            self.non_boundary_seats.remove(&edge);
         }
     }
 
@@ -594,7 +590,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             .collect();
         for edge in outgoing {
             self.region_graph.remove_edge(edge);
-            self.non_boundary_seats.remove(&edge);
         }
         self.region_graph[region].terminator = RegionTerminator::NoReturn;
     }
@@ -696,10 +691,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// regions, and derives the site reports.
     fn finish(mut self, lost_successor: Vec<(NodeIndex, anyhow::Error)>) -> Result<Cfg> {
         for (head, addr) in std::mem::take(&mut self.interior_candidates) {
-            let benign = self
-                .index
-                .get(PcodeInsnAddr::at_machine_start(head))
-                .is_some_and(|owner| self.is_benign_prefix_reentry(owner, addr));
+            let owner = self
+                .find_region_containing_addr(PcodeInsnAddr::at_machine_start(head))
+                .map(|(owner, _)| owner);
+            let benign = owner.is_some_and(|owner| self.is_benign_prefix_reentry(owner, addr));
             if !benign {
                 self.report.incomplete.insert(addr, Reason::InteriorTarget);
             }
