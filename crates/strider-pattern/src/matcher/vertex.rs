@@ -65,7 +65,7 @@ pub(crate) enum InputSlot {
 
 pub(crate) struct PatNode {
     pub(crate) kind: KindSpec,
-    /// Each binds the matched node (`Binding::Node`), for a node with no anchor output.
+    /// Each binds the matched node (`Binding::Node`).
     pub(crate) captures: Vec<crate::capture::Capture>,
     /// Run before descending into inputs; all must hold.
     pub(crate) node_predicates: Vec<NodePredicate>,

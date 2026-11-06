@@ -48,7 +48,7 @@ pub struct FunctionSideTables {
     call_ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention>,
     /// Sleigh user-op name by `CallOther` `user_op_id`.
     call_other_names: FxHashMap<u64, String>,
-    /// Every tracked varnode, value-deduped, in `(space, offset, size)` order.
+    /// Every tracked varnode in `InitialVnId` order: (space shortcut, offset, size).
     vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 }
 

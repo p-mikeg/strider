@@ -117,9 +117,10 @@ claims! {
         /// call, with [`escape_analysis`](Self::escape_analysis)'s gaps. Empty by default.
         pub noalias_allocators: rustc_hash::FxHashSet<u64> = rustc_hash::FxHashSet::default(),
         /// When no stack address escapes to a callee, a spill `Load` forwards across a `Call`
-        /// and, under `stack_global_disjoint`, an `Anchor` store. Gaps: a callee reaching the
-        /// frame through a callee-preserved register, and an alignment hole read as the end
-        /// of the outgoing-argument window, so an argument slot above it forwards. Default off.
+        /// and, under `stack_global_disjoint`, past a store through a pointer it cannot place.
+        /// Gaps: a callee reaching the frame through a callee-preserved register, and an
+        /// alignment hole read as the end of the outgoing-argument window, so an argument slot
+        /// above it forwards. Default off.
         pub escape_analysis: bool = false,
         /// An unplaced RAM `Store`, callee or user-op leaves the saved return-address and
         /// entry-SP slots as it found them. Wrong where one overwrites them: the return is

@@ -15,7 +15,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         addr: strider_cfg::PcodeInsnAddr,
         region_map: &super::RegionMap,
     ) -> Result<()> {
-        // Every node built here is fingerprinted with this machine address.
         let machine_addr = addr.machine_addr.addr;
         let res = self.with_lift_addr(Some(machine_addr), |s| {
             s.process_insn_inner(region_id, insn, addr, region_map)

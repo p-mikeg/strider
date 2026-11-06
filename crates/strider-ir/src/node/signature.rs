@@ -234,7 +234,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
             L::variadic(&[CTRL], CTRL),
         ),
 
-        // Value outputs are the clobbered varnodes.
+        // Value outputs: the return registers, then the clobbers.
         NodeKind::Call { .. } => sig(
             L::variadic(&[CTRL, MEM, TARGET, SP], ARG),
             L::variadic(&[CTRL, MEM], ANY_VAL),

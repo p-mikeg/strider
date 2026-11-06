@@ -2,8 +2,7 @@ use anyhow::Result;
 
 use super::Lifter;
 
-/// Per-function translation context, borrowing the shared [`Lifter`] engine
-/// and owning a fresh [`strider_ir::FunctionBuilder`].
+/// Per-function lift state.
 pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) lifter: &'a Lifter<R>,
     pub(crate) builder: strider_ir::FunctionBuilder,

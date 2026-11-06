@@ -1,5 +1,5 @@
-//! Whole-graph IR validator. Every check aggregates into a
-//! [`ValidationErrors`] bundle rather than failing fast.
+//! IR validator over the entry-reachable graph; every violation is collected
+//! into one [`ValidationErrors`].
 
 use crate::IRViewer;
 use crate::function::Function;
