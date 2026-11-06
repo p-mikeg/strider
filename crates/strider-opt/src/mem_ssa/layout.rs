@@ -441,10 +441,18 @@ impl MemLayout {
 
     /// Whether some entry arm of merge `phi`, from the `first`-th, has its
     /// nearest clobber laid out after `phi`'s immediate dominator. `Err` names
-    /// the first arm whose answer is not known yet, with its index.
+    /// the first arm whose answer is not known yet, with its index. Arms that
+    /// are not merges come first: one def run decides each, where a merge arm
+    /// may descend a ladder of merges.
     fn arms_dirty(&self, phi: u32, first: usize, answers: &Answers) -> Result<bool, (usize, u32)> {
         let stop = self.idom[phi as usize];
-        for (i, &u) in self.preds[phi as usize].iter().enumerate().skip(first) {
+        let preds = &self.preds[phi as usize];
+        let is_phi = |u: &&u32| self.shape[**u as usize] == Shape::Phi;
+        let arms = preds
+            .iter()
+            .filter(|u| !is_phi(u))
+            .chain(preds.iter().filter(is_phi));
+        for (i, &u) in arms.enumerate().skip(first) {
             if u >= phi || u == stop {
                 continue;
             }
