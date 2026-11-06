@@ -935,7 +935,7 @@ impl LoopForest {
                 }
             }
         }
-        assert_eq!(order.len(), n, "a reducible graph has a nested order");
+        assert_eq!(order.len(), n, "every reached def is placed");
         (order, block_end)
     }
 }

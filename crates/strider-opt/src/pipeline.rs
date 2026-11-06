@@ -90,8 +90,8 @@ fn apply_counted(
     Ok(edit.generation() != generation)
 }
 
-/// Post-pass sibling of [`run_one`]: the memory classes survive a pass that
-/// changed nothing, as between `run`'s post-passes.
+/// Runs one post-pass as [`OptimizerPipeline::run`] does, without
+/// validating: the memory classes survive a pass that changed nothing.
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_post(
     pass: &dyn Optimizer,

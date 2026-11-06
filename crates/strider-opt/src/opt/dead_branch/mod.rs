@@ -62,8 +62,8 @@ impl PeepholePass for DeadBranchElimination {
     }
 }
 
-/// Strips every `Region` predecessor slot whose producer entry does not
-/// reach, with the matching `Phi` / `MemPhi` slots; `true` if it stripped
+/// Strips every `Region` predecessor slot whose producer is unreachable from
+/// entry, with the matching `Phi` / `MemPhi` slots; `true` if it stripped
 /// one. The caller resyncs the live set.
 fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     let entry = edit.entry();
