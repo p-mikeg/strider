@@ -204,8 +204,9 @@ impl SleighArch {
         self.facts().has_delay_slots
     }
 
-    /// `noflow` context vars that change which constructor matches, reset to
-    /// the pspec default before each decode.
+    /// `noflow` context vars that change which constructor matches: reset to
+    /// the pspec default before each decode, then the previous instruction is
+    /// re-lifted so its own commit lands.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
         self.facts().transient_decode_vars
