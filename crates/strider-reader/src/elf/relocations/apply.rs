@@ -254,14 +254,6 @@ pub(super) fn apply_classified(
         ctx.unmodelled(holder, p, width, r.type_word());
         return;
     }
-    // Fast path: a RELA image-relative word reads no symbol or field.
-    if let (Value::ImageRelative, Some(a)) = (value, r.rela_addend) {
-        match fit(ctx.obj, field, apply_addend(0, a)) {
-            Some(word) => ctx.record(holder, p, word, width, ctx.field_le(field)),
-            None => ctx.unmodelled(holder, p, width, r.type_word()),
-        }
-        return;
-    }
     let field_le = ctx.field_le(field);
     match compute_classified(ctx, r, pair, value, field, p, holder) {
         Some(word) => ctx.record(holder, p, word, width, field_le),
