@@ -99,7 +99,7 @@ macro_rules! arch_presets {
 arch_presets! {
     X86 => "x86", x86, X86, SLA_SPEC_X86, PSPEC_X86, Little, Little, "x86:LE:32:default";
     X86_64 => "x86_64", x86_64, X86, SLA_SPEC_X86_64, PSPEC_X86_64, Little, Little, "x86:LE:64:default";
-    /// ARM 32-bit little-endian, non-Thumb.
+    /// ARM 32-bit little-endian; an odd entry decodes as Thumb.
     Arm => "arm", arm, ARM32, SLA_SPEC_ARM8_LE, PSPEC_ARMT, Little, Little, "ARM:LE:32:v8";
     /// Legacy pre-ARMv6 **BE32** ARM: big-endian instructions and data. For
     /// ARMv6+ big-endian Linux (BE8) use [`SleighArch::arm_be_kernel`]. NEON
@@ -108,8 +108,8 @@ arch_presets! {
     /// **BE8** ARM 32-bit (Ghidra's `ARM:LEBE:32`): little-endian
     /// instructions, big-endian data; every ARMv6+ big-endian Linux target.
     ArmBeKernel => "arm_be_kernel", arm_be_kernel, ARM32, SLA_SPEC_ARM8_BE8, PSPEC_ARMT, Big, Little, "ARM:LEBE:32:v8LEInstruction";
-    /// ARM 32-bit `-mthumb`: Cortex-M pspec defaults over the full-ARM-state
-    /// sla, so ARM state stays reachable (`arm-linux-gnueabihf-gcc -mthumb`).
+    /// [`SleighArch::arm`] under the Cortex-M pspec: only its `TMode` default
+    /// differs, and the entry's low bit overrides that.
     ArmThumb => "arm_thumb", arm_thumb, ARM32, SLA_SPEC_ARM8_LE, PSPEC_ARMCORTEX, Little, Little, "ARM:LE:32:v8T";
     Aarch64 => "aarch64", aarch64, AARCH64, SLA_SPEC_AARCH64, PSPEC_AARCH64, Little, Little, "AARCH64:LE:64:v8A";
     Aarch64Be => "aarch64be", aarch64be, AARCH64, SLA_SPEC_AARCH64BE, PSPEC_AARCH64, Big, Big, "AARCH64:BE:64:v8A";
