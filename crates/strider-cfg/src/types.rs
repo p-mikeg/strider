@@ -71,7 +71,8 @@ pub enum RegionTerminator {
     /// A no-return CallOther (`ud2`, `brk #imm`), a call to a
     /// [`crate::CfgOptions::no_return_targets`] entry or returning outside the
     /// bound, or a call whose fall-through holds no code; that last drops
-    /// whatever followed the call (a PowerPC TOC restore).
+    /// whatever followed the call (a PowerPC TOC restore). Unmapped bytes
+    /// after a call on a direct path are a `TailCall` stub instead.
     NoReturn,
     /// A branch leaving the function: a jump to an out-of-range target, or an
     /// empty stub at `start_addr == target` for an edge leaving the decoded
