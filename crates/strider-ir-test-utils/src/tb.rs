@@ -176,7 +176,7 @@ impl Tb {
             .expect("lzcount")
     }
 
-    // An `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`.
+    /// An `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`.
     pub fn bool_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
         self.fb
             .build_int_binary_operation(l, r, op, ValueType::I1)

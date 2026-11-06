@@ -543,7 +543,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     fn switch_arm(&self, node: NodeId, selector: &UBig) -> Eval<usize> {
         // An interworking dispatch carries its ISA mode in the low bit.
         let interworking = self.f.switch_isa_mode(node).is_some();
-        // `UBig` has no `Not`: clearing the low bit is a round trip through 1.
+        // `UBig` has no `Not`, so the low bit is cleared by shifting it out and back.
         let even = (selector.clone() >> 1usize) << 1usize;
         self.f
             .switch_targets(node)
