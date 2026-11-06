@@ -29,7 +29,6 @@ fn get_context_at<R: rsleigh::MemReader>(
 }
 
 impl FlowVars {
-    /// The flowing context vars of `tables`.
     pub fn of(tables: &'static strider_target::DecodeTables) -> Self {
         Self {
             vars: &tables.flow_vars,

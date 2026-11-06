@@ -39,7 +39,7 @@ pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
     /// Span of a region that seals with no instruction: the zero-p-code-op
     /// instruction at `start_addr`.
     empty_span_len: u32,
-    /// `None` only for the function entry region.
+    /// The region edging into this one; `None` only for the entry.
     parent_edge: Option<NodeIndex>,
     /// The ISA mode this region decodes in, when the arch has one. Re-imposed
     /// per instruction, since a change point inside the region ends the
