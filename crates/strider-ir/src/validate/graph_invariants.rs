@@ -539,7 +539,8 @@ pub(super) fn check_function_invariants_memory_linearity(
 /// its immediate dominator's state. A non-effect `Call` / `CallOther` passes
 /// its input token on: every memory read and `MemPhi` arm it reaches before
 /// the next effect, across merges and back edges, must reach that token
-/// through `Store`s.
+/// through `Store`s, and a node two such calls reach needs one token to build
+/// on the other.
 fn check_memory_order(
     ctx: &ScheduleContext<'_>,
     on_chain: &NodeIdSet,
@@ -813,7 +814,14 @@ fn check_memory_order(
                     }
                 } else if let Some(claimer) = claimed[succ] {
                     if rewinds(claimer) {
-                        lost(succ);
+                        if matches!(graph.node_kind(succ), NodeKind::Region) {
+                            errs.push(ValidationError::UnmergedMemoryEffect {
+                                region: succ,
+                                effect: call,
+                            });
+                        } else {
+                            lost(succ);
+                        }
                     }
                 } else {
                     claimed[succ] = Some(token);
