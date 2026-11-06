@@ -23,9 +23,6 @@ IMAGE = ADD + SUB + XOR
 mem = reader.BufferReader(IMAGE_BASE, IMAGE)
 lft = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)
 cc = sleigh.CallingConvention.x86_64_systemv()
-opts = strider.lift.LifterOptions(
-    cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-)
 
 # A signature per routine. The third's xor eax,eax folds to int_const(0), so
 # match the folded result, not the raw xor.
@@ -38,7 +35,7 @@ ENTRIES = {
 print(f"image: {len(IMAGE)} bytes mapped at {IMAGE_BASE:#x}, one BufferReader\n")
 for name, (offset, signature) in ENTRIES.items():
     addr = IMAGE_BASE + offset
-    _cfg, fn, _unresolved = lft.analyze(addr, cc, opts=opts)
+    _cfg, fn, _unresolved = lft.analyze(addr, cc)
     sig_hits = len(fn.find_all(signature, ignore_casts=True))
     ret_hits = len(fn.find_all(ret()))
     print(

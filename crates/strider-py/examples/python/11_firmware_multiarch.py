@@ -29,10 +29,6 @@ CASES = {
     ),
 }
 
-opts = strider.lift.LifterOptions(
-    cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-)
-
 # int_add is an IR node kind, not an ISA mnemonic, so one pattern serves every arch.
 a, b = Capture("a"), Capture("b")
 pat = int_add(a, b)
@@ -40,7 +36,7 @@ pat = int_add(a, b)
 for label, (arch, cc, base, code) in CASES.items():
     mem = reader.BufferReader(base, code + bytes(64))  # pad past the stream
     lft = strider.lift.lifter(arch, mem)
-    _cfg, fn, _unresolved = lft.analyze(base, cc, opts=opts)
+    _cfg, fn, _unresolved = lft.analyze(base, cc)
 
     hits = fn.find_all(pat, ignore_casts=True)
     print(

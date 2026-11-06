@@ -46,6 +46,3 @@ bytes.
 - **Padding**: the disassembler prefetches past the last instruction. A
   `BufferReader` short-reads there, so its padding is harmless; a `MemReader`
   returning `None` needs real padding (02 and 08 carry 64 bytes).
-- **`allow_code_before_start_addr=True`** (all five; also 03, 04, 07 and
-  08): otherwise an unconditional branch below the entry is a tail call, not
-  an edge.

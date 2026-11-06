@@ -18,14 +18,10 @@ head = mem.read(BASE, 3)
 assert head is not None and head.hex() == "8d0437"
 assert mem.read(BASE - 1, 4) is None
 
-# allow_code_before_start_addr permits blocks below the entry address.
 lft = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)
 _cfg, function, unresolved = lft.analyze(
     BASE,
     sleigh.CallingConvention.x86_64_systemv(),
-    opts=strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-    ),
 )
 
 print(f"lifted {function.node_count()} nodes from {len(CODE)} raw bytes")

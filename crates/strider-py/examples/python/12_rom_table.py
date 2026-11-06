@@ -24,9 +24,6 @@ lft = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem, rom)
 _cfg, fn, _unresolved = lft.analyze(
     CODE_BASE,
     sleigh.CallingConvention.x86_64_systemv(),
-    opts=strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-    ),
 )
 
 remaining = fn.find_all(load())
