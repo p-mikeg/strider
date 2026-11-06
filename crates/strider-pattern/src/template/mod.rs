@@ -23,7 +23,7 @@ use strider_ir::node::{
 };
 use strider_ir::{Function, IRBuilder, IRViewer};
 
-use crate::bindings::Bindings;
+use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::consumed_inputs;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
@@ -134,13 +134,16 @@ pub fn instantiate_guarded<B: IRBuilder>(
             else {
                 unreachable!("a capture leaf's one output is typed from its binding")
             };
-            match bindings.get_value(cap) {
-                Some(value) => {
+            match bindings.get_binding(cap) {
+                Some(Binding::Value(value)) => {
                     materialised[idx(out_vtx)] = Some(value);
                     if vtx == root {
                         root_value = Some(value);
                     }
                 }
+                Some(Binding::Node(_)) => anyhow::bail!(
+                    "capture {cap:?} bound a node, not a value; a template can only reuse a value"
+                ),
                 None => unbound = unbound.or(Some(cap)),
             }
             continue;
