@@ -44,6 +44,35 @@ fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
     Ok(())
 }
 
+/// A root left with no uses folds nothing, so the live constant equal to its
+/// value absorbs none of its operands' fingerprints.
+#[test]
+fn a_use_less_root_leaves_a_shared_constant_alone() -> Result<()> {
+    const A: u64 = 0xC0FF_EE01;
+    const B: u64 = 0xC0FF_EE02;
+    const SEVEN: u64 = 0xC0FF_EE04;
+    let mut dead_add = None;
+    let mut fg = make_fn(|b| {
+        b.set_lift_addr(Some(A));
+        let c3 = b.build_int_const(3u64, ValueType::int(64))?;
+        b.set_lift_addr(Some(B));
+        let c4 = b.build_int_const(4u64, ValueType::int(64))?;
+        let add = b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, ValueType::int(64))?;
+        dead_add = Some(add);
+        b.set_lift_addr(Some(SEVEN));
+        b.build_int_const(7u64, ValueType::int(64))
+    })?;
+    let add = fg.producer(dead_add.expect("built"));
+    let seven = fg.producer(fg.returned());
+    let mut edit = crate::EditFunction::new(&mut fg);
+    for rule in super::rules::build_rules() {
+        assert!(rule.try_at(&mut edit, add)?.is_none());
+    }
+    let fp = fg.side_tables().asm_fingerprint(seven);
+    assert!(!fp.contains(&A) && !fp.contains(&B), "got {fp:?}");
+    Ok(())
+}
+
 /// A shift count owes the output no width (`NodeKind::operand_width`), and
 /// the evaluator tests it against the width before masking, so a count of any
 /// width folds: one past the width shifts everything out.

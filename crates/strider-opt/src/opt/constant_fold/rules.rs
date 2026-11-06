@@ -468,7 +468,7 @@ fn const_eval_rule(edit: &mut EditFunction<'_>, root: NodeId) -> Result<Option<V
     let Ok((out, ty)) = f.single_value_output(root) else {
         return Ok(None);
     };
-    if !ty.is_integer() {
+    if !ty.is_integer() || edit.value_uses(out).next().is_none() {
         return Ok(None);
     }
     let Some(k) = eval_node_const(f, out, &|v| f.int_const(v).cloned(), None) else {
