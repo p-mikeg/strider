@@ -5,40 +5,22 @@
 
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::RelocationMode;
-use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
+use strider_reader::{ElfFileMemReader, OwnedElf};
+
+mod common;
+use common::{le32, le64, loader_fixture as path, rom_word as rom};
 
 const APPLIED: RelocationMode = RelocationMode::Applied { got_is_rom: false };
 const GOT_IS_ROM: RelocationMode = RelocationMode::Applied { got_is_rom: true };
-
-fn path(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/loader/out")
-        .join(name)
-}
 
 fn bytes(name: &str) -> Vec<u8> {
     std::fs::read(path(name))
         .unwrap_or_else(|e| panic!("{name}: {e} (run `make -C fixtures/loader`)"))
 }
 
-fn le32(b: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
-}
-
-fn le64(b: &[u8], at: usize) -> u64 {
-    u64::from_le_bytes(b[at..at + 8].try_into().unwrap())
-}
-
 /// `size` little-endian bytes of `v` at `at`.
 fn put(b: &mut [u8], at: usize, v: u64, size: usize) {
     b[at..at + size].copy_from_slice(&v.to_le_bytes()[..size]);
-}
-
-/// The little-endian `width`-byte word the ROM view serves at `addr`.
-fn rom(reader: &ElfFileMemReader, addr: u64, width: usize) -> Result<u64, String> {
-    let mut buf = vec![0u8; width];
-    ReadOnlyMemory::read(reader, addr, &mut buf).map_err(|e| e.to_string())?;
-    Ok(buf.iter().rev().fold(0, |a, &b| (a << 8) | u64::from(b)))
 }
 
 /// The little-endian `width`-byte word the fetch view serves at `addr`.

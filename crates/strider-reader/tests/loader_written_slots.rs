@@ -10,6 +10,9 @@ use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::{LoadFilter, RegionSource, RelocationMode};
 use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
 
+mod common;
+use common::assert_hole;
+
 const GOT_IS_ROM: RelocationMode = RelocationMode::Applied { got_is_rom: true };
 
 fn open(name: &str) -> OwnedElf {
@@ -49,13 +52,6 @@ fn word(bytes: &[u8], le: bool) -> u64 {
         bytes.iter().rev().fold(0, fold)
     } else {
         bytes.iter().fold(0, fold)
-    }
-}
-
-fn assert_hole(got: Result<u64, String>, r_type: u32, what: &str) {
-    match got {
-        Err(e) if e.contains(&format!("relocation of type {r_type} ")) => {}
-        other => panic!("{what}: expected a type-{r_type} hole, got {other:?}"),
     }
 }
 

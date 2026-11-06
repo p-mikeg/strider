@@ -1021,32 +1021,45 @@ fn a_word_sized_rel32_that_does_not_fit_is_a_hole() {
     );
 }
 
-/// A mips64el `SHT_REL` entry's `r_info` is transposed in what `object`
-/// reports, so the hole over an unhandled one must take its type from the
-/// untransposed word: `R_MIPS_GPREL32`, not the symbol index 1.
+/// The type a MIPS64 REL hole names, over a read-only slot:
+/// - mips64el: `object` reports `r_info` transposed, so the type comes from
+///   the untransposed word, `R_MIPS_GPREL32`, not the symbol index 1.
+/// - big-endian: the type word's top byte is `r_ssym`, not part of the type.
+/// - mips64el beside an `SHT_CREL` table: entries are read as written, so
+///   the `R_MIPS_26` jump reads as type 1 (`R_MIPS_16`), its `r_sym` word,
+///   against an out-of-range symbol.
 #[test]
-fn a_mips64el_rel_hole_names_the_relocation_type() {
-    let fx = common::elf_fixture::build_rel_elf_placed(
-        common::elf_fixture::RelOpts {
-            endian: object::Endianness::Little,
-            is_64: true,
-            e_machine: object::elf::EM_MIPS,
-            r_type: object::elf::R_MIPS_GPREL32,
-            defined_symbol: true,
-            slot_init: vec![0u8; 8],
-        },
-        // Read-only, so the unhandled relocation leaves a hole.
-        common::elf_fixture::RelPlacement {
-            slot_exec: true,
-            ..Default::default()
-        },
-    );
-    let table =
-        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
-    assert_eq!(
-        table.unmodelled_relocation_at(fx.slot_addr),
-        Some(object::elf::R_MIPS_GPREL32)
-    );
+fn a_mips64_rel_hole_names_the_relocation_type() {
+    use object::Endianness::{Big, Little};
+    use object::elf::{R_MIPS_16, R_MIPS_26, R_MIPS_GPREL32};
+    for (endian, r_type, slot_len, empty_crel, want) in [
+        (Little, R_MIPS_GPREL32, 8, false, R_MIPS_GPREL32),
+        (Big, (1 << 24) | R_MIPS_GPREL32, 8, false, R_MIPS_GPREL32),
+        (Little, R_MIPS_26, 4, true, R_MIPS_16),
+    ] {
+        let fx = common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian,
+                is_64: true,
+                e_machine: object::elf::EM_MIPS,
+                r_type,
+                defined_symbol: true,
+                slot_init: vec![0u8; slot_len],
+            },
+            common::elf_fixture::RelPlacement {
+                slot_exec: true,
+                empty_crel,
+                ..Default::default()
+            },
+        );
+        let table =
+            strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+        assert_eq!(
+            table.unmodelled_relocation_at(fx.slot_addr),
+            Some(want),
+            "{endian:?} type {r_type:#x}"
+        );
+    }
 }
 
 /// A sign-extended kseg address (`0xffff_ffff_8xxx_xxxx`) fits a 4-byte
@@ -1077,33 +1090,6 @@ fn a_mips64_rel32_to_a_kseg_address_is_patched() {
     );
     let table = strider_reader::MemRegionsLookupTable::new(regions);
     assert_eq!(table.unmodelled_relocation_at(fx.slot_addr), None);
-}
-
-/// A big-endian MIPS64 type word carries `r_ssym` in its top byte, which is
-/// not part of the type: the hole names `R_MIPS_GPREL32`.
-#[test]
-fn a_mips64_be_hole_drops_r_ssym_from_the_type() {
-    let fx = common::elf_fixture::build_rel_elf_placed(
-        common::elf_fixture::RelOpts {
-            endian: object::Endianness::Big,
-            is_64: true,
-            e_machine: object::elf::EM_MIPS,
-            r_type: (1 << 24) | object::elf::R_MIPS_GPREL32,
-            defined_symbol: true,
-            slot_init: vec![0u8; 8],
-        },
-        // Read-only, so the unhandled relocation leaves a hole.
-        common::elf_fixture::RelPlacement {
-            slot_exec: true,
-            ..Default::default()
-        },
-    );
-    let table =
-        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
-    assert_eq!(
-        table.unmodelled_relocation_at(fx.slot_addr),
-        Some(object::elf::R_MIPS_GPREL32)
-    );
 }
 
 /// A relocation at the top of the address space: a slot ending at
@@ -1256,35 +1242,6 @@ fn a_mips64el_crel_jump_is_patched() {
         .read_exact(fx.slot_addr, &mut word)
         .expect("the jump is patched, not a hole");
     assert_eq!(u32::from_le_bytes(word), (fx.sym_addr >> 2) as u32);
-}
-
-/// An image holding an `SHT_CREL` table reads its mips64el `SHT_REL`
-/// entries as written, untransposed: the `R_MIPS_26` jump patched alone
-/// reads as type 1, its `r_sym` word, against an out-of-range symbol, and is
-/// a hole.
-#[test]
-fn a_mips64el_rel_entry_beside_a_crel_table_is_read_as_written() {
-    let fx = common::elf_fixture::build_rel_elf_placed(
-        common::elf_fixture::RelOpts {
-            endian: object::Endianness::Little,
-            is_64: true,
-            e_machine: object::elf::EM_MIPS,
-            r_type: object::elf::R_MIPS_26,
-            defined_symbol: true,
-            slot_init: vec![0u8; 4],
-        },
-        common::elf_fixture::RelPlacement {
-            slot_exec: true,
-            empty_crel: true,
-            ..Default::default()
-        },
-    );
-    let table =
-        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
-    assert_eq!(
-        table.unmodelled_relocation_at(fx.slot_addr),
-        Some(object::elf::R_MIPS_16)
-    );
 }
 
 /// `S` exists only for a symbol: a relocation whose value reads it is a hole
