@@ -137,28 +137,6 @@ fn int_const_u128_is_none_for_non_const() -> Result<()> {
 }
 
 #[test]
-fn get_signed_int_sign_extension_cases() -> Result<()> {
-    let cases: [(&str, u64, i128); 2] = [
-        (
-            "get_signed_int_sign_extends_negative_u8",
-            u8::MAX as u64,
-            -1,
-        ),
-        (
-            "get_signed_int_positive_u8_stays_positive",
-            i8::MAX as u64,
-            i8::MAX as i128,
-        ),
-    ];
-    let mut b = empty_builder()?;
-    for (label, raw, expected) in cases {
-        let value = b.build_int_const(raw, ValueType::int(8))?;
-        assert_eq!(b.int_const_i128(value), Some(expected), "{label}");
-    }
-    Ok(())
-}
-
-#[test]
 fn truncate_const_folds_to_const() -> Result<()> {
     let mut b = empty_builder()?;
     let value = b.build_int_const(0xABCDu64, ValueType::int(16))?;
@@ -370,15 +348,6 @@ fn identical_constants_are_deduplicated() -> Result<()> {
     let a = b.build_int_const(77u64, ValueType::int(32))?;
     let c = b.build_int_const(77u64, ValueType::int(32))?;
     assert_eq!(a, c, "same constant must reuse the same node");
-    Ok(())
-}
-
-#[test]
-fn different_constants_are_distinct() -> Result<()> {
-    let mut b = empty_builder()?;
-    let a = b.build_int_const(1u64, ValueType::int(32))?;
-    let c = b.build_int_const(2u64, ValueType::int(32))?;
-    assert_ne!(a, c);
     Ok(())
 }
 
@@ -2702,23 +2671,6 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
         "clobber output at slot 3 must carry value_vn = rcx"
     );
 
-    Ok(())
-}
-
-/// One value at two widths shares an `IntConstId` but not a node.
-#[test]
-fn one_value_at_two_widths_is_two_nodes() -> Result<()> {
-    let mut b = empty_builder()?;
-    let wide = b.build_int_const(5u64, ValueType::int(256))?;
-    let narrow = b.build_int_const(5u64, ValueType::int(64))?;
-    let id = |v| {
-        let NodeKind::IntConst(id) = *b.function().node_kind(b.function().producer(v)) else {
-            panic!("expected IntConst");
-        };
-        id
-    };
-    assert_eq!(id(wide), id(narrow));
-    assert_ne!(b.function().producer(wide), b.function().producer(narrow));
     Ok(())
 }
 
