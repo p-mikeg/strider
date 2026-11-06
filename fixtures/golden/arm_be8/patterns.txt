@@ -1,6 +1,6 @@
 # arm_be8/patterns: Strider::analyze, default options
 endian big register=little
-default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
+default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == mul_then_add @0x100b8
@@ -14,6 +14,10 @@ float_arg 0 [%v21]
 float_arg 1 [%v22]
 float_arg 2 [%v23]
 float_arg 3 [%v24]
+float_arg 4 [%v25]
+float_arg 5 [%v26]
+float_arg 6 [%v27]
+float_arg 7 [%v28]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[sp]
@@ -39,7 +43,11 @@ float_arg 3 [%v24]
 %v22:i64 = initial_var[d1]
 %v23:i64 = initial_var[d2]
 %v24:i64 = initial_var[d3]
-return %v0, %v18, %v20, %v13, %v21, %v22, %v23, %v24
+%v25:i64 = initial_var[d4]
+%v26:i64 = initial_var[d5]
+%v27:i64 = initial_var[d6]
+%v28:i64 = initial_var[d7]
+return %v0, %v18, %v20, %v13, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28
 
 == chained_xor_mask @0x100f4
 cfg
@@ -51,6 +59,10 @@ float_arg 0 [%v18]
 float_arg 1 [%v19]
 float_arg 2 [%v20]
 float_arg 3 [%v21]
+float_arg 4 [%v22]
+float_arg 5 [%v23]
+float_arg 6 [%v24]
+float_arg 7 [%v25]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[sp]
@@ -73,7 +85,11 @@ float_arg 3 [%v21]
 %v19:i64 = initial_var[d1]
 %v20:i64 = initial_var[d2]
 %v21:i64 = initial_var[d3]
-return %v0, %v10, %v16, %v17, %v18, %v19, %v20, %v21
+%v22:i64 = initial_var[d4]
+%v23:i64 = initial_var[d5]
+%v24:i64 = initial_var[d6]
+%v25:i64 = initial_var[d7]
+return %v0, %v10, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25
 
 == if_returns_const @0x10138
 cfg
@@ -88,6 +104,10 @@ float_arg 0 [%v21]
 float_arg 1 [%v22]
 float_arg 2 [%v23]
 float_arg 3 [%v24]
+float_arg 4 [%v25]
+float_arg 5 [%v26]
+float_arg 6 [%v27]
+float_arg 7 [%v28]
 %v0:ctrl = entry
 %v1:i32 = iconst[0x0]
 %v2:i32 = initial_var[r0]
@@ -112,7 +132,11 @@ float_arg 3 [%v24]
 %v22:i64 = initial_var[d1]
 %v23:i64 = initial_var[d2]
 %v24:i64 = initial_var[d3]
-return %v8, %v19, %v10, %v20, %v21, %v22, %v23, %v24
+%v25:i64 = initial_var[d4]
+%v26:i64 = initial_var[d5]
+%v27:i64 = initial_var[d6]
+%v28:i64 = initial_var[d7]
+return %v8, %v19, %v10, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28
 
 == loop_with_invariant_load @0x10170
 cfg
@@ -127,6 +151,10 @@ float_arg 0 [%v40]
 float_arg 1 [%v41]
 float_arg 2 [%v42]
 float_arg 3 [%v43]
+float_arg 4 [%v44]
+float_arg 5 [%v45]
+float_arg 6 [%v46]
+float_arg 7 [%v47]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = iconst[0xfffffffc]
@@ -170,7 +198,11 @@ float_arg 3 [%v43]
 %v41:i64 = initial_var[d1]
 %v42:i64 = initial_var[d2]
 %v43:i64 = initial_var[d3]
-return %v31, %v23, %v32, %v28, %v40, %v41, %v42, %v43
+%v44:i64 = initial_var[d4]
+%v45:i64 = initial_var[d5]
+%v46:i64 = initial_var[d6]
+%v47:i64 = initial_var[d7]
+return %v31, %v23, %v32, %v28, %v40, %v41, %v42, %v43, %v44, %v45, %v46, %v47
 
 == recursive_with_accumulator @0x101ec
 cfg
@@ -223,7 +255,7 @@ float_arg 7 [%v34]
 %v32:i64 = initial_var[d5]
 %v33:i64 = initial_var[d6]
 %v34:i64 = initial_var[d7]
-%v35:ctrl, %v36:mem, %v37:i32<r0>, %v38:i32<r1>, %v39:i64<d0>, %v40:i64<d1>, %v41:i64<d2>, %v42:i64<d3>, %v43:i32<r2>, %v44:i32<r3>, %v45:i32<pc>, %v46:i8<NG>, %v47:i8<ZR>, %v48:i8<CY>, %v49:i8<OV>, %v50:i8<tmpNG>, %v51:i8<tmpZR>, %v52:i8<tmpCY>, %v53:i8<tmpOV>, %v54:i8<shift_carry>, %v55:i8<TB>, %v56:i8<ISAModeSwitch>, %v57:i32<mult_addr>, %v58:i64<d4>, %v59:i64<d5>, %v60:i64<d6>, %v61:i64<d7> = call %v4, %v22, %v23, %v20, %v25, %v26, %v21, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v21, %v2, %v14, %v10
+%v35:ctrl, %v36:mem, %v37:i32<r0>, %v38:i32<r1>, %v39:i64<d0>, %v40:i64<d1>, %v41:i64<d2>, %v42:i64<d3>, %v43:i64<d4>, %v44:i64<d5>, %v45:i64<d6>, %v46:i64<d7>, %v47:i32<r2>, %v48:i32<r3>, %v49:i32<pc>, %v50:i8<NG>, %v51:i8<ZR>, %v52:i8<CY>, %v53:i8<OV>, %v54:i8<tmpNG>, %v55:i8<tmpZR>, %v56:i8<tmpCY>, %v57:i8<tmpOV>, %v58:i8<shift_carry>, %v59:i8<TB>, %v60:i8<ISAModeSwitch>, %v61:i32<mult_addr> = call %v4, %v22, %v23, %v20, %v25, %v26, %v21, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v21, %v2, %v14, %v10
 
 %v62:ctrl, %v63:token = region %v5, %v35
 %v64:mem = memphi %v63, %v22, %v36
@@ -233,7 +265,11 @@ float_arg 7 [%v34]
 %v68:i64<d1> = phi %v63, %v28, %v40
 %v69:i64<d2> = phi %v63, %v29, %v41
 %v70:i64<d3> = phi %v63, %v30, %v42
-return %v62, %v64, %v65, %v66, %v67, %v68, %v69, %v70
+%v71:i64<d4> = phi %v63, %v31, %v43
+%v72:i64<d5> = phi %v63, %v32, %v44
+%v73:i64<d6> = phi %v63, %v33, %v45
+%v74:i64<d7> = phi %v63, %v34, %v46
+return %v62, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73, %v74
 
 == main @0x10240
 cfg
@@ -277,19 +313,19 @@ float_arg 7 [%v28]
 %v26:i64 = initial_var[d5]
 %v27:i64 = initial_var[d6]
 %v28:i64 = initial_var[d7]
-%v29:ctrl, %v30:mem, %v31:i32<r0>, %v32:i32<r1>, %v33:i64<d0>, %v34:i64<d1>, %v35:i64<d2>, %v36:i64<d3>, %v37:i32<r2>, %v38:i32<r3>, %v39:i32<pc>, %v40:i8<CY>, %v41:i8<OV>, %v42:i8<tmpNG>, %v43:i8<tmpZR>, %v44:i8<tmpCY>, %v45:i8<tmpOV>, %v46:i8<shift_carry>, %v47:i8<TB>, %v48:i8<ISAModeSwitch>, %v49:i32<mult_addr>, %v50:i64<d4>, %v51:i64<d5>, %v52:i64<d6>, %v53:i64<d7> = call %v0, %v14, %v15, %v17, %v18, %v19, %v20, %v13, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28
+%v29:ctrl, %v30:mem, %v31:i32<r0>, %v32:i32<r1>, %v33:i64<d0>, %v34:i64<d1>, %v35:i64<d2>, %v36:i64<d3>, %v37:i64<d4>, %v38:i64<d5>, %v39:i64<d6>, %v40:i64<d7>, %v41:i32<r2>, %v42:i32<r3>, %v43:i32<pc>, %v44:i8<CY>, %v45:i8<OV>, %v46:i8<tmpNG>, %v47:i8<tmpZR>, %v48:i8<tmpCY>, %v49:i8<tmpOV>, %v50:i8<shift_carry>, %v51:i8<TB>, %v52:i8<ISAModeSwitch>, %v53:i32<mult_addr> = call %v0, %v14, %v15, %v17, %v18, %v19, %v20, %v13, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28
 %v54:i32 = load[r] %v30, %v12
 %v55:i32 = int.xor %v54, %v31
 %v56:mem = store[r] %v30, %v12, %v55
 %v57:i32 = iconst[0x100f4]
 %v58:i32 = iconst[0xdeadbeef]
-%v59:ctrl, %v60:mem, %v61:i32<r0>, %v62:i32<r1>, %v63:i64<d0>, %v64:i64<d1>, %v65:i64<d2>, %v66:i64<d3>, %v67:i32<r2>, %v68:i32<r3>, %v69:i32<pc>, %v70:i8<CY>, %v71:i8<OV>, %v72:i8<tmpNG>, %v73:i8<tmpZR>, %v74:i8<tmpCY>, %v75:i8<tmpOV>, %v76:i8<shift_carry>, %v77:i8<TB>, %v78:i8<ISAModeSwitch>, %v79:i32<mult_addr>, %v80:i64<d4>, %v81:i64<d5>, %v82:i64<d6>, %v83:i64<d7> = call %v29, %v56, %v57, %v17, %v58, %v32, %v31, %v55, %v33, %v34, %v35, %v36, %v50, %v51, %v52, %v53
+%v59:ctrl, %v60:mem, %v61:i32<r0>, %v62:i32<r1>, %v63:i64<d0>, %v64:i64<d1>, %v65:i64<d2>, %v66:i64<d3>, %v67:i64<d4>, %v68:i64<d5>, %v69:i64<d6>, %v70:i64<d7>, %v71:i32<r2>, %v72:i32<r3>, %v73:i32<pc>, %v74:i8<CY>, %v75:i8<OV>, %v76:i8<tmpNG>, %v77:i8<tmpZR>, %v78:i8<tmpCY>, %v79:i8<tmpOV>, %v80:i8<shift_carry>, %v81:i8<TB>, %v82:i8<ISAModeSwitch>, %v83:i32<mult_addr> = call %v29, %v56, %v57, %v17, %v58, %v32, %v31, %v55, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v40
 %v84:i32 = load[r] %v60, %v12
 %v85:i32 = int.xor %v84, %v61
 %v86:mem = store[r] %v60, %v12, %v85
 %v87:i32 = iconst[0x10138]
 %v88:i32 = iconst[0xffffffff]
-%v89:ctrl, %v90:mem, %v91:i32<r0>, %v92:i32<r1>, %v93:i64<d0>, %v94:i64<d1>, %v95:i64<d2>, %v96:i64<d3>, %v97:i32<r2>, %v98:i32<r3>, %v99:i32<pc>, %v100:i8<CY>, %v101:i8<OV>, %v102:i8<tmpNG>, %v103:i8<tmpZR>, %v104:i8<tmpCY>, %v105:i8<tmpOV>, %v106:i8<shift_carry>, %v107:i8<TB>, %v108:i8<ISAModeSwitch>, %v109:i32<mult_addr>, %v110:i64<d4>, %v111:i64<d5>, %v112:i64<d6>, %v113:i64<d7> = call %v59, %v86, %v87, %v17, %v88, %v62, %v61, %v85, %v63, %v64, %v65, %v66, %v80, %v81, %v82, %v83
+%v89:ctrl, %v90:mem, %v91:i32<r0>, %v92:i32<r1>, %v93:i64<d0>, %v94:i64<d1>, %v95:i64<d2>, %v96:i64<d3>, %v97:i64<d4>, %v98:i64<d5>, %v99:i64<d6>, %v100:i64<d7>, %v101:i32<r2>, %v102:i32<r3>, %v103:i32<pc>, %v104:i8<CY>, %v105:i8<OV>, %v106:i8<tmpNG>, %v107:i8<tmpZR>, %v108:i8<tmpCY>, %v109:i8<tmpOV>, %v110:i8<shift_carry>, %v111:i8<TB>, %v112:i8<ISAModeSwitch>, %v113:i32<mult_addr> = call %v59, %v86, %v87, %v17, %v88, %v62, %v61, %v85, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70
 %v114:i32 = load[r] %v90, %v12
 %v115:i32 = int.xor %v114, %v91
 %v116:mem = store[r] %v90, %v12, %v115
@@ -297,13 +333,13 @@ float_arg 7 [%v28]
 %v118:mem = store[r] %v116, %v17, %v117
 %v119:i32 = iconst[0x10170]
 %v120:i32 = iconst[0x5]
-%v121:ctrl, %v122:mem, %v123:i32<r0>, %v124:i32<r1>, %v125:i64<d0>, %v126:i64<d1>, %v127:i64<d2>, %v128:i64<d3>, %v129:i32<r2>, %v130:i32<r3>, %v131:i32<pc>, %v132:i8<CY>, %v133:i8<OV>, %v134:i8<tmpNG>, %v135:i8<tmpZR>, %v136:i8<tmpCY>, %v137:i8<tmpOV>, %v138:i8<shift_carry>, %v139:i8<TB>, %v140:i8<ISAModeSwitch>, %v141:i32<mult_addr>, %v142:i64<d4>, %v143:i64<d5>, %v144:i64<d6>, %v145:i64<d7> = call %v89, %v118, %v119, %v17, %v17, %v120, %v91, %v17, %v93, %v94, %v95, %v96, %v110, %v111, %v112, %v113, %v117, %v115
+%v121:ctrl, %v122:mem, %v123:i32<r0>, %v124:i32<r1>, %v125:i64<d0>, %v126:i64<d1>, %v127:i64<d2>, %v128:i64<d3>, %v129:i64<d4>, %v130:i64<d5>, %v131:i64<d6>, %v132:i64<d7>, %v133:i32<r2>, %v134:i32<r3>, %v135:i32<pc>, %v136:i8<CY>, %v137:i8<OV>, %v138:i8<tmpNG>, %v139:i8<tmpZR>, %v140:i8<tmpCY>, %v141:i8<tmpOV>, %v142:i8<shift_carry>, %v143:i8<TB>, %v144:i8<ISAModeSwitch>, %v145:i32<mult_addr> = call %v89, %v118, %v119, %v17, %v17, %v120, %v91, %v17, %v93, %v94, %v95, %v96, %v97, %v98, %v99, %v100, %v117, %v115
 %v146:i32 = load[r] %v122, %v12
 %v147:i32 = int.xor %v146, %v123
 %v148:mem = store[r] %v122, %v12, %v147
 %v149:i32 = iconst[0x101ec]
-%v150:ctrl, %v151:mem, %v152:i32<r0>, %v153:i32<r1>, %v154:i64<d0>, %v155:i64<d1>, %v156:i64<d2>, %v157:i64<d3>, %v158:i32<r2>, %v159:i32<r3>, %v160:i32<pc>, %v161:i8<CY>, %v162:i8<OV>, %v163:i8<tmpNG>, %v164:i8<tmpZR>, %v165:i8<tmpCY>, %v166:i8<tmpOV>, %v167:i8<shift_carry>, %v168:i8<TB>, %v169:i8<ISAModeSwitch>, %v170:i32<mult_addr>, %v171:i64<d4>, %v172:i64<d5>, %v173:i64<d6>, %v174:i64<d7> = call %v121, %v148, %v149, %v17, %v120, %v13, %v123, %v147, %v125, %v126, %v127, %v128, %v142, %v143, %v144, %v145
+%v150:ctrl, %v151:mem, %v152:i32<r0>, %v153:i32<r1>, %v154:i64<d0>, %v155:i64<d1>, %v156:i64<d2>, %v157:i64<d3>, %v158:i64<d4>, %v159:i64<d5>, %v160:i64<d6>, %v161:i64<d7>, %v162:i32<r2>, %v163:i32<r3>, %v164:i32<pc>, %v165:i8<CY>, %v166:i8<OV>, %v167:i8<tmpNG>, %v168:i8<tmpZR>, %v169:i8<tmpCY>, %v170:i8<tmpOV>, %v171:i8<shift_carry>, %v172:i8<TB>, %v173:i8<ISAModeSwitch>, %v174:i32<mult_addr> = call %v121, %v148, %v149, %v17, %v120, %v13, %v123, %v147, %v125, %v126, %v127, %v128, %v129, %v130, %v131, %v132
 %v175:i32 = load[r] %v151, %v12
 %v176:i32 = int.xor %v175, %v152
 %v177:mem = store[r] %v151, %v12, %v176
-return %v150, %v177, %v176, %v153, %v154, %v155, %v156, %v157
+return %v150, %v177, %v176, %v153, %v154, %v155, %v156, %v157, %v158, %v159, %v160, %v161

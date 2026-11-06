@@ -1,6 +1,6 @@
 # arm/list_empty: Strider::analyze, default options
 endian little
-default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
+default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == main @0x3dc
@@ -13,6 +13,10 @@ float_arg 0 [%v10]
 float_arg 1 [%v11]
 float_arg 2 [%v12]
 float_arg 3 [%v13]
+float_arg 4 [%v14]
+float_arg 5 [%v15]
+float_arg 6 [%v16]
+float_arg 7 [%v17]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = iconst[0x1104c]
@@ -27,7 +31,11 @@ float_arg 3 [%v13]
 %v11:i64 = initial_var[d1]
 %v12:i64 = initial_var[d2]
 %v13:i64 = initial_var[d3]
-return %v0, %v5, %v8, %v9, %v10, %v11, %v12, %v13
+%v14:i64 = initial_var[d4]
+%v15:i64 = initial_var[d5]
+%v16:i64 = initial_var[d6]
+%v17:i64 = initial_var[d7]
+return %v0, %v5, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17
 
 == is_thread_group_empty @0x4f8
 cfg
@@ -39,6 +47,10 @@ float_arg 0 [%v12]
 float_arg 1 [%v13]
 float_arg 2 [%v14]
 float_arg 3 [%v15]
+float_arg 4 [%v16]
+float_arg 5 [%v17]
+float_arg 6 [%v18]
+float_arg 7 [%v19]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r0]
@@ -55,4 +67,8 @@ float_arg 3 [%v15]
 %v13:i64 = initial_var[d1]
 %v14:i64 = initial_var[d2]
 %v15:i64 = initial_var[d3]
-return %v0, %v1, %v10, %v11, %v12, %v13, %v14, %v15
+%v16:i64 = initial_var[d4]
+%v17:i64 = initial_var[d5]
+%v18:i64 = initial_var[d6]
+%v19:i64 = initial_var[d7]
+return %v0, %v1, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18, %v19

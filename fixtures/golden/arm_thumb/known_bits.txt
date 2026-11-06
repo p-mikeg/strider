@@ -1,6 +1,6 @@
 # arm_thumb/known_bits: Strider::analyze, default options
 endian little
-default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
+default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == main @0x3dd
@@ -41,11 +41,11 @@ float_arg 7 [%v23]
 %v21:i64 = initial_var[d5]
 %v22:i64 = initial_var[d6]
 %v23:i64 = initial_var[d7]
-%v24:ctrl, %v25:mem, %v26:i32<r0>, %v27:i32<r1>, %v28:i64<d0>, %v29:i64<d1>, %v30:i64<d2>, %v31:i64<d3>, %v32:i32<r2>, %v33:i32<r3>, %v34:i32<pc>, %v35:i8<NG>, %v36:i8<ZR>, %v37:i8<tmpNG>, %v38:i8<tmpZR>, %v39:i8<TB>, %v40:i8<ISAModeSwitch>, %v41:i32<mult_addr>, %v42:i64<d4>, %v43:i64<d5>, %v44:i64<d6>, %v45:i64<d7> = call %v0, %v10, %v11, %v13, %v9, %v14, %v15, %v9, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23
+%v24:ctrl, %v25:mem, %v26:i32<r0>, %v27:i32<r1>, %v28:i64<d0>, %v29:i64<d1>, %v30:i64<d2>, %v31:i64<d3>, %v32:i64<d4>, %v33:i64<d5>, %v34:i64<d6>, %v35:i64<d7>, %v36:i32<r2>, %v37:i32<r3>, %v38:i32<pc>, %v39:i8<NG>, %v40:i8<ZR>, %v41:i8<tmpNG>, %v42:i8<tmpZR>, %v43:i8<TB>, %v44:i8<ISAModeSwitch>, %v45:i32<mult_addr> = call %v0, %v10, %v11, %v13, %v9, %v14, %v15, %v9, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23
 %v46:i32 = load[r] %v25, %v8
 %v47:i32 = int.xor %v26, %v46
 %v48:mem = store[r] %v25, %v8, %v47
-return %v24, %v48, %v47, %v27, %v28, %v29, %v30, %v31
+return %v24, %v48, %v47, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35
 
 == kb_or_then_mask @0x4f5
 cfg
@@ -56,6 +56,10 @@ float_arg 0 [%v4]
 float_arg 1 [%v5]
 float_arg 2 [%v6]
 float_arg 3 [%v7]
+float_arg 4 [%v8]
+float_arg 5 [%v9]
+float_arg 6 [%v10]
+float_arg 7 [%v11]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = iconst[0x1]
@@ -64,4 +68,8 @@ float_arg 3 [%v7]
 %v5:i64 = initial_var[d1]
 %v6:i64 = initial_var[d2]
 %v7:i64 = initial_var[d3]
-return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
+%v8:i64 = initial_var[d4]
+%v9:i64 = initial_var[d5]
+%v10:i64 = initial_var[d6]
+%v11:i64 = initial_var[d7]
+return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7, %v8, %v9, %v10, %v11
