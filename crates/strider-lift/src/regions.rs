@@ -24,7 +24,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             let region = &cfg.region_graph()[cfg_rid];
             let last_addr = region
                 .insns
-                .last()
+                .back()
                 .map_or(region.start_addr.machine_addr.addr, |wrapped| {
                     wrapped.addr.machine_addr.addr
                 });
@@ -78,14 +78,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // insn, else (a stub) the greatest predecessor's last insn or start.
             let term_addr = region
                 .insns
-                .last()
+                .back()
                 .map(|wrapped| wrapped.addr.machine_addr.addr)
                 .or_else(|| {
                     cfg.region_predecessors(cfg_rid)
                         .map(|pred| {
                             let pred = &cfg.region_graph()[pred];
                             pred.insns
-                                .last()
+                                .back()
                                 .map_or(pred.start_addr, |w| w.addr)
                                 .machine_addr
                                 .addr
@@ -96,7 +96,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // in a `CallOther` already terminated in `handle_call_other`.
             let noreturn_call =
                 matches!(region.terminator, strider_cfg::RegionTerminator::NoReturn)
-                    && region.insns.last().is_some_and(|w| {
+                    && region.insns.back().is_some_and(|w| {
                         matches!(
                             w.insn.opcode,
                             rsleigh::Opcode::Call | rsleigh::Opcode::CallIndirect

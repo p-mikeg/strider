@@ -354,7 +354,7 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
         .regions()
         .find(|r| r.start_addr.machine() == 0x10004)
         .expect("region at 0x10004");
-    assert_eq!(thumb.insns.first().map(|i| i.len), Some(2));
+    assert_eq!(thumb.insns.front().map(|i| i.len), Some(2));
 }
 
 /// `xor eax, eax`, falling through to 0x1012.

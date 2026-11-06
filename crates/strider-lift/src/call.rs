@@ -119,7 +119,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             .node_weight(region)
             .is_some_and(|r| {
                 matches!(r.terminator, strider_cfg::RegionTerminator::NoReturn)
-                    && r.insns.last().is_some_and(|last| last.addr == addr)
+                    && r.insns.back().is_some_and(|last| last.addr == addr)
             })
     }
 
@@ -428,7 +428,7 @@ mod tests {
             let cfg_ends = cfg.regions().any(|r| {
                 matches!(r.terminator, strider_cfg::RegionTerminator::NoReturn)
                     && r.insns
-                        .last()
+                        .back()
                         .is_some_and(|w| w.insn.opcode == rsleigh::Opcode::CallOther)
             });
             let f = lifter

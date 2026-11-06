@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 use crate::test_support::*;
@@ -789,7 +791,7 @@ fn a_later_thumb_region_repaints_the_dispatch_a_site_already_sampled() {
     let insn_len = |start: u64| {
         cfg.regions()
             .find(|r| r.start_addr.machine() == start)
-            .and_then(|r| r.insns.first())
+            .and_then(|r| r.insns.front())
             .map(|i| i.len)
     };
     assert_eq!(insn_len(0x1008), Some(2), "the interworking arm is Thumb");
@@ -949,7 +951,7 @@ fn add_region_admits_an_empty_region_by_terminator() {
         let mut b = make_builder(0x1000, &mut engine);
         let empty = Region {
             start_addr: addr(0x1000, 0),
-            insns: Vec::new(),
+            insns: VecDeque::new(),
             empty_span_len: 0,
             isa_mode: None,
             terminator: terminator.clone(),

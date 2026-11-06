@@ -423,7 +423,7 @@ fn analyze_resolves_an_interworking_table_in_each_arm_mode() {
             .find(|r| r.start_addr.machine_addr.addr == addr)
             .unwrap_or_else(|| panic!("no region decoded at {addr:#x}"))
             .insns
-            .first()
+            .front()
             .expect("a decoded instruction")
             .len
     };

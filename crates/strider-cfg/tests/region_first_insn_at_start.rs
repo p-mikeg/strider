@@ -61,7 +61,7 @@ fn every_fixture_regions_first_insn_is_at_its_start() {
                     continue;
                 };
                 for region in cfg.regions() {
-                    if let Some(first) = region.insns.first() {
+                    if let Some(first) = region.insns.front() {
                         assert_eq!(
                             first.addr.machine_addr,
                             region.start_addr.machine_addr,
