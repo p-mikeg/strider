@@ -40,10 +40,10 @@ impl FunctionBuilder {
             output_kinds.push(ValueKind::Typed(vn.int_type()?));
         }
         let node = self.create_node(kind, inputs, output_kinds);
-        let values = kind.output_head_len();
+        let head = kind.output_head_len();
         let outputs: Vec<ValueId> = self.function().node_outputs(node).to_vec();
 
-        for (value, vn) in core::iter::zip(&outputs[values..], output_vns) {
+        for (value, vn) in core::iter::zip(&outputs[head..], output_vns) {
             self.function_mut().set_vn_for_value(*value, *vn);
         }
         Ok((node, outputs))
