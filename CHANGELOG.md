@@ -177,7 +177,8 @@ replaced the rest.
 - `ValidationError::PhiTokenNotFromRegion::producer_kind` is `token_kind`;
   `OrphanedMemoryOutput` has no `kind`; `Match::get_vn` and strider-pattern's
   `test-util` feature are gone; `strider_ir::walk::CastMask` is
-  `strider_ir::node::CastMask`.
+  `strider_ir::node::CastMask`; `first_value_input_type` is
+  `slot0_input_type`.
 - `float_le(x, y).ordered()` pins both comparisons.
 
 ### Added, Python
