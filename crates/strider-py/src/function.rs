@@ -91,6 +91,13 @@ impl PyFunction {
         })
     }
 
+    /// False when the last optimizer run stopped at its iteration cap; the IR
+    /// is valid but not fully folded.
+    #[getter]
+    fn optimizer_converged(&self) -> PyResult<bool> {
+        Ok(self.read()?.optimizer_converged())
+    }
+
     /// Run `pipeline` (default: the default pipeline) over this function in
     /// place, first adding `assumptions`, which must include every claim in
     /// force and add no lift-time one. Stales `Node` / `Match` handles and

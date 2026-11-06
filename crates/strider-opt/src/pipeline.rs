@@ -122,8 +122,8 @@ fn apply_post(
     Ok(())
 }
 
-/// The iterations [`OptimizerPipeline::run`] allows before it reports no
-/// convergence.
+/// The iterations [`OptimizerPipeline::run`] allows before it stops with a
+/// partly folded graph.
 const MAX_ITERS: u32 = 1024;
 
 #[cfg(test)]
@@ -176,11 +176,11 @@ impl OptimizerPipeline {
         &self.post_passes
     }
 
-    /// Runs the passes to convergence, then each post-pass once, then
-    /// validates; every exit drains the graph and restamps memory classes.
-    /// Errs with the first pass error (unvalidated, `function` mutated up to
-    /// it), else a validation error, else non-convergence after `MAX_ITERS`
-    /// iterations (post-passes skipped).
+    /// Runs the passes to convergence or for `MAX_ITERS` iterations, then
+    /// each post-pass once, then validates; every exit drains the graph and
+    /// restamps memory classes. Errs with the first pass error (unvalidated,
+    /// `function` mutated up to it), else a validation error. Records whether
+    /// the loop converged in [`strider_ir::Function::optimizer_converged`].
     pub fn run(&self, function: &mut strider_ir::Function, ctx: &OptCtx<'_>) -> crate::Result<()> {
         function.invalidate_analyses();
         let outcome = {
@@ -197,25 +197,20 @@ impl OptimizerPipeline {
         };
         let converged = outcome?;
         strider_ir::validate::validate(function).map_err(|e| e.report(function))?;
-        anyhow::ensure!(
-            converged,
-            "optimizer pipeline did not converge after {MAX_ITERS} iterations"
-        );
+        function.set_optimizer_converged(converged);
         Ok(())
     }
 
-    /// The fixed-point loop, then the post-passes on a graph it converged.
+    /// The fixed-point loop, then the post-passes; whether the loop converged.
     fn converge(
         &self,
         edit: &mut crate::EditFunction<'_>,
         ctx: &OptCtx<'_>,
     ) -> crate::Result<bool> {
         let converged = self.fixed_point(edit, ctx)?;
-        if converged {
-            edit.clean();
-            for opt in &self.post_passes {
-                apply_post(*opt, edit, ctx)?;
-            }
+        edit.clean();
+        for opt in &self.post_passes {
+            apply_post(*opt, edit, ctx)?;
         }
         Ok(converged)
     }
@@ -410,8 +405,8 @@ mod tests {
         Ok(())
     }
 
-    /// A non-monotone pass that changes the graph every run must hit the
-    /// iteration cap instead of spinning forever.
+    /// A non-monotone pass that changes the graph every run stops at the
+    /// iteration cap, recorded on the function, instead of spinning forever.
     #[test]
     fn fixed_point_limit_exceeded() {
         use super::{Optimizer, OptimizerPipeline};
@@ -431,17 +426,16 @@ mod tests {
         let mut function = one_const_fn(0);
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(&AlwaysChanged);
-        let err = pipeline
+        pipeline
             .run(&mut function, &OptCtx::new(None))
-            .expect_err("pipeline must bail out on a non-monotone pass");
-        assert!(
-            err.to_string().contains("did not converge"),
-            "expected 'did not converge' error, got {err:?}"
-        );
+            .expect("a capped run hands back a valid graph");
+        assert!(!function.optimizer_converged());
+        pipeline = OptimizerPipeline::new();
+        pipeline.run(&mut function, &OptCtx::new(None)).unwrap();
+        assert!(function.optimizer_converged(), "a converged run resets it");
     }
 
-    /// A capped run validates the graph it hands back, reporting a failure
-    /// ahead of the non-convergence.
+    /// A capped run validates the graph it hands back.
     #[test]
     fn fixed_point_limit_still_validates() {
         use super::{Optimizer, OptimizerPipeline};
@@ -792,8 +786,8 @@ mod tests {
         let mut function = sp_store_fn()?;
         let mut p = super::OptimizerPipeline::new();
         p.add(&KeepsMoving);
-        let err = p.run(&mut function, &OptCtx::new(None)).unwrap_err();
-        assert!(err.to_string().contains("did not converge"), "{err}");
+        p.run(&mut function, &OptCtx::new(None))?;
+        assert!(!function.optimizer_converged());
         let moved = -4 - 4 * i128::from(super::MAX_ITERS);
         assert_eq!(store_offset(&function), Some(moved));
         Ok(())
@@ -1029,6 +1023,54 @@ mod tests {
             "50-deep chain should fold; reachable={}",
             function.walk().count()
         );
+        Ok(())
+    }
+
+    /// `x = 0; n times: if (x == 0) { x = 0 } else { x = 1 }; return x`.
+    fn constant_branch_chain(n: usize) -> crate::Result<strider_ir::Function> {
+        use strider_ir::IntCmpOp;
+        let vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+        let i32t = ValueType::int(32);
+        let mut b = strider_ir_test_utils::RegisterSet::new()
+            .tracked(vn)
+            .arg(vn)
+            .build_fn()?;
+        let r0 = b.create_region_all()?;
+        b.set_entry_region_all(r0)?;
+        b.set_region(r0);
+        let z = b.build_int_const(0u64, i32t)?;
+        b.write_variable(&vn, z)?;
+        for _ in 0..n {
+            let [a, e, j] = [(); 3].map(|_| b.create_region_all());
+            let (a, e, j) = (a?, e?, j?);
+            let x = b.read_variable(&vn)?;
+            let zero = b.build_int_const(0u64, i32t)?;
+            let c = b.build_int_cmp_operation(x, zero, IntCmpOp::Equal, i32t)?;
+            b.build_if(c, a, e)?;
+            for (r, k) in [(a, 0u64), (e, 1)] {
+                b.set_region(r);
+                let v = b.build_int_const(k, i32t)?;
+                b.write_variable(&vn, v)?;
+                b.build_branch(j)?;
+            }
+            b.set_region(j);
+        }
+        let x = b.read_variable(&vn)?;
+        b.build_return(None, &[x])?;
+        b.set_lift_addr(None);
+        b.build()
+    }
+
+    /// Each link of a dependent constant-branch chain costs a fixed-point
+    /// iteration, so a long one stops at the cap with a valid graph.
+    #[test]
+    fn a_capped_default_run_is_valid_and_not_converged() -> crate::Result<()> {
+        for (n, converged) in [(50, true), (800, false)] {
+            let mut function = constant_branch_chain(n)?;
+            crate::default_pipeline().run(&mut function, &OptCtx::new(None))?;
+            assert_eq!(function.optimizer_converged(), converged, "n={n}");
+            strider_ir::validate::validate(&function).map_err(|e| e.report(&function))?;
+        }
         Ok(())
     }
 
