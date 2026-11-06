@@ -695,6 +695,10 @@ class FunctionArgPat(NodePat):
     `function_arg(0)` is the first integer argument, `function_arg_float(0)`
     the first float one. A stack argument takes the next integer index
     whatever its class.
+
+    A register argument is listed when its entry value has any use,
+    including as an unchanged input to a call or a return, so a match does
+    not show the function reads that argument.
     """
     def index(self, i: int) -> "FunctionArgPat":
         """Require the argument's position to be `i`."""

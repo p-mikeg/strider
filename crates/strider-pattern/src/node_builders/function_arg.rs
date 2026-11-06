@@ -18,6 +18,10 @@ pub enum FunctionArgClass {
 
 /// A function-argument carrier recorded by `FunctionArgDetect`: an `InitialVar` for a
 /// register-passed arg, a `Load` for a stack-passed one.
+///
+/// A register carrier is listed when its entry value has any use, including as
+/// an unchanged input to a call or a return, so a match does not show the
+/// function reads that argument.
 pub struct FunctionArgPat {
     source: Option<FunctionArgSource>,
     class: FunctionArgClass,
