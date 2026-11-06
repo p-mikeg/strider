@@ -83,6 +83,7 @@ impl FunctionMemos {
 /// `&Function` fills them in.
 impl Function {
     #[inline]
+    #[cfg(any(test, feature = "test-util"))]
     pub fn memory_class(&self, value: ValueId) -> MemDecomp {
         self.memos.borrow().memory_offsets[value]
     }
