@@ -13,9 +13,11 @@ create_exception!(
      (a malformed ELF included) has a bad value. Otherwise a wrong type \
      raises `TypeError` (a `bool` address or index included), an \
      out-of-range address, node id or operand index `StriderError` and \
-     another out-of-range int `OverflowError`, a range-checked option \
-     `ValueError`, a missing path `FileNotFoundError`, and `load_elf` on a \
-     non-ELF file or an unsupported arch or ABI `ValueError`.\n\n\
+     another out-of-range int `OverflowError`, and a range-checked option \
+     `ValueError`. `load_elf`, `add_elf` and `add_symbol_file` raise \
+     `FileNotFoundError` for a missing path and `ValueError` for a non-ELF \
+     file; `load_elf` also raises `ValueError` for an unsupported arch or \
+     ABI.\n\n\
      `.backtrace` is the message plus the Rust backtrace (empty when raised \
      from Python); `STRIDER_BACKTRACE=1` appends it to the message."
 );
