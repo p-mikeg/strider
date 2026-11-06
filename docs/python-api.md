@@ -124,9 +124,9 @@ _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 A handle works on any thread. `analyze`, `build_cfg` and `add_elf` take it
 exclusively; a `Lifter` method called on it meanwhile raises `StriderError:
 this Lifter is already in use`, while the `ElfLifter` symbol, `read`,
-`endianness` and `cc` reads keep working. For parallelism use one handle per thread, each
-built over `prog.arch`, `prog.reader()` and `prog.rom()` (gathered before any
-analysis is in flight and after every `add_elf`), and call
+`endianness` and `cc` reads keep working. For parallelism use one handle per
+thread, each built over `prog.arch`, `prog.reader()` and `prog.rom()` (gathered
+before any analysis is in flight and after every `add_elf`), and call
 `analyze(addr, prog.cc)`. `analyze` drops the GIL unless a reader is a Python
 one (anything but a `BufferReader`); `Function.optimize` holds it.
 
@@ -182,10 +182,10 @@ answer wrong. Each field's risky value is the positive one:
   entry SP (an `sp & -16` local) does not alias an incoming argument slot.
 - `escape_analysis` (off): when no stack address escapes the frame (through a
   call argument, a stored value, a return or a clobbered register), a spill
-  load forwards across a call and, under `stack_global_disjoint`, past a
-  store through a pointer strider cannot place. It misses a callee reading an address from a
-  preserved register, and is inert on a frame that stores its entry stack
-  pointer (every PowerPC frame, an ARM APCS frame).
+  load forwards across a call and, under `stack_global_disjoint`, past a store
+  through a pointer strider cannot place. It misses a callee reading an address
+  from a preserved register, and is inert on a frame that stores its entry
+  stack pointer (every PowerPC frame, an ARM APCS frame).
 - `noalias_allocators` (empty): the listed callees return fresh pointers that
   overlap no live allocation, stack slot or global, so an arena allocator does
   not qualify. Deallocation is not modelled. A non-empty list also forwards
@@ -409,7 +409,8 @@ never matches `0x34` at `I8`.
 Every operator is a free function (the `.pyi` lists them). They match the
 canonical IR ([optimizations](optimizations.md)); the aliases build it for you:
 `int_sub(a, b)` is `int_add(a, int_neg(b))` (with an uncaptured constant `b`,
-also the folded `int_add(a, -b)`), and `int_le` / `int_ne` are their lowered comparisons.
+also the folded `int_add(a, -b)`), and `int_le` / `int_ne` are their lowered
+comparisons.
 
 ```python
 p.int_add(a, b); p.int_mul(a, b); p.int_neg(a); p.int_and(a, b); p.int_xor(a, b)
@@ -464,9 +465,9 @@ p.entry(); p.region(); p.switch(); p.indirect_branch(); p.unreachable()
 ```
 
 Call slots: `.target(p)` (an int address or a list is fine), `.arg(i, p)`,
-`.mem(m)`, `.ctrl(p)`, `.res()` (pin to the return value when nested as a
-value or in a raw slot), `.output(slot)`. `indirect_branch().target` and `switch().selector`
-take a list too.
+`.mem(m)`, `.ctrl(p)`, `.res()` (pin to the return value when nested as a value
+or in a raw slot), `.output(slot)`. `indirect_branch().target` and
+`switch().selector` take a list too.
 
 A call's argument index counts the integer registers, then the float ones,
 then any vector window, then stack arguments: on x86-64 SysV `.arg(6)` is
@@ -628,10 +629,9 @@ cast level that matches, settling in pattern order as `first_of` does.
 
 `find_unique` fails on two structurally distinct matches even when they bind
 the same value. `find_unique_value(pat, capture, signed=False)` dedups by the
-captured constant: `None` when no match binds it to a constant, the value
-when all agree,
-`StriderError` for two distinct values or a capture no pattern binds. A list
-`pat` and `constraints=` work as in `find_all`.
+captured constant: `None` when no match binds it to a constant, the value when
+all agree, `StriderError` for two distinct values or a capture no pattern
+binds. A list `pat` and `constraints=` work as in `find_all`.
 
 ```python
 stride = p.Capture("stride")
@@ -742,11 +742,11 @@ function.rewrite_all([(pat1, tmpl1), (pat2, tmpl2)]) # -> total fire count
 ```
 
 `rewrite(find, replace)` replaces every match with a built value. `replace` is
-a `strider.template.Template`, a `Capture`, or a capture's name. `strider.template`
-builds the value ops and reuses the match's captures (`var(c)`); `float_le`,
-`float_is_nan` and the wildcards match but do not build. A
-`strider.pattern.Pat` is never a right-hand side: `TypeError` as `replace`,
-`StriderError` nested in a template.
+a `strider.template.Template`, a `Capture`, or a capture's name.
+`strider.template` builds the value ops and reuses the match's captures
+(`var(c)`); `float_le`, `float_is_nan` and the wildcards match but do not
+build. A `strider.pattern.Pat` is never a right-hand side: `TypeError` as
+`replace`, `StriderError` nested in a template.
 
 A match is skipped, uncounted, when the replacement has another width, or (for
 a `find` through a phi or region) would read the matched value or is not
@@ -929,9 +929,9 @@ one of seven reasons (`strider.cfg.INCOMPLETE_REASONS`):
 
 - `"unresolved_branch"`: an indirect branch with no complete answer (stopped
   deriving, lost a successor, narrowed, withdrawn, still growing at the
-  iteration cap), or a
-  return whose target is not provably the caller's (`push rsi; ret`) that you
-  did not seed `"return"`. `analyze`'s `unresolved` holds exactly these.
+  iteration cap), or a return whose target is not provably the caller's
+  (`push rsi; ret`) that you did not seed `"return"`. `analyze`'s `unresolved`
+  holds exactly these.
 - `"unverified_seed"`: a site settled only by your `known_targets` (including
   a seeded `"return"` whose target is not provably the caller's), or consumed
   as a tail call. Also an arm whose ISA mode was copied from its seeded
@@ -971,7 +971,7 @@ strider.cfg.CfgOptions(
     allow_code_before_start_addr=False,
     known_targets={0x401000: [0x401020, 0x401040]},   # your own answers, seated
     call_other_abis={"syscall": sleigh.CallOtherAbi.mem_clobber()},   # per user-op
-    data_ranges=[(0x401100, 0x401108)],               # [start, end) never decoded
+    data_ranges=[(0x401100, 0x401108)],               # [start, end) of data, not code
     fragment_ranges=[(0x400f00, 0x400f20)],           # [start, end) also this function's code
     no_return_targets=[0x401200],                     # direct-call targets that never return
 )
@@ -1019,11 +1019,11 @@ out-of-range int, such as a fixed-width constant or a stack offset; an integer
 constant wider than 512 bits is a `StriderError`). `load_elf` raises
 `FileNotFoundError` for a missing path, `ValueError` for a non-ELF file or an
 unsupported arch or ABI (microMIPS included, as does `add_elf`), and
-`StriderError` for a malformed ELF. Range-checked constructor arguments
-raise `ValueError`: `CfgOptions(function_max_size=0)`, a size with
+`StriderError` for a malformed ELF. Range-checked constructor arguments raise
+`ValueError`: `CfgOptions(function_max_size=0)`, a size with
 `allow_code_before_start_addr=True`, a `known_targets` string other than
-`"return"`, a string `call_other_abis` value, an empty
-`data_ranges` or `fragment_ranges` range, a `BufferReader` region past the address space. Every
+`"return"`, a string `call_other_abis` value, an empty `data_ranges` or
+`fragment_ranges` range, a `BufferReader` region past the address space. Every
 other bad value is a `StriderError`: `add_elf` / `add_symbol_file` on a bad
 path, an unknown `style=`, a reserved capture name, an unknown node id, an
 unbound capture read without `_opt`, and a `Match` read after `compact`,

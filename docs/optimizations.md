@@ -76,13 +76,13 @@ never through a call a claim makes transparent: the jump-table walk and
 return-target verification read that edge without those claims.
 
 With `escape_analysis`, when no stack address escapes the frame, a spill load
-forwards across a call if the slot is outside the callee's argument window,
-and past a store through a pointer strider cannot place (under
-`stack_global_disjoint`). With `noalias_allocators`, a load steps through a call to a listed
-allocator when it reads another allocation or such a frame slot; a global load
-does not. `callee_preserves_stack_args` empties the argument window under
-either. [python-api §2](python-api.md#2-analyzing-a-function) says when each
-claim is safe.
+forwards across a call if the slot is outside the callee's argument window, and
+past a store through a pointer strider cannot place (under
+`stack_global_disjoint`). With `noalias_allocators`, a load steps through a
+call to a listed allocator when it reads another allocation or such a frame
+slot; a global load does not. `callee_preserves_stack_args` empties the
+argument window under either. [python-api
+§2](python-api.md#2-analyzing-a-function) says when each claim is safe.
 
 ## Post-passes
 
@@ -165,9 +165,9 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 - PowerPC float code lifts to far more p-code than other ISAs because the
   FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
 - A chain of about 500 constant guards held only in registers reaches the
-  1024-iteration cap, and the analysis returns it partly folded. A chain whose guards each test
-  a different stack slot, with stores between them, still costs quadratic
-  settle work in the guard count.
+  1024-iteration cap, and the analysis returns it partly folded. A chain whose
+  guards each test a different stack slot, with stores between them, still
+  costs quadratic settle work in the guard count.
 - Reloads of `n` distinct stack slots cost quadratic climb work past `n`
   diamonds inside an irreducible loop, where the climb steps one dominator at
   a time, and past `n` calls under `escape_analysis`, where every call is a
