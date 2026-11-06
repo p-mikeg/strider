@@ -174,6 +174,11 @@ replaced the rest.
   `NodeOutputCountMismatch`), and so is `EditFunction::control_edits`.
 - `Function::frame_address_in_call_register` is gone: read
   `call_register_frame_reach().is_some()`.
+- `ValidationError::PhiTokenNotFromRegion::producer_kind` is `token_kind`;
+  `OrphanedMemoryOutput` has no `kind`; `Match::get_vn` and strider-pattern's
+  `test-util` feature are gone; `strider_ir::walk::CastMask` is
+  `strider_ir::node::CastMask`.
+- `float_le(x, y).ordered()` pins both comparisons.
 
 ### Added, Python
 
@@ -208,6 +213,8 @@ replaced the rest.
 
 ### Changed, Python
 
+- `ElfLifter`, `load_elf`, `FieldPat`, `field` and `code_ptr` report
+  `strider.lift` / `strider.pattern` as their `__module__`.
 - A `Lifter` works on any thread. `analyze`, `build_cfg` and `add_elf` hold
   it alone; a `Lifter` call on it meanwhile raises `StriderError` ("already
   in use"), while `ElfLifter` symbol and memory reads still work.
@@ -284,6 +291,15 @@ Matching and rewriting:
 
 Analysis:
 
+- A jump table behind an IT-block early return (`cmp; itt hi; movhi; bxhi lr;
+  tbb`) seats only the arms its dispatch reaches; it seated bytes past the
+  table and the next function with an empty `incomplete`.
+- ARM NEON `vtbl` / `vtbx` lift exactly on the D registers; they clobbered a
+  core register and never wrote `Dd`.
+- XSAVE / XSAVEC / XSAVEOPT / XSAVES read EDX:EAX, `cpuid` reads ECX, and
+  AArch64 `smc` / `hvc` read x0..x17.
+- A wide incoming stack load starting inside an argument merges into it
+  instead of starting a new ordinal.
 - A jump table indexed by a leading-zero or population count with no bounds
   check (clang AArch64 `switch(__builtin_clz(x))`) is read up to the count's
   largest value; it read past the table and seated arms of the next one.
@@ -404,6 +420,9 @@ Lifting and decoding (most in the vendored Sleigh):
 
 Loading:
 
+- Under `got_is_rom`, a `-z now` non-PIE executable's `JUMP_SLOT` against an
+  import with a canonical PLT is a hole; it was served as the PLT stub's own
+  address, and the stub lifted as a self-loop.
 - An unsized ARM / Thumb 16-bit or `ABS8` relocation holes only its own
   bytes, not the next instruction's.
 - Relocations: a linked image is relocated from its dynamic tags as `ld.so`
@@ -437,6 +456,9 @@ Loading:
 
 Rendering:
 
+- The HTML viewer classifies every IR node kind (phis, shifts, extends, raw
+  constants and initial vars were left out).
+- A pretty DOT label of a NaN float constant shows its bits.
 - The explorer shows a failed `/dot` request's error and clears the graph;
   it kept the stale one.
 - The HTML viewer switches to `sfdp` past 2000 nodes; it counted labelled
