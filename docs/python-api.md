@@ -464,7 +464,7 @@ p.entry(); p.region(); p.switch(); p.indirect_branch(); p.unreachable()
 
 Call slots: `.target(p)` (an int address or a list is fine), `.arg(i, p)`,
 `.mem(m)`, `.ctrl(p)`, `.res()` (pin to the return value when nested as a
-value), `.output(slot)`. `indirect_branch().target` and `switch().selector`
+value or in a raw slot), `.output(slot)`. `indirect_branch().target` and `switch().selector`
 take a list too.
 
 A call's argument index counts the integer registers, then the float ones,

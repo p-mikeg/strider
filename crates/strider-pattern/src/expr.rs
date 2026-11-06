@@ -883,7 +883,7 @@ impl Node {
         let anchor_out = match anchor {
             AnchorKind::Value(at) => {
                 let out = b.value_output(node, at);
-                if self.pin_anchor_slot {
+                if self.pin_anchor_slot && matches!(slot, Some(Slot::Value | Slot::Raw)) {
                     b.pin_value_out_slot(out);
                 }
                 // A call: its control, memory or value edge.

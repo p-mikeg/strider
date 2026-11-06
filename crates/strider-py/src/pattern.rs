@@ -2022,8 +2022,8 @@ node_builder! {
         { multi args(usize): arg(Value) = "Constrain positional argument `idx` (0-based)." },
         { pat mem(Memory): mem = "Constrain the call's memory predecessor." },
         { flag res: res
-            = "When nested as a value operand, pin it to the declared result \
-               output, excluding caller-saved clobbers." },
+            = "When nested as a value or raw-slot operand, pin it to the declared \
+               result output, excluding caller-saved clobbers." },
     ],
     ctor: call = "Start a `Call` pattern builder.",
 }
@@ -2104,8 +2104,8 @@ node_builder! {
         { multi args(usize): arg(Value)
             = "Constrain raw `inputs[idx]` of the matched CallOther." },
         { flag res: res
-            = "When nested as a value operand, pin it to the declared result \
-               output (excludes implicit-write clobber outputs)." },
+            = "When nested as a value or raw-slot operand, pin it to the declared \
+               result output (excludes implicit-write clobber outputs)." },
     ],
     ctor: call_other = "Start a `CallOther` pattern builder.",
 }

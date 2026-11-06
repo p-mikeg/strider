@@ -43,8 +43,8 @@ impl CallPat {
         Self(self.0.input_mem(NodeKind::CTRL_MEM_SLOT, p))
     }
 
-    /// As a value operand, matches only the result output (raw slot 2), not a
-    /// clobber. No effect on a root or memory producer.
+    /// As a value or raw-slot operand, matches only the result output (raw slot 2), not a
+    /// clobber. No effect on a root, a control predecessor or a memory producer.
     pub fn res(self) -> Self {
         Self(self.0.pin_anchor_slot())
     }
