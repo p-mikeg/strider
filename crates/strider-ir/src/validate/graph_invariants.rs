@@ -534,11 +534,12 @@ pub(super) fn check_function_invariants_memory_linearity(
 /// A control node's state is the nearest dominating memory effect: the entry,
 /// a `Region` with a `MemPhi` on the chain, a non-memory-preserving `Call`, or
 /// a `Call` / `CallOther` on the chain. A memory input, stepped back through
-/// `Store`s, must reach the state before its consumer. A non-effect `Call` /
-/// `CallOther` passes its input token on: a memory read it dominates before
-/// the next effect must reach that token through `Store`s. A `MemPhi` arm must
-/// be its edge's state; at a `Region` with no `MemPhi`, every live edge carries
-/// its immediate dominator's state.
+/// `Store`s, must reach the state before its consumer. A `MemPhi` arm must be
+/// its edge's state; at a `Region` with no `MemPhi`, every live edge carries
+/// its immediate dominator's state. A non-effect `Call` / `CallOther` passes
+/// its input token on: every memory read and `MemPhi` arm it reaches before
+/// the next effect, across merges and back edges, must reach that token
+/// through `Store`s.
 fn check_memory_order(
     ctx: &ScheduleContext<'_>,
     on_chain: &NodeIdSet,
@@ -679,10 +680,9 @@ fn check_memory_order(
     };
 
     // Pre-order with a stack of ancestors: the top that dominates a node is its
-    // immediate dominator. `read` is the nearest dominating non-effect `Call` /
-    // `CallOther` after `state`, with the token it read.
+    // immediate dominator. `reads` are the non-effect calls with their tokens.
     let mut state: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
-    let mut read: SecondaryMap<NodeId, Option<(NodeId, ValueId)>> = SecondaryMap::new();
+    let mut reads: Vec<(NodeId, ValueId)> = Vec::new();
     let mut idom: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
     let mut ancestors: Vec<NodeId> = Vec::new();
     for &node in tree.preorder() {
@@ -692,32 +692,25 @@ fn check_memory_order(
         let parent = ancestors.last().copied();
         idom[node] = parent;
         let before = parent.and_then(|p| state[p]);
-        let read_before = parent.and_then(|p| read[p]);
-        let memory = ctrl_memory_input(graph, node);
-        if is_effect(node) {
-            state[node] = Some(node);
-        } else {
-            state[node] = before;
-            let is_call = matches!(
-                graph.node_kind(node),
-                NodeKind::Call { .. } | NodeKind::CallOther { .. }
-            );
-            read[node] = memory
-                .filter(|_| is_call)
-                .map(|m| (node, m))
-                .or(read_before);
-        }
+        let effect = is_effect(node);
+        state[node] = if effect { Some(node) } else { before };
         ancestors.push(node);
 
-        let Some(memory) = memory else { continue };
+        let Some(memory) = ctrl_memory_input(graph, node) else {
+            continue;
+        };
+        if !effect
+            && matches!(
+                graph.node_kind(node),
+                NodeKind::Call { .. } | NodeKind::CallOther { .. }
+            )
+        {
+            reads.push((node, memory));
+        }
         if let Some(effect) = before
             && origin(memory) != effect
         {
             errs.push(ValidationError::MemoryRewind { node, effect });
-        } else if let Some((call, token)) = read_before
-            && !builds_on(memory, token)
-        {
-            errs.push(ValidationError::MemoryRewind { node, effect: call });
         }
     }
 
@@ -728,31 +721,96 @@ fn check_memory_order(
         let edge_states = graph
             .node_inputs(region)
             .into_iter()
-            .map(|edge| graph.producer(edge))
-            .map(|pred| (state[pred], read[pred]));
+            .map(|edge| state[graph.producer(edge)]);
         if is_effect(region) {
             for phi in chain_mem_phis(region) {
                 let arms = graph.node_inputs(phi).into_iter().skip(1);
-                for (arm, (edge_state, edge_read)) in arms.zip(edge_states.clone()) {
+                for (arm, edge_state) in arms.zip(edge_states.clone()) {
                     if let Some(effect) = edge_state
                         && origin(arm) != effect
                     {
                         errs.push(ValidationError::MemoryRewind { node: phi, effect });
-                    } else if let Some((call, token)) = edge_read
-                        && !builds_on(arm, token)
-                    {
-                        errs.push(ValidationError::MemoryRewind {
-                            node: phi,
-                            effect: call,
-                        });
                     }
                 }
             }
         } else {
             let merged = idom[region].and_then(|d| state[d]);
-            for effect in edge_states.filter_map(|(effect, _)| effect) {
+            for effect in edge_states.flatten() {
                 if Some(effect) != merged {
                     errs.push(ValidationError::UnmergedMemoryEffect { region, effect });
+                }
+            }
+        }
+    }
+
+    // How many `Store`s a token's chain steps through, memoized per `Store`.
+    let mut store_depth: SecondaryMap<NodeId, Option<u32>> = SecondaryMap::new();
+    let mut chain: Vec<NodeId> = Vec::new();
+    let mut depth = |value: ValueId| {
+        let mut producer = graph.producer(value);
+        let mut depth = 0;
+        while matches!(graph.node_kind(producer), NodeKind::Store(_)) {
+            if let Some(known) = store_depth[producer] {
+                depth = known;
+                break;
+            }
+            chain.push(producer);
+            producer = graph.producer(
+                graph
+                    .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                    .expect("a Store has memory"),
+            );
+        }
+        for store in chain.drain(..).rev() {
+            depth += 1;
+            store_depth[store] = Some(depth);
+        }
+        depth
+    };
+    reads.sort_by_cached_key(|&(_, token)| std::cmp::Reverse(depth(token)));
+
+    // Each call floods the control nodes it reaches before an effect, deepest
+    // token first, so a node an earlier flood claimed needs only its claimer's
+    // token to build on this one. Every node is expanded once.
+    let mut claimed: SecondaryMap<NodeId, Option<ValueId>> = SecondaryMap::new();
+    let mut stack: Vec<NodeId> = Vec::new();
+    for &(call, token) in &reads {
+        // A token of another origin is reported by the state checks.
+        let home = origin(token);
+        let mut rewinds = |memory: ValueId| origin(memory) == home && !builds_on(memory, token);
+        stack.push(call);
+        while let Some(node) = stack.pop() {
+            for (succ, slot) in
+                crate::walk::cfg_outputs(graph, node).flat_map(|v| graph.value_uses(v))
+            {
+                let mut lost =
+                    |node: NodeId| errs.push(ValidationError::MemoryRewind { node, effect: call });
+                if is_effect(succ) {
+                    if matches!(graph.node_kind(succ), NodeKind::Region) {
+                        for phi in chain_mem_phis(succ) {
+                            if let Some(arm) = graph.nth_input(phi, slot as usize + 1)
+                                && rewinds(arm)
+                            {
+                                lost(phi);
+                            }
+                        }
+                    } else if let Some(memory) = ctrl_memory_input(graph, succ)
+                        && rewinds(memory)
+                    {
+                        lost(succ);
+                    }
+                } else if let Some(claimer) = claimed[succ] {
+                    if rewinds(claimer) {
+                        lost(succ);
+                    }
+                } else {
+                    claimed[succ] = Some(token);
+                    if let Some(memory) = ctrl_memory_input(graph, succ)
+                        && rewinds(memory)
+                    {
+                        lost(succ);
+                    }
+                    stack.push(succ);
                 }
             }
         }
