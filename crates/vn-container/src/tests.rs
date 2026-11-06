@@ -25,18 +25,31 @@ fn vn_contains_encloses_and_rejects_disjoint() {
 }
 
 #[test]
-fn dedup_drops_enclosed_keeps_wider_and_partial() {
+fn dedup_drops_enclosed_and_merges_partial_overlaps() {
     let rdi = reg(0, 8);
     let edi = reg(0, 4);
     assert_eq!(dedup_overlapping_largest(&[rdi, edi]), vec![rdi]);
     assert_eq!(dedup_overlapping_largest(&[edi, rdi]), vec![rdi]);
-    // Partial overlap: neither encloses the other, so both survive.
+    // Partial overlap: neither encloses the other, so their union stands
+    // for both, at the earlier input's position.
     assert_eq!(
-        dedup_overlapping_largest(&[reg(0, 8), reg(4, 8)]),
-        vec![reg(0, 8), reg(4, 8)]
+        dedup_overlapping_largest(&[reg(16, 4), reg(4, 8), reg(0, 8)]),
+        vec![reg(16, 4), reg(0, 12)]
     );
-    // Enclosure must be STRICT: equal-size duplicates both survive.
-    assert_eq!(dedup_overlapping_largest(&[reg(0, 4), reg(0, 4)]).len(), 2);
+    // A chain merges whole, though its ends share no byte.
+    assert_eq!(
+        dedup_overlapping_largest(&[reg(0, 4), reg(2, 4), reg(5, 4)]),
+        vec![reg(0, 9)]
+    );
+    // Adjacent ranges share no byte, so stay apart.
+    assert_eq!(
+        dedup_overlapping_largest(&[reg(0, 4), reg(4, 4)]),
+        vec![reg(0, 4), reg(4, 4)]
+    );
+    assert_eq!(
+        dedup_overlapping_largest(&[reg(0, 4), reg(0, 4)]),
+        vec![reg(0, 4)]
+    );
     assert!(dedup_overlapping_largest(&[]).is_empty());
 }
 
@@ -71,16 +84,13 @@ fn largest_container_resolves_subregister_and_self() {
 
 #[test]
 fn container_map_picks_widest_crossing_encloser() {
-    // Two enclosers of `inner` that don't enclose each other: the dropped
-    // inner view must map to the WIDER one, not the first seen.
-    let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b; survives.
-    let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider; survives.
-    let inner = uniq(5, 4); // [5,9): enclosed by BOTH -> dropped.
+    // Two enclosers of `inner` that don't enclose each other: `inner` must
+    // map to the WIDER one, not the first seen.
+    let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b.
+    let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider.
+    let inner = uniq(5, 4); // [5,9): enclosed by both.
 
-    let survivors = dedup_overlapping_largest(&[a, b, inner]);
-    assert_eq!(survivors, vec![a, b]);
-
-    let cm = ContainerMap::build(&survivors, [a, b, inner]);
+    let cm = ContainerMap::build(&[a, b], [a, b, inner]);
     assert_eq!(cm.container_of(&inner), b, "widest encloser");
     assert_eq!(cm.container_of(&a), a);
     assert_eq!(cm.container_of(&b), b);
@@ -122,8 +132,6 @@ fn dedup_drops_only_on_a_strictly_wider_reach() {
         dedup_overlapping_largest(&[reg(0, 10), reg(2, 8)]),
         vec![reg(0, 10)]
     );
-    // Same end, same start, same size: neither subsumes.
-    assert_eq!(dedup_overlapping_largest(&[reg(2, 8), reg(2, 8)]).len(), 2);
     // A survivor reaching further than any later entry drops all of them.
     assert_eq!(
         dedup_overlapping_largest(&[reg(0, 16), reg(4, 4), reg(8, 8)]),

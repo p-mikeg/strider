@@ -30,7 +30,9 @@ register outside it fails the function. It holds:
 - each input-less rounding-mode op's register, unless
   `fp_rounding_mode_is_nearest`.
 
-`Function::new` folds the set into largest containers and sorts it.
+`Function::new` folds the set into largest containers, a partially overlapping
+run into its union, and sorts it. The lift first adds the smallest declared
+register enclosing each such union.
 
 ## Register aliasing
 
