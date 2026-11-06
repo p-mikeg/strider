@@ -11,7 +11,6 @@ publish.workspace = true
 [features]
 # The brute-force `oracle` module, `walk::acyclic_postorder`, and
 # `dominance_frontiers` with the placement over it, for tests.
-# strider-ir-test-utils re-exports `oracle` as `graph_oracle`.
 test-util = []
 
 [dependencies]

@@ -37,9 +37,8 @@ pub struct FunctionSideTables {
     /// Per-class CC argument index to the carrier nodes' output values
     /// (`InitialVar` for register args, `Load` for stack args).
     arg_index_to_values: FxHashMap<(ArgClass, u32), Vec<ValueId>>,
-    /// `InitialVnId` to `InitialVar(id)` node index. Accessors trust it; the
-    /// validator re-checks reachable entries against the node's kind
-    /// (`StaleInitialVarIndex`).
+    /// The `InitialVar(id)` node of each id; `validate` re-checks reachable
+    /// entries.
     pub(crate) initial_var_index: SecondaryMap<crate::node::InitialVnId, Option<NodeId>>,
     /// Unsigned values of `IntConst(id)` nodes, deduped after
     /// `crate::eval::mask` to the node's output width.
@@ -161,8 +160,8 @@ impl FunctionSideTables {
         }
     }
 
-    /// Links `src`'s fingerprint under `dst`'s. A live alias, not a copy:
-    /// contributors added to `src` afterwards are `dst`'s too.
+    /// Links `src`'s fingerprint under `dst`'s, a live alias once `src`'s is
+    /// non-empty (see [`UnionDag::union`]).
     pub(crate) fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
         if dst == src {
             return;
@@ -213,7 +212,6 @@ impl FunctionSideTables {
                     let old = *id;
                     *id = *cc_ids[old].get_or_insert_with(|| ccs.intern(call_ccs[old].clone()));
                 }
-                // `InitialVar`'s id keys the function's own tracked varnodes.
                 NodeKind::Call { cc: None }
                 | NodeKind::Entry
                 | NodeKind::InitialMemory
@@ -271,7 +269,6 @@ impl FunctionSideTables {
             vn_interner: _,
         } = self;
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
-        // `InitialVnId`s are stable; only the arena-id side needs translating.
         *value_vn = value_vn
             .drain()
             .filter_map(|(value, id)| Some((remap.value_old_to_new(value)?, id)))

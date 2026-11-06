@@ -13,8 +13,9 @@ use crate::node::{
 
 impl Function {
     /// The canonical text form: a header, then one `outs = op[payload] ins` line per node
-    /// reachable from [`Self::entry`]. With `fingerprints`, each line ends in its asm address
-    /// set `  @{..}`. Equal graphs print equal text however built; [`Self::compact`] keeps it.
+    /// reachable from [`Self::entry`]. With `fingerprints`, each attributed line ends in its
+    /// asm address set `  @{..}`. Equal graphs print equal text however built;
+    /// [`Self::compact`] keeps it.
     pub fn to_text(&self, fingerprints: bool) -> String {
         self.to_text_with(fingerprints, &vn_str)
     }

@@ -370,8 +370,8 @@ pub trait IRWalker: IRViewer {
         self.walk().filter(move |&n| pred(self.node_kind(n)))
     }
 
-    /// Reachable nodes matching `pred`, producers before consumers except
-    /// across a def-use cycle.
+    /// Nodes the def->use walk from the input-less roots reaches, matching
+    /// `pred`; producers before consumers except across a def-use cycle.
     fn reverse_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,

@@ -20,7 +20,7 @@ bitflags::bitflags! {
     }
 }
 
-/// Persistent edit bookkeeping owned by an [`EditFunction`] for its lifetime.
+/// An [`EditFunction`]'s live/roots bookkeeping.
 pub(crate) struct FunctionState {
     /// Entry-reachable and not culled.
     live_nodes: DenseEntitySet<NodeId>,
@@ -47,7 +47,8 @@ impl FunctionState {
 }
 
 /// A [`Function`] plus the live/roots bookkeeping the curated edit verbs keep
-/// current.
+/// current. Edits that might orphan a producer enqueue it; `clean` drains the
+/// queue. A side-effecting node dies only by `cull_dead` or `kill_node`.
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: FunctionState,
@@ -154,8 +155,9 @@ impl<'g> EditFunction<'g> {
         self.control_edits += u64::from(self.function.value_kind(value).is_control());
     }
 
-    /// Kills everything outside the live set, walking the raw def->use graph
-    /// from `roots` so dead consumers of live producers are reached. Idempotent.
+    /// Kills every non-live node reachable def->use from a live root, so dead
+    /// consumers of live producers are reached. A dead node whose whole input
+    /// cone is dead stays until [`Function::compact`]. Idempotent.
     pub fn cull_dead(&mut self) {
         let graph = self.function.graph();
         let succs = FnSuccs::new(|n| def_use_succs(graph, n));
@@ -181,9 +183,8 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Bypasses the live/roots bookkeeping: after a structural edit, call
-    /// [`Self::resync_live_set`] before reading an order. A cacheable node
-    /// whose kind is rewritten keeps its old dedup key (missed dedups only)
-    /// until [`Function::compact`]. Counts as a control edit.
+    /// [`Self::resync_live_set`] before reading an order. Rewriting a cacheable
+    /// node's kind needs [`Graph::rebuild_cache`]. Counts as a control edit.
     pub fn function_mut(&mut self) -> &mut Function {
         self.control_edits += 1;
         self.function
@@ -212,7 +213,7 @@ impl<'g> EditFunction<'g> {
         f(&memo.as_ref().expect("filled above").1)
     }
 
-    /// Reverse post-order over the live def->use graph of the entry: a node
+    /// Reverse post-order over the live def->use graph from its roots: a node
     /// precedes its consumers unless the use closes a cycle. Starts at the
     /// lowest-id root.
     pub fn live_reverse_postorder(&self) -> Vec<NodeId> {
@@ -241,9 +242,6 @@ impl<'g> EditFunction<'g> {
     pub fn entry(&self) -> NodeId {
         self.function.entry()
     }
-
-    // Edits that might orphan a producer enqueue it; `clean` drains the queue.
-    // A side-effecting node dies only by `cull_dead` or `kill_node`.
 
     pub fn is_live(&self, node: NodeId) -> bool {
         self.state.live_nodes.contains(node)

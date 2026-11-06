@@ -150,8 +150,8 @@ impl GraphWalkInfo {
         }
     }
 
-    /// Every producer before its consumers unless the use closes a def-use
-    /// cycle (a loop's `Region` or phi), a root first.
+    /// What `roots` reach over live def->use edges, every producer before its
+    /// consumers unless the use closes a cycle, a root first.
     pub(crate) fn reverse_postorder(&self, graph: &Graph) -> Vec<NodeId> {
         let succs = FnSuccs::new(|n| live_def_use_succs(graph, &self.live_nodes, n));
         let mut rpo: Vec<_> = PostOrder::new(succs, self.roots.iter().copied()).collect();

@@ -149,8 +149,8 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
         }
         IntBinaryOp::Sdiv => {
             let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
-            // P-code wraps `INT_MIN / -1` to `INT_MIN`, but Ghidra's 64-bit
-            // host division is UB there, so it is left unfolded.
+            // `INT_MIN / -1` is left unfolded at every width: Ghidra's `intb`
+            // division is UB at 64 bits and machines disagree (x86 `idiv` traps).
             if sr == IBig::ZERO || (sl == signed_min(ty) && sr == IBig::NEG_ONE) {
                 return None;
             }
@@ -217,8 +217,8 @@ pub fn popcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
     Some(UBig::from(mask(v, in_ty).count_ones()))
 }
 
-/// Leading zeros over `8 * byte_size` bits, as `opbehavior.cc:791` counts
-/// (differs from `bit_width` only at `I1`); `None` for a float.
+/// Leading zeros over `8 * byte_size` bits, as Ghidra's `OpBehaviorLzcount`
+/// counts (differs from `bit_width` only at `I1`); `None` for a float.
 #[inline]
 pub fn lzcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
     int_bits(in_ty)?;

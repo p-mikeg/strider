@@ -505,7 +505,6 @@ pub(super) fn check_function_invariants_memory_linearity(
 ) {
     let function = ctx.function;
     let graph = function.graph();
-    // Of the control nodes, exactly the memory readers take Memory there.
     let mut stack: Vec<ValueId> = ctx
         .domtree
         .preorder()
