@@ -272,8 +272,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
         let region_map = driver.build_region_map(&placement)?;
 
-        // Dominator-tree pre-order: each region inherits values from its
-        // already-lifted immediate dominator.
         driver.translate_regions(&region_map, &doms)?;
         driver.link_region_edges(&region_map)?;
         driver.seat_exit_free_sinks()?;
