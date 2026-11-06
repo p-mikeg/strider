@@ -68,9 +68,9 @@ impl PyBufferReader {
 
 #[pymethods]
 impl PyBufferReader {
-    /// Map `data` at `base_addr`. Raises `ValueError` if the region runs past
-    /// the address space, `TypeError` for a buffer whose items are not one
-    /// byte.
+    /// Map `data` at `base_addr`. Raises `ValueError` if `base_addr +
+    /// len(data)` exceeds `2**64 - 1`, `TypeError` for a buffer whose items
+    /// are not one byte.
     #[new]
     fn new(base_addr: crate::bigint::Addr, data: &Bound<'_, PyAny>) -> PyResult<Self> {
         let region = MemRegion::new(base_addr.0, extract_bytes(data)?.into_owned())

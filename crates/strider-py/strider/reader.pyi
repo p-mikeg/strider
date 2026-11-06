@@ -9,9 +9,9 @@ __all__: list[str]
 class BufferReader:
     """Raw byte reader, usable as both `mem` and `rom`."""
     def __init__(self, base_addr: int, data: Union[bytes, bytearray, Sequence[int]]) -> None:
-        """Map `data` at `base_addr`. Raises `ValueError` if the region runs
-        past the address space, `TypeError` for a buffer whose items are not
-        one byte."""
+        """Map `data` at `base_addr`. Raises `ValueError` if `base_addr +
+        len(data)` exceeds `2**64 - 1`, `TypeError` for a buffer whose items
+        are not one byte."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Up to `size` bytes at `addr` (fewer at a region edge), or `None`
