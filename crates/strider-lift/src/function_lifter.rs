@@ -23,7 +23,7 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) pcode_consts: super::pcode_consts::PcodeConsts,
     /// The first value written to `ISAModeSwitch` at a machine address, and
     /// that address: the mode its branch targets decode in. The region's
-    /// `IndirectBranch` takes it iff they share the address.
+    /// `IndirectBranch` or `Switch` takes it iff they share the address.
     pub(crate) pending_isa_mode: Option<(strider_ir::node::ValueId, u64)>,
     /// Each `Region` node's last machine address: the branch leaving it.
     pub(crate) region_last_addrs: rustc_hash::FxHashMap<strider_ir::node::NodeId, u64>,

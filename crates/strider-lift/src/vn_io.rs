@@ -48,7 +48,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         match space {
             rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr_off, vn.int_type()?),
             rsleigh::VnSpace::REGISTER if self.lifter.is_volatile(vn) => self.read_volatile(vn),
-            // `vn_container::is_aliasable_space`.
+            // The `vn_container::is_aliasable_space` spaces.
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
@@ -58,8 +58,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// A volatile register read: a fresh `read_volatile` `CallOther` each time,
-    /// so no two reads merge (as Ghidra's decompiler does). Writes stay plain.
+    /// A volatile register read: a fresh `read_volatile` `CallOther` each time
+    /// (as in Ghidra's decompiler), so no two reads merge. Writes stay plain.
     fn read_volatile(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let (node, outputs) =
             self.builder
