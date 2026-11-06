@@ -64,7 +64,7 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
         .find(|r| r.start_addr.machine_addr.addr == SHARED)
         .expect("region at 0x1010");
     assert_eq!(
-        claimed.insns.first().map(|i| i.len),
+        claimed.insns.front().map(|i| i.len),
         Some(4),
         "the ARM decode is one 4-byte instruction and the Thumb one two bytes; \
          the direct edge's proved mode must beat the arm's claimed one",
@@ -94,7 +94,7 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
         .find(|r| r.start_addr.machine_addr.addr == SHARED)
         .expect("the direct branch must reach a region at 0x1010");
     assert_eq!(
-        shared.insns.first().map(|i| i.len),
+        shared.insns.front().map(|i| i.len),
         Some(4),
         "the ARM decode is one 4-byte instruction and the Thumb one two bytes; \
          the direct edge's proved mode must own the bytes",

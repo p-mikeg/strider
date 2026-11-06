@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use petgraph::stable_graph::StableDiGraph;
 
 /// A machine address.
@@ -143,7 +145,7 @@ pub struct Region {
     pub start_addr: PcodeInsnAddr,
     /// Program order, ascending. Empty for a zero-pcode-op `Unconditional`
     /// region or a `TailCall` stub.
-    pub insns: Vec<RegionInstruction>,
+    pub insns: VecDeque<RegionInstruction>,
     /// Byte length of an empty region's zero-pcode-op instruction; `0` for a
     /// stub. Unread while `insns` is non-empty.
     pub empty_span_len: u32,
@@ -163,7 +165,10 @@ impl Region {
 
     /// The ascending order [`Self::insn_index_at`] bisects over. O(len).
     pub(crate) fn insns_are_ascending(&self) -> bool {
-        self.insns.windows(2).all(|w| w[0].addr <= w[1].addr)
+        self.insns
+            .iter()
+            .zip(self.insns.iter().skip(1))
+            .all(|(a, b)| a.addr <= b.addr)
     }
 
     /// Whether a pcode op sits at exactly `addr`.
@@ -176,7 +181,7 @@ impl Region {
     /// saturated: that would disown the byte at `u64::MAX`).
     pub(crate) fn end(&self) -> Option<u64> {
         let start = self.start_addr.machine();
-        let end = match self.insns.last() {
+        let end = match self.insns.back() {
             Some(last) => last.addr.machine().checked_add(u64::from(last.len)),
             None => start.checked_add(u64::from(self.empty_span_len)),
         }?;
@@ -196,7 +201,7 @@ impl Region {
     /// span. An empty region owns its `empty_span_len` machine bytes.
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
         let below_end = self.end().is_none_or(|end| addr.machine() < end);
-        match self.insns.last() {
+        match self.insns.back() {
             None => {
                 addr == self.start_addr
                     || (addr.machine_addr > self.start_addr.machine_addr && below_end)
@@ -256,7 +261,7 @@ mod tests {
         // A region is a hole-free run, so no other region owns the bytes of its
         // last instruction either.
         let mut r = make_region(&[(0x1000, 0), (0x1010, 0)]);
-        r.insns.last_mut().unwrap().len = 10;
+        r.insns.back_mut().unwrap().len = 10;
         assert!(r.contains_addr(addr(0x1015, 0)));
         assert!(r.contains_addr(addr(0x1019, 0)));
         assert!(!r.contains_addr(addr(0x101a, 0)), "the end is exclusive");
@@ -270,7 +275,7 @@ mod tests {
         // A tail-call stub owns its start address and no byte past it.
         let r = Region {
             start_addr: addr(0x1000, 0),
-            insns: Vec::new(),
+            insns: VecDeque::new(),
             empty_span_len: 0,
             isa_mode: None,
             terminator: RegionTerminator::Unconditional,
@@ -286,7 +291,7 @@ mod tests {
         // carry no pcode, so only their machine addresses are owned.
         let r = Region {
             start_addr: addr(0x1000, 0),
-            insns: Vec::new(),
+            insns: VecDeque::new(),
             empty_span_len: 4,
             isa_mode: None,
             terminator: RegionTerminator::Unconditional,

@@ -126,7 +126,7 @@ fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
             .cfg
             .regions()
             .find(|r| r.start_addr.machine_addr.addr == THUMB_ARM)
-            .and_then(|r| r.insns.first())
+            .and_then(|r| r.insns.front())
             .map(|i| i.len),
         Some(2),
         "the Thumb arm still decodes as Thumb",

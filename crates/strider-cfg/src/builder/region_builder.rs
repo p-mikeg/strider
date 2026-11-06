@@ -412,7 +412,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let region = self.builder.add_region(Region {
             start_addr: self.start_addr,
             empty_span_len: self.empty_span_len,
-            insns,
+            insns: insns.into(),
             terminator,
             isa_mode: self.isa_mode,
         })?;

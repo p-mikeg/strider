@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
@@ -30,11 +32,10 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         if split_index == 0 {
             return Ok(region_id);
         }
-        // The smaller half moves to a fresh allocation, but `drain` still
-        // shifts the tail: repeated lowest-first splits of one region (arm
-        // order, or direct targets popped ascending) are O(n^2).
+        // The smaller half moves to a fresh allocation, O(min(split_index,
+        // len - split_index)): a front `drain` of a `VecDeque` shifts nothing.
         let insns = &mut second_region.insns;
-        let first_region_insns: Vec<_> = if split_index <= insns.len() / 2 {
+        let first_region_insns: VecDeque<_> = if split_index <= insns.len() / 2 {
             insns.drain(..split_index).collect()
         } else {
             let upper = insns.split_off(split_index);

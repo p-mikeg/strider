@@ -1396,7 +1396,7 @@ fn an_interior_target_enters_at_its_containing_instruction() {
             .find(|&n| {
                 graph[n]
                     .insns
-                    .last()
+                    .back()
                     .is_some_and(|i| i.addr.machine() == 0x1007)
             })
             .expect("the region ending at the je");

@@ -5,6 +5,8 @@ mod split;
 mod tests;
 
 pub(crate) use flow::{FlowContext, FlowVars, hold_var};
+use std::collections::VecDeque;
+
 use petgraph::visit::EdgeRef;
 use region_builder::{DecodeFailure, RegionBuilder, decode_failure, is_call};
 pub(crate) use strider_target::FlowCommit;
@@ -242,11 +244,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         debug_assert!(
             region
                 .insns
-                .first()
+                .front()
                 .is_none_or(|i| i.addr.machine_addr == region.start_addr.machine_addr),
             "phantom span: region start {:?} below first insn {:?}",
             region.start_addr,
-            region.insns.first().map(|i| i.addr),
+            region.insns.front().map(|i| i.addr),
         );
 
         let region_id = self.region_graph.add_node(region);
@@ -290,7 +292,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             Some(existing) => existing,
             None => self.add_region(Region {
                 start_addr: addr,
-                insns: Vec::new(),
+                insns: VecDeque::new(),
                 empty_span_len: 0,
                 isa_mode: None,
                 terminator: RegionTerminator::TailCall {
@@ -567,7 +569,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             if region.terminator != RegionTerminator::Unconditional {
                 continue;
             }
-            match region.insns.last() {
+            match region.insns.back() {
                 Some(last) if is_call(last) => calls.push(id),
                 Some(_) => {}
                 None => stack.extend(
