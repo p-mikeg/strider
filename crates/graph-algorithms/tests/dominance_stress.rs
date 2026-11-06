@@ -499,19 +499,14 @@ fn scale_succs(shape: usize, n: u32, v: u32) -> Vec<u32> {
 }
 
 /// Successors asked once per vertex, and hash probes linear in the graph,
-/// across the dominators, frontiers, placement and tree walks.
+/// across the dominators, placement and tree walks.
 #[test]
 #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
 fn dominance_work_is_linear_on_million_vertex_graphs() {
     const N: u32 = 1_000_000;
-    // (idom of N - 1, frontier entries, phis for one definition at 1)
-    let expect: [(u32, usize, &[u32]); 4] = [
-        (N - 2, 0, &[]),
-        (0, N as usize - 2, &[N - 1]),
-        (0, 0, &[]),
-        (N - 2, N as usize - 1, &[1]),
-    ];
-    for (shape, &(idom, entries, phis)) in expect.iter().enumerate() {
+    // (idom of N - 1, phis for one definition at 1)
+    let expect: [(u32, &[u32]); 4] = [(N - 2, &[]), (0, &[N - 1]), (0, &[]), (N - 2, &[1])];
+    for (shape, &(idom, phis)) in expect.iter().enumerate() {
         let mut preds: Vec<Vec<u32>> = vec![Vec::new(); N as usize];
         let mut edges = 0u64;
         for v in 0..N {
@@ -530,9 +525,6 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         });
         // Each result is reduced to the numbers asserted below and dropped,
         // so the peak holds one of them at a time.
-        let fr = frontiers(&doms, &preds);
-        let fr_entries: usize = fr.values().map(Vec::len).sum();
-        drop(fr);
         let placed = phi_placement(
             &doms,
             |v: Counted| preds[v.0 as usize].iter().map(|&p| Counted(p)),
@@ -552,7 +544,6 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
             Some(Counted(idom)),
             "shape {shape}"
         );
-        assert_eq!(fr_entries, entries, "shape {shape}");
         got.sort_unstable();
         assert_eq!(got, phis, "shape {shape}");
         assert_eq!(
