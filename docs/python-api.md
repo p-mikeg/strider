@@ -1016,16 +1016,16 @@ operand index outside its unsigned range. A wrongly typed argument raises the
 usual builtin (`TypeError`, a `bool` address or index and a `str` `entry`
 outside `ElfLifter.analyze` included, or `OverflowError` for another
 out-of-range int, such as a fixed-width constant or a stack offset; an integer
-constant wider than 512 bits is a `StriderError`). `load_elf` raises
-`FileNotFoundError` for a missing path, `ValueError` for a non-ELF file or an
-unsupported arch or ABI (microMIPS included, as does `add_elf`), and
-`StriderError` for a malformed ELF. Range-checked constructor arguments raise
+constant wider than 512 bits is a `StriderError`). `load_elf`, `add_elf` and
+`add_symbol_file` raise `FileNotFoundError` for a missing path and `ValueError`
+for a non-ELF file; `load_elf` and `add_elf` also raise `ValueError` for an
+unsupported arch or ABI (microMIPS included). A malformed ELF is a
+`StriderError`. Range-checked constructor arguments raise
 `ValueError`: `CfgOptions(function_max_size=0)`, a size with
 `allow_code_before_start_addr=True`, a `known_targets` string other than
 `"return"`, a string `call_other_abis` value, an empty `data_ranges` or
 `fragment_ranges` range, a `BufferReader` region past the address space. Every
-other bad value is a `StriderError`: `add_elf` / `add_symbol_file` on a bad
-path, an unknown `style=`, a reserved capture name, an unknown node id, an
+other bad value is a `StriderError`: an unknown `style=`, a reserved capture name, an unknown node id, an
 unbound capture read without `_opt`, and a `Match` read after `compact`,
 `optimize`, `rewrite` or `rewrite_all`.
 

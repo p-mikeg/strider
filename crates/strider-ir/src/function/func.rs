@@ -122,8 +122,8 @@ impl Function {
         self.call_register_frame_reach = reach;
     }
 
-    /// `false` when the last optimizer run stopped at its iteration cap: the
-    /// graph is valid but not fully folded.
+    /// `false` when the last optimizer run stopped at its iteration cap (the
+    /// graph is valid but not fully folded) or failed.
     #[inline]
     pub fn optimizer_converged(&self) -> bool {
         self.optimizer_converged
