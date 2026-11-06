@@ -110,7 +110,7 @@ class Cfg:
         latest start."""
         ...
     def _region_texts(self) -> dict:
-        """Disassembly text per region index."""
+        """P-code text per region index."""
         ...
 
 class CfgOptions:

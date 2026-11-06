@@ -276,7 +276,7 @@ class _CfgVisualizer:
     """A `Cfg` as a `_Visualizer`."""
 
     def __init__(self, cfg: Cfg, whole: bool = True, depth: int = 0) -> None:
-        """Explore `cfg`; its region disassembly is built once for search."""
+        """Explore `cfg`; its regions' p-code text is built once for search."""
         self._cfg = cfg
         self._whole = whole
         self._depth = depth
@@ -305,7 +305,8 @@ class _CfgVisualizer:
 
     def search(self, query: str) -> dict[str, Any]:
         """Center the region containing `query` when it parses as an address,
-        else highlight every region whose disassembly contains it."""
+        else highlight every region whose p-code text contains it (`IntAdd`,
+        `RSP`), case-insensitively."""
         q = query.strip()
         try:
             addr = int(q, 0)
