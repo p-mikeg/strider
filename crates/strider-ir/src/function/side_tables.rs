@@ -426,14 +426,6 @@ impl crate::Function {
             .insert(user_op_id, name.into());
     }
 
-    /// The `InitialVar(stack_vn)` node, whose output is the entry SP; `None`
-    /// when `stack_vn` is not tracked (deduped into a wider container). The
-    /// node may already have been culled.
-    pub fn initial_sp(&self) -> Option<NodeId> {
-        let sp_id = self.vn_id_of(&self.default_cc().stack_ptr)?;
-        self.side_tables().initial_var_index[sp_id]
-    }
-
     /// The output of `vn`'s `InitialVar` node; `None` when `vn` is untracked.
     pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
         let id = self.vn_id_of(vn)?;
