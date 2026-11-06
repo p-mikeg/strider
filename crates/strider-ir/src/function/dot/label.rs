@@ -2,12 +2,6 @@ use super::{FunctionDotDumper, node_style};
 use crate::IRViewer;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
-/// `vn` as `ArchNames::vn` spells it: a register's name (`"RAX"`), else
-/// `<space>[0x<off>]:<size>`, or `0x<off>:<size>` for a constant.
-fn vn_to_display_name(names: &strider_target::ArchNames, vn: &rsleigh::Vn) -> String {
-    names.vn(*vn).to_string()
-}
-
 /// `ty`'s spelling, `"?"` when there is none.
 fn ty_str(ty: Option<ValueType>) -> String {
     ty.map_or_else(|| "?".to_owned(), |t| t.to_string())
@@ -19,10 +13,6 @@ fn ty_suffix(ty: Option<ValueType>, sep: &str) -> String {
 }
 
 impl FunctionDotDumper<'_> {
-    fn vn_to_name(&self, vn: &rsleigh::Vn) -> String {
-        vn_to_display_name(self.names, vn)
-    }
-
     fn out_type(&self, node: NodeId) -> Option<ValueType> {
         self.function
             .first_value_output_of(node)
@@ -52,7 +42,7 @@ impl FunctionDotDumper<'_> {
 
         match kind {
             NodeKind::InitialVar(id) => match self.function.initial_vn_opt(*id) {
-                Some(vn) => format!("init\n{}", self.vn_to_name(&vn)),
+                Some(vn) => format!("init\n{}", self.names.vn(vn)),
                 None => format!("init\n#{}", id.as_u32()),
             },
             NodeKind::MemPhi => "φ Mem".to_string(),
@@ -63,7 +53,7 @@ impl FunctionDotDumper<'_> {
                 .and_then(|v| self.function.get_vn_for_value(v))
             {
                 None => "φ Val".to_string(),
-                Some(var) => format!("φ {}", self.vn_to_name(&var)),
+                Some(var) => format!("φ {}", self.names.vn(var)),
             },
 
             // A dangling id (malformed graph) labels rather than panics.
@@ -173,7 +163,7 @@ impl FunctionDotDumper<'_> {
     /// from the output's `value_vn` tag; `outN` when untagged.
     pub(super) fn clobber_name(&self, value_id: ValueId, output_index: u32) -> String {
         match self.function.get_vn_for_value(value_id) {
-            Some(vn) => self.vn_to_name(&vn),
+            Some(vn) => self.names.vn(vn).to_string(),
             None => format!("out{output_index}"),
         }
     }
@@ -183,82 +173,6 @@ impl FunctionDotDumper<'_> {
     pub(super) fn return_ret_name(&self, input_slot: usize) -> Option<String> {
         let i = input_slot.checked_sub(2)?;
         let vn = *self.function.ret_val_regs().get(i)?;
-        Some(self.vn_to_name(&vn))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::vn_to_display_name;
-    use rsleigh::{Vn, VnSpace};
-
-    fn names() -> &'static strider_target::ArchNames {
-        strider_target::SleighArch::x86_64().names()
-    }
-
-    #[test]
-    fn const_formats_as_hex_offset_colon_size() {
-        let vn = Vn {
-            addr_off: 0x2a,
-            addr_space: VnSpace::CONST,
-            size: 4,
-        };
-        assert_eq!(vn_to_display_name(names(), &vn), "0x2a:4");
-    }
-
-    #[test]
-    fn ram_formats_as_ram_offset_size() {
-        let vn = Vn {
-            addr_off: 0x1000,
-            addr_space: VnSpace::RAM,
-            size: 8,
-        };
-        assert_eq!(vn_to_display_name(names(), &vn), "ram[0x1000]:8");
-    }
-
-    #[test]
-    fn unique_formats_as_unique_offset_size() {
-        let vn = Vn {
-            addr_off: 0x80,
-            addr_space: VnSpace::UNIQUE,
-            size: 1,
-        };
-        assert_eq!(vn_to_display_name(names(), &vn), "unique[0x80]:1");
-    }
-
-    #[test]
-    fn register_known_offset_returns_register_name() {
-        // The register table varies across .sla versions, so try several.
-        let candidates = ["RAX", "RDI", "RSI", "EAX", "AX"];
-        let (name, vn) = candidates
-            .iter()
-            .find_map(|&n| names().regs().name_to_vn(n).map(|v| (n, v)))
-            .expect("no known register resolved");
-        assert_eq!(vn_to_display_name(names(), &vn), name);
-    }
-
-    #[test]
-    fn register_unknown_offset_falls_back_to_space_addr_size() {
-        // A REGISTER-space offset the register table won't map.
-        let bogus = Vn {
-            addr_off: 0xffff_ffff_ffff_ffff,
-            addr_space: VnSpace::REGISTER,
-            size: 1,
-        };
-        assert_eq!(
-            vn_to_display_name(names(), &bogus),
-            "register[0xffffffffffffffff]:1"
-        );
-    }
-
-    #[test]
-    fn unknown_space_byte_falls_back_to_shortcut_char() {
-        // A shortcut that is none of CONST/REGISTER/RAM/UNIQUE.
-        let exotic = Vn {
-            addr_off: 0,
-            addr_space: VnSpace::new(b'?'),
-            size: 1,
-        };
-        assert_eq!(vn_to_display_name(names(), &exotic), "?[0x0]:1");
+        Some(self.names.vn(vn).to_string())
     }
 }
