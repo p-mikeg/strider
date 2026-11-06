@@ -170,10 +170,9 @@ where
         entry: u64,
         cc: &strider_target::BuiltCallingConvention,
         opts: &AnalyzeOptions<'_>,
-        pipeline: Option<strider_opt::OptimizerPipeline>,
         classify: Classifier<'_>,
     ) -> Result<AnalyzeResult> {
-        self.resolve(entry, cc, opts, pipeline, classify)
+        self.resolve(entry, cc, opts, None, classify)
     }
 }
 

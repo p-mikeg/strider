@@ -608,7 +608,7 @@ fn resolution_off_skips_the_classifier_and_reports_the_site() {
             ..Default::default()
         };
         let result = strider
-            .analyze_with_classifier(BASE, &cc, &opts, None, &classify)
+            .analyze_with_classifier(BASE, &cc, &opts, &classify)
             .expect("analyze");
         let reported = result
             .incomplete()

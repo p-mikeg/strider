@@ -49,7 +49,7 @@ fn analyze_flapping(bytes: Vec<u8>, opts: &AnalyzeOptions<'_>) -> (AnalyzeResult
         };
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let result = strider
-        .analyze_with_classifier(BASE, &cc, opts, None, &flapping)
+        .analyze_with_classifier(BASE, &cc, opts, &flapping)
         .expect("an unstable site is a result, not an error");
     (result, round.get())
 }
