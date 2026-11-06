@@ -28,11 +28,11 @@ impl RegionFilter {
     fn check(&self, function: &strider_ir::Function, node: NodeId) -> bool {
         use strider_ir::MemDecomp;
         let Some(addr) = function.access_address(node) else {
-            return matches!(self, RegionFilter::Any);
+            return false;
         };
         let (class, slot) = function.memory_decomp(addr);
         match self {
-            RegionFilter::Any => true,
+            RegionFilter::Any => unreachable!("`apply` installs no predicate for `Any`"),
             RegionFilter::Heap => matches!(class, MemDecomp::Heap(_)),
             RegionFilter::NonStack => {
                 matches!(class, MemDecomp::Heap(_) | MemDecomp::NotMemory)
