@@ -164,8 +164,8 @@ fn insn_text_and_insn_plain_text_spell_every_operand() {
         [
             "Copy unique[0xd400]:8, RAX",
             "Store ram, RSP, unique[0xd400]:8",
-            "Load unique[0x23f00]:8, ram, RSP",
-            "Copy RBX, unique[0x23f00]:8",
+            "Load unique[0x24700]:8, ram, RSP",
+            "Copy RBX, unique[0x24700]:8",
             "Load RIP, ram, RSP",
             "IntAdd RSP, RSP, 0x8:8",
             "Return RIP",
@@ -176,8 +176,8 @@ fn insn_text_and_insn_plain_text_spell_every_operand() {
         [
             "Copy u[0xd400]:8, %[0x0]:8",
             "Store r, %[0x20]:8, u[0xd400]:8",
-            "Load u[0x23f00]:8, r, %[0x20]:8",
-            "Copy %[0x18]:8, u[0x23f00]:8",
+            "Load u[0x24700]:8, r, %[0x20]:8",
+            "Copy %[0x18]:8, u[0x24700]:8",
             "Load %[0x288]:8, r, %[0x20]:8",
             "IntAdd %[0x20]:8, %[0x20]:8, 0x8:8",
             "Return %[0x288]:8",

@@ -277,8 +277,8 @@ Lifting and decoding (most in the vendored Sleigh):
   PowerPC and MIPS; `fcvt*`, `vcvt`, `fctid*`, `fcfidu`, `friz`, `frsp`,
   `fist*` and `frndint` were wrong.
 - x86: `fprem`, `fxam`, `fcom`, `rcl` / `rcr` OF, `lock hlt`, 66/F2/F3
-  conversion prefixes, `0x67` memory operands, `rep`, `lea`, and the
-  upstream Ghidra b16f1556d2 fixes; VEX.256 FMA writes all 256 bits;
+  conversion prefixes, `0x67` memory and string operands, `rep`, `lea`, and
+  the upstream Ghidra b16f1556d2 fixes; VEX.256 FMA writes all 256 bits;
   `rdtscp` writes EDX:EAX and ECX; `0x90` under a REX prefix without B is a
   `nop`; `pushf` and `syscall`'s R11 set reserved RFLAGS bit 1.
 - PowerPC: `fmadd` and kin round once and give the ISA's NaN; the scalar,
