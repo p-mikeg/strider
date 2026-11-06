@@ -77,6 +77,13 @@ def test_cfg_address_search_still_works():
     assert vis.search("0x1000") == {"center": cfg.region_at(0x1000)}
 
 
+@pytest.mark.parametrize("query", ["-1", hex(1 << 64)])
+def test_cfg_address_search_out_of_range_highlights_nothing(query):
+    _fn, cfg = _function_and_cfg()
+    vis = strider.explore._CfgVisualizer(cfg)
+    assert vis.search(query) == {"highlight": []}
+
+
 def test_a_visualizer_builds_and_renders_off_the_creating_thread():
     """The explorer reads names, not a decoder, so a visualizer built on a
     worker thread renders there."""
