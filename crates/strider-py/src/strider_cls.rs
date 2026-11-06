@@ -708,10 +708,10 @@ impl PyLifter {
         let this = try_borrow_lifter(slf)?;
         crate::reader::check_mem_unchanged(py, &[&this.mem_obj])?;
         let entry_mode = this.target()?.entry_mode_context(entry);
-        let start = if entry_mode.is_some() {
-            entry & !1
+        let (start, addr) = if entry_mode.is_some() {
+            (entry & !1, addr & !1)
         } else {
-            entry
+            (entry, addr)
         };
         if addr < start {
             return Err(into_strider_err(anyhow::anyhow!(
