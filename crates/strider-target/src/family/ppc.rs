@@ -5,7 +5,9 @@ use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 use CallOtherClass::NoOp;
 
 pub(crate) static PPC: Family = Family {
+    #[cfg(any(test, feature = "test-util"))]
     name: "ppc",
+    #[cfg(any(test, feature = "test-util"))]
     ghidra_ldefs: "PowerPC/data/languages/ppc.ldefs",
     facts: DecodeFacts {
         isa_mode_var: None,

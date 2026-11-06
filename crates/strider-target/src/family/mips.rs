@@ -4,7 +4,9 @@ use crate::call_other_abi::{CallOtherAbi, CallOtherClass, Row};
 use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static MIPS: Family = Family {
+    #[cfg(any(test, feature = "test-util"))]
     name: "mips",
+    #[cfg(any(test, feature = "test-util"))]
     ghidra_ldefs: "MIPS/data/languages/mips.ldefs",
     facts: DecodeFacts {
         // The pspecs pin `RELP=1`, so the alternate ISA is MIPS16e, never

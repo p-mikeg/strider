@@ -4,7 +4,9 @@ use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Pre
 use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static ARM32: Family = Family {
+    #[cfg(any(test, feature = "test-util"))]
     name: "arm32",
+    #[cfg(any(test, feature = "test-util"))]
     ghidra_ldefs: "ARM/data/languages/ARM.ldefs",
     facts: DecodeFacts {
         isa_mode_var: Some("TMode"),

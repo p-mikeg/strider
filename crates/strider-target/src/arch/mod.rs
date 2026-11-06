@@ -44,6 +44,7 @@ macro_rules! arch_presets {
 
             /// The name of the family this preset belongs to: `"x86"`,
             /// `"arm32"`, `"aarch64"`, `"mips"` or `"ppc"`.
+            #[cfg(any(test, feature = "test-util"))]
             #[must_use]
             pub const fn family_name(self) -> &'static str {
                 self.family().name
@@ -51,6 +52,7 @@ macro_rules! arch_presets {
 
             /// The Ghidra `.ldefs` file this preset is a row of, e.g.
             /// `"x86/data/languages/x86.ldefs"`.
+            #[cfg(any(test, feature = "test-util"))]
             #[must_use]
             pub const fn ghidra_ldefs(self) -> &'static str {
                 self.family().ghidra_ldefs

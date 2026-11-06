@@ -4,7 +4,9 @@ use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Row
 use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static X86: Family = Family {
+    #[cfg(any(test, feature = "test-util"))]
     name: "x86",
+    #[cfg(any(test, feature = "test-util"))]
     ghidra_ldefs: "x86/data/languages/x86.ldefs",
     facts: DecodeFacts {
         isa_mode_var: None,
