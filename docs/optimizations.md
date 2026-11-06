@@ -92,13 +92,15 @@ In default pipeline order:
 window to the call as ordinary arguments, up to the first slot no whole store
 reaches. A store of the entry value of a register the function's own
 convention preserves (a prologue save), or a call between store and call, also
-ends the arguments; other stores just above them can come along (clang
-x86-64's `push rax` alignment slot, MIPS o32's `gp` save). A slot every
-arm of a non-loop join stores whole is collected as the phi of those values.
+ends the arguments; other stores just above them can come along (an
+alignment push such as x86-64 clang's `push rax` or ARM gcc's `push {r3, lr}`,
+MIPS o32's `gp` save). A slot every arm of a non-loop join stores whole is
+collected as the phi of those values.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
 stack pointer read, after the register arguments: one ordinal per run of slots
-one load spans, up to the first slot no load reads. It narrows those loads'
+one load spans, up to the first slot no clean load reads (a load a store or
+call may have overwritten is not clean). It narrows those loads'
 memory edges under the same claims as `LoadForward`. Register arguments are
 recorded at lift time.
 
