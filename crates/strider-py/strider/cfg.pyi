@@ -53,7 +53,8 @@ class Cfg:
         ...
     def pcode_at(self, addr: int) -> Optional[str]:
         """The p-code ops this CFG decoded at `addr`, joined with `"; "`, or
-        `None`. Right across an ISA-mode switch. An instruction lifting to no
+        `None`. Right across an ISA-mode switch; on ARM or MIPS `addr`'s low
+        bit is ignored, as in `Lifter.pcode_at`. An instruction lifting to no
         ops (`endbr64`) also gives `None`; `Lifter.pcode_at` returns `""`.
         """
         ...

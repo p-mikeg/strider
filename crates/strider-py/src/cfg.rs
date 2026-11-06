@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 
 use pyo3::prelude::*;
 
+use crate::bigint::Unsigned;
 use crate::dot::{DEFAULT_CFG_STYLE, dot_style_for, render};
 use crate::errors::into_strider_err;
 use crate::node::PyNode;
@@ -147,10 +148,16 @@ impl PyCfg {
     }
 
     /// The p-code ops this CFG decoded at `addr`, joined with `"; "`, or
-    /// `None`. An instruction lifting to no ops (x86 `endbr64`) also gives
-    /// `None`; `Lifter.pcode_at` returns `""` for it.
+    /// `None`; on ARM or MIPS `addr`'s low bit is ignored. An instruction
+    /// lifting to no ops (x86 `endbr64`) also gives `None`; `Lifter.pcode_at`
+    /// returns `""` for it.
     fn pcode_at(&self, addr: crate::bigint::Addr) -> Option<String> {
-        self.pcode_map().get(&addr.0).cloned()
+        let addr = if self.arch.isa_mode_var().is_some() {
+            addr.0 & !1
+        } else {
+            addr.0
+        };
+        self.pcode_map().get(&addr).cloned()
     }
 
     /// `node`'s asm fingerprint as sorted `(addr, pcode)` pairs, skipping an
@@ -192,16 +199,16 @@ impl PyCfg {
 
     /// DOT of the regions within `depth` edges of region `center`, capped at
     /// `max_nodes`.
-    #[pyo3(signature = (center, depth=5, max_nodes=60))]
+    #[pyo3(signature = (center, depth=Unsigned(5), max_nodes=Unsigned(60)))]
     fn neighborhood_dot(
         &self,
         center: crate::bigint::Unsigned<u32>,
-        depth: usize,
-        max_nodes: usize,
+        depth: Unsigned<usize>,
+        max_nodes: Unsigned<usize>,
     ) -> PyResult<String> {
         let node = self.region_id(center.0)?;
         self.inner
-            .neighborhood_dot(self.arch.names(), node, depth, max_nodes)
+            .neighborhood_dot(self.arch.names(), node, depth.0, max_nodes.0)
             .map_err(into_strider_err)
     }
 
