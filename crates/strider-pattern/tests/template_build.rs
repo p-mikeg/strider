@@ -888,3 +888,39 @@ fn a_fn_leaf_returning_an_int_const_is_refused() {
     .expect_err("an IntConst from a Fn leaf");
     assert!(err.to_string().contains("IntConst"), "{err}");
 }
+
+/// A template rooted on a node with no value output is refused before any
+/// node is built.
+#[test]
+fn a_valueless_root_is_refused_before_building() {
+    let space = rsleigh::VnSpace::RAM;
+    let mut b = TemplateBuilder::new();
+    let mem_node = b.node(NodeKind::InitialMemory);
+    let mem = b.memory_output(mem_node, 0);
+    let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(0x100u32))
+    })));
+    b.set_value_ty(addr, T::int(64));
+    let store = b.node(NodeKind::Store(space));
+    b.input(store, 0, mem);
+    b.input(store, 1, addr);
+    b.input(store, 2, addr);
+    let _mem = b.memory_output(store, 0);
+    let tpl = b.finish();
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
+    let lhs_root = fx.walk().next().unwrap();
+    let before = fx.graph().all_node_ids().count();
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(
+        &tpl,
+        &mut ef,
+        &Bindings::default(),
+        lhs_root,
+        &[lhs_root],
+        T::int(64),
+    )
+    .expect_err("a Store root has no value to stand for the LHS");
+    assert!(err.to_string().contains("no value output"), "{err}");
+    drop(ef);
+    assert_eq!(fx.graph().all_node_ids().count(), before);
+}
