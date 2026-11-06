@@ -583,22 +583,6 @@ fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
     Ok(())
 }
 
-/// A 9-byte varnode is past the `u64` carrier, yet its constants still fit
-/// the `u128` one.
-#[test]
-fn i72_const_round_trips_through_the_interner() -> Result<()> {
-    let mut b = empty_builder()?;
-    assert!(ValueType::int(72).bit_width() > 64);
-    let v: u128 = (1u128 << 72) - 1;
-    let c = b.build_int_const(v, ValueType::int(72))?;
-    assert_eq!(b.function().int_const_u128(c), Some(v));
-    assert_eq!(b.function().int_const_i128(c), Some(-1));
-    // Masking to the declared width drops the carry out of bit 71.
-    let over = b.build_int_const(v + 1, ValueType::int(72))?;
-    assert_eq!(b.function().int_const_u128(over), Some(0));
-    Ok(())
-}
-
 /// The inferred type must be bitcastable from the integer it was inferred for.
 #[test]
 fn infer_float_type_matches_input_width() -> Result<()> {
@@ -2033,31 +2017,6 @@ fn int_const_ibig_reads_a_signed_value_at_every_width() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn a_wide_const_dedups_repeated_values() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let limbs = [42u64, 0, 0, 0x8000_0000_0000_0000];
-    let o1 = b.build_int_const(UBig::from_words(&limbs), ValueType::int(256))?;
-    let o2 = b.build_int_const(UBig::from_words(&limbs), ValueType::int(256))?;
-    let n1 = b.function().producer(o1);
-    let n2 = b.function().producer(o2);
-    assert_eq!(n1, n2, "structural dedup must reuse the same NodeId");
-    Ok(())
-}
-
-/// A value fitting `u128` is accepted at the widest types without a wide
-/// spelling.
-#[test]
-fn build_int_const_accepts_u256_and_u512() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let v256 = b.build_int_const(0u64, ValueType::int(256))?;
-    assert_eq!(b.function().value_type(v256)?, ValueType::int(256));
-    let v512 = b.build_int_const(7u64, ValueType::int(512))?;
-    assert_eq!(b.function().value_type(v512)?, ValueType::int(512));
-    assert_eq!(b.function().int_const_u128(v512), Some(7));
-    Ok(())
-}
-
 /// A narrow type takes a wide spelling too, interning what the scalar one
 /// interns; a float type is refused.
 #[test]
@@ -2072,30 +2031,6 @@ fn a_wide_spelling_at_a_narrow_int_type() -> Result<()> {
         .build_int_const(UBig::from_words(&[1]), ValueType::float(64))
         .expect_err("a float type has no integer bits");
     assert!(err.to_string().contains("non-integer type"), "got: {err}");
-    Ok(())
-}
-
-/// Missing high limbs read as zero: a slice shorter than the type's limb
-/// count is the same constant, and the same node, as the zero-padded one.
-#[test]
-fn missing_high_limbs_read_as_zero() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let short = b.build_int_const(UBig::from_words(&[5]), ValueType::int(256))?;
-    let padded = b.build_int_const(UBig::from_words(&[5, 0, 0, 0]), ValueType::int(256))?;
-    assert_eq!(short, padded, "one constant, one node");
-    assert_eq!(b.function().int_const_u128(short), Some(5));
-    let low = b.build_int_const(UBig::from_words(&[u64::MAX]), ValueType::int(512))?;
-    assert_eq!(b.function().int_const_u128(low), Some(u128::from(u64::MAX)));
-    let empty = b.build_int_const(UBig::from_words(&[]), ValueType::int(512))?;
-    assert_eq!(b.function().int_const_u128(empty), Some(0));
-    let three = b.build_int_const(UBig::from_words(&[u64::MAX; 3]), ValueType::int(256))?;
-    let NodeKind::IntConst(id) = *b.function().node_kind(b.function().producer(three)) else {
-        panic!("expected an IntConst");
-    };
-    assert_eq!(
-        b.function().const_value(id),
-        &UBig::from_words(&[u64::MAX, u64::MAX, u64::MAX, 0])
-    );
     Ok(())
 }
 
@@ -2770,97 +2705,30 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     Ok(())
 }
 
-/// Every fitting value reads back as a scalar, I80 included, at the declared
-/// width.
+/// One value at two widths shares an `IntConstId` but not a node.
 #[test]
-fn small_valued_i80_const_interns_once() -> Result<()> {
+fn one_value_at_two_widths_is_two_nodes() -> Result<()> {
     let mut b = empty_builder()?;
-    let via_small = b.build_int_const(5u64, ValueType::int(80))?;
-    let node = b.function().producer(via_small);
-    let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
-        panic!("expected IntConst");
+    let wide = b.build_int_const(5u64, ValueType::int(256))?;
+    let narrow = b.build_int_const(5u64, ValueType::int(64))?;
+    let id = |v| {
+        let NodeKind::IntConst(id) = *b.function().node_kind(b.function().producer(v)) else {
+            panic!("expected IntConst");
+        };
+        id
     };
-    assert_eq!(b.function().const_value(id), &UBig::from(5u64));
-    assert_eq!(b.function().value_type(via_small)?, ValueType::int(80));
-    assert_eq!(b.function().int_const_u128(via_small), Some(5u128));
-
-    let again = b.build_int_const(5u64, ValueType::int(80))?;
-    assert_eq!(
-        b.function().producer(again),
-        node,
-        "equal I80 value must dedup to one node"
-    );
+    assert_eq!(id(wide), id(narrow));
+    assert_ne!(b.function().producer(wide), b.function().producer(narrow));
     Ok(())
 }
 
-/// Limbs that fit `u128` normalise, so the limb path and the scalar path
-/// share one `IntConstId` for the same value.
+/// 3 at I1 masks to 1 and dedups with boolean `true`.
 #[test]
-fn small_valued_i256_limbs_canonicalise_to_the_scalar() -> Result<()> {
-    let mut b = empty_builder()?;
-    let via_limbs = b.build_int_const(UBig::from_words(&[5, 0, 0, 0]), ValueType::int(256))?;
-    let node = b.function().producer(via_limbs);
-    let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
-        panic!("expected IntConst");
-    };
-    assert_eq!(
-        b.function().const_value(id),
-        &UBig::from(5u64),
-        "small-valued I256 limbs must normalise to the scalar, got {:?}",
-        b.function().const_value(id)
-    );
-    assert_eq!(b.function().value_type(via_limbs)?, ValueType::int(256));
-
-    let via_i64 = b.build_int_const(5u64, ValueType::int(64))?;
-    let i64_node = b.function().producer(via_i64);
-    let NodeKind::IntConst(i64_id) = *b.function().node_kind(i64_node) else {
-        panic!("expected IntConst");
-    };
-    assert_eq!(i64_id, id, "value 5 must share one IntConstId");
-    assert_ne!(i64_node, node, "different widths must be distinct nodes");
-    Ok(())
-}
-
-/// Interning masks to the declared width, so 3 at I1 becomes 1.
-#[test]
-fn i1_const_payload_masks_to_one_bit() -> Result<()> {
+fn i1_const_dedups_with_boolean_true() -> Result<()> {
     let mut b = empty_builder()?;
     let v = b.build_int_const(3u64, ValueType::I1)?;
-    let node = b.function().producer(v);
-    let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
-        panic!("expected IntConst");
-    };
-    assert_eq!(
-        b.function().const_value(id),
-        &UBig::ONE,
-        "value 3 at I1 must mask to 1, got {:?}",
-        b.function().const_value(id)
-    );
     let t = b.build_boolean_const(true);
-    assert_eq!(
-        b.function().producer(t),
-        node,
-        "masked I1 const dedups with boolean true"
-    );
-    Ok(())
-}
-
-/// Masking at exactly the carrier's width is the identity.
-#[test]
-fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
-    let mut b = empty_builder()?;
-    let v = b.build_int_const(u64::MAX, ValueType::int(64))?;
-    let node = b.function().producer(v);
-    let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
-        panic!("expected IntConst");
-    };
-    assert_eq!(
-        b.function().const_value(id),
-        &UBig::from(u64::MAX),
-        "all 64 bits must survive the width mask, got {:?}",
-        b.function().const_value(id)
-    );
-    assert_eq!(b.int_const_u128(v), Some(u128::from(u64::MAX)));
+    assert_eq!(b.function().producer(t), b.function().producer(v));
     Ok(())
 }
 

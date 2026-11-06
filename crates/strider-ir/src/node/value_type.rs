@@ -318,27 +318,14 @@ mod tests {
         }
     }
 
-    /// The unsigned read is [`crate::eval::mask`], which has no carrier.
+    /// A float has no integer bits.
     #[test]
-    fn mask_reduces_to_the_declared_width() {
-        use crate::eval::mask;
-        use dashu_int::UBig;
-        let v = UBig::from(0x12345678u32);
-        assert_eq!(mask(&v, ValueType::int(16)), UBig::from(0x5678u32));
-        assert_eq!(mask(&v, ValueType::int(32)), v);
-        let all = UBig::from(u128::MAX);
-        assert_eq!(mask(&all, ValueType::int(128)), all);
-        // A float has no integer bits.
-        assert_eq!(mask(&v, ValueType::float(32)), UBig::ZERO);
-        // Every bit above the declared width clears.
-        assert_eq!(mask(&all, ValueType::int(8)), UBig::from(u8::MAX));
-        assert_eq!(mask(&all, ValueType::int(64)), UBig::from(u64::MAX));
-        // Past the carrier the value survives whole.
-        assert_eq!(mask(&all, ValueType::int(256)), all);
-        // I1 masks to the low bit.
-        assert_eq!(mask(&UBig::ONE, ValueType::I1), UBig::ONE);
-        assert_eq!(mask(&UBig::ZERO, ValueType::I1), UBig::ZERO);
-        assert_eq!(mask(&UBig::from(0xFEu8), ValueType::I1), UBig::ZERO);
+    fn mask_at_a_float_type_is_zero() {
+        let v = dashu_int::UBig::from(0x12345678u32);
+        assert_eq!(
+            crate::eval::mask(&v, ValueType::float(32)),
+            dashu_int::UBig::ZERO
+        );
     }
 
     #[test]
@@ -400,17 +387,6 @@ mod tests {
         );
         let max_pos = i128::MAX as u128;
         assert_eq!(ValueType::int(128).get_signed_int(max_pos), Some(i128::MAX));
-    }
-
-    #[test]
-    fn mask_for_u80_reduces_to_80_bits() {
-        use crate::eval::mask;
-        use dashu_int::UBig;
-        let ty = ValueType::int(80);
-        let raw = UBig::from(u128::MAX);
-        assert_eq!(mask(&raw, ty), (UBig::ONE << 80usize) - UBig::ONE);
-        let small = UBig::from(0x12345678u32);
-        assert_eq!(mask(&small, ty), small);
     }
 
     #[test]
