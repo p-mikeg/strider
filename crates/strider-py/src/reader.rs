@@ -576,7 +576,7 @@ impl PyLoadedElf {
             return Ok(strider_cfg::DataRanges::default());
         }
         self.with_symbols(|t| {
-            // A Thumb symbol's `start` is one below its address.
+            // An ISA-bit symbol's `start` is one below its address.
             let first = t
                 .by_addr
                 .partition_point(|&i| t.syms[i].start() < entry.saturating_sub(1));
