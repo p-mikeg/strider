@@ -10,8 +10,8 @@ use strider_ir::node::{NodeKind, ValueKind};
 use strider_ir::{IntBinaryOp, IntUnaryOp};
 use strider_pattern::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_neg, int_xor, one_of,
-    ret, var,
+    Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_const, int_neg,
+    int_xor, one_of, ret, var,
 };
 
 /// `int_neg(int_add(5, int_mul(7, 9)))`.
@@ -418,8 +418,8 @@ fn a_first_of_answer_does_not_depend_on_a_siblings_arm_order() {
     assert_eq!(around, inside, "the lowest arm that matches wins");
 }
 
-/// `match_at` stops at its first match, which arm 2 of the alternation
-/// reaches before the sibling's next configuration brings arm 1 one.
+/// `match_at` keeps arm 1, though arm 2 of the alternation matches before the
+/// sibling's next configuration brings arm 1 in.
 #[test]
 fn match_at_takes_the_lowest_first_of_arm_that_matches() {
     let x = Capture::new();
@@ -903,4 +903,24 @@ fn a_shared_first_of_offered_two_values_settles_its_reads_in_order() {
     let mut want = [(a, b), (b, a)];
     want.sort_unstable();
     assert_eq!(got, want);
+}
+
+/// Under `first_of`, `match_at` returns `find_all`'s first match at the node,
+/// though an all-lowest-arm configuration comes later in the walk.
+#[test]
+fn match_at_agrees_with_find_alls_first_under_first_of() {
+    let mut t = Tb::empty();
+    let a = t.u64(5);
+    let one = t.u64(1);
+    let s = t.add(a, one);
+    let f = t.ret_val(s);
+    let (x, y) = (Capture::new(), Capture::new());
+    let pat = int_add(first_of![int_const(1u128), var(x)], var(y)).into_pattern();
+    let m = Matcher::new(&f);
+    let all = m.find_all(&pat).unwrap();
+    let hit = m.match_at(all[0].root(), &pat).unwrap().expect("matches");
+    assert_eq!(
+        (hit.value(x), hit.value(y)),
+        (all[0].value(x), all[0].value(y))
+    );
 }

@@ -200,9 +200,12 @@ impl<'f> Matcher<'f> {
         let generation = self.function.graph().generation();
         let mut found: Vec<(Match, Vec<walk::ArmTaken>)> = Vec::new();
         let trail = walk::ArmTrail::default();
+        // An earlier match through a higher arm at another choice point can
+        // survive the settle, so only a capture-free pattern stops early.
+        let stop_early = first_only && pat.bound_captures().next().is_none();
         walk::anchor(self, pat, root, node, scratch, Some(&trail), &mut |b| {
             let arms = trail.arms.borrow();
-            if first_only && arms.iter().all(|e| e.1 == 0) {
+            if stop_early && arms.iter().all(|e| e.1 == 0) {
                 found = vec![(Match::new(node, std::mem::take(b), generation), Vec::new())];
                 return true;
             }
