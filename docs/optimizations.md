@@ -49,7 +49,8 @@ so you only match the positive form.
 
 **PhiCollapse.** A phi or memory phi whose inputs other than itself are all one
 value becomes that value (`[x, itself]` is `x`). A strongly connected group of
-phis with a single outside input folds to it too.
+phis with a single outside input folds to it too. An `and` of a phi with a
+constant mask becomes the value every arm agrees on under that mask.
 
 **RegionCollapse.** A region with one control input is removed; its phis and
 memory phis become their single value input.
@@ -74,9 +75,10 @@ overwrite it (`stack_global_disjoint`, `noalias_allocators`' heap identity),
 never through a call a claim makes transparent: the jump-table walk and
 return-target verification read that edge without those claims.
 
-With `escape_analysis`, a spill load forwards across a call when no stack
-address escapes the frame and the slot is outside the callee's argument
-window. With `noalias_allocators`, a load steps through a call to a listed
+With `escape_analysis`, when no stack address escapes the frame, a spill load
+forwards across a call if the slot is outside the callee's argument window,
+and past a store through a pointer strider cannot place (under
+`stack_global_disjoint`). With `noalias_allocators`, a load steps through a call to a listed
 allocator when it reads another allocation or such a frame slot; a global load
 does not. `callee_preserves_stack_args` empties the argument window under
 either. [python-api §2](python-api.md#2-analyzing-a-function) says when each
@@ -87,9 +89,10 @@ claim is safe.
 In default pipeline order:
 
 **CallStackArgCollect.** Attaches the stores into each call's outgoing argument
-window to the call as ordinary arguments. A store of the entry value of a
-register the function's own convention preserves (a prologue save) ends the
-arguments; other stores just above them can come along.
+window to the call as ordinary arguments, up to the first slot no whole store
+reaches. A store of the entry value of a register the function's own
+convention preserves (a prologue save), or a call between store and call, also
+ends the arguments; other stores just above them can come along.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
 stack pointer read, after the register arguments: one ordinal per run of slots

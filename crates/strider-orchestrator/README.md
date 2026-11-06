@@ -41,5 +41,6 @@ contract is on `Reason`. The five target reasons accumulate over every round,
 since an inexact edge fed the classifier whether or not the final CFG keeps
 it; the two site reasons are the final round's.
 
-A seed suppresses only the unclassified-`Switch` report, and only until the
-site outgrows it.
+A seed turns a site's `UnresolvedBranch` into `UnverifiedSeed`: an
+unclassified `Switch` until the site outgrows the seed, and an unproven return
+seeded `LinkRegister`.

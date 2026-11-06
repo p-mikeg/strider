@@ -182,7 +182,8 @@ answer wrong. Each field's risky value is the positive one:
   entry SP (an `sp & -16` local) does not alias an incoming argument slot.
 - `escape_analysis` (off): when no stack address escapes the frame (through a
   call argument, a stored value, a return or a clobbered register), a spill
-  load forwards across a call. It misses a callee reading an address from a
+  load forwards across a call and, under `stack_global_disjoint`, past a
+  store through a pointer strider cannot place. It misses a callee reading an address from a
   preserved register, and is inert on a frame that stores its entry stack
   pointer (every PowerPC frame, an ARM APCS frame).
 - `noalias_allocators` (empty): the listed callees return fresh pointers that
@@ -473,7 +474,9 @@ XMM0; on PPC64 the first stack argument is `8+25` (userland) or `8+13`
 (`*_linux_kernel`). `function_arg` / `function_arg_float` index the two
 classes separately. An incoming stack ordinal counts slots, not C arguments:
 one per run of slots one load spans, so a `long long` read as two 4-byte loads
-takes two, and the first slot no load reads ends the stack arguments.
+takes two. Only slots up to the first one no load reads are arguments, for
+`function_arg_stack` and `.source_stack` too: on i386, a function that ignores
+its first parameter has no stack arguments.
 
 If slots: `.cond(p)`, `.ctrl(p)`, `.capture_true(c)` / `.capture_false(c)`.
 To match what an edge leads to, join on the edge:

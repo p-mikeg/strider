@@ -59,8 +59,8 @@ come from `record_insn_effects`, a hand-written mirror of the lift's write
 paths: a spurious def costs a dead phi, a missed one miscompiles.
 
 Regions are renamed in dominator-tree pre-order, each starting from its
-immediate dominator's variable map. Reading a variable no definition reaches
-is an error.
+immediate dominator's variable map. The entry defines every tracked variable
+as an `InitialVar`, so every read finds a definition.
 
 ## Lift-time canonicalisations
 

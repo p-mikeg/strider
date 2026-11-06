@@ -21,9 +21,9 @@ CallOther ABI table.
 - `call_other_abi`: the CallOther table and its `classify` / `classify_with`
   lookups.
 
-Everything one family knows lives in `src/family/<name>.rs` as a `Family`:
-ldefs path, decode facts, CallOther rows and calling conventions.
-`call_other_abi/common.rs` holds the arch-independent rows. Tests check the
+Each family is a `Family` in `src/family/<name>.rs`: ldefs path, decode
+facts, CallOther rows and calling conventions. `call_other_abi/common.rs`
+holds rows matched by op name on any family that emits the op. Tests check the
 data against the vendored sla and Ghidra.
 
 ## CallOther ABI
