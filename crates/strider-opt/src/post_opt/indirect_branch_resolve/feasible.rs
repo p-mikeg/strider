@@ -1,39 +1,39 @@
+use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{CtrlKey, Function, IRViewer, control_edge_dominator_tree};
+use strider_ir::{CtrlKey, DominatorTree, Function, IRViewer, control_edge_dominator_tree};
 
-use super::{Path, ReturnTargets};
+/// Which input of a `Region` of one `If`'s two edges control can have
+/// arrived through on its way to a point: the one an `If` on the same
+/// condition below the region agrees with.
+pub(crate) struct FeasibleArms<'f> {
+    function: &'f Function,
+    doms: Option<DominatorTree<CtrlKey>>,
+    memo: FxHashMap<(CtrlKey, NodeId), Option<usize>>,
+    guards: FxHashMap<ValueId, Vec<(NodeId, bool)>>,
+}
 
-impl<'f> ReturnTargets<'f> {
-    /// Each arm of `phi` control can have taken to reach `path`, observed on
-    /// the edge it enters by. An arm entering a `Region` of one `If`'s two
-    /// edges is cut when an `If` on the same condition below the region takes
-    /// the other edge on the way to `path`.
-    pub(super) fn arms(
-        &mut self,
-        path: Path,
-        phi: NodeId,
-    ) -> impl Iterator<Item = (Path, ValueId)> + 'f {
-        let function = self.function;
-        let feasible = path.and_then(|point| self.feasible_arm(point, function.phi_region(phi)));
-        function
-            .phi_arms(phi)
-            .enumerate()
-            .filter(move |&(arm, _)| feasible.is_none_or(|only| only == arm))
-            .map(|(_, (edge, value))| (Some(CtrlKey::Edge(edge)), value))
+impl<'f> FeasibleArms<'f> {
+    pub(crate) fn new(function: &'f Function) -> Self {
+        Self {
+            function,
+            doms: None,
+            memo: FxHashMap::default(),
+            guards: FxHashMap::default(),
+        }
     }
 
     /// The one input of `region` control can have arrived through when it
     /// passes `point`, `None` when that is not shown.
-    fn feasible_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
-        if let Some(&arm) = self.feasible.get(&(point, region)) {
+    pub(crate) fn only_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
+        if let Some(&arm) = self.memo.get(&(point, region)) {
             return arm;
         }
-        let arm = self.decide_arm(point, region);
-        self.feasible.insert((point, region), arm);
+        let arm = self.decide(point, region);
+        self.memo.insert((point, region), arm);
         arm
     }
 
-    fn decide_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
+    fn decide(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
         let function = self.function;
         let [a, b] = function.node_inputs_exact::<2>(region).ok()?;
         let branch = function.producer(a);
@@ -69,6 +69,7 @@ impl<'f> ReturnTargets<'f> {
         [a, b].iter().position(|&input| input == taken)
     }
 }
+
 /// `value` with every `Xor(_, 1)` of a boolean peeled off, and whether an odd
 /// number were.
 fn condition(function: &Function, mut value: ValueId) -> (ValueId, bool) {
