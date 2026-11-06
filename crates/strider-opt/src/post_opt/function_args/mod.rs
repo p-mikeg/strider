@@ -7,7 +7,7 @@ use crate::pipeline::Optimizer;
 
 /// Registers the function's stack-passed arguments as argument values.
 ///
-/// A candidate is an unshadowed `Load[InitialVar(sp) + K]` with `K` in a stack
+/// A candidate is a clean `Load[InitialVar(sp) + K]` with `K` in a stack
 /// slot. Ordinals start at `arg_passing_regs.len()` whatever the argument's
 /// class, so an integer-arg query can bind a stack-passed float. Only slots
 /// up to the first one no clean load reads are arguments.
@@ -101,7 +101,14 @@ fn detect_stack_args(
     }
     let mut cursor = 0usize;
     let mut ordinal = first_stack_arg as u32;
-    while let Some(&(reach, _)) = groups.get(&cursor) {
+    while let Some(&(mut reach, _)) = groups.get(&cursor) {
+        let mut slot = cursor;
+        while slot <= reach {
+            if let Some(&(further, _)) = groups.get(&slot) {
+                reach = reach.max(further);
+            }
+            slot += 1;
+        }
         let arg_loads: Vec<(NodeKind, ValueId)> = (cursor..=reach)
             .filter_map(|s| groups.get(&s))
             .flat_map(|(_, loads)| loads.iter().copied())
