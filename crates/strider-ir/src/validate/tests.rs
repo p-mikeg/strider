@@ -1672,6 +1672,196 @@ fn memory_order_store_past_a_non_clobbering_call_other_validates() {
     validate(&s.f).expect("a Store chain on the CallOther's token");
 }
 
+/// Two non-clobbering `CallOther`s in a row, the second reading a `Store` on
+/// the first's token.
+#[test]
+fn memory_order_call_other_after_a_store_past_a_call_other_validates() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
+    stamp(&mut s.f, addr_n);
+    let (_, st1_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let (_, st2_mem) = store(&mut s.f, st1_mem, addr, addr);
+    let mut ctrl = s.entry_ctrl;
+    for mem in [st1_mem, st2_mem] {
+        let op = s.f.graph_mut().create_node(
+            NodeKind::CallOther { user_op_id: 0 },
+            [ctrl, mem],
+            [ValueKind::Control, ValueKind::Memory],
+        );
+        stamp(&mut s.f, op);
+        [ctrl, _] = s.f.node_outputs_exact::<2>(op).unwrap();
+    }
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [ctrl, st2_mem], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f).expect("each CallOther reads on the one before");
+}
+
+/// `Store; If`, a non-clobbering `CallOther` reading the `Store` on the then
+/// arm, a merge with no `MemPhi`, and a `Return` taking the Store's token or,
+/// with `rewind`, the token from before it.
+fn call_other_arm_then_memphi_free_merge(rewind: bool) -> (Function, NodeId, NodeId) {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
+    stamp(&mut s.f, addr_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let op = s.f.graph_mut().create_node(
+        NodeKind::CallOther { user_op_id: 0 },
+        [then_edge, st_mem],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, op);
+    let [op_ctrl, _] = s.f.node_outputs_exact::<2>(op).unwrap();
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [op_ctrl, else_edge],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, _] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let ret_mem = if rewind { s.mem_value } else { st_mem };
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [merge_ctrl, ret_mem], []);
+    stamp(&mut s.f, ret);
+    (s.f, op, ret)
+}
+
+#[test]
+fn memory_order_memphi_free_merge_after_a_non_clobbering_call_other_validates() {
+    let (f, _, _) = call_other_arm_then_memphi_free_merge(false);
+    validate(&f).expect("the Return takes the token the CallOther read");
+}
+
+#[test]
+fn memory_order_return_behind_a_call_other_across_a_memphi_free_merge_is_rejected() {
+    let (f, op, ret) = call_other_arm_then_memphi_free_merge(true);
+    let errs = validate(&f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
+            if *node == ret && *effect == op),
+        "{errs:?}"
+    );
+}
+
+/// `Store`, then a loop with no `MemPhi` whose body is a non-clobbering
+/// `CallOther` reading the `Store`, and a `Return` on the loop exit taking the
+/// Store's token or, with `rewind`, the token from before it.
+fn call_other_in_memphi_free_loop(rewind: bool) -> (Function, NodeId, NodeId) {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
+    stamp(&mut s.f, addr_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let header = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [header_ctrl, _] = s.f.node_outputs_exact::<2>(header).unwrap();
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [header_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [body_edge, exit_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let op = s.f.graph_mut().create_node(
+        NodeKind::CallOther { user_op_id: 0 },
+        [body_edge, st_mem],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, op);
+    let [op_ctrl, _] = s.f.node_outputs_exact::<2>(op).unwrap();
+    s.f.graph_mut().add_node_input(header, op_ctrl);
+    let ret_mem = if rewind { s.mem_value } else { st_mem };
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [exit_edge, ret_mem], []);
+    stamp(&mut s.f, ret);
+    (s.f, op, ret)
+}
+
+#[test]
+fn memory_order_memphi_free_loop_around_a_non_clobbering_call_other_validates() {
+    let (f, _, _) = call_other_in_memphi_free_loop(false);
+    validate(&f).expect("the Return takes the token the CallOther read");
+}
+
+#[test]
+fn memory_order_return_behind_a_call_other_on_a_loop_back_edge_is_rejected() {
+    let (f, op, ret) = call_other_in_memphi_free_loop(true);
+    let errs = validate(&f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
+            if *node == ret && *effect == op),
+        "{errs:?}"
+    );
+}
+
+/// Each arm's non-clobbering `CallOther` reads a different `Store` of the same
+/// token, and the arms merge with no `MemPhi`: no one token after the merge
+/// holds both writes.
+#[test]
+fn memory_order_memphi_free_merge_of_two_store_forks_is_rejected() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
+    stamp(&mut s.f, addr_n);
+    let (_, st1_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let (_, st2_mem) = store(&mut s.f, s.mem_value, cond, addr);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let mut call_other = |edge: ValueId, mem: ValueId| {
+        let op = s.f.graph_mut().create_node(
+            NodeKind::CallOther { user_op_id: 0 },
+            [edge, mem],
+            [ValueKind::Control, ValueKind::Memory],
+        );
+        stamp(&mut s.f, op);
+        let [op_ctrl, _] = s.f.node_outputs_exact::<2>(op).unwrap();
+        (op, op_ctrl)
+    };
+    let (_, then_ctrl) = call_other(then_edge, st1_mem);
+    let (else_op, else_ctrl) = call_other(else_edge, st2_mem);
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [then_ctrl, else_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, _] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [merge_ctrl, st1_mem], []);
+    stamp(&mut s.f, ret);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        errs.0
+            .iter()
+            .any(|e| matches!(e, ValidationError::MemoryRewind { effect, .. }
+            if *effect == else_op)),
+        "{errs:?}"
+    );
+}
+
 /// Builds `kind(IntConst:in_ty) -> out_ty` into a returned spine and asserts
 /// the validator rejects it as a width-direction violation.
 fn assert_width_direction_rejected(
