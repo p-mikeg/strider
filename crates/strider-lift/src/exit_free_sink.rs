@@ -125,8 +125,7 @@ fn region_memory_input(graph: &Graph, region: NodeId, index: usize) -> Result<Va
 }
 
 /// Walks control forward from `start` through stranded nodes until one
-/// repeats, and returns that cycle. A stranded node always has a stranded
-/// successor, so the walk closes.
+/// repeats; returns that cycle, or an empty set if the walk dead-ends.
 fn walk_to_cycle(graph: &Graph, stranded: &NodeIdSet, start: NodeId) -> NodeIdSet {
     let mut path: Vec<NodeId> = Vec::new();
     let mut on_path = NodeIdSet::new();
