@@ -60,9 +60,10 @@ class Symbol:
     @property
     def address(self) -> int:
         """`st_value`; for a ppc64 ELFv1 function, the code its `.opd`
-        descriptor names. A Thumb function keeps the Thumb bit. An object
-        file's undefined, common or defined IFUNC symbol has an unmapped
-        address past the image."""
+        descriptor names. A Thumb function keeps the Thumb bit, and a MIPS16
+        one (`STO_MIPS16`) gets the ISA bit. An object file's undefined,
+        common or defined IFUNC symbol has an unmapped address past the
+        image."""
         ...
     @property
     def size(self) -> Optional[int]:
@@ -79,8 +80,8 @@ class Symbol:
         ...
     @property
     def end(self) -> Optional[int]:
-        """One past the last byte, or `None` when `size` is. Ignores the
-        Thumb bit."""
+        """One past the last byte, or `None` when `size` is. Ignores the ISA
+        bit."""
         ...
     @property
     def is_thumb(self) -> bool:
