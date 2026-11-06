@@ -356,34 +356,6 @@ const CALLING_CONVENTIONS: &[CcPreset] = &[
     },
 ];
 
-/// Base for `x86_cdecl` and `x86_linux_kernel`, which differ only in
-/// `arg_passing_regs`.
-const X86_CDECL_BASE: CallingConvention = CallingConvention {
-    stack_ptr: "ESP",
-    arg_passing_regs: &[],
-    // Scalar floats go on the stack. The psABI's `__m128` arguments in
-    // XMM0-XMM2 are left out so `arg(n)` stays stack-only; a caller's vector
-    // argument setup goes unrooted.
-    arg_passing_regs_float: &[],
-    callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
-    ret_val_regs: &["EAX", "EDX"],
-    // Scalar floats in ST0, COMPLEX_X87 in ST0/ST1, `__m128` in XMM0.
-    ret_val_regs_float: &["ST0", "ST1", "XMM0"],
-    // Above the 4-byte return address.
-    stack_args: Some(StackArgs {
-        base_offset: 4,
-        increment: 4,
-    }),
-    // The plain `ret`; see `x86_cdecl` for callees that pop more.
-    ret_stack_pop: 4,
-    // `call` pushes the return address.
-    link_register: None,
-    preserves_memory: false,
-    preserves_all_registers: false,
-    entry_address: None,
-    reg_args_adjoin_stack_args: false,
-};
-
 impl CallingConvention {
     /// The x86-64 System V ABI calling convention.
     #[must_use]
@@ -420,7 +392,31 @@ impl CallingConvention {
     /// does not preserve its register.
     #[must_use]
     pub const fn x86_cdecl() -> Self {
-        X86_CDECL_BASE
+        CallingConvention {
+            stack_ptr: "ESP",
+            arg_passing_regs: &[],
+            // Scalar floats go on the stack. The psABI's `__m128` arguments in
+            // XMM0-XMM2 are left out so `arg(n)` stays stack-only; a caller's vector
+            // argument setup goes unrooted.
+            arg_passing_regs_float: &[],
+            callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
+            ret_val_regs: &["EAX", "EDX"],
+            // Scalar floats in ST0, COMPLEX_X87 in ST0/ST1, `__m128` in XMM0.
+            ret_val_regs_float: &["ST0", "ST1", "XMM0"],
+            // Above the 4-byte return address.
+            stack_args: Some(StackArgs {
+                base_offset: 4,
+                increment: 4,
+            }),
+            // The plain `ret`.
+            ret_stack_pop: 4,
+            // `call` pushes the return address.
+            link_register: None,
+            preserves_memory: false,
+            preserves_all_registers: false,
+            entry_address: None,
+            reg_args_adjoin_stack_args: false,
+        }
     }
 
     /// The Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
@@ -430,7 +426,7 @@ impl CallingConvention {
     pub const fn x86_linux_kernel() -> Self {
         CallingConvention {
             arg_passing_regs: &["EAX", "EDX", "ECX"],
-            ..X86_CDECL_BASE
+            ..Self::x86_cdecl()
         }
     }
 }

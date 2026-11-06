@@ -186,57 +186,53 @@ const CALLING_CONVENTIONS: &[CcPreset] = &[
     },
 ];
 
-/// Base for `arm_aapcs` and `arm_aapcs_soft`, which differ only in the VFP
-/// argument and return lists.
-const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
-    stack_ptr: "sp",
-    arg_passing_regs: &["r0", "r1", "r2", "r3"],
-    // The double carriers. A `float` argument n is in `s_n` (inside
-    // `d_{n/2}`), which the IR cannot tell without the callee's signature, so
-    // past position 0 a float slot is a candidate, not an answer.
-    arg_passing_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
-    callee_saved_regs: &[
-        "r4",
-        "r5",
-        "r6",
-        "r7",
-        "r8",
-        "r9",
-        "r10",
-        "r11",
-        "lr",
-        "d8",
-        "d9",
-        "d10",
-        "d11",
-        "d12",
-        "d13",
-        "d14",
-        "d15",
-        // CPSR.M (a fork register): `sp` is banked per mode and preserved,
-        // so a callee returns in its caller's mode.
-        "cpsr_mode",
-    ],
-    ret_val_regs: &["r0", "r1"],
-    // A homogeneous aggregate has up to four members, q0-q3 for vectors.
-    ret_val_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
-    stack_args: Some(StackArgs {
-        base_offset: 0,
-        increment: 4,
-    }),
-    ret_stack_pop: 0,
-    link_register: Some("lr"),
-    preserves_memory: false,
-    preserves_all_registers: false,
-    entry_address: None,
-    reg_args_adjoin_stack_args: true,
-};
-
 impl CallingConvention {
     /// The ARM 32-bit AAPCS hard-float (VFP) calling convention.
     #[must_use]
     pub const fn arm_aapcs() -> Self {
-        ARM_AAPCS_VFP_BASE
+        CallingConvention {
+            stack_ptr: "sp",
+            arg_passing_regs: &["r0", "r1", "r2", "r3"],
+            // The double carriers. A `float` argument n is in `s_n` (inside
+            // `d_{n/2}`), which the IR cannot tell without the callee's signature, so
+            // past position 0 a float slot is a candidate, not an answer.
+            arg_passing_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
+            callee_saved_regs: &[
+                "r4",
+                "r5",
+                "r6",
+                "r7",
+                "r8",
+                "r9",
+                "r10",
+                "r11",
+                "lr",
+                "d8",
+                "d9",
+                "d10",
+                "d11",
+                "d12",
+                "d13",
+                "d14",
+                "d15",
+                // CPSR.M (a fork register): `sp` is banked per mode and preserved,
+                // so a callee returns in its caller's mode.
+                "cpsr_mode",
+            ],
+            ret_val_regs: &["r0", "r1"],
+            // A homogeneous aggregate has up to four members, q0-q3 for vectors.
+            ret_val_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
+            stack_args: Some(StackArgs {
+                base_offset: 0,
+                increment: 4,
+            }),
+            ret_stack_pop: 0,
+            link_register: Some("lr"),
+            preserves_memory: false,
+            preserves_all_registers: false,
+            entry_address: None,
+            reg_args_adjoin_stack_args: true,
+        }
     }
 
     /// The ARM 32-bit AAPCS calling convention for a
@@ -247,7 +243,7 @@ impl CallingConvention {
         CallingConvention {
             arg_passing_regs_float: &[],
             ret_val_regs_float: &[],
-            ..ARM_AAPCS_VFP_BASE
+            ..Self::arm_aapcs()
         }
     }
 }

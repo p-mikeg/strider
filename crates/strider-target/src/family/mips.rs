@@ -199,44 +199,41 @@ const CALLING_CONVENTIONS: &[CcPreset] = &[
     },
 ];
 
-/// Base for `mips_o32` and `mips_n64`.
-const MIPS_O32_BASE: CallingConvention = CallingConvention {
-    stack_ptr: "sp",
-    arg_passing_regs: &["a0", "a1", "a2", "a3"],
-    // Positional, which o32 is not: it uses $f12 / $f14 only while every
-    // earlier argument is FP, so a function not leading with floats can report
-    // an $f12 temporary as float argument 0.
-    arg_passing_regs_float: &["f12", "f14"],
-    callee_saved_regs: &[
-        // Under `-mabicalls` the caller restores `gp`; listed so
-        // `InitialVar(gp)` reaches GOT loads. `f20`..`f31` is o32's; n64
-        // overrides the list.
-        "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra", "f20", "f21", "f22",
-        "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31",
-    ],
-    ret_val_regs: &["v0", "v1"],
-    // Returns are read at their declared width, so a `double` needs the
-    // 8-byte pair (`FREGSIZE 4`); arguments are projected to their containers.
-    ret_val_regs_float: &["f0_1", "f2_3"],
-    // Above the 16-byte home area of a0..a3.
-    stack_args: Some(StackArgs {
-        base_offset: 16,
-        increment: 4,
-    }),
-    ret_stack_pop: 0,
-    link_register: Some("ra"),
-    preserves_memory: false,
-    preserves_all_registers: false,
-    // abicalls: a callee is entered through `jalr t9`.
-    entry_address: Some("t9"),
-    reg_args_adjoin_stack_args: true,
-};
-
 impl CallingConvention {
     /// The MIPS O32 calling convention.
     #[must_use]
     pub const fn mips_o32() -> Self {
-        MIPS_O32_BASE
+        CallingConvention {
+            stack_ptr: "sp",
+            arg_passing_regs: &["a0", "a1", "a2", "a3"],
+            // Positional, which o32 is not: it uses $f12 / $f14 only while every
+            // earlier argument is FP, so a function not leading with floats can report
+            // an $f12 temporary as float argument 0.
+            arg_passing_regs_float: &["f12", "f14"],
+            callee_saved_regs: &[
+                // Under `-mabicalls` the caller restores `gp`; listed so
+                // `InitialVar(gp)` reaches GOT loads. `f20`..`f31` is o32's; n64
+                // overrides the list.
+                "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra", "f20", "f21",
+                "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31",
+            ],
+            ret_val_regs: &["v0", "v1"],
+            // Returns are read at their declared width, so a `double` needs the
+            // 8-byte pair (`FREGSIZE 4`); arguments are projected to their containers.
+            ret_val_regs_float: &["f0_1", "f2_3"],
+            // Above the 16-byte home area of a0..a3.
+            stack_args: Some(StackArgs {
+                base_offset: 16,
+                increment: 4,
+            }),
+            ret_stack_pop: 0,
+            link_register: Some("ra"),
+            preserves_memory: false,
+            preserves_all_registers: false,
+            // abicalls: a callee is entered through `jalr t9`.
+            entry_address: Some("t9"),
+            reg_args_adjoin_stack_args: true,
+        }
     }
 
     /// The MIPS N64 calling convention.
@@ -256,7 +253,7 @@ impl CallingConvention {
                 base_offset: 0,
                 increment: 8,
             }),
-            ..MIPS_O32_BASE
+            ..Self::mips_o32()
         }
     }
 }
