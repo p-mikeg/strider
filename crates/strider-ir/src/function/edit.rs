@@ -54,7 +54,7 @@ pub struct EditFunction<'g> {
     generation: u64,
     /// Nodes created, resurrected or re-walked into the live set.
     live_entries: u64,
-    /// [`Self::live_postorder`] and the [`Self::edits`] reading it was walked at.
+    /// The live post-order and the [`Self::edits`] reading it was walked at.
     order_memo: std::cell::RefCell<Option<(u64, Vec<NodeId>)>>,
     /// Edits that added or removed a use of a `Control` value, plus every
     /// [`Self::function_mut`] borrow.
@@ -193,6 +193,7 @@ impl<'g> EditFunction<'g> {
     /// consumers unless the use closes a cycle. Roots are seeded in ascending
     /// `NodeId` order, so the RPO starts at the lowest-id root. Walked once per
     /// [`Self::edits`] reading.
+    #[cfg(test)]
     pub fn live_postorder(&self) -> Vec<NodeId> {
         self.with_live_postorder(<[NodeId]>::to_vec)
     }
@@ -211,7 +212,9 @@ impl<'g> EditFunction<'g> {
         f(&memo.as_ref().expect("filled above").1)
     }
 
-    /// Reverse of [`Self::live_postorder`].
+    /// Reverse post-order over the live def->use graph of the entry: a node
+    /// precedes its consumers unless the use closes a cycle. Starts at the
+    /// lowest-id root.
     pub fn live_reverse_postorder(&self) -> Vec<NodeId> {
         self.with_live_postorder(|o| o.iter().rev().copied().collect())
     }
