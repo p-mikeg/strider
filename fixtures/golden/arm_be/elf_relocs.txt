@@ -1,6 +1,6 @@
 # arm_be/elf_relocs: Strider::analyze, default options
 endian big
-default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
+default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == helper_a @0x2b4
@@ -13,6 +13,10 @@ float_arg 0 [%v10]
 float_arg 1 [%v11]
 float_arg 2 [%v12]
 float_arg 3 [%v13]
+float_arg 4 [%v14]
+float_arg 5 [%v15]
+float_arg 6 [%v16]
+float_arg 7 [%v17]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[sp]
@@ -27,7 +31,11 @@ float_arg 3 [%v13]
 %v11:i64 = initial_var[d1]
 %v12:i64 = initial_var[d2]
 %v13:i64 = initial_var[d3]
-return %v0, %v6, %v8, %v9, %v10, %v11, %v12, %v13
+%v14:i64 = initial_var[d4]
+%v15:i64 = initial_var[d5]
+%v16:i64 = initial_var[d6]
+%v17:i64 = initial_var[d7]
+return %v0, %v6, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17
 
 == helper_b @0x2cc
 cfg
@@ -39,6 +47,10 @@ float_arg 0 [%v10]
 float_arg 1 [%v11]
 float_arg 2 [%v12]
 float_arg 3 [%v13]
+float_arg 4 [%v14]
+float_arg 5 [%v15]
+float_arg 6 [%v16]
+float_arg 7 [%v17]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[sp]
@@ -53,7 +65,11 @@ float_arg 3 [%v13]
 %v11:i64 = initial_var[d1]
 %v12:i64 = initial_var[d2]
 %v13:i64 = initial_var[d3]
-return %v0, %v6, %v8, %v9, %v10, %v11, %v12, %v13
+%v14:i64 = initial_var[d4]
+%v15:i64 = initial_var[d5]
+%v16:i64 = initial_var[d6]
+%v17:i64 = initial_var[d7]
+return %v0, %v6, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17
 
 == helper_c @0x2e4
 cfg
@@ -65,6 +81,10 @@ float_arg 0 [%v10]
 float_arg 1 [%v11]
 float_arg 2 [%v12]
 float_arg 3 [%v13]
+float_arg 4 [%v14]
+float_arg 5 [%v15]
+float_arg 6 [%v16]
+float_arg 7 [%v17]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[sp]
@@ -79,7 +99,11 @@ float_arg 3 [%v13]
 %v11:i64 = initial_var[d1]
 %v12:i64 = initial_var[d2]
 %v13:i64 = initial_var[d3]
-return %v0, %v6, %v8, %v9, %v10, %v11, %v12, %v13
+%v14:i64 = initial_var[d4]
+%v15:i64 = initial_var[d5]
+%v16:i64 = initial_var[d6]
+%v17:i64 = initial_var[d7]
+return %v0, %v6, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17
 
 == helper_d @0x2fc
 cfg
@@ -91,6 +115,10 @@ float_arg 0 [%v10]
 float_arg 1 [%v11]
 float_arg 2 [%v12]
 float_arg 3 [%v13]
+float_arg 4 [%v14]
+float_arg 5 [%v15]
+float_arg 6 [%v16]
+float_arg 7 [%v17]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[sp]
@@ -105,7 +133,11 @@ float_arg 3 [%v13]
 %v11:i64 = initial_var[d1]
 %v12:i64 = initial_var[d2]
 %v13:i64 = initial_var[d3]
-return %v0, %v6, %v8, %v9, %v10, %v11, %v12, %v13
+%v14:i64 = initial_var[d4]
+%v15:i64 = initial_var[d5]
+%v16:i64 = initial_var[d6]
+%v17:i64 = initial_var[d7]
+return %v0, %v6, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17
 
 == dispatch_via_table @0x314
 cfg
@@ -162,8 +194,8 @@ float_arg 7 [%v38]
 %v36:i64 = initial_var[d5]
 %v37:i64 = initial_var[d6]
 %v38:i64 = initial_var[d7]
-%v39:ctrl, %v40:mem, %v41:i32<r0>, %v42:i32<r1>, %v43:i64<d0>, %v44:i64<d1>, %v45:i64<d2>, %v46:i64<d3>, %v47:i32<r2>, %v48:i32<r3>, %v49:i32<pc>, %v50:i8<CY>, %v51:i8<OV>, %v52:i8<tmpNG>, %v53:i8<tmpZR>, %v54:i8<tmpCY>, %v55:i8<tmpOV>, %v56:i8<shift_carry>, %v57:i8<TB>, %v58:i8<ISAModeSwitch>, %v59:i32<mult_addr>, %v60:i64<d7>, %v61:i64<d6>, %v62:i64<d5>, %v63:i64<d4> = call %v0, %v18, %v28, %v16, %v17, %v26, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v17, %v13, %v9, %v5
-return %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46
+%v39:ctrl, %v40:mem, %v41:i32<r0>, %v42:i32<r1>, %v43:i64<d0>, %v44:i64<d1>, %v45:i64<d2>, %v46:i64<d3>, %v47:i64<d4>, %v48:i64<d5>, %v49:i64<d6>, %v50:i64<d7>, %v51:i32<r2>, %v52:i32<r3>, %v53:i32<pc>, %v54:i8<CY>, %v55:i8<OV>, %v56:i8<tmpNG>, %v57:i8<tmpZR>, %v58:i8<tmpCY>, %v59:i8<tmpOV>, %v60:i8<shift_carry>, %v61:i8<TB>, %v62:i8<ISAModeSwitch>, %v63:i32<mult_addr> = call %v0, %v18, %v28, %v16, %v17, %v26, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v17, %v13, %v9, %v5
+return %v39, %v40, %v41, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50
 
 == compute_via_helper @0x350
 cfg
@@ -210,5 +242,5 @@ float_arg 7 [%v28]
 %v26:i64 = initial_var[d5]
 %v27:i64 = initial_var[d6]
 %v28:i64 = initial_var[d7]
-%v29:ctrl, %v30:mem, %v31:i32<r0>, %v32:i32<r1>, %v33:i64<d0>, %v34:i64<d1>, %v35:i64<d2>, %v36:i64<d3>, %v37:i32<r2>, %v38:i32<r3>, %v39:i32<pc>, %v40:i8<CY>, %v41:i8<tmpNG>, %v42:i8<tmpZR>, %v43:i8<tmpCY>, %v44:i8<tmpOV>, %v45:i8<shift_carry>, %v46:i8<TB>, %v47:i8<ISAModeSwitch>, %v48:i32<mult_addr>, %v49:i64<d7>, %v50:i64<d6>, %v51:i64<d5>, %v52:i64<d4> = call %v0, %v14, %v15, %v17, %v13, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28
-return %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36
+%v29:ctrl, %v30:mem, %v31:i32<r0>, %v32:i32<r1>, %v33:i64<d0>, %v34:i64<d1>, %v35:i64<d2>, %v36:i64<d3>, %v37:i64<d4>, %v38:i64<d5>, %v39:i64<d6>, %v40:i64<d7>, %v41:i32<r2>, %v42:i32<r3>, %v43:i32<pc>, %v44:i8<CY>, %v45:i8<tmpNG>, %v46:i8<tmpZR>, %v47:i8<tmpCY>, %v48:i8<tmpOV>, %v49:i8<shift_carry>, %v50:i8<TB>, %v51:i8<ISAModeSwitch>, %v52:i32<mult_addr> = call %v0, %v14, %v15, %v17, %v13, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28
+return %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v40

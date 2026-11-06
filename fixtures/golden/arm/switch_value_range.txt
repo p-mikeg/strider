@@ -2,7 +2,7 @@
 # dispatch_offset: no unresolved_branch and cfg.switch
 # dispatch_unmasked: no unresolved_branch and cfg.switch
 endian little
-default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
+default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == main @0x3dc
@@ -14,6 +14,10 @@ float_arg 0 [%v44]
 float_arg 1 [%v45]
 float_arg 2 [%v46]
 float_arg 3 [%v47]
+float_arg 4 [%v48]
+float_arg 5 [%v49]
+float_arg 6 [%v50]
+float_arg 7 [%v51]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[sp]
@@ -62,7 +66,11 @@ float_arg 3 [%v47]
 %v45:i64 = initial_var[d1]
 %v46:i64 = initial_var[d2]
 %v47:i64 = initial_var[d3]
-return %v0, %v42, %v41, %v43, %v44, %v45, %v46, %v47
+%v48:i64 = initial_var[d4]
+%v49:i64 = initial_var[d5]
+%v50:i64 = initial_var[d6]
+%v51:i64 = initial_var[d7]
+return %v0, %v42, %v41, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50, %v51
 
 == dispatch_unmasked @0x5c8
 cfg
@@ -93,6 +101,10 @@ float_arg 0 [%v9]
 float_arg 1 [%v10]
 float_arg 2 [%v11]
 float_arg 3 [%v12]
+float_arg 4 [%v13]
+float_arg 5 [%v14]
+float_arg 6 [%v15]
+float_arg 7 [%v16]
 %v0:ctrl = entry
 %v1:i32 = iconst[0x7]
 %v2:i32 = initial_var[r0]
@@ -105,41 +117,45 @@ float_arg 3 [%v12]
 %v10:i64 = initial_var[d1]
 %v11:i64 = initial_var[d2]
 %v12:i64 = initial_var[d3]
-return %v4, %v6, %v7, %v8, %v9, %v10, %v11, %v12
-%v13:i32 = iconst[0x2]
-%v14:i32 = int.shift_left %v2, %v13
-%v15:i32 = iconst[0x5d4]
-%v16:i32 = int.add %v14, %v15
-%v17:i32 = iconst[0xfffffffe]
-%v18:i32 = int.and %v16, %v17
-%v19:i32 = iconst[0x1]
-%v20:i32 = int.and %v16, %v19
-%v21:i32 = iconst[0x0]
-%v22:i1 = icmp.equal %v20, %v21
-%v23:i1 = iconst[0x1]
-%v24:i1 = int.xor %v22, %v23
-%v25:ctrl, %v26:ctrl, %v27:ctrl, %v28:ctrl, %v29:ctrl, %v30:ctrl, %v31:ctrl, %v32:ctrl = switch[0x5d4, 0x5d8, 0x5dc, 0x5e0, 0x5e4, 0x5e8, 0x5ec, 0x5f0] %v5, %v18, %v24
-%v33:i32 = int.add %v8, %v19
-return %v25, %v6, %v33, %v8, %v9, %v10, %v11, %v12
-%v34:i32 = int.add %v8, %v13
-return %v26, %v6, %v34, %v8, %v9, %v10, %v11, %v12
-%v35:i32 = iconst[0x3]
-%v36:i32 = int.add %v8, %v35
-return %v27, %v6, %v36, %v8, %v9, %v10, %v11, %v12
-%v37:i32 = iconst[0x4]
-%v38:i32 = int.add %v8, %v37
-return %v28, %v6, %v38, %v8, %v9, %v10, %v11, %v12
-%v39:i32 = iconst[0x5]
+%v13:i64 = initial_var[d4]
+%v14:i64 = initial_var[d5]
+%v15:i64 = initial_var[d6]
+%v16:i64 = initial_var[d7]
+return %v4, %v6, %v7, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
+%v17:i32 = iconst[0x2]
+%v18:i32 = int.shift_left %v2, %v17
+%v19:i32 = iconst[0x5d4]
+%v20:i32 = int.add %v18, %v19
+%v21:i32 = iconst[0xfffffffe]
+%v22:i32 = int.and %v20, %v21
+%v23:i32 = iconst[0x1]
+%v24:i32 = int.and %v20, %v23
+%v25:i32 = iconst[0x0]
+%v26:i1 = icmp.equal %v24, %v25
+%v27:i1 = iconst[0x1]
+%v28:i1 = int.xor %v26, %v27
+%v29:ctrl, %v30:ctrl, %v31:ctrl, %v32:ctrl, %v33:ctrl, %v34:ctrl, %v35:ctrl, %v36:ctrl = switch[0x5d4, 0x5d8, 0x5dc, 0x5e0, 0x5e4, 0x5e8, 0x5ec, 0x5f0] %v5, %v22, %v28
+%v37:i32 = int.add %v8, %v23
+return %v29, %v6, %v37, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
+%v38:i32 = int.add %v8, %v17
+return %v30, %v6, %v38, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
+%v39:i32 = iconst[0x3]
 %v40:i32 = int.add %v8, %v39
-return %v29, %v6, %v40, %v8, %v9, %v10, %v11, %v12
-%v41:i32 = iconst[0x6]
+return %v31, %v6, %v40, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
+%v41:i32 = iconst[0x4]
 %v42:i32 = int.add %v8, %v41
-return %v30, %v6, %v42, %v8, %v9, %v10, %v11, %v12
-%v43:i32 = int.add %v8, %v1
-return %v31, %v6, %v43, %v8, %v9, %v10, %v11, %v12
-%v44:i32 = iconst[0x8]
-%v45:i32 = int.add %v8, %v44
-return %v32, %v6, %v45, %v8, %v9, %v10, %v11, %v12
+return %v32, %v6, %v42, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
+%v43:i32 = iconst[0x5]
+%v44:i32 = int.add %v8, %v43
+return %v33, %v6, %v44, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
+%v45:i32 = iconst[0x6]
+%v46:i32 = int.add %v8, %v45
+return %v34, %v6, %v46, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
+%v47:i32 = int.add %v8, %v1
+return %v35, %v6, %v47, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
+%v48:i32 = iconst[0x8]
+%v49:i32 = int.add %v8, %v48
+return %v36, %v6, %v49, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16
 
 == dispatch_offset @0x63c
 cfg
@@ -170,6 +186,10 @@ float_arg 0 [%v11]
 float_arg 1 [%v12]
 float_arg 2 [%v13]
 float_arg 3 [%v14]
+float_arg 4 [%v15]
+float_arg 5 [%v16]
+float_arg 6 [%v17]
+float_arg 7 [%v18]
 %v0:ctrl = entry
 %v1:i32 = iconst[0x7]
 %v2:i32 = initial_var[r0]
@@ -184,38 +204,42 @@ float_arg 3 [%v14]
 %v12:i64 = initial_var[d1]
 %v13:i64 = initial_var[d2]
 %v14:i64 = initial_var[d3]
-return %v6, %v8, %v9, %v10, %v11, %v12, %v13, %v14
-%v15:i32 = iconst[0x2]
-%v16:i32 = int.shift_left %v4, %v15
-%v17:i32 = iconst[0x64c]
-%v18:i32 = int.add %v16, %v17
-%v19:i32 = iconst[0xfffffffe]
-%v20:i32 = int.and %v18, %v19
-%v21:i32 = iconst[0x1]
-%v22:i32 = int.and %v18, %v21
-%v23:i32 = iconst[0x0]
-%v24:i1 = icmp.equal %v22, %v23
-%v25:i1 = iconst[0x1]
-%v26:i1 = int.xor %v24, %v25
-%v27:ctrl, %v28:ctrl, %v29:ctrl, %v30:ctrl, %v31:ctrl, %v32:ctrl, %v33:ctrl, %v34:ctrl = switch[0x64c, 0x650, 0x654, 0x658, 0x65c, 0x660, 0x664, 0x668] %v7, %v20, %v26
-%v35:i32 = int.add %v10, %v21
-return %v27, %v8, %v35, %v10, %v11, %v12, %v13, %v14
-%v36:i32 = int.add %v10, %v15
-return %v28, %v8, %v36, %v10, %v11, %v12, %v13, %v14
-%v37:i32 = iconst[0x3]
-%v38:i32 = int.add %v10, %v37
-return %v29, %v8, %v38, %v10, %v11, %v12, %v13, %v14
-%v39:i32 = iconst[0x4]
-%v40:i32 = int.add %v10, %v39
-return %v30, %v8, %v40, %v10, %v11, %v12, %v13, %v14
-%v41:i32 = iconst[0x5]
+%v15:i64 = initial_var[d4]
+%v16:i64 = initial_var[d5]
+%v17:i64 = initial_var[d6]
+%v18:i64 = initial_var[d7]
+return %v6, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18
+%v19:i32 = iconst[0x2]
+%v20:i32 = int.shift_left %v4, %v19
+%v21:i32 = iconst[0x64c]
+%v22:i32 = int.add %v20, %v21
+%v23:i32 = iconst[0xfffffffe]
+%v24:i32 = int.and %v22, %v23
+%v25:i32 = iconst[0x1]
+%v26:i32 = int.and %v22, %v25
+%v27:i32 = iconst[0x0]
+%v28:i1 = icmp.equal %v26, %v27
+%v29:i1 = iconst[0x1]
+%v30:i1 = int.xor %v28, %v29
+%v31:ctrl, %v32:ctrl, %v33:ctrl, %v34:ctrl, %v35:ctrl, %v36:ctrl, %v37:ctrl, %v38:ctrl = switch[0x64c, 0x650, 0x654, 0x658, 0x65c, 0x660, 0x664, 0x668] %v7, %v24, %v30
+%v39:i32 = int.add %v10, %v25
+return %v31, %v8, %v39, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18
+%v40:i32 = int.add %v10, %v19
+return %v32, %v8, %v40, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18
+%v41:i32 = iconst[0x3]
 %v42:i32 = int.add %v10, %v41
-return %v31, %v8, %v42, %v10, %v11, %v12, %v13, %v14
-%v43:i32 = iconst[0x6]
+return %v33, %v8, %v42, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18
+%v43:i32 = iconst[0x4]
 %v44:i32 = int.add %v10, %v43
-return %v32, %v8, %v44, %v10, %v11, %v12, %v13, %v14
-%v45:i32 = int.add %v10, %v1
-return %v33, %v8, %v45, %v10, %v11, %v12, %v13, %v14
-%v46:i32 = iconst[0x8]
-%v47:i32 = int.add %v10, %v46
-return %v34, %v8, %v47, %v10, %v11, %v12, %v13, %v14
+return %v34, %v8, %v44, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18
+%v45:i32 = iconst[0x5]
+%v46:i32 = int.add %v10, %v45
+return %v35, %v8, %v46, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18
+%v47:i32 = iconst[0x6]
+%v48:i32 = int.add %v10, %v47
+return %v36, %v8, %v48, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18
+%v49:i32 = int.add %v10, %v1
+return %v37, %v8, %v49, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18
+%v50:i32 = iconst[0x8]
+%v51:i32 = int.add %v10, %v50
+return %v38, %v8, %v51, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18

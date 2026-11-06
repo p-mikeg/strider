@@ -20,10 +20,9 @@ const X86_RET_F: &[&str] = &["ST0", "ST1", "XMM0"];
 /// AAPCS64 6.4.1 / 6.4.2: v0-v7 in, a 4-member HFA back in v0-v3.
 const Q0_7: &[&str] = &["q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7"];
 const Q0_3: &[&str] = &["q0", "q1", "q2", "q3"];
-/// AAPCS-VFP (IHI 0042 6.1.2.1): the double carriers d0-d7, a 4-member HFA
-/// back in d0-d3.
+/// AAPCS-VFP (IHI 0042 6.1.2.1): the double carriers d0-d7, a 4-member
+/// vector aggregate back in q0-q3.
 const D0_7: &[&str] = &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"];
-const D0_3: &[&str] = &["d0", "d1", "d2", "d3"];
 /// AAPCS 5.1.2.1 / AAPCS64 6.1.2: d8-d15, AAPCS64 preserving the low 64 bits
 /// only, so these name the `d` views and never `q8`-`q15`.
 const D8_D15: &[&str] = &["d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15"];
@@ -151,7 +150,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             args_float: D0_7,
             saved_float: D8_D15,
-            ret_float: D0_3,
+            ret_float: D0_7,
             callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
@@ -379,7 +378,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             args_float: D0_7,
             saved_float: D8_D15,
-            ret_float: D0_3,
+            ret_float: D0_7,
             callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
@@ -399,7 +398,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             args_float: D0_7,
             saved_float: D8_D15,
-            ret_float: D0_3,
+            ret_float: D0_7,
             callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
@@ -421,7 +420,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             args_float: D0_7,
             saved_float: D8_D15,
-            ret_float: D0_3,
+            ret_float: D0_7,
             callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,

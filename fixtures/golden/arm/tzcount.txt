@@ -1,6 +1,6 @@
 # arm/tzcount: Strider::analyze, default options
 endian little
-default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
+default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == main @0x3dc
@@ -40,11 +40,11 @@ float_arg 7 [%v21]
 %v19:i64 = initial_var[d5]
 %v20:i64 = initial_var[d6]
 %v21:i64 = initial_var[d7]
-%v22:ctrl, %v23:mem, %v24:i32<r0>, %v25:i32<r1>, %v26:i64<d0>, %v27:i64<d1>, %v28:i64<d2>, %v29:i64<d3>, %v30:i32<r2>, %v31:i32<r3>, %v32:i32<pc>, %v33:i8<CY>, %v34:i8<OV>, %v35:i8<tmpNG>, %v36:i8<tmpZR>, %v37:i8<tmpCY>, %v38:i8<tmpOV>, %v39:i8<shift_carry>, %v40:i8<TB>, %v41:i8<ISAModeSwitch>, %v42:i64<d4>, %v43:i64<d5>, %v44:i64<d6>, %v45:i64<d7> = call %v0, %v6, %v7, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18, %v19, %v20, %v21
+%v22:ctrl, %v23:mem, %v24:i32<r0>, %v25:i32<r1>, %v26:i64<d0>, %v27:i64<d1>, %v28:i64<d2>, %v29:i64<d3>, %v30:i64<d4>, %v31:i64<d5>, %v32:i64<d6>, %v33:i64<d7>, %v34:i32<r2>, %v35:i32<r3>, %v36:i32<pc>, %v37:i8<CY>, %v38:i8<OV>, %v39:i8<tmpNG>, %v40:i8<tmpZR>, %v41:i8<tmpCY>, %v42:i8<tmpOV>, %v43:i8<shift_carry>, %v44:i8<TB>, %v45:i8<ISAModeSwitch> = call %v0, %v6, %v7, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18, %v19, %v20, %v21
 %v46:i32 = iconst[0xfffffff4]
 %v47:i32 = int.add %v2, %v46
 %v48:mem = store[r] %v23, %v47, %v24
-return %v22, %v48, %v24, %v25, %v26, %v27, %v28, %v29
+return %v22, %v48, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33
 
 == tzcount @0x4f8
 cfg
@@ -61,6 +61,10 @@ float_arg 0 [%v27]
 float_arg 1 [%v28]
 float_arg 2 [%v29]
 float_arg 3 [%v30]
+float_arg 4 [%v31]
+float_arg 5 [%v32]
+float_arg 6 [%v33]
+float_arg 7 [%v34]
 %v0:ctrl = entry
 %v1:i32 = initial_var[r0]
 %v2:i32 = iconst[0x1]
@@ -89,4 +93,8 @@ float_arg 3 [%v30]
 %v28:i64 = initial_var[d1]
 %v29:i64 = initial_var[d2]
 %v30:i64 = initial_var[d3]
-return %v22, %v25, %v24, %v26, %v27, %v28, %v29, %v30
+%v31:i64 = initial_var[d4]
+%v32:i64 = initial_var[d5]
+%v33:i64 = initial_var[d6]
+%v34:i64 = initial_var[d7]
+return %v22, %v25, %v24, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34

@@ -224,8 +224,8 @@ const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
         "cpsr_mode",
     ],
     ret_val_regs: &["r0", "r1"],
-    // A homogeneous float aggregate has up to four members.
-    ret_val_regs_float: &["d0", "d1", "d2", "d3"],
+    // A homogeneous aggregate has up to four members, q0-q3 for vectors.
+    ret_val_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
     stack_args: Some(StackArgs {
         base_offset: 0,
         increment: 4,
