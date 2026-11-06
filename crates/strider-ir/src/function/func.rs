@@ -31,6 +31,8 @@ pub struct Function {
     assumptions: crate::AssumptionOptions,
     /// [`Self::call_register_frame_reach`], set by `FunctionBuilder::build`.
     call_register_frame_reach: Option<i128>,
+    /// [`Self::optimizer_converged`].
+    optimizer_converged: bool,
 
     side_tables: FunctionSideTables,
 
@@ -69,6 +71,7 @@ impl Function {
             byte_order: byte_order.into(),
             assumptions: crate::AssumptionOptions::none(),
             call_register_frame_reach: None,
+            optimizer_converged: true,
             side_tables: FunctionSideTables::new(vn_interner),
             memos: std::cell::RefCell::default(),
         }
@@ -117,6 +120,18 @@ impl Function {
     #[inline]
     pub(crate) fn set_call_register_frame_reach(&mut self, reach: Option<i128>) {
         self.call_register_frame_reach = reach;
+    }
+
+    /// `false` when the last optimizer run stopped at its iteration cap: the
+    /// graph is valid but not fully folded.
+    #[inline]
+    pub fn optimizer_converged(&self) -> bool {
+        self.optimizer_converged
+    }
+
+    #[inline]
+    pub fn set_optimizer_converged(&mut self, converged: bool) {
+        self.optimizer_converged = converged;
     }
 
     /// Adds `claims` to the claims in force, dropping the graph-derived memos
@@ -427,6 +442,7 @@ mod compact_tests {
             ..crate::AssumptionOptions::none()
         };
         f.set_call_register_frame_reach(Some(-8));
+        f.set_optimizer_converged(false);
         f.assume(&listed);
 
         f.invalidate_analyses();
@@ -438,6 +454,7 @@ mod compact_tests {
             byte_order,
             assumptions,
             call_register_frame_reach,
+            optimizer_converged,
             side_tables: _,
             memos: _,
         } = &f;
@@ -445,6 +462,7 @@ mod compact_tests {
         assert_eq!(*byte_order, before.byte_order);
         assert_eq!(*assumptions, listed);
         assert_eq!(*call_register_frame_reach, Some(-8));
+        assert!(!optimizer_converged);
     }
 
     #[test]

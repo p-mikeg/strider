@@ -97,6 +97,11 @@ class Function:
         """A copy of the claims in force: those `analyze` ran under plus every
         set `optimize` added since."""
         ...
+    @property
+    def optimizer_converged(self) -> bool:
+        """False when the last optimizer run stopped at its iteration cap; the
+        IR is valid but not fully folded."""
+        ...
     def entry_node(self) -> int:
         """The id of the `Entry` node."""
         ...

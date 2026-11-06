@@ -259,3 +259,10 @@ def test_assumption_options_compare_by_value():
 def test_assumption_options_is_unhashable():
     with pytest.raises(TypeError):
         hash(AssumptionOptions())
+
+
+def test_an_analyzed_and_optimized_function_converged():
+    lift, g = _spill_at_floor()
+    assert g.optimizer_converged is True
+    g.optimize()
+    assert g.optimizer_converged is True

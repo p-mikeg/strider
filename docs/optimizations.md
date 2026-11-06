@@ -8,7 +8,8 @@ default set. When a pattern does not match, a pass has usually reshaped it.
 
 - **Rewriting passes** loop together to a fixed point. A pass whose last run
   changed nothing is skipped until another pass changes the graph. The loop is
-  capped at 1024 iterations and raises if it has not settled.
+  capped at 1024 iterations; a run that stops there keeps a valid, partly
+  folded graph and sets `Function.optimizer_converged` to `False`.
 - **Post-passes** run once afterwards (below).
 
 ## Rewriting passes
@@ -161,7 +162,7 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 - PowerPC float code lifts to far more p-code than other ISAs because the
   FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
 - A chain of about 500 constant guards held only in registers reaches the
-  1024-iteration cap, and the analysis raises. A chain whose guards each test
+  1024-iteration cap, and the analysis returns it partly folded. A chain whose guards each test
   a different stack slot, with stores between them, still costs quadratic
   settle work in the guard count.
 - Reloads of `n` distinct stack slots cost quadratic climb work past `n`
