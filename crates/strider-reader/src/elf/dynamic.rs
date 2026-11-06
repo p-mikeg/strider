@@ -1,8 +1,8 @@
 //! A linked image's relocations as the dynamic loader finds them: the last
 //! `PT_DYNAMIC` at its `p_vaddr`, the last entry of each tag, and the tables
-//! those tags place. No section header takes part. A plain-table entry an
-//! earlier table already holds is walked once (ppc32 `DT_RELA` spans
-//! `DT_JMPREL`).
+//! those tags place. No section header places a table; symbols still come from
+//! `.dynsym`'s section header. A plain-table entry an earlier table already
+//! holds is walked once (ppc32 `DT_RELA` spans `DT_JMPREL`).
 //!
 //! Where loaders differ, it takes the last `PT_DYNAMIC` (bionic: the first),
 //! applies both `DT_REL` and `DT_RELA` (glibc: the arch's only), applies each
