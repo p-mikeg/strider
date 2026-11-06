@@ -41,7 +41,7 @@ use super::orchestrator::{run_pipeline_x86_64, target_value_input};
 /// `DataUnavailErr` on the buffered memory reader; the terminator ends
 /// the region, so the pad bytes are never reachable from the analysed
 /// function.
-pub(crate) fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
+fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
     let mut bytes: Vec<u8> = Vec::new();
     for (encoding, _asm) in insns {
         bytes.extend_from_slice(encoding);

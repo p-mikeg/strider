@@ -238,21 +238,6 @@ fn mtfsfi_writes_its_immediate() {
     }
 }
 
-/// `fpscrRoundingControl` and then `fpscrUndefined` are the last user ops on
-/// every PowerPC preset, so no other id moved.
-#[test]
-fn the_rounding_mode_op_is_the_last_user_op() {
-    for arch in [Arch::Ppc32be, Arch::Ppc32le, Arch::Ppc64be, Arch::Ppc64le] {
-        let (strider, _) = common::strider_over_bytes(arch, vec![0; 4], BASE, None);
-        let names = strider.user_op_names();
-        assert_eq!(
-            names[names.len() - 2..],
-            ["fpscrRoundingControl", "fpscrUndefined"],
-            "{arch:?}"
-        );
-    }
-}
-
 /// The float `rn` picks from the floats bracketing an exact value: `floor`
 /// the greatest at or below it, `ceil` the least at or above, `nearest` the
 /// nearest even. Toward zero takes `floor` for a non-negative value.

@@ -492,162 +492,36 @@ pub(crate) fn has_constant(function: &strider_ir::Function, value: u64) -> bool 
 }
 
 /// Generates one `#[test]` per (architecture, function) pair.
-///
-/// Basic form (every arch in `ALL_ARCHES` runs):
-///   per_arch_test!("<case>", "<fn_name>", <assertion_fn>);
-///
-/// With per-arch ignores (specific archs are `#[ignore = "reason"]`-marked):
-///   per_arch_test!("<case>", "<fn_name>", <assertion_fn>, ignore = {
-///       Mips32le: "<what fails and why>",
-///       Mips32be: "<what fails and why>",
-///   });
-///
-/// Ignore reasons should be a one-line diagnosis, not just a symptom, so
-/// a future reader can find the fix path from the reason alone.
-///
-/// `macro_rules!` has no ident equality, so the ignore block can't be
-/// compared directly: it's scanned by dedicated per-arch arms.  The outer
-/// macro hands each arch's entry to `__one_arch_test!`, which forwards it
-/// to that arch's scanner.
 #[macro_export]
 macro_rules! per_arch_test {
-    // No-ignore shorthand.
     ($case:literal, $fn_name:literal, $assert:ident) => {
-        per_arch_test!($case, $fn_name, $assert, ignore = {});
-    };
-    // Full form: parse the per-arch ignore list into a canonical group per arch.
-    ($case:literal, $fn_name:literal, $assert:ident, ignore = { $($skip_arch:ident: $reason:literal),* $(,)? }) => {
         paste::paste! {
             mod [<test_ $fn_name>] {
                 use super::*;
-                // Resolve each arch's ignore entry and emit the test
-                // function.  The inner `__one_arch_test!` macro
-                // receives the ignore list verbatim and scans it for a
-                // matching entry using dedicated per-arch arms.
-                $crate::__one_arch_test!(X86,       x86,        $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(X86Kernel, x86_kernel, $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(X64,       x64,        $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Aarch64,   aarch64,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Aarch64Be, aarch64be, $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Arm,       arm,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(ArmBe,     arm_be,    $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(ArmBe8,    arm_be8,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(ArmThumb,  arm_thumb, $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Mips32le,  mips32le,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Mips32be,  mips32be,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Mips64le,  mips64le,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Mips64be,  mips64be,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Ppc32be,   ppc32be,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Ppc32le,   ppc32le,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Ppc64be,   ppc64be,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Ppc64le,   ppc64le,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                // A new `Arch` fails to compile here until it has an arm above.
-                const _: fn($crate::common::Arch) = |arch| match arch {
-                    $crate::common::Arch::X86
-                    | $crate::common::Arch::X86Kernel
-                    | $crate::common::Arch::X64
-                    | $crate::common::Arch::Aarch64
-                    | $crate::common::Arch::Aarch64Be
-                    | $crate::common::Arch::Arm
-                    | $crate::common::Arch::ArmBe
-                    | $crate::common::Arch::ArmBe8
-                    | $crate::common::Arch::ArmThumb
-                    | $crate::common::Arch::Mips32le
-                    | $crate::common::Arch::Mips32be
-                    | $crate::common::Arch::Mips64le
-                    | $crate::common::Arch::Mips64be
-                    | $crate::common::Arch::Ppc32be
-                    | $crate::common::Arch::Ppc32le
-                    | $crate::common::Arch::Ppc64be
-                    | $crate::common::Arch::Ppc64le => {}
-                };
+                $crate::__arch_tests!($case, $fn_name, $assert;
+                    X86 x86, X86Kernel x86_kernel, X64 x64, Aarch64 aarch64,
+                    Aarch64Be aarch64be, Arm arm, ArmBe arm_be, ArmBe8 arm_be8,
+                    ArmThumb arm_thumb, Mips32le mips32le, Mips32be mips32be,
+                    Mips64le mips64le, Mips64be mips64be, Ppc32be ppc32be,
+                    Ppc32le ppc32le, Ppc64be ppc64be, Ppc64le ppc64le);
             }
         }
     };
 }
 
-// Thin dispatcher: forwards the opaque `ignore` block to the matching
-// per-arch scanner (`__scan_ignore_x86!` etc.), which emits either an
-// `#[ignore = reason] #[test]` or a plain `#[test]`.  `paste!` builds the
-// scanner name by lower-casing the arch token (e.g. `Aarch64Be` ->
-// `__scan_ignore_aarch64be`).  The literal `$fn:ident` token after the
-// function name below isn't a typo: the scanner arms require it in their
-// match pattern (see `__define_scan_ignore!`).
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __one_arch_test {
-    ($arch:ident, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        paste::paste! {
-            // Scanners are emitted by `__define_scan_ignore!`.  Rust can't
-            // resolve `$crate::name` for a macro that is itself
-            // macro-generated (rust-lang/rust#52234), so we call it by its
-            // unqualified name; `#[macro_export]` hoists it to the crate
-            // root regardless.
-            [<__scan_ignore_ $arch:lower>]!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-        }
-    };
-}
-
-// Each per-arch scanner needs three arms: match-self (emit an ignored
-// test), skip-other (recurse past an entry for a different arch), and
-// empty (emit a plain test).  The match-self arm needs the arch as a
-// literal token, and `macro_rules!` has no ident equality, so we generate
-// one scanner per arch via `__define_scan_ignore!($arch_lower,
-// $arch_camel)` (invoked once per arch below).
-//
-// `$d:tt` is the standard "dollar token" trick for nesting `macro_rules!`
-// on stable: an outer macro can't write a bare `$` for an inner macro's
-// metavariables (it would bind in the outer scope), so `$d` stands in for
-// a literal `$` in the emitted scanner.
-//
-// The generator runs at definition time, not as part of the runtime
-// skip-other recursion, so it adds nothing to `recursion_limit` pressure.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __define_scan_ignore {
-    ($d:tt $arch_lower:ident, $arch_camel:ident) => {
-        paste::paste! {
-            #[doc(hidden)]
-            #[macro_export]
-            macro_rules! [<__scan_ignore_ $arch_lower>] {
-                ($d fn:ident : ident, $d case:literal, $d fn_name:literal, $d assert:ident,
-                 { $arch_camel: $d reason:literal $d(, $d($d _rest:tt)*)? }) => {
-                    #[test] #[ignore = $d reason]
-                    fn $d fn() {
-                        let function = $d crate::common::analyze($d crate::common::Arch::$arch_camel, $d case, $d fn_name);
-                        $d assert(&function);
-                    }
-                };
-                ($d fn:ident : ident, $d case:literal, $d fn_name:literal, $d assert:ident,
-                 { $d _skip:ident: $d _r:literal $d(, $d($d rest:tt)*)? }) => {
-                    [<__scan_ignore_ $arch_lower>]!($d fn:ident, $d case, $d fn_name, $d assert, { $d($d($d rest)*)? });
-                };
-                ($d fn:ident : ident, $d case:literal, $d fn_name:literal, $d assert:ident, { $d(,)? }) => {
-                    #[test]
-                    fn $d fn() {
-                        let function = $d crate::common::analyze($d crate::common::Arch::$arch_camel, $d case, $d fn_name);
-                        $d assert(&function);
-                    }
-                };
+macro_rules! __arch_tests {
+    ($case:literal, $fn_name:literal, $assert:ident; $($arch:ident $test:ident),*) => {
+        $(
+            #[test]
+            fn $test() {
+                $assert(&$crate::common::analyze($crate::common::Arch::$arch, $case, $fn_name));
             }
-        }
+        )*
+        // A new `Arch` fails to compile here until it is listed above.
+        const _: fn($crate::common::Arch) = |arch| match arch {
+            $($crate::common::Arch::$arch)|* => {}
+        };
     };
 }
-
-__define_scan_ignore!($ x86,        X86);
-__define_scan_ignore!($ x86kernel,  X86Kernel);
-__define_scan_ignore!($ x64,        X64);
-__define_scan_ignore!($ aarch64,    Aarch64);
-__define_scan_ignore!($ aarch64be,  Aarch64Be);
-__define_scan_ignore!($ arm,        Arm);
-__define_scan_ignore!($ armbe,      ArmBe);
-__define_scan_ignore!($ armbe8,     ArmBe8);
-__define_scan_ignore!($ armthumb,   ArmThumb);
-__define_scan_ignore!($ mips32le,   Mips32le);
-__define_scan_ignore!($ mips32be,   Mips32be);
-__define_scan_ignore!($ mips64le,   Mips64le);
-__define_scan_ignore!($ mips64be,   Mips64be);
-__define_scan_ignore!($ ppc32be,    Ppc32be);
-__define_scan_ignore!($ ppc32le,    Ppc32le);
-__define_scan_ignore!($ ppc64be,    Ppc64be);
-__define_scan_ignore!($ ppc64le,    Ppc64le);

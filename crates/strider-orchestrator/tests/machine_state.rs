@@ -24,6 +24,9 @@ mod register_space_store_writes_a_register;
 #[path = "machine_state/register_space_unresolvable_is_opaque.rs"]
 mod register_space_unresolvable_is_opaque;
 
+#[path = "machine_state/rounding_mode_ops.rs"]
+mod rounding_mode_ops;
+
 #[path = "machine_state/stack_offset_detect_e2e.rs"]
 mod stack_offset_detect_e2e;
 
