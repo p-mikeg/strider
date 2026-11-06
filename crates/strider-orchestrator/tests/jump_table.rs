@@ -6,6 +6,9 @@
 #[macro_use]
 mod common;
 
+#[path = "jump_table/byte_table_outside_rom_defers.rs"]
+mod byte_table_outside_rom_defers;
+
 #[path = "jump_table/chained_tables_resolve_one_level_per_round.rs"]
 mod chained_tables_resolve_one_level_per_round;
 
