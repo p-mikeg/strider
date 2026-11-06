@@ -651,7 +651,8 @@ impl CallingConvention {
         }
     }
 
-    /// The PowerPC 64-bit ELFv1 calling convention.
+    /// The PowerPC 64-bit ELFv1 calling convention. `powerpc_sysv32` and
+    /// `powerpc64_elf_v2` inherit every field they do not override.
     #[must_use]
     pub const fn powerpc64_elf_v1() -> Self {
         CallingConvention {
