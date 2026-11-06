@@ -178,7 +178,3 @@ pub(crate) fn cmp(f: Fmt, a: u128, b: u128) -> Option<Ordering> {
 pub(crate) fn neg(f: Fmt, a: u128) -> u128 {
     a ^ f.sign(true)
 }
-
-pub(crate) fn is_nan(f: Fmt, a: u128) -> bool {
-    matches!(f.decode(a), Num::Nan)
-}
