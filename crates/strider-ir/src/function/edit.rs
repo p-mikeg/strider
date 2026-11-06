@@ -113,7 +113,8 @@ impl<'g> EditFunction<'g> {
     }
 
     /// [`Self::generation`] plus every node entering the live set, so two equal
-    /// readings bracket no change to the live graph.
+    /// readings bracket no change to the live graph, unless
+    /// [`Self::function_mut`] wrote without a [`Self::resync_live_set`].
     pub fn edits(&self) -> u64 {
         self.generation + self.live_entries
     }
@@ -190,7 +191,7 @@ impl<'g> EditFunction<'g> {
         self.function
     }
 
-    /// Post-order over the live def->use graph of the entry: a node follows its
+    /// Post-order over the live def->use graph from its roots: a node follows its
     /// consumers unless the use closes a cycle. Roots are seeded in ascending
     /// `NodeId` order, so the RPO starts at the lowest-id root. Walked once per
     /// [`Self::edits`] reading.
@@ -486,6 +487,10 @@ impl<'g> EditFunction<'g> {
 
     /// Appends an input to a **non-cacheable** node.
     pub fn add_node_input(&mut self, node: NodeId, output_id: ValueId) {
+        debug_assert!(
+            !self.node_kind(node).is_cacheable(),
+            "{node:?} is cacheable"
+        );
         let was_input_less = self.node_inputs(node).is_empty();
         self.will_attach_value(output_id);
         self.note_edge(output_id);
@@ -498,6 +503,10 @@ impl<'g> EditFunction<'g> {
 
     /// Keeps the first `len` inputs of a **non-cacheable** node.
     pub fn truncate_node_inputs(&mut self, node: NodeId, len: usize) {
+        debug_assert!(
+            !self.node_kind(node).is_cacheable(),
+            "{node:?} is cacheable"
+        );
         let present = self.function.node_inputs(node).len();
         if present <= len {
             return;
@@ -535,8 +544,8 @@ impl<'g> EditFunction<'g> {
         self.absorb_node_fingerprint(into, from);
     }
 
-    /// Redirects every use of `old` to `new`, absorbing `old`'s producer
-    /// asm-fingerprint. Returns `true` iff a use moved.
+    /// Redirects every use of `old` to `new`. Absorbs `old`'s producer
+    /// asm-fingerprint even when no use moved. Returns `true` iff a use moved.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> bool {
         let from = self.function.producer(old);
         self.absorb_fingerprint(new, old);
@@ -720,6 +729,23 @@ mod tests {
         ctx.kill_node(node);
         assert!(!ctx.is_live(node), "killed node is no longer live");
         assert!(!ctx.is_root(node), "killed node dropped from roots");
+    }
+
+    /// Changing a cacheable node's arity would drop it from dedup.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "is cacheable")]
+    fn adding_an_input_to_a_cacheable_node_panics() {
+        let mut b = single_region_builder();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let neg = b
+            .build_int_unary_operation(one, crate::IntUnaryOp::Neg, ValueType::int(64))
+            .unwrap();
+        b.build_return(Some(neg), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let node = function.producer(neg);
+        EditFunction::new(&mut function).add_node_input(node, one);
     }
 
     /// A use moved or a node killed advances the generation; creating a node,

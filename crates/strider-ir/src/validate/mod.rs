@@ -30,7 +30,7 @@ use local_typing::check_local_typing;
 /// Returns a [`ValidationErrors`] bundle aggregating every violation found.
 pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     let entry = function.entry();
-    // Detached nodes carry stale shapes.
+    // Only reachable nodes are judged; detached ones keep stale shapes.
     let mut walk = crate::walk::walk_graph(function.graph(), entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();
