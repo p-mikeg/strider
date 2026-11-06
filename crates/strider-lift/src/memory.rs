@@ -58,7 +58,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
     /// A register-space STORE whose address names no register: mirror the
     /// registers into the space, store, and re-read every tracked register
-    /// from it.
+    /// the store can reach.
     fn opaque_register_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let addr = self.read_input(insn, 1)?;
         let data = self.read_input(insn, 2)?;
@@ -66,8 +66,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.builder
             .build_store(addr, data, rsleigh::VnSpace::REGISTER)?;
 
-        let clobbered: Vec<rsleigh::Vn> =
-            opaque_clobber_set(self.builder.function().all_vns()).collect();
+        let clobbered: Vec<rsleigh::Vn> = opaque_clobber_set(
+            self.builder.function().all_vns(),
+            self.lifter.arch().register_space_reach(),
+        )
+        .collect();
         for vn in clobbered {
             let ty = vn.int_type()?;
             // At the space's width: at `ty` distinct offsets could mask to one
@@ -82,11 +85,15 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         Ok(())
     }
 
-    /// Stores every tracked register into its REGISTER-space slot, which
-    /// named register writes (SSA variables) leave stale.
+    /// Stores every tracked register an opaque access can reach into its
+    /// REGISTER-space slot, which named register writes (SSA variables)
+    /// leave stale.
     fn mirror_registers_into_space(&mut self) -> Result<()> {
-        let mirrored: Vec<rsleigh::Vn> =
-            opaque_clobber_set(self.builder.function().all_vns()).collect();
+        let mirrored: Vec<rsleigh::Vn> = opaque_clobber_set(
+            self.builder.function().all_vns(),
+            self.lifter.arch().register_space_reach(),
+        )
+        .collect();
         for vn in mirrored {
             let slot =
                 self.build_addr_const(rsleigh::VnSpace::REGISTER, vn.addr_off, "REGISTER space")?;

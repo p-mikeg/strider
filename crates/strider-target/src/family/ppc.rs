@@ -15,6 +15,7 @@ pub(crate) static PPC: Family = Family {
         transient_decode_vars: &[],
         has_delay_slots: false,
         callother_output_exact: false,
+        register_space_reach: None,
         internal_registers: &["r2Save", "RESERVE_ADDRESS"],
         // The counter SPRs (DEC, PURR, HDEC, the PMCs, PIT, ...); the pspec
         // marks only the timebase.

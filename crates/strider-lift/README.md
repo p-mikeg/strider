@@ -46,10 +46,11 @@ conditional branch tests a flag `!= 0` at its slot width.
 
 A sla addresses the REGISTER space when an instruction field picks the register
 (ARM `vld1.N {dX[i]}`). An address that resolves to a declared register is an
-ordinary register read or write. Otherwise every tracked register is first
-stored into its slot; an unresolved STORE is then followed by re-reading every
-tracked register from the space, and an unresolved LOAD reads the space. The
-space uses `register_endianness` (`Function::byte_order`).
+ordinary register read or write. Otherwise every tracked register inside
+`SleighArch::register_space_reach` (ARM: the NEON file; elsewhere the whole
+space) is first stored into its slot; an unresolved STORE is then followed by
+re-reading those registers from the space, and an unresolved LOAD reads the
+space. The space uses `register_endianness` (`Function::byte_order`).
 
 ## SSA construction
 

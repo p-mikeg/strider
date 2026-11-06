@@ -57,6 +57,7 @@ pub(crate) struct DecodeFacts {
     /// [`SleighArch::callother_output_is_exact_in`](crate::SleighArch::callother_output_is_exact_in)
     /// short of its x87 rule.
     pub(crate) callother_output_exact: bool,
+    pub(crate) register_space_reach: Option<core::ops::Range<u64>>,
     pub(crate) internal_registers: &'static [&'static str],
     /// Volatile registers the pspec does not mark.
     pub(crate) volatile_registers: &'static [&'static str],
