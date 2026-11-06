@@ -26,7 +26,7 @@ pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
         .collect()
 }
 
-/// The root: the unique sink. A node with no outputs is a sink.
+/// The root: the unique sink, a node none of whose outputs is consumed.
 ///
 /// # Errors
 /// Unless there is exactly one sink.

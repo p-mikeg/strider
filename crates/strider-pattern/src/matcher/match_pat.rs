@@ -35,7 +35,7 @@ impl<P: MatchPat> MatchPat for Captured<P> {}
 impl crate::TemplatePat for Captured<crate::typed::wildcards::Var> {}
 impl<P> crate::template::template_pat::sealed::Sealed for Captured<P> {}
 
-/// Fluent combinator surface available on every [`MatchPat`].
+/// Combinators on every [`MatchPat`].
 pub trait CaptureExt: MatchPat + 'static {
     fn capture(self, c: crate::capture::Capture) -> Captured<Self> {
         Captured(self.into_expr().capture(c), PhantomData)
