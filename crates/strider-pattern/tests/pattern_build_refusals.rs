@@ -46,6 +46,19 @@ fn a_typed_guard_on_a_control_rooted_builder_is_refused() {
     assert!(error_of(&pat).contains("with_root_post_match"));
 }
 
+/// An alternation of valueless arms has no value for the guard either.
+#[test]
+fn a_typed_guard_on_an_alternation_of_valueless_arms_is_refused() {
+    let pat = one_of![ret()].when_match(|_m, _ty, _b| true).into_pattern();
+    assert!(error_of(&pat).contains("with_root_post_match"));
+
+    let function = add_5_3();
+    let pat = one_of![ret(), int_add(anything(), anything())]
+        .when_match(|_m, _ty, _b| true)
+        .into_pattern();
+    assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
+}
+
 /// A typed guard on a value root is untouched.
 #[test]
 fn a_typed_guard_on_a_value_root_still_runs() {
