@@ -270,6 +270,33 @@ fn switch_selector_matches_and_captures() {
     assert!(hits[0].value(c).is_some());
 }
 
+/// A root with no output vertex is matched once, not once per arm.
+#[test]
+fn a_vertex_less_switch_root_is_matched_once() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let dispatch = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+    let arms: Vec<_> = (0..8u64)
+        .map(|i| (b.create_region_all().unwrap(), 0x1000 + i))
+        .collect();
+    b.build_switch(dispatch, &arms).unwrap();
+    for &(r, _) in &arms {
+        b.set_region(r);
+        b.build_return(None, &[]).unwrap();
+    }
+    let function = b.build().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let selector = anything().filter(move |_, _| {
+        seen.fetch_add(1, Ordering::Relaxed);
+        true
+    });
+    let pat = switch().capture(Capture::new()).selector(selector);
+    a::matches(&function, pat.build(), 1);
+    assert!(calls.load(Ordering::Relaxed) <= 2, "{calls:?}");
+}
+
 /// `Switch` is the one builder whose `.output(slot)` vertex is also its only
 /// vertex, so the root lookup has nothing to pick between and the slot has to
 /// be pinned on the vertex itself.
