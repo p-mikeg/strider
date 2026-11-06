@@ -137,7 +137,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let mut args: Vec<strider_ir::node::ValueId> =
             Vec::with_capacity(abi.implicit_reads.len() + explicit_args.len());
         for vn in &abi.implicit_reads {
-            // The tracked set may lack a footprint register.
+            // Names the register when its read fails.
             args.push(self.read_vn(vn).with_context(|| {
                 let reg = self
                     .lifter
