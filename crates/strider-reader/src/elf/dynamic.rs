@@ -243,7 +243,9 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
                         sh_type,
                         addr,
                         ent,
-                        entries: entries.map(|(i, e)| (addr + i as u64 * ent, e)).collect(),
+                        entries: entries
+                            .map(|(i, e)| (addr.wrapping_add(i as u64 * ent), e))
+                            .collect(),
                     }
                 })
             }
