@@ -949,19 +949,11 @@ fn validate_rejects_negative_stack_arg_base_offset() {
     let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let sp = regs.name_to_vn("RSP").expect("x86_64 has RSP");
     let cc = BuiltCallingConvention {
-        arg_passing_regs: vec![],
-        callee_saved_regs: vec![],
-        ret_val_regs: vec![],
-        ret_val_regs_float: vec![],
         stack_ptr: sp,
         stack_args: Some(StackArgs {
             base_offset: -8,
             increment: 8,
         }),
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     };
     assert!(
