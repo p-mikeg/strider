@@ -135,9 +135,9 @@ impl Function {
     }
 
     /// Adds `claims` to the claims in force, dropping the graph-derived memos
-    /// when one is new. The memory classes ([`Self::stack_offset`],
-    /// `memory_decomp`) read nothing until a run or
-    /// `strider_opt::refresh_memory_classes`.
+    /// when one is new. Until the next optimizer run or
+    /// `strider_opt::refresh_memory_classes`, [`Self::stack_offset`] and
+    /// `memory_decomp` answer `None` / `Unknown`.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
         if claims.omitted_by(&self.assumptions).is_empty() {
             return;

@@ -66,8 +66,8 @@ pub(super) fn neighborhood_nodes(
 }
 
 impl FunctionDotDumper<'_> {
-    /// Standalone DOT for the depth-`depth` neighborhood around `center`, with
-    /// `center` highlighted.
+    /// Standalone DOT for the nodes within `depth` edges of `center`, `center`
+    /// highlighted.
     ///
     /// # Errors
     /// Propagates a DOT-emit error from the renderer.

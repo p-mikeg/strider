@@ -71,8 +71,8 @@ pub(super) fn note_unique_kinds(seen: &mut UniqueKinds, node: NodeId, kind: &Nod
     }
 }
 
-/// At most one live [`NodeKind::Entry`] and one live
-/// [`NodeKind::InitialMemory`]. Neither is required.
+/// At most one reachable [`NodeKind::Entry`] and one
+/// [`NodeKind::InitialMemory`].
 pub(super) fn check_unique_kinds(seen: &UniqueKinds, errs: &mut Vec<ValidationError>) {
     if let (Some(first), Some(second)) = seen.entry {
         errs.push(ValidationError::MultipleEntryNodes { first, second });
@@ -333,9 +333,9 @@ pub(super) fn check_asm_fingerprint(
     }
 }
 
-/// Every reachable `Store`'s Memory output has a reachable consumer; a
-/// violation means a severed use-list. An unreachable consumer can be a
-/// corpse a dedup left behind.
+/// Every reachable `Store`'s Memory output has a reachable consumer. Only a
+/// severed use-list breaks it: the walk reaches a `Store` through a
+/// consumer's input.
 pub(super) fn check_memory_chain(
     function: &Function,
     reachable: &NodeIdSet,
