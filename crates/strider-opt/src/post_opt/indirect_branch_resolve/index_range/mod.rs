@@ -131,9 +131,8 @@ impl<'f> RangeMap<'f> {
 
         let producer = self.function.producer(value);
 
-        // A constant scaling propagates only under a dominating guard on the
-        // operand: KnownBits keeps the stride but loses the upper bound, so an
-        // unguarded `byte * 4` would resolve as a 256-case index.
+        // A scaling carries its operand's dominating guard; unguarded, the
+        // value's own KnownBits bound stands.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
             self.resolve_phi(value, mask, region)
         } else if let Some(operand) = self.masks.identity[value] {

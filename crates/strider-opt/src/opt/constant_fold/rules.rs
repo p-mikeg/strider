@@ -437,7 +437,6 @@ fn build_identity_rules() -> Vec<Rule> {
     let or_all_ones_rule =
         Rule::rewrite(int_or(var(x), int_const(c)).when_match(is_all_ones), var(c));
 
-    // Shifts are not commutative: only a zero count is an identity.
     vec![
         Rule::rewrite(int_add(var(x), int_const(0u128)), var(x)),
         Rule::rewrite(int_sub(var(x), var(x)), int_const(0u128)),

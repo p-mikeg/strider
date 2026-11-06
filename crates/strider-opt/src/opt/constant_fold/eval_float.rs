@@ -64,7 +64,6 @@ pub(crate) fn eval_float_binary(
     match ty {
         ValueType::Float(32) => eval_binary!(f32, op, bits_l as u32, bits_r as u32),
         ValueType::Float(64) => eval_binary!(f64, op, bits_l, bits_r),
-        // Only f32 / f64 have host arithmetic.
         ValueType::Int(_) | ValueType::Float(_) => None,
     }
 }

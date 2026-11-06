@@ -50,7 +50,7 @@ enum ShiftDir {
     Right,
 }
 
-/// Transfer for both shifts: vacated bits become known-zero. `None` when the
+/// Transfer for ShiftLeft / ShiftRight: vacated bits become known-zero. `None` when the
 /// shift amount is unknown. A shift `>= bit_width` gives 0, as in Sleigh.
 fn shift_known_bits(
     function: &strider_ir::Function,
@@ -253,8 +253,8 @@ pub fn analyze(function: &strider_ir::Function) -> KnownBitsMap {
     known
 }
 
-/// Propagates known-bit information and replaces outputs whose every bit is
-/// determined with an equivalent integer constant.
+/// Folds each output whose bits are all known to a constant, and drops an
+/// `And(x, C)` whose `C` covers every bit `x` may set.
 pub struct KnownBits;
 
 impl Optimizer for KnownBits {

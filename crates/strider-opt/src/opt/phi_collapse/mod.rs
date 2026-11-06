@@ -5,7 +5,8 @@
 //! one value is replaced by it; with more, the test reruns over its phis that
 //! take no outside value. Dead predecessor edges count. Phis over a `Region`
 //! unreachable from entry are skipped: collapsing there can close a non-phi
-//! data cycle.
+//! data cycle. Then folds `And(phi, C)` when every arm masked by `C` agrees
+//! ([`masked`]).
 
 use cranelift_entity::SecondaryMap;
 use strider_ir::IRViewer;
