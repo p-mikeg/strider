@@ -63,8 +63,8 @@ pub enum NodeKind {
     Region,
     MemPhi,
     /// Inputs: `[phi_token, val_0, val_1, ...]`, one value per predecessor in
-    /// the joining `Region`'s `Control` input order. A register-aliased read's
-    /// phi carries its source varnode in the `value_vn` side-table.
+    /// the joining `Region`'s `Control` input order. A lifted phi's varnode is
+    /// in the `value_vn` side table.
     Phi,
 
     /// Inputs: `(control, cond:I1)`. Outputs: `[true, false]` controls.

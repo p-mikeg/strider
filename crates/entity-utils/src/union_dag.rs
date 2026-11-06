@@ -63,9 +63,9 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
         }
     }
 
-    /// O(1) amortised: links `src`'s root under `dst`; a no-op when `src` is
-    /// empty. A live alias: values added to `src` later are visible from `dst`,
-    /// not the reverse.
+    /// O(1) amortised: links `src`'s root under `dst`, a live alias: values
+    /// `src` gains later are `dst`'s too, not the reverse. A no-op while `src`
+    /// is empty, so values it gains after such a call are not.
     pub fn union(&mut self, dst: N, src: N) {
         let Some(src_root) = self.roots[src].expand() else {
             return;

@@ -130,23 +130,19 @@ pub enum ValidationError {
 
     #[error(
         "node {node:?} produces a Control output {value:?} that no reachable node \
-         consumes; every control edge must reach a terminator (`Return` / \
-         `IndirectBranch` / `Unreachable`)"
+         consumes"
     )]
     UnusedControlOutput { node: NodeId, value: ValueId },
 
     #[error(
         "node {node:?} produces a Control output {value:?} consumed by more than \
-         one node; a control edge has exactly one successor (a split must be an \
-         `If`, a merge must go through a `Region`)"
+         one node"
     )]
     ReusedControlOutput { node: NodeId, value: ValueId },
 
     #[error(
         "{count} node(s) control-reachable from Entry, the first being {node:?}, \
-         reach no terminator (`Return` / `IndirectBranch` / `Unreachable`); an \
-         exit-free control cycle anchors no liveness, so compaction drops its \
-         whole body"
+         reach no terminator (`Return` / `IndirectBranch` / `Unreachable`)"
     )]
     NoTerminatorReachable { node: NodeId, count: usize },
 
@@ -188,8 +184,7 @@ pub enum ValidationError {
 
     #[error(
         "node {node:?} (kind {kind:?}) is reachable but has an empty \
-         asm-fingerprint; non-exempt nodes must record at least one \
-         contributing machine-instruction address"
+         asm-fingerprint"
     )]
     MissingAsmFingerprint {
         node: NodeId,
@@ -216,22 +211,19 @@ pub enum ValidationError {
 
     #[error(
         "node {node:?} is `FloatConst({bits:#x})`, which has bits set above its \
-         declared output width; a float constant carries only its own IEEE 754 \
-         pattern, so two otherwise-equal constants would not dedup"
+         declared output width"
     )]
     FloatConstWidthMismatch { node: NodeId, bits: u64 },
 
     #[error(
-        "node {node:?} is a `FloatConst` declared {ty:?}, wider than the `u64` \
-         payload: past 8 bytes the node carries only the low 64 bits of the \
-         IEEE 754 pattern, which no mask can distinguish from the whole of it"
+        "node {node:?} is a `FloatConst` declared {ty:?}, wider than its 64-bit \
+         payload"
     )]
     FloatConstUnrepresentableType { node: NodeId, ty: ValueType },
 
     #[error(
         "node {node:?} (kind {kind:?}) is its own transitive data producer; only a \
-         Phi / MemPhi may close a data cycle, and reverse post-order otherwise \
-         yields the node before its own producer"
+         Phi / MemPhi may close a data cycle"
     )]
     DataCycle {
         node: NodeId,
@@ -282,8 +274,7 @@ pub enum ValidationError {
 
     #[error(
         "initial_var_index entry for varnode {vn:?} points at reachable node \
-         {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node. \
-         The index has drifted from the live graph"
+         {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node"
     )]
     StaleInitialVarIndex {
         node: NodeId,
@@ -306,8 +297,7 @@ pub enum ValidationError {
     #[error(
         "node {node:?} (kind {kind:?}) has input width {in_width} and output \
          width {out_width}; `Extend` must strictly widen and `Truncate` must \
-         strictly narrow (same value, opposite-direction op is a redundant \
-         spelling)"
+         strictly narrow"
     )]
     ExtendTruncateWidthDirection {
         node: NodeId,

@@ -135,8 +135,9 @@ impl Function {
     }
 
     /// Adds `claims` to the claims in force, dropping the graph-derived memos
-    /// when one is new. A region filter or [`Self::stack_offset`] then reads
-    /// nothing until a run or `strider_opt::refresh_memory_classes`.
+    /// when one is new. The memory classes ([`Self::stack_offset`],
+    /// `memory_decomp`) read nothing until a run or
+    /// `strider_opt::refresh_memory_classes`.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
         if claims.omitted_by(&self.assumptions).is_empty() {
             return;

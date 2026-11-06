@@ -24,12 +24,12 @@ pub(super) fn node_style(kind: &NodeKind) -> (&'static str, &'static str) {
         NodeKind::If => ("diamond", "#3a2a10"),
         NodeKind::Load(_) | NodeKind::Store(_) => ("box3d", "#102030"),
         NodeKind::Call { .. } => ("rarrow", "#3a1010"),
-        NodeKind::CallOther { .. } => ("doubleoctagon", "#3a2810"), // amber: opaque intrinsic
-        NodeKind::CPoolRef => ("folder", "#2a1a3a"),                // violet: JVM metadata
-        NodeKind::New => ("component", "#103a2a"),                  // dark green: allocation
+        NodeKind::CallOther { .. } => ("doubleoctagon", "#3a2810"),
+        NodeKind::CPoolRef => ("folder", "#2a1a3a"),
+        NodeKind::New => ("component", "#103a2a"),
         NodeKind::Return | NodeKind::IndirectBranch => ("doublecircle", "#103a10"),
         NodeKind::Switch(_) => ("trapezium", "#103a10"),
-        NodeKind::Unreachable => ("Msquare", "#3a1030"), // magenta: a sink control cannot leave
+        NodeKind::Unreachable => ("Msquare", "#3a1030"), // a sink control cannot leave
         NodeKind::IntConst(_) => ("ellipse", "#2d2d2d"),
         NodeKind::FloatConst(_) => ("ellipse", "#1a3020"),
         NodeKind::IntUnaryOp(_)
@@ -40,28 +40,28 @@ pub(super) fn node_style(kind: &NodeKind) -> (&'static str, &'static str) {
         | NodeKind::Lzcount
         | NodeKind::Extend(_) => ("box", "#2d2d2d"),
         NodeKind::FloatBinaryOp(_) | NodeKind::FloatUnaryOp(_) | NodeKind::FloatCmpOp(_) => {
-            ("box", "#1a3020") // dark green
+            ("box", "#1a3020")
         }
         NodeKind::IntToFloat
         | NodeKind::FloatToInt
         | NodeKind::FloatToFloat
         | NodeKind::IntBitsToFloat
-        | NodeKind::FloatBitsToInt => ("box", "#302018"), // dark amber
+        | NodeKind::FloatBitsToInt => ("box", "#302018"),
     }
 }
 
 pub(super) fn role_color(role: SlotRole) -> &'static str {
     match role {
-        SlotRole::Control => "#00cccc",                              // aqua
-        SlotRole::Memory => "#cc88aa",                               // pink
-        SlotRole::Phi | SlotRole::In => "#dddddd",                   // white
-        SlotRole::Lhs => "#4488ff",                                  // blue
-        SlotRole::Rhs => "#ff4444",                                  // red
-        SlotRole::Val | SlotRole::Ret => "#88cc88",                  // green
-        SlotRole::Addr => "#cc88ff",                                 // purple
-        SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "#ff8800", // orange
-        SlotRole::Target | SlotRole::Sp => "#ffdd44",                // yellow
-        SlotRole::Cond => "#ff44ff",                                 // magenta
+        SlotRole::Control => "#00cccc",
+        SlotRole::Memory => "#cc88aa",
+        SlotRole::Phi | SlotRole::In => "#dddddd",
+        SlotRole::Lhs => "#4488ff",
+        SlotRole::Rhs => "#ff4444",
+        SlotRole::Val | SlotRole::Ret => "#88cc88",
+        SlotRole::Addr => "#cc88ff",
+        SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "#ff8800",
+        SlotRole::Target | SlotRole::Sp => "#ffdd44",
+        SlotRole::Cond => "#ff44ff",
     }
 }
 
