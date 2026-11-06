@@ -1,9 +1,5 @@
 use super::*;
 
-fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
-    arch.probe_regs()
-}
-
 /// Float / vector register lists shared by the rows below, each cited where
 /// the preset names it.
 const NONE: &[&str] = &[];
@@ -501,7 +497,7 @@ fn cases() -> Vec<Case> {
 }
 
 fn build_case(case: &Case) -> (BuiltCallingConvention, rsleigh::SleighRegs) {
-    let regs = regs_for((case.arch)());
+    let regs = (case.arch)().probe_regs();
     let built = (case.cc)()
         .build(&regs)
         .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", case.name));
@@ -626,7 +622,7 @@ fn presets_resolved_registers_have_expected_size() {
 #[test]
 fn preserves_transforms_commute_with_build() {
     for c in cases() {
-        let regs = regs_for((c.arch)());
+        let regs = (c.arch)().probe_regs();
         let cc = (c.cc)();
         let built = cc.build(&regs).expect("build");
         assert_eq!(
@@ -665,7 +661,7 @@ fn presets_incoming_args_start() {
 /// An unknown register name in any category errors, on any architecture.
 #[test]
 fn build_returns_error_for_unknown_register_name() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     for bad_name in &["NOTAREG", "", "rax_FAKE"] {
         let cc = CallingConvention {
             stack_ptr: "RSP",
@@ -696,7 +692,7 @@ fn build_returns_error_for_unknown_register_name() {
 /// the remaining valid ones.
 #[test]
 fn build_returns_error_even_when_some_names_are_valid() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let cc = CallingConvention {
         stack_ptr: "RSP",
         arg_passing_regs: &["RDI", "NOT_A_REG", "RSI"],
@@ -748,7 +744,7 @@ fn every_preset_names_its_familys_link_register() {
 /// `regs_to_vns`.
 #[test]
 fn build_returns_error_for_unknown_stack_pointer_name() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let cc = CallingConvention {
         stack_ptr: "NOT_A_SP",
         arg_passing_regs: &[],
@@ -800,7 +796,7 @@ fn no_preset_preserves_memory() {
 
 #[test]
 fn positional_arg_layout_empty_has_no_stack() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let cc = CallingConvention::x86_64_systemv()
         .preserves_all()
         .build(&regs)
@@ -950,7 +946,7 @@ fn stack_args_slot_math_degrades_on_overflow_not_panics() {
 /// offset decoded from a crafted binary.
 #[test]
 fn validate_rejects_negative_stack_arg_base_offset() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let sp = regs.name_to_vn("RSP").expect("x86_64 has RSP");
     let cc = BuiltCallingConvention {
         arg_passing_regs: vec![],
@@ -981,7 +977,7 @@ fn validate_rejects_negative_stack_arg_base_offset() {
 /// varnodes and `validate_call_output_vns` rejects.
 #[test]
 fn aliased_float_ret_regs_collapse_to_one_container_each() {
-    let regs = regs_for(crate::arch::SleighArch::arm());
+    let regs = crate::arch::SleighArch::arm().probe_regs();
     let built = CallingConvention::arm_aapcs()
         .build(&regs)
         .expect("arm_aapcs must build");
@@ -1017,7 +1013,7 @@ fn float_arg_regs_may_overlap_returns_but_not_callee_saved() {
         ),
     ] {
         let built = cc_fn()
-            .build(&regs_for(arch_fn()))
+            .build(&arch_fn().probe_regs())
             .unwrap_or_else(|e| panic!("{name}: build failed: {e:?}"));
         assert!(
             built
@@ -1057,7 +1053,7 @@ fn container_in(tracked: &[rsleigh::Vn], v: &rsleigh::Vn) -> rsleigh::Vn {
 /// to trash its upper half, so the container belongs in the clobber set.
 #[test]
 fn aarch64_tracked_q8_is_clobbered() {
-    let regs = regs_for(crate::arch::SleighArch::aarch64());
+    let regs = crate::arch::SleighArch::aarch64().probe_regs();
     let built = CallingConvention::aarch64_aapcs64()
         .build(&regs)
         .expect("aarch64_aapcs64 must build");
@@ -1083,7 +1079,7 @@ fn aarch64_tracked_q8_is_clobbered() {
 /// function tracking the 128-bit container keeps it out of the clobber set.
 #[test]
 fn arm_tracked_q4_stays_preserved() {
-    let regs = regs_for(crate::arch::SleighArch::arm());
+    let regs = crate::arch::SleighArch::arm().probe_regs();
     let built = CallingConvention::arm_aapcs()
         .build(&regs)
         .expect("arm_aapcs must build");
@@ -1111,7 +1107,7 @@ fn arm_tracked_q4_stays_preserved() {
 /// |callee_saved| * |tracked| per call, 42 * |tracked| on PPC64.
 #[test]
 fn ret_and_clobber_vns_does_not_map_the_callee_saved_list() {
-    let regs = regs_for(crate::arch::SleighArch::ppc64be());
+    let regs = crate::arch::SleighArch::ppc64be().probe_regs();
     let cc = CallingConvention::powerpc64_elf_v1();
     let built = cc.build(&regs).expect("powerpc64_elf_v1 must build");
     let tracked: Vec<rsleigh::Vn> = built
@@ -1192,7 +1188,7 @@ fn only_elfv2_and_mips_carry_an_entry_address_register() {
         ),
     ];
     for &(name, arch, cc, expected) in cases {
-        let regs = regs_for(arch());
+        let regs = arch().probe_regs();
         let built = cc().build(&regs).expect(name);
         assert_eq!(
             built.entry_address,
@@ -1207,7 +1203,7 @@ fn only_elfv2_and_mips_carry_an_entry_address_register() {
 /// make every call region a def site for all of them.
 #[test]
 fn tracked_unique_temporaries_are_not_call_clobbers() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let built = CallingConvention::x86_64_systemv()
         .build(&regs)
         .expect("x86_64_systemv must build");
