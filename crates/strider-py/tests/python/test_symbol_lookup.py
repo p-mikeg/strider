@@ -131,7 +131,7 @@ def test_an_uncomputed_relocation_in_code_fails_the_decode(tmp_path):
     inside, start = tmp_path / "inside.o", tmp_path / "start.o"
     _object_calling(inside, 23)
     _object_calling(start, 23, offset=0)
-    with pytest.raises(strider.StriderError, match="no bytes at"):
+    with pytest.raises(strider.StriderError, match="classified unmapped"):
         strider.lift.load_elf(str(inside)).analyze("f")
     with pytest.raises(strider.StriderError, match="relocation of type 23"):
         strider.lift.load_elf(str(start)).analyze("f")

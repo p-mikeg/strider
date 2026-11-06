@@ -37,6 +37,20 @@ def test_mem_reader_python_exception_text_propagates_into_reader_error():
     )
 
 
+
+def test_a_short_read_ends_in_the_unmapped_verdict():
+    """A reader that serves a truncated instruction gets the verdict, not a
+    claim that it has no bytes."""
+
+    class Short(MemReader):
+        def read(self, addr, size):
+            return b"\x48"
+
+    lift = strider.lift.lifter(SleighArch.x86_64(), Short())
+    with pytest.raises(StriderError) as excinfo:
+        lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+    assert str(excinfo.value).endswith(": 0x1000 classified unmapped")
+
 def test_reader_exception_is_chained_as_cause():
     """The message survives, but only the original exception carries a
     traceback into the caller's own code."""
