@@ -25,8 +25,8 @@ impl Patch {
     ///
     /// # Panics
     ///
-    /// When `size_bytes > 8`: every relocation kind classifies a field of
-    /// 1 to 8 bytes.
+    /// When `size_bytes > 8`: every computed field is 1 to 8 bytes; a wider
+    /// one is only ever a hole.
     pub(crate) fn new(addr: u64, value: u64, size_bytes: usize, endian_le: bool) -> Self {
         assert!(size_bytes <= 8, "a {size_bytes}-byte relocation field");
         let mut bytes = [0u8; 8];
