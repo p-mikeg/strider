@@ -197,31 +197,26 @@ for m in function.find_all(
     ...
 ```
 
-**Which value a phi picks on a branch.** `phi_input_from_edge(phi, edge,
-value)` holds when `phi`'s input along `edge` is `value`. All three are
-captures; take the edge off an `if` with `capture_true` / `capture_false`:
+**Which value a phi picks on a branch.** `phi().input_from(edge, value)`
+matches a phi whose input along `edge` is `value`; take the edge off an `if`
+with `capture_true` / `capture_false` and pass the phi's `constraints()`:
 
 ```python
 from strider.pattern import if_else, phi, int_const, Capture
-from strider.pattern.constraints import phi_input_from_edge
 
-edge, the_phi, v = Capture(), Capture(), Capture()
+edge, v = Capture(), Capture()
+merge = phi().input_from(edge, int_const(v))
 matches = function.find_all(
-    [if_else().capture_true(edge), phi().capture(the_phi), int_const(v)],
-    constraints=[phi_input_from_edge(the_phi, edge, v)],
+    [if_else().capture_true(edge), merge], constraints=merge.constraints()
 )
 for m in matches:
     print("on the taken branch the phi selects", m.uint(v))
 ```
 
-`input_from` on `phi()` or `mem_phi()` writes the captures and constraint
-for you:
-
-```python
-merged = phi().input_from(edge, int_const())
-matches = function.find_all([if_else().capture_true(edge), merged],
-                            constraints=merged.constraints())
-```
+`mem_phi().input_from` is the memory form. Both build the constraint
+`phi_input_from_edge(phi, edge, value)`, which also takes three captures
+directly; but patterns tied only by a constraint join as a cross product, so
+prefer `input_from`.
 
 `negate(c)` keeps matches where `c` does *not* hold, and `any_of([...])` /
 `all_of([...])` combine several constraints.

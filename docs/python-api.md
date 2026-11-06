@@ -686,7 +686,9 @@ has no truth value (`if hit[c]` raises `TypeError`), so test `hit[c].has` or
 ## 7. Constraints (`strider.pattern.constraints`)
 
 A joined `find_all([...])` correlates captures shared across its patterns;
-constraints filter the joined rows.
+constraints filter the joined rows. Patterns tied only by a constraint join as
+a cross product (the cost is the product of their match counts); share a
+capture or use `input_from` to keep it small.
 
 ```python
 from strider.pattern import constraints as k
