@@ -5,8 +5,8 @@ use crate::build_graph::BuildGraph;
 use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern, Role, SlotMode};
 use strider_graph::{NodeId, ValueId};
 
-/// A node's output, scoped to the builder that produced it. An IR value is
-/// not one:
+/// A pattern node's output. Meaningful only in the builder that produced it;
+/// an IR value is not one:
 ///
 /// ```compile_fail,E0308
 /// use strider_pattern::matcher::{KindSpec, MatcherBuilder};
@@ -17,7 +17,8 @@ use strider_graph::{NodeId, ValueId};
 #[derive(Clone, Copy)]
 pub struct PatValueRef(ValueId);
 
-/// A node, scoped to the builder that produced it. An IR node is not one:
+/// A pattern node. Meaningful only in the builder that produced it; an IR
+/// node is not one:
 ///
 /// ```compile_fail,E0308
 /// use strider_pattern::matcher::{KindSpec, MatcherBuilder};

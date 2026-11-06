@@ -16,7 +16,7 @@ use crate::typed::int_const;
 use super::MemPat;
 use crate::expr::{Node, OutputAspect};
 
-/// A `Call` clobbers caller-saved registers and the memory token.
+/// A `Call` pattern; see [`call`].
 pub struct CallPat(Node);
 
 impl CallPat {

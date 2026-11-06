@@ -306,8 +306,7 @@ fn rpo_is_strict_defs_before_uses_on_a_diamond() {
 }
 
 /// A back-edge must terminate and visit each node once, roots first.
-/// Built from non-cacheable `Region` nodes, since cacheable data nodes
-/// reject post-hoc input edits.
+/// Built from `Region` nodes; the cycle needs a post-hoc input edit.
 #[test]
 fn rpo_terminates_and_dedups_on_a_cycle() {
     use std::collections::HashSet;

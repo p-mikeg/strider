@@ -121,8 +121,8 @@ impl NodeCache {
         }) {
             return Some(twin);
         }
-        // Every mutation verb invalidates first, so a stored hash means the
-        // structure is unchanged.
+        // Every edge or output edit invalidates first; a payload rewrite needs
+        // `rebuild_cache`.
         debug_assert!(
             self.node_hashes[node] == HASH_NONE || self.node_hashes[node] == h,
             "canonicalize: node {node:?} has a stale stored hash \

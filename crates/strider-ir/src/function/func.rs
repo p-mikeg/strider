@@ -250,10 +250,14 @@ mod function_skeleton_tests {
     use crate::node::{NodeKind, ValueKind};
 
     #[test]
-    fn function_new_builds_entry_and_initial_memory_skeleton() {
+    fn test_function_builds_entry_then_initial_memory() {
         let f = test_function();
         let ids: Vec<_> = f.graph().all_node_ids().collect();
-        assert_eq!(ids.len(), 2, "new() builds exactly Entry + InitialMemory");
+        assert_eq!(
+            ids.len(),
+            2,
+            "test_function() builds Entry then InitialMemory"
+        );
         assert!(matches!(f.node_kind(ids[0]), NodeKind::Entry));
         assert!(matches!(f.node_kind(ids[1]), NodeKind::InitialMemory));
         assert_eq!(
