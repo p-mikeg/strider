@@ -11,7 +11,8 @@ import pytest
 
 import strider
 from strider.pattern import (
-    Capture, Pat, anything, var, call, int_const, load, function_arg,
+    Capture, Pat, anything, var, call, int_const, load, function_arg, one_of,
+    first_of,
 )
 
 from .conftest import built_function, fixture_path
@@ -68,6 +69,16 @@ def test_when_predicate_filters_control_builder():
 
     passing = g.find_all(call().when(lambda m: True))
     assert len(passing) == len(baseline), ".when(True) must keep every match"
+
+
+def test_a_one_arm_alternation_matches_like_its_call_arm():
+    g = _switch_graph()
+    c = Capture("c")
+    bare = g.find_all(call().capture(c))
+    assert len(bare) >= 1
+    for alt in (one_of, first_of):
+        hits = g.find_all(alt([call().capture(c)]))
+        assert [h.root for h in hits] == [h.root for h in bare], alt.__name__
 
 
 def test_target_accepts_pat_like():

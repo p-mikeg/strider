@@ -26,7 +26,8 @@ pub(crate) enum Slot {
     Memory,
     /// A control predecessor: lowered as a value, retyped to `Control`.
     Control,
-    /// A pattern's root: lowered as a value, falling back to a valueless node's memory token.
+    /// A pattern's root: a node on its own anchor, anything else lowered as a value, falling back
+    /// to a valueless node's memory token.
     Root,
 }
 
@@ -681,7 +682,8 @@ pub(crate) struct Node {
     node_predicates: Vec<NodePredicate>,
     captures: Vec<Capture>,
     anchor: AnchorKind,
-    /// The value output a value slot nests through when the anchor is not one (a `Call`).
+    /// The value output a value, raw or control consumer nests through when the anchor is not
+    /// one (a `Call`).
     value_anchor: Option<usize>,
     output_width: Option<u32>,
     /// `(slot, bits)`.
@@ -830,9 +832,7 @@ impl Node {
     /// The anchor a `slot` consumer nests through.
     fn anchor_for(&self, slot: Slot) -> AnchorKind {
         match (slot, self.value_anchor) {
-            (Slot::Value | Slot::Raw | Slot::Control | Slot::Root, Some(at)) => {
-                AnchorKind::Value(at)
-            }
+            (Slot::Value | Slot::Raw | Slot::Control, Some(at)) => AnchorKind::Value(at),
             _ => self.anchor,
         }
     }
