@@ -56,7 +56,7 @@ pub trait IRBuilderExt: IRBuilder {
 
         if !output_type.is_integer() {
             return Err(anyhow!(
-                "output {value_id:?} target is not an integer value"
+                "extend target {output_type} is not an integer type"
             ));
         }
         if !curr_output_type.is_integer() {

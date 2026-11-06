@@ -26,8 +26,8 @@ macro_rules! supported_widths {
     };
 }
 
-// Each width is one some vendored sla spec puts on a varnode or temporary
-// (e.g. i24 x86 `tmp:3`, i72 x86 `adcx`, i80 x87 ST).
+// Every width some vendored sla spec gives a varnode or temporary (i24: x86
+// `tmp:3`, i72: x86 `adcx`, i80: x87 ST).
 supported_widths! {
     int: 1 8 16 24 32 40 48 56 64 72 80 96 112 128 256 512;
     float: 16 32 64 80 128
