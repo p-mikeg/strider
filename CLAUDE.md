@@ -251,9 +251,9 @@ operands accept the same pairs with the same bindings.
   prove (five default on; `assumptions.rs` has each); a wrong one miscompiles.
   `AnalyzeOptions.assumptions` seeds each lift and `Function::assume` adds
   claims, withdrawing none. `msr_register_keeps_mode` and
-  `fp_rounding_mode_is_nearest` are read by the lift. `LoadForward` and `FunctionArgDetect` narrow under
-  `Policy::strict` (the claims less the call relaxations), because later walks
-  honour no call relaxation.
+  `fp_rounding_mode_is_nearest` are read by the lift. `LoadForward` and
+  `FunctionArgDetect` narrow under `Policy::strict` (the claims less the call
+  relaxations), because later walks honour no call relaxation.
 
 ## strider-py
 

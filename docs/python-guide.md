@@ -324,10 +324,10 @@ lft = strider.lift.lifter(arch, mem)
 cfg, function, unresolved = lft.analyze(0x8000, cc)
 ```
 
-A plain lifter works by address and takes the convention per `analyze`.
-For computed bytes subclass `MemReader`, and pass a `ReadOnlyMemory` as `rom=`
-so `LoadReadOnly` folds fixed-address loads
-([custom memory](python-api.md#custom-memory-readermemreader--readerreadonlymemory)).
+A plain lifter works by address and takes the convention per `analyze`. For
+computed bytes subclass `MemReader`, and pass a `ReadOnlyMemory` as `rom=` so
+`LoadReadOnly` folds fixed-address loads ([custom
+memory](python-api.md#custom-memory-readermemreader--readerreadonlymemory)).
 
 Examples `02` (custom `MemReader`), `07` (ROM folding) and `08` (both) in
 `crates/strider-py/examples/python/` run these end to end.
