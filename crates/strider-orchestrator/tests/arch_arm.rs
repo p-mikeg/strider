@@ -18,6 +18,9 @@ mod arm_neon_lane_insert;
 #[path = "arch_arm/arm_neon_vld1_vst1_element_order.rs"]
 mod arm_neon_vld1_vst1_element_order;
 
+#[path = "arch_arm/arm_neon_vtbl.rs"]
+mod arm_neon_vtbl;
+
 #[path = "arch_arm/arm_smc_hvc_lift.rs"]
 mod arm_smc_hvc_lift;
 
