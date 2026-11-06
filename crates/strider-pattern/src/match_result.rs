@@ -5,9 +5,10 @@ use strider_ir::node::{NodeId, ValueId};
 use crate::bindings::Bindings;
 use crate::capture::Capture;
 
-/// One match. Its ids are invalidated by [`strider_ir::Function::compact`]: accessors taking a
-/// graph then return nothing, while the graph-free ones ([`Match::root`], [`Match::value`],
-/// [`Match::is_bound`], [`Match::matched_nodes`]) return stale ids.
+/// One match. Its ids are invalidated by [`strider_ir::Function::compact`]: the `Match`
+/// accessors taking a graph then return nothing, while the graph-free ones ([`Match::root`],
+/// [`Match::value`], [`Match::is_bound`], [`Match::matched_nodes`]) and [`Match::bindings`]
+/// are not generation-checked: check [`Match::is_stale`] first.
 #[derive(Clone)]
 pub struct Match {
     pub(crate) root: NodeId,
@@ -35,7 +36,8 @@ impl Match {
         self.root
     }
 
-    /// The typed value / op accessors, e.g. `m.bindings().get_uint(c, function)`.
+    /// The typed value / op accessors, e.g. `m.bindings().get_uint(c, function)`. Not
+    /// generation-checked; see [`Self::is_stale`].
     pub fn bindings(&self) -> &Bindings {
         &self.bindings
     }
