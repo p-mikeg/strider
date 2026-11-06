@@ -51,21 +51,19 @@ pub(crate) static AARCH64: Family = Family {
 const CALL_OTHER: &[Row] = &[
     // Linux SVC: w8 = number (read as `x8`), x0..x5 = args, x0 = return.
     // `CallSupervisor(imm16)` takes only the immediate.
-    Row {
-        names: &["CallSupervisor"],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+    Row::new(
+        &["CallSupervisor"],
+        CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["x8", "x0", "x1", "x2", "x3", "x4", "x5"],
             implicit_writes: &["x0"],
             clobbers_memory: true,
             no_return: false,
         }),
-    },
+    ),
     // SMCCC HVC / SMC: x0..x7 in, x0..x3 out.
-    Row {
-        names: &["CallHyperVisor", "CallSecureMonitor"],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+    Row::new(
+        &["CallHyperVisor", "CallSecureMonitor"],
+        CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             // SMCCC 1.0 may also leave x4..x17 unpredictable.
             implicit_writes: &[
@@ -75,28 +73,16 @@ const CALL_OTHER: &[Row] = &[
             clobbers_memory: true,
             no_return: false,
         }),
-    },
+    ),
     // TBL / TBX (constructors `tbl` / `tbx`): every table register is a listed
     // operand.
-    Row {
-        names: &["a64_TBL"],
-        only: None,
-        class: PURE,
-    },
+    Row::new(&["a64_TBL"], PURE),
     // `SIMD_PIECE(reg, lane)` reads one lane of a listed operand.
-    Row {
-        names: &["SIMD_PIECE"],
-        only: None,
-        class: PURE,
-    },
+    Row::new(&["SIMD_PIECE"], PURE),
     // SVE LDR / STR take the base register as a value, so their access has no
     // p-code. Other `SVE_ld*` / `SVE_st*` / `SVE_prf*` ops share the shape and
     // stay unclassified, failing the lift.
-    Row {
-        names: &["SVE_ldr", "SVE_str"],
-        only: None,
-        class: MEM_CLOBBER,
-    },
+    Row::new(&["SVE_ldr", "SVE_str"], MEM_CLOBBER),
 ];
 
 /// `TLBI_` / `DC_` / `IC_` are TLB and cache maintenance; every `NEON_` op is

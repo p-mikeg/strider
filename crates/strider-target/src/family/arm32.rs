@@ -36,22 +36,20 @@ pub(crate) static ARM32: Family = Family {
 
 const CALL_OTHER: &[Row] = &[
     // Linux SVC: r7 = number, r0..r6 = args, r0 = return.
-    Row {
-        names: &["software_interrupt"],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+    Row::new(
+        &["software_interrupt"],
+        CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
             implicit_writes: &["r0"],
             clobbers_memory: true,
             no_return: false,
         }),
-    },
+    ),
     // SMCCC HVC / SMC (the sla's `software_hvc` / `software_smc`, no output):
     // r0..r7 in, r0..r3 out; SMCCC 1.0 may also leave r4..r12 unpredictable.
-    Row {
-        names: &["software_hvc", "software_smc"],
-        only: None,
-        class: CallOtherClass::Call(CallOtherAbi {
+    Row::new(
+        &["software_hvc", "software_smc"],
+        CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"],
             implicit_writes: &[
                 "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12",
@@ -59,21 +57,20 @@ const CALL_OTHER: &[Row] = &[
             clobbers_memory: true,
             no_return: false,
         }),
-    },
+    ),
     // NEON register compute outside the `Vector*` / `Float*` families.
-    Row {
-        names: &[
+    Row::new(
+        &[
             "SHA256ScheduleUpdate0",
             "SHA256ScheduleUpdate1",
             "SatQ",
             "SignedSatQ",
             "vrev",
         ],
-        only: None,
-        class: PURE,
-    },
-    Row {
-        names: &[
+        PURE,
+    ),
+    Row::new(
+        &[
             "setAbortMode",
             "setFIQMode",
             "setIRQMode",
@@ -84,14 +81,9 @@ const CALL_OTHER: &[Row] = &[
             "setUndefinedMode",
             "setUserMode",
         ],
-        only: None,
-        class: ARM_MODE_SWITCH,
-    },
-    Row {
-        names: &["setStackMode"],
-        only: None,
-        class: ARM_STACK_SWITCH,
-    },
+        ARM_MODE_SWITCH,
+    ),
+    Row::new(&["setStackMode"], ARM_STACK_SWITCH),
 ];
 
 /// A processor-mode switch (`cps`, `msr` to the CPSR control field): every
