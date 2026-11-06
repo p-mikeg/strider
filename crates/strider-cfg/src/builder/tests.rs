@@ -301,11 +301,10 @@ fn switch_target_interior_to_a_regions_last_instruction_is_dropped() {
     );
 }
 
-/// A resolved jump-table target interior to the switch's OWN region: the
-/// seat-time guard runs before `finish_current_region`, so no region owns
-/// the address yet and the target slips through.
+/// A table arm interior to the dispatch's own, still open region defers the
+/// whole site, as one interior to an earlier region does.
 #[test]
-fn switch_target_interior_to_its_own_region_still_builds() {
+fn switch_target_interior_to_its_own_region_defers_the_site() {
     let base = 0x1000u64;
     let mut bytes = MOVABS_RAX_0.to_vec();
     bytes.extend_from_slice(&[0xff, 0xe0]); // 0x100a: jmp rax
@@ -327,12 +326,24 @@ fn switch_target_interior_to_its_own_region_still_builds() {
 
     let cfg = build_cfg(bytes, base, &opts)
         .expect("a table target off an instruction boundary must not fail the build");
-    assert_every_switch_target_has_an_arm(&cfg);
+    assert!(
+        cfg.regions().any(|r| matches!(
+            &r.terminator,
+            RegionTerminator::UnresolvedIndirectBranch { addr, .. } if *addr == branch
+        )),
+        "the site must defer: {:?}",
+        cfg.regions().map(|r| &r.terminator).collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        cfg.incomplete()
+            .of(crate::Reason::InteriorTarget)
+            .collect::<Vec<_>>(),
+        &[addr(0x1005, 0)]
+    );
 }
 
-/// Same defect, reached the other way: the target is on no boundary of a
-/// region decoded AFTER the switch was seated, so exploration order alone
-/// decides whether the site defers or explodes.
+/// A target on no boundary of a region decoded after the switch was seated,
+/// which the seat-time check cannot see.
 #[test]
 fn switch_target_interior_to_a_later_decoded_region_still_builds() {
     let base = 0x1000u64;

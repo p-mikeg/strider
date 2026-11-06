@@ -337,8 +337,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
     /// Seats a terminator from [`crate::CfgOptions::seated`] at this site:
     /// `LinkRegister` as `Return`, an out-of-range `Single` as `TailCall`,
-    /// anything else as a `Switch`. No answer, or one out-of-range or
-    /// off-boundary arm, defers the whole site as `UnresolvedIndirectBranch`.
+    /// anything else as a `Switch`. No answer, `Withdrawn`, or one
+    /// out-of-range or off-boundary arm defers the whole site.
     fn process_branch_indirect(
         &mut self,
         insn: &rsleigh::Insn,
@@ -369,10 +369,18 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             Some(seated) => seated.arms(),
         };
         // A bad arm means the table bound is wrong, so the whole site defers.
+        // The open region is not indexed yet, so it is checked here.
+        let interior_to_open = |a: PcodeInsnAddr| {
+            self.insns.last().is_some_and(|last| {
+                a.machine() > self.start_addr.machine()
+                    && a.machine() < last.addr.machine() + u64::from(last.len)
+                    && self.insns.binary_search_by(|i| i.addr.cmp(&a)).is_err()
+            })
+        };
         let mut deferred = false;
         for target in arms {
             let a = PcodeInsnAddr::at_machine_start(target.addr);
-            if self.builder.addr_is_interior_non_boundary(a) {
+            if self.builder.addr_is_interior_non_boundary(a) || interior_to_open(a) {
                 self.builder
                     .report
                     .incomplete
