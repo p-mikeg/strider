@@ -98,7 +98,7 @@ pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
     ("TLB_read_indexed_entryPageMask", PURE),
     ("getHWRegister", PURE),
     ("move_from_thread_cp0", PURE),
-    // MIPS PREF. Hint 25 (`PrepareForStore`) leaves the line unpredictable,
+    // MIPS PREF. Hint 30 (`PrepareForStore`) leaves the line unpredictable,
     // but reading it before writing it is already undefined.
     ("prefetch", PURE),
     // x86 VERW, RDPMC, RDRAND / RDSEED: outputs are p-code.

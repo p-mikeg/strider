@@ -63,7 +63,8 @@ const CALL_OTHER: &[Row] = &[
             no_return: false,
         }),
     },
-    // n64: eight arguments; the sla names a4..a7 `t0`..`t3`.
+    // n64: a0..a7 (the sla's `t0`..`t3` are a4..a7), a superset of the
+    // kernel's six.
     Row {
         names: &["syscall"],
         only: Some(MIPS64_BOTH),
