@@ -171,7 +171,6 @@ fn a_seat_refused_on_the_cap_round_is_not_published() {
             BASE,
             &cc,
             &strider_orchestrator::AnalyzeOptions::default(),
-            None,
             &classify,
         )
         .expect("a refused seat is a result, not an error");
@@ -226,7 +225,6 @@ fn a_table_still_growing_at_the_cap_is_reported() {
             BASE,
             &cc,
             &strider_orchestrator::AnalyzeOptions::default(),
-            None,
             &classify,
         )
         .expect("a site growing at the cap is a result, not an error");
