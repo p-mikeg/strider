@@ -47,31 +47,17 @@ const PPC_MSR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
 
 /// FPSCR.FPCC, which a VSX compare or data-class test sets as it sets CR
 /// field BF; `mcrfs` and `mffs` read it back.
-const PPC_FPCC: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"],
-    clobbers_memory: false,
-    no_return: false,
-});
+const PPC_FPCC: CallOtherClass = writes(FPCC_VX.split_at(4).0);
 
 /// [`PPC_FPCC`] plus the invalid-operation bits and summaries a
 /// quad-precision compare raises (VXSNAN, and VXVC for `xscmpoqp`).
-const PPC_FPCC_VX: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &[
-        "fp_cc0",
-        "fp_cc1",
-        "fp_cc2",
-        "fp_cc3",
-        "fp_fx",
-        "fp_fex",
-        "fp_vx",
-        "fp_vxsnan",
-        "fp_vxvc",
-    ],
-    clobbers_memory: false,
-    no_return: false,
-});
+const PPC_FPCC_VX: CallOtherClass = writes(FPCC_VX);
+
+#[rustfmt::skip]
+const FPCC_VX: &[&str] = &[
+    "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3",
+    "fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc",
+];
 
 /// The FPSCR status bits a scalar VSX arithmetic, rounding or conversion op
 /// may set: FPRF (`fp_c`, FPCC), FR, FI, the exceptions and their summaries.
@@ -123,104 +109,38 @@ const PPC_FP_VECTOR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
 
 /// A VSX compare writing XT, or a max/min: VXSNAN, the ordered compares'
 /// VXVC, and their summaries.
-const PPC_FP_INVALID: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"],
-    clobbers_memory: false,
-    no_return: false,
-});
+const PPC_FP_INVALID: CallOtherClass = writes(FP_INVALID_CR6.split_at(FP_INVALID_CR6.len() - 1).0);
 
 /// [`PPC_FP_INVALID`] plus the CR6 an `Rc=1` vector compare sets.
-const PPC_FP_INVALID_CR6: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc", "cr6"],
-    clobbers_memory: false,
-    no_return: false,
-});
+const PPC_FP_INVALID_CR6: CallOtherClass = writes(FP_INVALID_CR6);
+
+const FP_INVALID_CR6: &[&str] = &["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc", "cr6"];
 
 /// Every FPSCR bit `mtfsf` can rewrite (`FM=0xff`), which `setSummaryFPSCR`
 /// and `mcrfs` read back directly.
-const PPC_FPSCR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &[
-        "fp_fx",
-        "fp_fex",
-        "fp_vx",
-        "fp_ox",
-        "fp_ux",
-        "fp_zx",
-        "fp_xx",
-        "fp_vxsnan",
-        "fp_vxisi",
-        "fp_vxidi",
-        "fp_vxzdz",
-        "fp_vximz",
-        "fp_vxvc",
-        "fp_fr",
-        "fp_fi",
-        "fp_c",
-        "fp_cc0",
-        "fp_cc1",
-        "fp_cc2",
-        "fp_cc3",
-        "fp_reserve1",
-        "fp_vxsoft",
-        "fp_vxsqrt",
-        "fp_vxcvi",
-        "fp_ve",
-        "fp_oe",
-        "fp_ue",
-        "fp_ze",
-        "fp_xe",
-        "fp_ni",
-        "fp_rn0",
-        "fp_rn1",
-    ],
-    clobbers_memory: false,
-    no_return: false,
-});
+const PPC_FPSCR: CallOtherClass = writes(FPSCR_CR1.split_at(FPSCR_CR1.len() - 1).0);
 
 /// `mtfsf.` / `mtfsfi.`: the FPSCR write plus the CR1 the `Rc=1` form sets.
-const PPC_FPSCR_CR1: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &[
-        "fp_fx",
-        "fp_fex",
-        "fp_vx",
-        "fp_ox",
-        "fp_ux",
-        "fp_zx",
-        "fp_xx",
-        "fp_vxsnan",
-        "fp_vxisi",
-        "fp_vxidi",
-        "fp_vxzdz",
-        "fp_vximz",
-        "fp_vxvc",
-        "fp_fr",
-        "fp_fi",
-        "fp_c",
-        "fp_cc0",
-        "fp_cc1",
-        "fp_cc2",
-        "fp_cc3",
-        "fp_reserve1",
-        "fp_vxsoft",
-        "fp_vxsqrt",
-        "fp_vxcvi",
-        "fp_ve",
-        "fp_oe",
-        "fp_ue",
-        "fp_ze",
-        "fp_xe",
-        "fp_ni",
-        "fp_rn0",
-        "fp_rn1",
-        "cr1",
-    ],
-    clobbers_memory: false,
-    no_return: false,
-});
+const PPC_FPSCR_CR1: CallOtherClass = writes(FPSCR_CR1);
+
+#[rustfmt::skip]
+const FPSCR_CR1: &[&str] = &[
+    "fp_fx", "fp_fex", "fp_vx", "fp_ox", "fp_ux", "fp_zx", "fp_xx", "fp_vxsnan",
+    "fp_vxisi", "fp_vxidi", "fp_vxzdz", "fp_vximz", "fp_vxvc", "fp_fr", "fp_fi", "fp_c",
+    "fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3", "fp_reserve1", "fp_vxsoft", "fp_vxsqrt", "fp_vxcvi",
+    "fp_ve", "fp_oe", "fp_ue", "fp_ze", "fp_xe", "fp_ni", "fp_rn0", "fp_rn1",
+    "cr1",
+];
+
+/// A register-only op writing `w`.
+const fn writes(w: &'static [&'static str]) -> CallOtherClass {
+    CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: w,
+        clobbers_memory: false,
+        no_return: false,
+    })
+}
 
 /// An AltiVec record form (`vcmp*.`, `bcd*.`): the sla leaves its CR6
 /// unwritten. A non-record `vcmp*` shares the op name; over-approximated.
