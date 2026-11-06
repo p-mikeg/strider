@@ -104,3 +104,31 @@ fn every_preset_family_is_registered_once() {
     assert_eq!(registered.len(), len, "a family is registered twice");
     assert_eq!(from_presets, registered);
 }
+
+/// The ARM32 register-space reach covers the d-register file and leaves the
+/// core registers out.
+#[test]
+fn arm32_register_space_reach_is_the_neon_file() {
+    for preset in [
+        ArchPreset::Arm,
+        ArchPreset::ArmBe,
+        ArchPreset::ArmBeKernel,
+        ArchPreset::ArmThumb,
+    ] {
+        let arch = preset.arch();
+        let reach = arch.register_space_reach().expect("reach");
+        let regs = arch.probe_regs();
+        for d in 0..32 {
+            let vn = regs.name_to_vn(&format!("d{d}")).expect("d register");
+            let end = vn.addr_off + u64::from(vn.size);
+            assert!(
+                reach.start <= vn.addr_off && end <= reach.end,
+                "{preset:?}: d{d}"
+            );
+        }
+        for name in ["r0", "sp", "lr", "pc", "cpsr", "fpscr"] {
+            let vn = regs.name_to_vn(name).expect(name);
+            assert!(!reach.contains(&vn.addr_off), "{preset:?}: {name}");
+        }
+    }
+}

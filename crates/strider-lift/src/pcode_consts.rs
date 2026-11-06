@@ -1,6 +1,7 @@
 //! Constant values of a machine instruction's p-code temporaries, resolving a
 //! register-space LOAD / STORE address (ARM `vld1.N {dX[i]}`). A loop-carried
-//! address (ARM `VLD2/3/4`) does not fold and takes the opaque path.
+//! address (ARM `VLD2/3/4`) does not fold and takes the opaque path, bounded
+//! by the arch's register-space reach.
 //!
 //! The def-site collection and the lift must feed the same ops through this in
 //! the same order, or a write gets no phi at a join.
@@ -134,14 +135,17 @@ impl<R: rsleigh::MemReader> super::Lifter<R> {
     }
 }
 
-/// The tracked varnodes an unresolved register-space write may reach.
+/// The tracked varnodes an unresolved register-space access may reach.
 pub(crate) fn opaque_clobber_set(
     all_vns: &[rsleigh::Vn],
+    reach: Option<core::ops::Range<u64>>,
 ) -> impl Iterator<Item = rsleigh::Vn> + '_ {
-    all_vns
-        .iter()
-        .copied()
-        .filter(|v| v.addr_space == rsleigh::VnSpace::REGISTER)
+    all_vns.iter().copied().filter(move |v| {
+        v.addr_space == rsleigh::VnSpace::REGISTER
+            && reach
+                .as_ref()
+                .is_none_or(|r| v.addr_off < r.end && r.start < v.addr_off + u64::from(v.size))
+    })
 }
 
 #[cfg(test)]

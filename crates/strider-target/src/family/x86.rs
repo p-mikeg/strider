@@ -14,6 +14,7 @@ pub(crate) static X86: Family = Family {
         transient_decode_vars: &[],
         has_delay_slots: false,
         callother_output_exact: true,
+        register_space_reach: None,
         internal_registers: &["xmmTmp1", "xmmTmp2"],
         volatile_registers: &[],
         non_volatile_registers: &[],

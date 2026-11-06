@@ -15,6 +15,9 @@ pub(crate) static ARM32: Family = Family {
         transient_decode_vars: &["LRset", "REToverride", "CALLoverride"],
         has_delay_slots: false,
         callother_output_exact: false,
+        // Every `*[register]` access is NEON: `&Dreg` (d0..d31, 0x300..0x400)
+        // plus or minus `regInc * 24` (regInc <= 2), plus a byte under 8.
+        register_space_reach: Some(0x2d0..0x430),
         internal_registers: &[
             "mult_addr",
             "mult_dat8",

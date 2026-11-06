@@ -17,6 +17,7 @@ pub(crate) static MIPS: Family = Family {
         transient_decode_vars: &["PAIR_INSTRUCTION_FLAG", "ext_delay"],
         has_delay_slots: true,
         callother_output_exact: false,
+        register_space_reach: None,
         internal_registers: &["tsp"],
         // CP0 counters and hardware-set state, which no MIPS pspec marks:
         // `PerfCnt.<odd>` are the counters, `cop0_reg9.6` Octeon's `CvmCount`.

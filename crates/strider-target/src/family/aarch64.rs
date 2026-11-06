@@ -14,6 +14,7 @@ pub(crate) static AARCH64: Family = Family {
         transient_decode_vars: &[],
         has_delay_slots: false,
         callother_output_exact: false,
+        register_space_reach: None,
         internal_registers: &[
             "tmp_ldWn",
             "tmp_ldXn",

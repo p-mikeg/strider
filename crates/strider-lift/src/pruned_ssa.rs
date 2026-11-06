@@ -174,14 +174,15 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 }
             }
             // Mirrors `handle_store`'s REGISTER-space paths (ARM
-            // `vld1.N {dX[i]}`): the resolved register, else the whole file.
+            // `vld1.N {dX[i]}`): the resolved register, else its reach.
             Opcode::Store => {
                 if let Some(vn) = self.lifter.register_slot_of(insn, consts) {
                     self.add_def(&vn, r, scan);
                 } else if self.lifter.is_register_space_access(insn) {
-                    for vn in
-                        super::pcode_consts::opaque_clobber_set(self.builder.function().all_vns())
-                    {
+                    for vn in super::pcode_consts::opaque_clobber_set(
+                        self.builder.function().all_vns(),
+                        self.lifter.arch().register_space_reach(),
+                    ) {
                         self.add_def(&vn, r, scan);
                     }
                 }

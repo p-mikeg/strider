@@ -219,6 +219,14 @@ impl SleighArch {
         self.facts().callother_output_exact && container.size != 10
     }
 
+    /// The REGISTER-space bytes a register-space LOAD or STORE can address,
+    /// or `None` for the whole space. An access outside it is assumed not to
+    /// exist.
+    #[must_use]
+    pub fn register_space_reach(&self) -> Option<core::ops::Range<u64>> {
+        self.facts().register_space_reach.clone()
+    }
+
     /// Registers the sla declares for its own semantics rather than as
     /// processor state (per-instruction scratch, fake storage such as
     /// PowerPC `r2Save`), which no callee can read.
