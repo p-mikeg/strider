@@ -176,3 +176,19 @@ impl<T: IntoPy<PyObject>> IntoPy<PyObject> for Unsigned<T> {
         self.0.into_py(py)
     }
 }
+
+/// A sequence of ints, refusing the `bytes` / `bytearray` PyO3 would read
+/// as the list of its byte values.
+pub struct IntSeq<T>(pub Vec<T>);
+
+impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for IntSeq<T> {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if ob.is_instance_of::<PyBytes>() || ob.is_instance_of::<pyo3::types::PyByteArray>() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "expected a list of ints, not {}",
+                ob.get_type().name()?
+            )));
+        }
+        ob.extract().map(Self)
+    }
+}

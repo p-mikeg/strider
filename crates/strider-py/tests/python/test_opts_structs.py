@@ -351,3 +351,14 @@ def test_msr_register_keeps_mode_reaches_the_lift(keeps):
     )
     assert function.assumptions.msr_register_keeps_mode is keeps
     assert unresolved == ([] if keeps else [0x1004])
+
+
+@pytest.mark.parametrize("seq", [b"ab", bytearray(b"ab")])
+def test_bytes_is_no_list_of_ints(seq):
+    """PyO3 would read `bytes` as the list of its byte values."""
+    with pytest.raises(TypeError):
+        strider.cfg.CfgOptions(known_targets={0x1000: seq})
+    with pytest.raises(TypeError):
+        strider.pattern.int_const(seq)
+    with pytest.raises(TypeError):
+        strider.pattern.int_const_any_width(seq)
