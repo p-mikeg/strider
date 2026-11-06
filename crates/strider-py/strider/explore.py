@@ -309,7 +309,7 @@ class _CfgVisualizer:
         q = query.strip()
         try:
             addr = int(q, 0)
-            blk = self._cfg.region_at(addr)
+            blk = self._cfg.region_at(addr) if 0 <= addr < 1 << 64 else None
             return {"center": blk} if blk is not None else {"highlight": []}
         except ValueError:
             ql = q.lower()
@@ -688,7 +688,7 @@ def _serve(
         try:
             srv.serve_forever()
         except KeyboardInterrupt:
-            srv.shutdown()
+            pass
         finally:
             _RUNNING.pop(bound_port, None)
             srv.server_close()
