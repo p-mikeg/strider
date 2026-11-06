@@ -54,8 +54,8 @@ pub struct UndecodableTarget {
     pub target: PcodeInsnAddr,
 }
 
-/// How a [`Region`] ends; edges are unweighted. `Return`, `TailCall`,
-/// `NoReturn` and `UnresolvedIndirectBranch` have no outgoing edge.
+/// How a [`Region`] ends. `Return`, `TailCall`, `NoReturn` and
+/// `UnresolvedIndirectBranch` have no outgoing edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionTerminator {
     /// One successor: a `Branch`, a zero-pcode-op instruction, a fall-through

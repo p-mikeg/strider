@@ -73,7 +73,8 @@ impl ResolvedTargets {
     }
 
     /// A caller's own answer of `targets`: one target is a [`Self::Single`],
-    /// which out of range is a tail call rather than a deferring arm.
+    /// which out of range is a tail call rather than a deferring arm. No
+    /// target carries a mode bit.
     #[must_use]
     pub fn seeded(targets: impl IntoIterator<Item = u64>) -> Self {
         let table = Self::table(targets.into_iter().map(|t| ResolvedTarget::new(t, None)));

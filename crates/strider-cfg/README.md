@@ -43,6 +43,6 @@ before any arm, so a direct decode wins an ISA-mode clash.
 
 `Cfg::incomplete()` is a sorted set of `(PcodeInsnAddr, Reason)`; each
 reason's contract is on `Reason`. A build resolves nothing, so every deferred
-site is `UnresolvedBranch` and every seat `UnverifiedSeed`. An unmapped entry,
-or a fall-through into bytes Sleigh rejects that no call explains, fails the
-build.
+site is `UnresolvedBranch` and every seat `UnverifiedSeed`. An unmapped or
+undecodable entry, or a fall-through no call explains into bytes Sleigh
+rejects, fails the build.
