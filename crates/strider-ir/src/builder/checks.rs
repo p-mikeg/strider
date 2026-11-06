@@ -1,14 +1,4 @@
-//! Operand checks a builder runs before creating a node, as free functions
-//! over `&Function` rather than `IRViewer` methods:
-//!
-//! ```compile_fail,E0599
-//! use strider_ir::node::ValueId;
-//! use strider_ir::{Function, IRViewer};
-//!
-//! fn check(f: &Function, v: ValueId) -> strider_ir::Result<()> {
-//!     f.require_value_kind(v)
-//! }
-//! ```
+//! Operand checks a builder runs before creating a node.
 
 use anyhow::anyhow;
 

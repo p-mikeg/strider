@@ -849,8 +849,7 @@ fn build_call_other_names_a_ram_output_in_the_text_spelling() -> Result<()> {
         .build_call_other(0, &[], &[vn], false, false)
         .expect_err("a RAM output");
     let ram = crate::function::space_str(vn.addr_space);
-    let want =
-        format!("names the varnode {ram}:0x1000:4, in space `{ram}`, outside register (`%`)");
+    let want = format!("call-class varnode {ram}:0x1000:4 is in space `{ram}`");
     assert!(err.to_string().contains(&want), "got: {err}");
     Ok(())
 }

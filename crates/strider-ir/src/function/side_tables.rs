@@ -20,9 +20,8 @@ enum ArgClass {
     Float,
 }
 
-/// The id-keyed payload tables of a [`Function`]: each holds arena ids
-/// [`Function::compact`] remaps or payload ids it renumbers. None is part of
-/// the graph's structural identity, and none is cleared by invalidation.
+/// Per-function tables keyed by node, value or payload id. [`Function::compact`]
+/// remaps or renumbers them; invalidation keeps them.
 ///
 /// [`Function`]: crate::Function
 /// [`Function::compact`]: crate::Function::compact

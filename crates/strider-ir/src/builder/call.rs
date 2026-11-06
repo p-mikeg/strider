@@ -13,13 +13,9 @@ fn require_reg_or_unique(vn: &rsleigh::Vn) -> Result<()> {
     match vn.addr_space {
         rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
         space => Err(anyhow!(
-            "a call-class read or write names the varnode {}, in space `{}`, \
-             outside register (`{}`) and unique (`{}`) space, the only ones \
-             that can carry one",
+            "call-class varnode {} is in space `{}`; only register and unique space can carry one",
             crate::function::vn_str(vn),
             crate::function::space_str(space),
-            crate::function::space_str(rsleigh::VnSpace::REGISTER),
-            crate::function::space_str(rsleigh::VnSpace::UNIQUE),
         )),
     }
 }
