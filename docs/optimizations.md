@@ -86,8 +86,9 @@ claim is safe.
 In default pipeline order:
 
 **CallStackArgCollect.** Attaches the stores into each call's outgoing argument
-window to the call as ordinary arguments. It errs wide: a spill just above the
-arguments can come along.
+window to the call as ordinary arguments. A store of the entry value of a
+register the function's own convention preserves (a prologue save) ends the
+arguments; other stores just above them can come along.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
 stack pointer read, after the register arguments: one ordinal per run of slots

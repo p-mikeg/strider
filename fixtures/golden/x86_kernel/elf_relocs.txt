@@ -108,7 +108,7 @@ arg 1 [%v29]
 %v27:i32 = int.add %v22, %v26
 %v28:i32 = load[r] %v18, %v27
 %v29:i32 = initial_var[EDX]
-%v30:ctrl, %v31:mem, %v32:i32<EAX>, %v33:i32<EDX>, %v34:i80<ST0>, %v35:i80<ST1>, %v36:i128<XMM0>, %v37:i32<ECX>, %v38:i8<CF>, %v39:i8<PF>, %v40:i8<ZF>, %v41:i8<SF>, %v42:i8<OF>, %v43:i32<EIP> = call %v0, %v20, %v28, %v16, %v29, %v29, %v24, %v13, %v9, %v5
+%v30:ctrl, %v31:mem, %v32:i32<EAX>, %v33:i32<EDX>, %v34:i80<ST0>, %v35:i80<ST1>, %v36:i128<XMM0>, %v37:i32<ECX>, %v38:i8<CF>, %v39:i8<PF>, %v40:i8<ZF>, %v41:i8<SF>, %v42:i8<OF>, %v43:i32<EIP> = call %v0, %v20, %v28, %v16, %v29, %v29, %v24, %v13
 return %v30, %v31, %v32, %v33, %v34, %v35, %v36
 
 == compute_via_helper @0x1320

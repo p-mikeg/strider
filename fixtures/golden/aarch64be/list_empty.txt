@@ -94,7 +94,7 @@ float_arg 7 [%v39]
 %v37:i128 = initial_var[q5]
 %v38:i128 = initial_var[q6]
 %v39:i128 = initial_var[q7]
-%v40:ctrl, %v41:mem, %v42:i64<x0>, %v43:i64<x1>, %v44:i128<q0>, %v45:i128<q1>, %v46:i128<q2>, %v47:i128<q3>, %v48:i64<pc>, %v49:i8<tmpCY>, %v50:i8<tmpOV>, %v51:i8<tmpNG>, %v52:i8<tmpZR>, %v53:i64<x2>, %v54:i64<x3>, %v55:i64<x4>, %v56:i64<x5>, %v57:i64<x6>, %v58:i64<x7>, %v59:i64<x8>, %v60:i128<q4>, %v61:i128<q5>, %v62:i128<q6>, %v63:i128<q7> = call %v0, %v23, %v24, %v17, %v25, %v18, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v18, %v14, %v5, %v9
+%v40:ctrl, %v41:mem, %v42:i64<x0>, %v43:i64<x1>, %v44:i128<q0>, %v45:i128<q1>, %v46:i128<q2>, %v47:i128<q3>, %v48:i64<pc>, %v49:i8<tmpCY>, %v50:i8<tmpOV>, %v51:i8<tmpNG>, %v52:i8<tmpZR>, %v53:i64<x2>, %v54:i64<x3>, %v55:i64<x4>, %v56:i64<x5>, %v57:i64<x6>, %v58:i64<x7>, %v59:i64<x8>, %v60:i128<q4>, %v61:i128<q5>, %v62:i128<q6>, %v63:i128<q7> = call %v0, %v23, %v24, %v17, %v25, %v18, %v26, %v27, %v28, %v29, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39, %v18, %v14
 %v64:i32 = truncate %v42
 %v65:i32 = load[r] %v41, %v12
 %v66:i32 = int.add %v64, %v65

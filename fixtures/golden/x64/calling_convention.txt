@@ -705,7 +705,7 @@ float_arg 7 [%v54]
 %v52:i128 = initial_var[XMM5]
 %v53:i128 = initial_var[XMM6]
 %v54:i128 = initial_var[XMM7]
-%v55:ctrl, %v56:mem, %v57:i64<RAX>, %v58:i64<RDX>, %v59:i128<XMM0>, %v60:i128<XMM1>, %v61:i80<ST0>, %v62:i80<ST1>, %v63:i64<RCX>, %v64:i64<RSI>, %v65:i64<RDI>, %v66:i64<R8>, %v67:i64<R9>, %v68:i64<R10>, %v69:i64<R11>, %v70:i8<CF>, %v71:i8<PF>, %v72:i8<ZF>, %v73:i8<SF>, %v74:i8<OF>, %v75:i64<RIP>, %v76:i128<XMM2>, %v77:i128<XMM3>, %v78:i128<XMM4>, %v79:i128<XMM5>, %v80:i128<XMM6>, %v81:i128<XMM7> = call %v0, %v45, %v46, %v43, %v8, %v11, %v28, %v31, %v34, %v37, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v54, %v26, %v19, %v5
+%v55:ctrl, %v56:mem, %v57:i64<RAX>, %v58:i64<RDX>, %v59:i128<XMM0>, %v60:i128<XMM1>, %v61:i80<ST0>, %v62:i80<ST1>, %v63:i64<RCX>, %v64:i64<RSI>, %v65:i64<RDI>, %v66:i64<R8>, %v67:i64<R9>, %v68:i64<R10>, %v69:i64<R11>, %v70:i8<CF>, %v71:i8<PF>, %v72:i8<ZF>, %v73:i8<SF>, %v74:i8<OF>, %v75:i64<RIP>, %v76:i128<XMM2>, %v77:i128<XMM3>, %v78:i128<XMM4>, %v79:i128<XMM5>, %v80:i128<XMM6>, %v81:i128<XMM7> = call %v0, %v45, %v46, %v43, %v8, %v11, %v28, %v31, %v34, %v37, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v54, %v26, %v19
 %v82:i64 = int.add %v68, %v26
 %v83:i32 = truncate %v82
 %v84:i32 = truncate %v69

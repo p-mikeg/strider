@@ -479,7 +479,7 @@ float_arg 7 [%v43]
 %v41:i64 = initial_var[d5]
 %v42:i64 = initial_var[d6]
 %v43:i64 = initial_var[d7]
-%v44:ctrl, %v45:mem, %v46:i32<r0>, %v47:i32<r1>, %v48:i64<d0>, %v49:i64<d1>, %v50:i64<d2>, %v51:i64<d3>, %v52:i64<d4>, %v53:i64<d5>, %v54:i64<d6>, %v55:i64<d7>, %v56:i32<r2>, %v57:i32<r3>, %v58:i32<pc>, %v59:i8<NG>, %v60:i8<ZR>, %v61:i8<CY>, %v62:i8<OV>, %v63:i8<tmpNG>, %v64:i8<tmpZR>, %v65:i8<tmpCY>, %v66:i8<tmpOV>, %v67:i8<shift_carry>, %v68:i8<TB>, %v69:i8<ISAModeSwitch>, %v70:i32<mult_addr> = call %v6, %v32, %v33, %v30, %v23, %v23, %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v3, %v1, %v23, %v1, %v16, %v12
+%v44:ctrl, %v45:mem, %v46:i32<r0>, %v47:i32<r1>, %v48:i64<d0>, %v49:i64<d1>, %v50:i64<d2>, %v51:i64<d3>, %v52:i64<d4>, %v53:i64<d5>, %v54:i64<d6>, %v55:i64<d7>, %v56:i32<r2>, %v57:i32<r3>, %v58:i32<pc>, %v59:i8<NG>, %v60:i8<ZR>, %v61:i8<CY>, %v62:i8<OV>, %v63:i8<tmpNG>, %v64:i8<tmpZR>, %v65:i8<tmpCY>, %v66:i8<tmpOV>, %v67:i8<shift_carry>, %v68:i8<TB>, %v69:i8<ISAModeSwitch>, %v70:i32<mult_addr> = call %v6, %v32, %v33, %v30, %v23, %v23, %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v3, %v1, %v23, %v1
 
 %v71:ctrl, %v72:token = region %v7, %v44
 %v73:mem = memphi %v72, %v32, %v45
@@ -1416,7 +1416,7 @@ float_arg 7 [%v79]
 %v77:i64 = initial_var[d5]
 %v78:i64 = initial_var[d6]
 %v79:i64 = initial_var[d7]
-%v80:ctrl, %v81:mem, %v82:i32<r0>, %v83:i32<r1>, %v84:i64<d0>, %v85:i64<d1>, %v86:i64<d2>, %v87:i64<d3>, %v88:i64<d4>, %v89:i64<d5>, %v90:i64<d6>, %v91:i64<d7>, %v92:i32<r2>, %v93:i32<r3>, %v94:i32<r12>, %v95:i32<pc>, %v96:i8<CY>, %v97:i8<OV>, %v98:i8<tmpNG>, %v99:i8<tmpZR>, %v100:i8<tmpCY>, %v101:i8<tmpOV>, %v102:i8<shift_carry>, %v103:i8<TB>, %v104:i8<ISAModeSwitch>, %v105:i32<mult_addr> = call %v0, %v70, %v71, %v32, %v34, %v29, %v63, %v59, %v72, %v73, %v74, %v75, %v76, %v77, %v78, %v79, %v34, %v29, %v29, %v63, %v59, %v55, %v36, %v40, %v44, %v48, %v29, %v29, %v25, %v21, %v17, %v13, %v9, %v5
+%v80:ctrl, %v81:mem, %v82:i32<r0>, %v83:i32<r1>, %v84:i64<d0>, %v85:i64<d1>, %v86:i64<d2>, %v87:i64<d3>, %v88:i64<d4>, %v89:i64<d5>, %v90:i64<d6>, %v91:i64<d7>, %v92:i32<r2>, %v93:i32<r3>, %v94:i32<r12>, %v95:i32<pc>, %v96:i8<CY>, %v97:i8<OV>, %v98:i8<tmpNG>, %v99:i8<tmpZR>, %v100:i8<tmpCY>, %v101:i8<tmpOV>, %v102:i8<shift_carry>, %v103:i8<TB>, %v104:i8<ISAModeSwitch>, %v105:i32<mult_addr> = call %v0, %v70, %v71, %v32, %v34, %v29, %v63, %v59, %v72, %v73, %v74, %v75, %v76, %v77, %v78, %v79, %v34, %v29, %v29, %v63, %v59, %v55, %v36, %v40, %v44, %v48, %v29, %v29
 %v106:i32 = load[r] %v81, %v28
 %v107:i32 = int.xor %v106, %v82
 %v108:mem = store[r] %v81, %v28, %v107

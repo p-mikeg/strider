@@ -10,7 +10,9 @@ mod tests;
 /// The contiguous prefix of stack-arg slots the call's [`ArgPrefix`] anchors,
 /// stopping at the first slot no whole store of its own reaches. Offsets are
 /// relative to the call-time SP; a store wider than one slot is one argument.
-/// Over-collects incidental stack writes; a `Call` on the chain ends it.
+/// A slot holding the entry value of a register the function's own convention
+/// preserves (a prologue save) ends it, as does a `Call` on the chain.
+/// Over-collects other incidental stack writes.
 fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
@@ -21,6 +23,13 @@ fn collect_stack_args(
         return Vec::new();
     };
     let big_endian = function.byte_order().data == strider_target::Endianness::Big;
+    let tracked = function.all_vns();
+    let saved: Vec<ValueId> = function
+        .default_cc()
+        .callee_saved_regs
+        .iter()
+        .filter_map(|r| function.initial_var_value(&vn_container::largest_container_in(tracked, r)))
+        .collect();
     // An anchor a nearer store patched in part holds no one value to collect,
     // and a store inside the slot is its argument only right-justified on
     // big-endian.
@@ -28,10 +37,12 @@ fn collect_stack_args(
         .slots()
         .iter()
         .map_while(|slot| {
+            let data = slot.store.data(function);
             (slot.whole
+                && !saved.contains(&data)
                 && (slot.span == slot.store.size(function)
                     || (big_endian && slot.span == increment)))
-                .then(|| slot.store.data(function))
+                .then_some(data)
         })
         .collect()
 }

@@ -329,12 +329,12 @@ arg 3 [%v26]
 %v26:i32 = load[r] %v6, %v25
 %v27:i32 = initial_var[ECX]
 %v28:i32 = initial_var[EDX]
-%v29:ctrl, %v30:mem, %v31:i32<EAX>, %v32:i32<EDX>, %v33:i80<ST0>, %v34:i80<ST1>, %v35:i128<XMM0>, %v36:i32<ECX>, %v37:i8<CF>, %v38:i8<PF>, %v39:i8<ZF>, %v40:i8<SF>, %v41:i8<OF>, %v42:i32<EIP> = call %v4, %v22, %v23, %v20, %v26, %v27, %v28, %v1, %v14, %v10
+%v29:ctrl, %v30:mem, %v31:i32<EAX>, %v32:i32<EDX>, %v33:i80<ST0>, %v34:i80<ST1>, %v35:i128<XMM0>, %v36:i32<ECX>, %v37:i8<CF>, %v38:i8<PF>, %v39:i8<ZF>, %v40:i8<SF>, %v41:i8<OF>, %v42:i32<EIP> = call %v4, %v22, %v23, %v20, %v26, %v27, %v28, %v1
 %v43:i32 = iconst[0x2]
 %v44:i32 = int.add %v26, %v43
 %v45:i32 = iconst[0x401268]
 %v46:mem = store[r] %v18, %v20, %v45
-%v47:ctrl, %v48:mem, %v49:i32<EAX>, %v50:i32<EDX>, %v51:i80<ST0>, %v52:i80<ST1>, %v53:i128<XMM0>, %v54:i32<ECX>, %v55:i8<CF>, %v56:i8<PF>, %v57:i8<ZF>, %v58:i8<SF>, %v59:i8<OF>, %v60:i32<EIP> = call %v5, %v46, %v23, %v20, %v28, %v27, %v26, %v1, %v14, %v10
+%v47:ctrl, %v48:mem, %v49:i32<EAX>, %v50:i32<EDX>, %v51:i80<ST0>, %v52:i80<ST1>, %v53:i128<XMM0>, %v54:i32<ECX>, %v55:i8<CF>, %v56:i8<PF>, %v57:i8<ZF>, %v58:i8<SF>, %v59:i8<OF>, %v60:i32<EIP> = call %v5, %v46, %v23, %v20, %v28, %v27, %v26, %v1
 %v61:i32 = iconst[0x1]
 %v62:i32 = int.add %v28, %v61
 

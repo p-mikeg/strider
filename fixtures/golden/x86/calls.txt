@@ -50,7 +50,7 @@ arg 0 [%v5]
 %v31:i32 = iconst[0x401107]
 %v32:mem = store[r] %v28, %v30, %v31
 %v33:i32 = iconst[0x4010f0]
-%v34:ctrl, %v35:mem, %v36:i32<EAX>, %v37:i32<EDX>, %v38:i80<ST0>, %v39:i80<ST1>, %v40:i128<XMM0>, %v41:i8<CF>, %v42:i8<PF>, %v43:i8<ZF>, %v44:i8<SF>, %v45:i8<OF>, %v46:i32<EIP> = call %v9, %v32, %v33, %v30, %v27, %v20, %v16
+%v34:ctrl, %v35:mem, %v36:i32<EAX>, %v37:i32<EDX>, %v38:i80<ST0>, %v39:i80<ST1>, %v40:i128<XMM0>, %v41:i8<CF>, %v42:i8<PF>, %v43:i8<ZF>, %v44:i8<SF>, %v45:i8<OF>, %v46:i32<EIP> = call %v9, %v32, %v33, %v30, %v27
 %v47:i32 = iconst[0xfffffffe]
 %v48:i32 = int.add %v5, %v47
 %v49:mem = store[r] %v35, %v23, %v48

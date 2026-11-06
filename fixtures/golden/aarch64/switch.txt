@@ -367,7 +367,7 @@ return %v7, %v9, %v14, %v10, %v15, %v16, %v17, %v18
 %v56:i128 = initial_var[q5]
 %v57:i128 = initial_var[q6]
 %v58:i128 = initial_var[q7]
-%v59:ctrl, %v60:mem, %v61:i64<x0>, %v62:i64<x1>, %v63:i128<q0>, %v64:i128<q1>, %v65:i128<q2>, %v66:i128<q3>, %v67:i64<pc>, %v68:i8<NG>, %v69:i8<ZR>, %v70:i8<CY>, %v71:i8<OV>, %v72:i8<tmpCY>, %v73:i8<tmpOV>, %v74:i8<tmpNG>, %v75:i8<tmpZR>, %v76:i64<x2>, %v77:i64<x3>, %v78:i64<x4>, %v79:i64<x5>, %v80:i64<x6>, %v81:i64<x7>, %v82:i128<q4>, %v83:i128<q5>, %v84:i128<q6>, %v85:i128<q7> = call %v35, %v45, %v46, %v39, %v49, %v10, %v47, %v50, %v51, %v52, %v53, %v54, %v15, %v16, %v17, %v18, %v55, %v56, %v57, %v58, %v40, %v44
+%v59:ctrl, %v60:mem, %v61:i64<x0>, %v62:i64<x1>, %v63:i128<q0>, %v64:i128<q1>, %v65:i128<q2>, %v66:i128<q3>, %v67:i64<pc>, %v68:i8<NG>, %v69:i8<ZR>, %v70:i8<CY>, %v71:i8<OV>, %v72:i8<tmpCY>, %v73:i8<tmpOV>, %v74:i8<tmpNG>, %v75:i8<tmpZR>, %v76:i64<x2>, %v77:i64<x3>, %v78:i64<x4>, %v79:i64<x5>, %v80:i64<x6>, %v81:i64<x7>, %v82:i128<q4>, %v83:i128<q5>, %v84:i128<q6>, %v85:i128<q7> = call %v35, %v45, %v46, %v39, %v49, %v10, %v47, %v50, %v51, %v52, %v53, %v54, %v15, %v16, %v17, %v18, %v55, %v56, %v57, %v58
 return %v59, %v60, %v61, %v62, %v63, %v64, %v65, %v66
 %v86:i32 = iconst[0x2]
 %v87:i1 = icmp.equal %v4, %v86

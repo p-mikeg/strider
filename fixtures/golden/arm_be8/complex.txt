@@ -516,7 +516,7 @@ float_arg 7 [%v42]
 %v40:i64 = initial_var[d5]
 %v41:i64 = initial_var[d6]
 %v42:i64 = initial_var[d7]
-%v43:ctrl, %v44:mem, %v45:i32<r0>, %v46:i32<r1>, %v47:i64<d0>, %v48:i64<d1>, %v49:i64<d2>, %v50:i64<d3>, %v51:i64<d4>, %v52:i64<d5>, %v53:i64<d6>, %v54:i64<d7>, %v55:i32<r2>, %v56:i32<r3>, %v57:i32<pc>, %v58:i8<NG>, %v59:i8<ZR>, %v60:i8<CY>, %v61:i8<OV>, %v62:i8<tmpNG>, %v63:i8<tmpZR>, %v64:i8<tmpCY>, %v65:i8<tmpOV>, %v66:i8<shift_carry>, %v67:i8<TB>, %v68:i8<ISAModeSwitch>, %v69:i32<mult_addr> = call %v6, %v32, %v33, %v22, %v23, %v23, %v34, %v3, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v23, %v1, %v3, %v1, %v16, %v12
+%v43:ctrl, %v44:mem, %v45:i32<r0>, %v46:i32<r1>, %v47:i64<d0>, %v48:i64<d1>, %v49:i64<d2>, %v50:i64<d3>, %v51:i64<d4>, %v52:i64<d5>, %v53:i64<d6>, %v54:i64<d7>, %v55:i32<r2>, %v56:i32<r3>, %v57:i32<pc>, %v58:i8<NG>, %v59:i8<ZR>, %v60:i8<CY>, %v61:i8<OV>, %v62:i8<tmpNG>, %v63:i8<tmpZR>, %v64:i8<tmpCY>, %v65:i8<tmpOV>, %v66:i8<shift_carry>, %v67:i8<TB>, %v68:i8<ISAModeSwitch>, %v69:i32<mult_addr> = call %v6, %v32, %v33, %v22, %v23, %v23, %v34, %v3, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v23, %v1, %v3, %v1
 
 %v70:ctrl, %v71:token = region %v7, %v43
 %v72:mem = memphi %v71, %v32, %v44
