@@ -50,9 +50,23 @@ These change an answer without an error:
 - An optimizer run that reaches its iteration cap returns the valid, partly
   folded function and sets `Function.optimizer_converged` to `False`, where
   it raised.
+- A MIPS16 function's `Symbol.address` carries its ISA bit (bit 0), so
+  `analyze` of it decodes MIPS16; it decoded MIPS32.
+- A stack argument every arm of a join stores (gcc's cross-jumped calls) is
+  collected as the phi of the stored values: `call().arg(k)` binds it.
+- A direct branch into an instruction's interior enters at that instruction,
+  not at the start of its region; an x86 `lock`-prefix re-entry is benign
+  anywhere in a region and no longer reported.
 
 These raise:
 
+- `add_elf` / `add_symbol_file` raise `FileNotFoundError` for a missing path
+  and `ValueError` for a non-ELF, as `load_elf` does, where they raised
+  `StriderError`.
+- `bytes` where a list of ints is expected (`known_targets` values,
+  `int_const`) raises `TypeError`; it read each byte as an int.
+- `one_of([ret()]).when_match(..)` raises as `ret().when_match(..)` does; it
+  never matched.
 - An out-of-range int for a fixed-width argument (`int_const_any_width`,
   `float_const`, `stack_offset`, `source_stack`, `function_arg_stack`,
   `custom()`'s stack fields) raises `OverflowError`, where it raised
@@ -126,9 +140,11 @@ Output that reads differently:
 - `to_dot(pretty=True)` names a `Load` / `Store` space by its sla name.
 - `Node.sint()` and the signed `Match` readers answer past 128 bits where they
   answered `None`; `int_const` takes an `int` of up to 512 bits.
-- A failed read at a decode address is reported as `classified unmapped`,
+- A failed read at a decode address is reported as `is unmapped`,
   not as missing bytes; a preset convention that does not fit the arch names
   both; a builder wired into its own operand is named as a cycle.
+- Calling-convention errors spell a varnode as `%[0x20]:4` and a preset by
+  its name; a Sleigh exception reads `sleigh: <error>`.
 
 ### Breaking, Rust
 
@@ -228,6 +244,8 @@ replaced the rest.
 
 Matching and rewriting:
 
+- `rewrite` binds the same match `find_all` lists first at a root under
+  `first_of` / `ignore_casts`.
 - `first_of` and `ignore_casts` settle in a fixed order: at each value the
   first listed arm (or outermost cast level) that matches wins.
 - `int_const_any_width` with a negative value matches `I256` / `I512`
@@ -338,9 +356,17 @@ Lifting and decoding (most in the vendored Sleigh):
   (`lock cmpxchg`, `rep movs`) edges to its first op, not its last p-code
   slice, and is still `"interior_target"`; glibc's `je 0f; lock; 0:`
   re-entry is not reported whichever edge decodes first.
+- A MIPS delay slot whose ISA mode an earlier build on the same handle left
+  stale decodes as on a fresh handle; the build raised `BadDataError`.
+- `Function.optimizer_converged` is `False` after a failed run, not the
+  previous run's value.
+- A fall-through or Duff's-device switch of n arms builds its CFG in linear
+  time in n; it was quadratic (`analyze` of 4000 arms: 6.7 s before, 1.5 s after).
 
 Loading:
 
+- An unsized ARM / Thumb 16-bit or `ABS8` relocation holes only its own
+  bytes, not the next instruction's.
 - Relocations: a linked image is relocated from its dynamic tags as `ld.so`
   reads them; no image fails with "patch budget"; overlapping or ambiguous
   fields are holes; mips64el `SHT_REL`, `R_X86_64_32`, `R_PPC64_REL32`,
@@ -370,6 +396,12 @@ Loading:
 - A relocation table ending past the top of the address space no longer
   panics `load_elf`.
 
+Rendering:
+
+- The explorer shows a failed `/dot` request's error instead of a stale
+  graph.
+- The HTML viewer switches to `sfdp` past 2000 nodes; it counted labelled
+  edges too.
 
 ## 0.2.0
 
