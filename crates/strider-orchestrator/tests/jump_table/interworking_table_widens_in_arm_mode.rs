@@ -34,20 +34,13 @@ const TEXT: &[u8] = &[
 fn widened_thumb_arms_keep_their_mode() {
     let mut bytes = TEXT.to_vec();
     bytes.extend(std::iter::repeat_n(0u8, 64));
-    let (mut s, cc) = common::strider_over_bytes(
+    let r = common::analyze_bytes(
         common::Arch::Arm,
         bytes,
         BASE,
         Some(Box::new(MockRom::raw_bytes(BASE, TEXT.to_vec()))),
+        0x10058,
     );
-    let r = s
-        .analyze(
-            0x10058,
-            &cc,
-            &strider_orchestrator::AnalyzeOptions::default(),
-            None,
-        )
-        .expect("analyze");
     let mut arms: Vec<(u64, Option<bool>)> = r
         .cfg
         .regions()

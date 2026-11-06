@@ -32,16 +32,14 @@ fn analyze(arch: Arch, body: &[u32]) -> Function {
     let mut words = body.to_vec();
     words.push(0xe12f_ff1e); // bx lr
     let bytes = common::words_image(&words, code_order);
-    let (mut strider, cc) = common::strider_over_bytes(
+    common::analyze_bytes(
         arch,
         bytes,
         BASE,
         Some(Box::new(MockRom::raw_bytes(DATA, DATA_BYTES.to_vec()))),
-    );
-    strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function
+        BASE,
+    )
+    .function
 }
 
 /// `d` as `(d[31:0], d[63:32])` after loading `esize`-bit elements from

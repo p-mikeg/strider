@@ -37,22 +37,15 @@ fn analyze(
         bytes.resize(off, 0);
         bytes.extend_from_slice(data);
     }
-    let (mut s, cc) = common::strider_over_bytes(
+    let r = common::analyze_bytes(
         arch,
         bytes,
         base,
         Some(Box::new(MockRom::regions(
             sections.iter().map(|&(base, bytes)| (base, bytes.to_vec())),
         ))),
+        entry,
     );
-    let r = s
-        .analyze(
-            entry,
-            &cc,
-            &strider_orchestrator::AnalyzeOptions::default(),
-            None,
-        )
-        .expect("analyze");
     let mut arms: Vec<u64> = r
         .cfg
         .regions()

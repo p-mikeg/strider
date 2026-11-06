@@ -15,7 +15,6 @@
 //! seat a literal-pool word and the next function.
 
 use strider_ir_test_utils::MockRom;
-use strider_orchestrator::AnalyzeOptions;
 
 use crate::common;
 
@@ -35,15 +34,13 @@ const CODE: &[&str] = &[
 #[test]
 fn an_arm_the_dispatch_cannot_reach_bounds_nothing() {
     let code = common::hex(&CODE.concat());
-    let (mut strider, cc) = common::strider_over_bytes(
+    let r = common::analyze_bytes(
         common::Arch::ArmThumb,
         code.clone(),
         BASE,
         Some(Box::new(MockRom::raw_bytes(BASE, code))),
+        BASE | 1,
     );
-    let r = strider
-        .analyze(BASE | 1, &cc, &AnalyzeOptions::default(), None)
-        .expect("analyze");
     let mut arms: Vec<u64> = r
         .cfg
         .regions()

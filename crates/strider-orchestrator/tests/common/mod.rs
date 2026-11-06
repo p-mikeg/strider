@@ -155,6 +155,21 @@ pub(crate) fn strider_over_bytes(
     (strider, cc)
 }
 
+/// `entry` analysed under the default options and pipeline by
+/// [`strider_over_bytes`].
+pub(crate) fn analyze_bytes(
+    arch: Arch,
+    bytes: Vec<u8>,
+    base: u64,
+    rom: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>>,
+    entry: u64,
+) -> strider_orchestrator::AnalyzeResult {
+    let (mut strider, cc) = strider_over_bytes(arch, bytes, base, rom);
+    strider
+        .analyze(entry, &cc, &Default::default(), None)
+        .expect("analyze")
+}
+
 /// Build a synthetic x86-64 binary: `jmp rax` (2 bytes at `0x1000`)
 /// followed by `n_targets` x `ret` (0xc3), padded with 16 x `int3`
 /// (0xcc) so speculative look-ahead past the last `ret` doesn't fault
@@ -427,11 +442,7 @@ pub(crate) fn folded_return(arch: Arch, bytes: Vec<u8>, base: u64) -> u128 {
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
         strider_ir_test_utils::MockRom::raw_bytes(base, bytes.clone()),
     );
-    let (mut strider, cc) = strider_over_bytes(arch, bytes, base, Some(rom));
-    let f = strider
-        .analyze(base, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
+    let f = analyze_bytes(arch, bytes, base, Some(rom), base).function;
     let v = returned(&f)[0];
     f.int_const_u128(v)
         .unwrap_or_else(|| panic!("return slot 0 did not fold: {:?}", producer_kind(&f, v)))

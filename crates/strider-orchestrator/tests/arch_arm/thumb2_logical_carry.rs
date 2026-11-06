@@ -23,11 +23,7 @@ fn carry_after(r1: [u16; 2], primed: u16, insn: [u16; 2]) -> Option<u128> {
         r1[0], r1[1], 0x2300, primed, insn[0], insn[1], 0xf04f, 0x0000, 0xf140, 0x0000, 0x4770,
     ];
     let bytes = halves.iter().flat_map(|h| h.to_le_bytes()).collect();
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::ArmThumb, bytes, BASE, None);
-    let f = strider
-        .analyze(BASE | 1, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
+    let f = common::analyze_bytes(common::Arch::ArmThumb, bytes, BASE, None, BASE | 1).function;
     let ret = f
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))

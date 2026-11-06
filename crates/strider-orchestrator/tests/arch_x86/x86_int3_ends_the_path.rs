@@ -12,10 +12,7 @@ use strider_ir::node::NodeKind;
 use strider_ir::{Function, IRViewer, IRWalker};
 
 fn analyze(arch: Arch, bytes: Vec<u8>, base: u64) -> strider_orchestrator::AnalyzeResult {
-    let (mut strider, cc) = common::strider_over_bytes(arch, bytes, base, None);
-    strider
-        .analyze(base, &cc, &Default::default(), None)
-        .expect("analyze")
+    common::analyze_bytes(arch, bytes, base, None, base)
 }
 
 fn count(f: &Function, pred: impl Fn(&NodeKind) -> bool) -> usize {

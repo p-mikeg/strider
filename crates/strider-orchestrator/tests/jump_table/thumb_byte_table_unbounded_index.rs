@@ -17,7 +17,6 @@
 
 use strider_cfg::Reason;
 use strider_ir_test_utils::MockRom;
-use strider_orchestrator::AnalyzeOptions;
 
 use crate::common;
 
@@ -35,16 +34,14 @@ const CODE: &[&str] = &[
 #[test]
 fn a_tbb_over_an_unbounded_index_defers() {
     let rom = MockRom::raw_bytes(BASE, common::hex(&CODE.concat()));
-    let (mut strider, cc) = common::strider_over_bytes(
+    let cfg = common::analyze_bytes(
         common::Arch::ArmThumb,
         common::hex(&CODE.concat()),
         BASE,
         Some(Box::new(rom)),
-    );
-    let cfg = strider
-        .analyze(BASE | 1, &cc, &AnalyzeOptions::default(), None)
-        .expect("analyze")
-        .cfg;
+        BASE | 1,
+    )
+    .cfg;
     let reported: Vec<(u64, Reason)> = cfg
         .incomplete()
         .iter()

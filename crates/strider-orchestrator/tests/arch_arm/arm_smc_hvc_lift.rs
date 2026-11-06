@@ -11,10 +11,7 @@ use strider_ir::node::NodeKind;
 const BASE: u64 = 0x1000;
 
 fn r0_producer(arch: Arch, bytes: Vec<u8>, entry: u64) -> String {
-    let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let result = strider
-        .analyze(entry, &cc, &Default::default(), None)
-        .expect("analyze");
+    let result = common::analyze_bytes(arch, bytes, BASE, None, entry);
     assert!(result.incomplete().is_empty(), "{:?}", result.incomplete());
     let f = result.function;
     let producer = f.producer(common::returned(&f)[0]);

@@ -12,15 +12,7 @@ fn a_direct_branch_out_of_the_image_is_reported_not_failed() {
     let mut bytes = vec![0xe9, 0x00, 0x00, 0x00, 0x40];
     bytes.extend_from_slice(&[0xc3; 8]);
 
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    let result = strider
-        .analyze(
-            BASE,
-            &cc,
-            &strider_orchestrator::AnalyzeOptions::default(),
-            None,
-        )
-        .expect("an unmapped direct target must not fail the whole function");
+    let result = common::analyze_bytes(common::Arch::X64, bytes, BASE, None, BASE);
 
     assert_eq!(
         result

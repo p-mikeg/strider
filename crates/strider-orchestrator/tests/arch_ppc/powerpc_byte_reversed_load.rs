@@ -31,11 +31,7 @@ fn returned_r3(arch: Arch, body: &[u32]) -> Option<u128> {
     bytes.resize(usize::try_from(DATA - BASE).unwrap(), 0);
     bytes.extend([0x11, 0x22, 0x33, 0x44]);
     let rom = strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone());
-    let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, Some(Box::new(rom)));
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
+    let f = common::analyze_bytes(arch, bytes, BASE, Some(Box::new(rom)), BASE).function;
     let ret = f
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))

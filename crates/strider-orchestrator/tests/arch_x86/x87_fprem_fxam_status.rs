@@ -113,10 +113,7 @@ fn fcom_keeps_the_status_words_other_bits() {
 }
 
 fn analyze(bytes: Vec<u8>) -> strider_orchestrator::AnalyzeResult {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
+    common::analyze_bytes(common::Arch::X64, bytes, BASE, None, BASE)
 }
 
 /// Whether `name`'s `CallOther` is in the cone of `v`.

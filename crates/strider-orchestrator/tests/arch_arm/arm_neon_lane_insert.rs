@@ -20,11 +20,7 @@ fn d1_after(arch: Arch, insn: u32) -> (Option<u128>, Option<u128>) {
     words.push(insn);
     words.extend(EPILOGUE);
     let bytes = words_image(&words, arch.sleigh().endianness());
-    let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let f = strider
-        .analyze(BASE, &cc, &Default::default(), None)
-        .expect("analyze")
-        .function;
+    let f = common::analyze_bytes(arch, bytes, BASE, None, BASE).function;
     let ret = f
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
