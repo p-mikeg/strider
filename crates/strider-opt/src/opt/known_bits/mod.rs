@@ -86,6 +86,19 @@ fn shift_known_bits(
     })
 }
 
+/// The largest `Popcount` / `Lzcount` (`kind`) of an `input_ty` value with
+/// `input` facts, counting over its `8 * byte_size` bits as Sleigh does.
+pub(crate) fn count_max(kind: NodeKind, input: KnownBitsFacts, input_ty: ValueType) -> u128 {
+    let width = input_ty.byte_size() as u128 * 8;
+    match kind {
+        NodeKind::Lzcount if input.ones != 0 => {
+            width - u128::from(u128::BITS - input.ones.leading_zeros())
+        }
+        NodeKind::Popcount => width - u128::from(input.zeros.count_ones()),
+        _ => width,
+    }
+}
+
 /// Operand facts from interned constants alone.
 pub(crate) fn const_only(
     function: &strider_ir::Function,
@@ -180,11 +193,8 @@ pub(crate) fn node_known_bits(
                         }
                     }
                 }
-                // Popcount / Lzcount: the result is at most the input's
-                // `8 * byte_size`, the width Sleigh counts over.
                 _ => {
-                    let max_val = (input_ty.byte_size() * 8) as u64;
-                    let bits_needed = u64::BITS - max_val.leading_zeros();
+                    let bits_needed = u128::BITS - count_max(kind, kb, input_ty).leading_zeros();
                     KnownBitsFacts {
                         ones: 0,
                         zeros: type_mask & !mask_below(bits_needed),

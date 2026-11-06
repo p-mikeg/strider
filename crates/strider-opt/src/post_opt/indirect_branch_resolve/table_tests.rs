@@ -453,6 +453,50 @@ fn classify_table_dispatch_masked_full_byte_i32_resolves() {
     assert_eq!(arms(result), Some(entries));
 }
 
+/// `count(raw)` (or `count(raw | 1)` when `low_bit`) of an `I32` load,
+/// zero-extended to `I64` and indexing a 4-byte table at `0x4000` whose 64
+/// slots all hold distinct targets; the arms seated.
+fn count_indexed_arms(kind: NodeKind, low_bit: bool) -> Option<Vec<u64>> {
+    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
+    let (g, _target) = build_with_target(|fb| {
+        let mut raw = build_non_const_idx(fb);
+        if low_bit {
+            raw = fb
+                .build_const_binop(1u64, raw, IntBinaryOp::Or, i32t)
+                .unwrap();
+        }
+        let count = match kind {
+            NodeKind::Lzcount => fb.build_lzcount(raw, i32t),
+            NodeKind::Popcount => fb.build_popcount(raw, i32t),
+            other => panic!("not a count: {other:?}"),
+        }
+        .unwrap();
+        let idx = fb
+            .extend_if_needed(count, i64t, ExtendOp::ZeroExtend)
+            .unwrap();
+        let mul = fb
+            .build_const_binop(4u64, idx, IntBinaryOp::Mul, i64t)
+            .unwrap();
+        let addr = fb
+            .build_const_binop(0x4000u64, mul, IntBinaryOp::Add, i64t)
+            .unwrap();
+        let cell = fb.build_load(addr, VnSpace::RAM, i32t).unwrap();
+        fb.extend_if_needed(cell, i64t, ExtendOp::ZeroExtend)
+            .unwrap()
+    });
+    let rom = MockRom::strided(0x4000, 4, (0..64).map(|i| 0x5000 + 4 * i).collect(), 4);
+    arms(classify(&g, Some(&rom)))
+}
+
+#[test]
+fn a_bit_count_index_reads_only_the_counts_its_input_width_allows() {
+    let slots = |n: u64| Some((0..n).map(|i| 0x5000 + 4 * i).collect::<Vec<_>>());
+    assert_eq!(count_indexed_arms(NodeKind::Lzcount, false), slots(33));
+    assert_eq!(count_indexed_arms(NodeKind::Popcount, false), slots(33));
+    // A known-one low bit leaves at most 31 leading zeros.
+    assert_eq!(count_indexed_arms(NodeKind::Lzcount, true), slots(32));
+}
+
 #[test]
 fn decompose_index_picks_shallowest_narrowed_index() {
     // Two bounded dominators of one dispatch: a deep `reg & 0x3F` and the
