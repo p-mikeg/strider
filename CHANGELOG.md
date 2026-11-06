@@ -37,6 +37,19 @@ These change an answer without an error:
   as ROM.
 - A carry after `cmn` / `adds` / x86 `add` becomes one unsigned `Less`, so
   HI / LS / `ja` / `jbe` sites match an unsigned-compare pattern.
+- A `call()` / `call_other()` wrapped in `one_of`, `first_of` or `into_pat`
+  matches once per call, like the bare pattern, not once per output.
+- `.res()` on a call in a control or memory slot has no effect; it made the
+  pattern match nothing.
+- A call's collected stack arguments end at a slot holding a callee-saved
+  register's entry value, so `call().arg(k)` past the register arguments no
+  longer binds the prologue's saved frame pointer, link register or
+  callee-saved registers.
+- ARM hard-float (AAPCS-VFP) functions return in d0-d7 (q0-q3, a vector
+  aggregate): calls and returns carry d4-d7.
+- An optimizer run that reaches its iteration cap returns the valid, partly
+  folded function and sets `Function.optimizer_converged` to `False`, where
+  it raised.
 
 These raise:
 
@@ -104,6 +117,7 @@ These raise:
   they matched nothing.
 - A constant `int_sub` / `float_sub` costs 5 pattern nodes against the
   256-node cap, not 3.
+- `field(base, True)` raises `TypeError` where it read offset 1.
 
 Output that reads differently:
 
@@ -112,6 +126,9 @@ Output that reads differently:
 - `to_dot(pretty=True)` names a `Load` / `Store` space by its sla name.
 - `Node.sint()` and the signed `Match` readers answer past 128 bits where they
   answered `None`; `int_const` takes an `int` of up to 512 bits.
+- A failed read at a decode address is reported as `classified unmapped`,
+  not as missing bytes; a preset convention that does not fit the arch names
+  both; a builder wired into its own operand is named as a cycle.
 
 ### Breaking, Rust
 
@@ -127,6 +144,9 @@ replaced the rest.
   `OpdTable::toc_at` reads an ELFv1 descriptor's TOC pointer.
 - `BuiltCallingConvention::validate` no longer requires a callee-saved
   link register; `validate_default` does, for a function's own convention.
+- `OptimizerPipeline::run` returns `Ok` at its iteration cap; read
+  `Function::optimizer_converged`. A typed `when_match` on a call root inside
+  an alternation is refused, as `.build()` refuses it.
 
 ### Added, Python
 
@@ -160,6 +180,8 @@ replaced the rest.
 - `Function.to_text()` prints `assumptions` and
   `frame_address_in_call_register` lines, and a REGISTER-space byte order
   that differs from the data order.
+- `Function.optimizer_converged`.
+- `Lifter.pcode_at` takes a Thumb or MIPS16 address with its mode bit set.
 
 ### Changed, Python
 
@@ -269,6 +291,10 @@ Analysis:
   as a narrowing, which could withdraw the site.
 - N constant `if (flag)` guards over one local (gcc -O0) settle in a bounded
   number of optimizer iterations, not N.
+- Phi placement at lift is near-linear: deep loop nests no longer cost
+  quadratic time and memory.
+- A constant fold of an unused root leaves a shared constant's
+  `asm_fingerprint` alone.
 
 Lifting and decoding (most in the vendored Sleigh):
 
@@ -341,6 +367,8 @@ Loading:
   `no_return_targets` and `per_address_ccs` keyed by symbol also cover the
   local entry.
 - `load_elf` / `add_elf` parse an image once.
+- A relocation table ending past the top of the address space no longer
+  panics `load_elf`.
 
 
 ## 0.2.0
