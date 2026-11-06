@@ -92,7 +92,8 @@ In default pipeline order:
 window to the call as ordinary arguments, up to the first slot no whole store
 reaches. A store of the entry value of a register the function's own
 convention preserves (a prologue save), or a call between store and call, also
-ends the arguments; other stores just above them can come along.
+ends the arguments; other stores just above them can come along. A slot every
+arm of a non-loop join stores whole is collected as the phi of those values.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
 stack pointer read, after the register arguments: one ordinal per run of slots

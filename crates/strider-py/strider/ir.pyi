@@ -101,8 +101,8 @@ class Function:
         ...
     @property
     def optimizer_converged(self) -> bool:
-        """False when the last optimizer run stopped at its iteration cap; the
-        IR is valid but not fully folded."""
+        """False when the last optimizer run stopped at its iteration cap (the
+        IR is valid but not fully folded) or raised."""
         ...
     def entry_node(self) -> int:
         """The id of the `Entry` node."""

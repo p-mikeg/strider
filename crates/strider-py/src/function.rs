@@ -91,8 +91,8 @@ impl PyFunction {
         })
     }
 
-    /// False when the last optimizer run stopped at its iteration cap; the IR
-    /// is valid but not fully folded.
+    /// False when the last optimizer run stopped at its iteration cap (the IR
+    /// is valid but not fully folded) or raised.
     #[getter]
     fn optimizer_converged(&self) -> PyResult<bool> {
         Ok(self.read()?.optimizer_converged())
