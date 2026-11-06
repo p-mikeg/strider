@@ -1023,23 +1023,22 @@ given.
 
 ## Errors
 
-Analysis failures are `strider.StriderError`, as is an address, node id or
-operand index outside its unsigned range. A wrongly typed argument raises the
-usual builtin (`TypeError`, a `bool` address or index and a `str` `entry`
-outside `ElfLifter.analyze` included, or `OverflowError` for another
-out-of-range int, such as a fixed-width constant or a stack offset; an integer
-constant wider than 512 bits is a `StriderError`). `load_elf`, `add_elf` and
-`add_symbol_file` raise `FileNotFoundError` for a missing path and `ValueError`
-for a non-ELF file; `load_elf` and `add_elf` also raise `ValueError` for an
-unsupported arch or ABI (microMIPS included). A malformed ELF is a
-`StriderError`. Range-checked constructor arguments raise
-`ValueError`: `CfgOptions(function_max_size=0)`, a size with
-`allow_code_before_start_addr=True`, a `known_targets` string other than
-`"return"`, a string `call_other_abis` value, an empty `data_ranges` or
-`fragment_ranges` range, a `BufferReader` region past the address space. Every
-other bad value is a `StriderError`: an unknown `style=`, a reserved capture
-name, an unknown node id, an unbound capture read without `_opt`, and a `Match`
-read after `compact`, `optimize`, `rewrite` or `rewrite_all`.
+- `TypeError`: a wrongly typed argument, a `bool` address or index, a `str`
+  `entry` outside `ElfLifter.analyze`.
+- `OverflowError`: an out-of-range fixed-width int (a constant, a stack
+  offset); an address, node id or operand index out of its unsigned range is a
+  `StriderError` instead, as is an integer constant over 512 bits.
+- `FileNotFoundError` / `ValueError`: a missing path / a non-ELF file
+  (`load_elf`, `add_elf`, `add_symbol_file`). `ValueError` also for an
+  unsupported arch or ABI (microMIPS included) and for range-checked
+  constructor arguments: `CfgOptions(function_max_size=0)`, a size with
+  `allow_code_before_start_addr=True`, a `known_targets` string other than
+  `"return"`, a string `call_other_abis` value, an empty `data_ranges` /
+  `fragment_ranges` range, a `BufferReader` region past the address space.
+- `StriderError`: analysis failures, a malformed ELF, and every other bad
+  value (an unknown `style=`, a reserved capture name, an unknown node id, an
+  unbound capture read without `_opt`, a `Match` read after `compact`,
+  `optimize`, `rewrite` or `rewrite_all`).
 
 The message is the error and its causes; `.backtrace` adds the Rust
 backtrace:
