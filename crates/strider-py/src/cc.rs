@@ -237,7 +237,7 @@ impl PyCallingConvention {
 
     /// The preset name (e.g. `"x86_64_systemv"`) or `"custom"`, suffixed
     /// `.preserves_all` / `.preserves_regs` for those variants.
-    fn name(&self) -> String {
+    pub(crate) fn name(&self) -> String {
         match self.variant() {
             Some(v) => format!("{}.{v}", self.preset_name),
             None => self.preset_name.to_string(),

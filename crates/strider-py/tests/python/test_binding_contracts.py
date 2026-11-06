@@ -462,6 +462,15 @@ def test_a_per_address_cc_refusal_keeps_the_backtrace_out_of_its_message():
         pytest.fail("expected a StriderError")
 
 
+
+def test_a_preset_cc_of_another_arch_is_named_with_the_arch():
+    with pytest.raises(strider.StriderError) as raised:
+        _x86_64(_STRAIGHT).analyze(_BASE, CallingConvention.arm_aapcs())
+    assert str(raised.value) == (
+        "calling convention arm_aapcs does not fit the x86_64 register table: "
+        'unknown sleigh register name "r0"'
+    )
+
 # --- the custom-convention arch check ---------------------------------------
 
 
