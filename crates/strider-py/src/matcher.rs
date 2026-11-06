@@ -181,7 +181,8 @@ impl PyMatch {
     }
 
     /// `Node.asm_fingerprint` of the node bound to `key`: a superset of the
-    /// instructions behind it. `[]` when unbound, and possibly for a
+    /// instructions behind it, holding every address that used a shared
+    /// constant folded into it. `[]` when unbound, and possibly for a
     /// structural kind.
     fn asm_fingerprint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Vec<u64>> {
         match self.node_opt(py, key)? {
