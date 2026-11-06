@@ -30,14 +30,9 @@ fn raw_builder(
         arg_passing_regs: arg_passing.to_vec(),
         callee_saved_regs: callee_saved.to_vec(),
         ret_val_regs: ret_val.to_vec(),
-        ret_val_regs_float: Vec::new(),
         stack_ptr: stack_vn
             .unwrap_or_else(|| strider_target::BuiltCallingConvention::default().stack_ptr),
-        stack_args: None,
         ret_stack_pop,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     };
     // Mirror the lifter and track the stack vn: `build_call` reads SP from the
@@ -2431,16 +2426,8 @@ mod build_call_with_cc {
 
         callee_saved.extend(x86_64_arg_regs(&regs));
         let override_cc = BuiltCallingConvention {
-            arg_passing_regs: vec![],
             callee_saved_regs: callee_saved,
-            ret_val_regs: vec![],
-            ret_val_regs_float: vec![],
             stack_ptr: rsp,
-            stack_args: None,
-            ret_stack_pop: 0,
-            link_register: None,
-            preserves_memory: false,
-            preserves_all_registers: false,
             ..Default::default()
         };
 
@@ -2740,15 +2727,8 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
     };
     let cc = strider_target::BuiltCallingConvention {
         arg_passing_regs: vec![rdi, rsi],
-        callee_saved_regs: vec![],
         ret_val_regs: vec![rdi],
-        ret_val_regs_float: vec![],
         stack_ptr: sp,
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     };
     let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little)?;
@@ -2782,15 +2762,7 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     let sp = reg_vn(0x20, 8);
     let cc = strider_target::BuiltCallingConvention {
         arg_passing_regs: vec![edi], // passed in the narrow alias
-        callee_saved_regs: vec![],
-        ret_val_regs: vec![],
-        ret_val_regs_float: vec![],
         stack_ptr: sp,
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
         ..Default::default()
     };
     // `FunctionBuilder::new` seeds edi then drops it as enclosed by rdi, so
