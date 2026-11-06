@@ -13,7 +13,7 @@
       --accent:  #5b9cf6; --ok: #4ec994; --danger: #f47067;
       --col-entry:#3a7ee8; --col-ctrl:#7c3aed; --col-phi:#0e7490;
       --col-const:#15803d; --col-arith:#b45309; --col-mem:#be123c;
-      --col-cmp:#0f766e;  --col-bool:#6d28d9; --col-cast:#475569;
+      --col-cmp:#0f766e;  --col-cast:#475569;
       --col-call:#9a3412; --col-ret:#1e3a5f;
       --hl-sel-node:#fbbf24; --hl-sel-edge:#38bdf8;
       --hl-neighbor:#86efac; --hl-search:#facc15;
@@ -140,7 +140,7 @@
     .nk-arith ellipse,.nk-arith polygon,.nk-arith rect,.nk-arith path{stroke:var(--col-arith)!important;stroke-width:2px!important}
     .nk-mem   ellipse,.nk-mem   polygon,.nk-mem   rect,.nk-mem   path{stroke:var(--col-mem)  !important;stroke-width:2px!important}
     .nk-cmp   ellipse,.nk-cmp   polygon,.nk-cmp   rect,.nk-cmp   path{stroke:var(--col-cmp)  !important;stroke-width:2px!important}
-    .nk-bool  ellipse,.nk-bool  polygon,.nk-bool  rect,.nk-bool  path{stroke:var(--col-bool) !important;stroke-width:2px!important}
+    .nk-cast  ellipse,.nk-cast  polygon,.nk-cast  rect,.nk-cast  path{stroke:var(--col-cast) !important;stroke-width:2px!important}
     .nk-call  ellipse,.nk-call  polygon,.nk-call  rect,.nk-call  path{stroke:var(--col-call) !important;stroke-width:2px!important}
     .nk-ret   ellipse,.nk-ret   polygon,.nk-ret   rect,.nk-ret   path{stroke:var(--col-ret)  !important;stroke-width:2px!important}
 
@@ -287,9 +287,7 @@ function withDefaults(dot){
 const ORIG=JSON.parse(document.getElementById("dot-src").textContent);
 let curDot=withDefaults(ORIG);
 document.getElementById("dotSrc").value=ORIG;
-// Pre-selected layout engine (chosen server-side based on node count: graphs
-// above the size threshold default to "sfdp" so the initial render doesn't
-// stall on `dot`'s O(n^2) layout phase).  Placeholder replaced by Rust.
+// Initial engine, picked by node count in Rust (`DEFAULT_SFDP_NODE_THRESHOLD`).
 (function pickDefaultEngine(){
   const e="__DEFAULT_ENGINE__";
   const sel=document.getElementById("engSel");
@@ -297,17 +295,18 @@ document.getElementById("dotSrc").value=ORIG;
 })();
 
 // ── node-kind rules ───────────────────────────────────────────────────────────
+// First match wins; matched against both the raw and the pretty labels.
 const KINDS=[
-  [/\bEntry\b/i,               "nk-entry","Entry",       "#3a7ee8"],
-  [/\bControlState\b/i,        "nk-ctrl", "ControlState","#7c3aed"],
-  [/\b(VarPhi|MemPhi|ValuePhi)\b/i,"nk-phi","Phi","#0e7490"],
-  [/\bconst\b/i,               "nk-const","Const",       "#15803d"],
-  [/\b(Add|Sub|Mul|Div|Rem|Xor|And|Or|Shift|Negate|Not|Popcount|Extend|Truncate|Cast)\b/i,"nk-arith","Arith","#b45309"],
-  [/\b(Load|Store|InitialMemory)\b/i,"nk-mem","Memory","#be123c"],
-  [/\b(Cmp|Equal|Less|Sless|Sborrow|Carry)\b/i,"nk-cmp","Compare","#0f766e"],
-  [/\bBool/i,                  "nk-bool", "Boolean",     "#6d28d9"],
-  [/\b(Call|PostCall|post-call)\b/i,"nk-call","Call",    "#9a3412"],
+  [/\b(Entry|InitialVar|init)\b/i,"nk-entry","Entry",   "#3a7ee8"],
+  [/\b(Region|If|Switch|IndirectBranch|Unreachable)\b/i,"nk-ctrl","Control","#7c3aed"],
+  [/\b(Call|CallOther)\b/i,    "nk-call", "Call",        "#9a3412"],
   [/\bReturn\b/i,              "nk-ret",  "Return",      "#1e3a5f"],
+  [/\b(Phi|MemPhi)\b|φ/i,      "nk-phi",  "Phi",         "#0e7490"],
+  [/\b(IntConst|FloatConst|const)\b/i,"nk-const","Const","#15803d"],
+  [/\b(Load|Store|InitialMemory)\b/i,"nk-mem","Memory","#be123c"],
+  [/\b(IntCmpOp|FloatCmpOp|Equal|Less|Sless|Carry|Scarry|Sborrow)\b/i,"nk-cmp","Compare","#0f766e"],
+  [/\b(Truncate|Extend|ZeroExtend|SignExtend|IntToFloat|FloatToInt|FloatToFloat|IntBitsToFloat|FloatBitsToInt|bitcast)\b/i,"nk-cast","Cast","#475569"],
+  [/\b(IntBinaryOp|IntUnaryOp|FloatBinaryOp|FloatUnaryOp|Add|Mul|Div|Sdiv|Rem|Srem|Xor|And|Or|ShiftLeft|ShiftRight|SShiftRight|Neg|Abs|Sqrt|Ceil|Floor|Round|Popcount|Lzcount)\b/i,"nk-arith","Arith","#b45309"],
 ];
 function classify(txt){for(const[re,cls]of KINDS)if(re.test(txt))return cls;return null;}
 (function buildLegend(){
@@ -326,9 +325,8 @@ let viz=null,pz=null;
 // nIdx: nodeId -> <g.node>. eIdx: edgeKey "a->b" -> one representative <g.edge>
 // (multi-edges share a key so eIdx stores only the first).
 // eEp: <g.edge> -> {tail, head, key}. nE: nodeId -> {out, in, nb} adjacency.
-// allNodes / allEdges: complete sets of every <g.node>/<g.edge> in the SVG,
-// needed for correct dim/highlight iteration even when multi-edges collapse
-// keys in eIdx. nLabel: cached text label per nodeId (avoid re-walking <text>).
+// allNodes / allEdges: every <g.node>/<g.edge>, multi-edges included.
+// nLabel: cached text label per nodeId.
 const nIdx=new Map(),eIdx=new Map(),eEp=new Map(),nE=new Map();
 const allNodes=new Set(),allEdges=new Set();
 const nLabel=new Map();
@@ -490,24 +488,17 @@ function selE(key,g,ep,center=false){
 }
 
 // ── URL fragment deep links ──
-// Selection mirrored in `window.location.hash` so `graph.html#n=42` opens
-// straight to node 42 and `Copy URL` from the address bar produces a
-// shareable link.  `applyingHash` guards the obvious re-entrancy: programmatic
-// hash writes by `syncHash` would otherwise trigger our own `hashchange`
-// listener and re-apply the very selection we just made.
+// Selection mirrored in location.hash (`#n=42`); `applyingHash` stops our own
+// hash writes from re-applying it.
 let applyingHash=false;
 function encodeHashId(id){return encodeURIComponent(id);}
 function decodeHashId(s){try{return decodeURIComponent(s);}catch{return s;}}
-// Write the current selection into window.location.hash.  Uses
-// history.replaceState so we don't pollute the browser back-stack with one
-// entry per click; our own `pushH` is the canonical history.
+// replaceState, so the back stack is `pushH`'s alone.
 function syncHash(){
   if(applyingHash)return;
   let h="";
   if(sel.type==="node"&&sel.name)h="#n="+encodeHashId(sel.name);
   else if(sel.type==="edge"&&sel.ekey)h="#e="+encodeHashId(sel.ekey);
-  // Only write when changed, avoiding redundant replaceState calls during
-  // history replay (applyHAt → selN → syncHash with the same hash).
   if((window.location.hash||"")===h)return;
   try{history.replaceState(null,"",h||window.location.pathname+window.location.search);}
   catch{window.location.hash=h;}
@@ -543,10 +534,8 @@ window.addEventListener("hashchange",()=>{
 // ── pan/zoom ──────────────────────────────────────────────────────────────────
 const PZ_MIN=.01,PZ_MAX=80;
 function getBB(el){try{return el.getBBox();}catch{return null;}}
-// Union of SCREEN-space client rects for `els`. Returns null if none valid.
-// Using getBoundingClientRect avoids the svg coord-system tangle (nodes are
-// inside Graphviz's `g#graph0` which carries its own translate, so getBBox
-// returns a bbox in a frame that doesn't match vp.getScreenCTM()).
+// Union of the screen-space client rects of `els`, or null if none is valid.
+// Screen rects, since getBBox is in `g#graph0`'s translated frame.
 function unionScreenRect(els){
   let l=Infinity,t=Infinity,r=-Infinity,b=-Infinity;
   for(const el of els){
@@ -559,17 +548,12 @@ function unionScreenRect(els){
   if(!isFinite(l))return null;
   return{left:l,top:t,right:r,bottom:b,width:r-l,height:b-t,cx:(l+r)/2,cy:(t+b)/2};
 }
-// Scale factor from outer-SVG user units (viewBox) to screen pixels.
-// pz.panBy expects its delta in outer-SVG user units, so we divide our
-// screen-pixel deltas by this to get the right values.
+// Screen pixels per outer-SVG user unit, the unit pz.panBy takes.
 function svgRootScale(svg){
   const m=svg.getScreenCTM();
   return{sx:(m&&m.a)||1,sy:(m&&m.d)||1};
 }
-// Pan the main view so SVG-space point (sx,sy) in *viewport-local* coords
-// lands at the container centre. Used by the minimap click handler, where
-// the click produces a viewBox coord that (with viewport transform reset in
-// the clone) coincides with the main view's viewport-local space.
+// Pan the main view so viewport-local point (sx,sy) lands at the container centre.
 function panToSvgPoint(svg,sx,sy){
   if(!pz||!svg)return;
   const vp=svg.querySelector(".svg-pan-zoom_viewport");if(!vp)return;
@@ -586,10 +570,7 @@ function panScreenTo(svg,cx,cy){
   const r=gw.getBoundingClientRect();
   pz.panBy({x:(r.left+r.width/2-cx)/sa,y:(r.top+r.height/2-cy)/sd});
 }
-// Fit a list of elements (by screen-space bbox) in the viewport.
-// `pad` multiplies the bbox on each axis (1.3 = 30% slack on each side).
-// Two-step: pan the bbox centre to the container centre, then zoom around
-// that centre (svg-pan-zoom's pz.zoom zooms about the viewport centre).
+// Fit `els` (by screen-space bbox) in the viewport; `pad` scales the bbox.
 function fitElements(els,pad=1.3){
   if(!pz||!els||!els.length)return;
   const svg=gw.querySelector("svg");if(!svg)return;
@@ -663,15 +644,8 @@ function getVisibleSvgRect(svg){
   if(!svg)return null;
   const vp=svg.querySelector(".svg-pan-zoom_viewport");
   if(!vp)return null;
-  // Map the container's SCREEN-space corners into the viewport group's local
-  // coordinate space, the same frame the minimap clone renders in
-  // (the clone keeps the graphviz g#graph0 transform but drops the
-  // svg-pan-zoom viewport transform, so its content lives in vp-local =
-  // original-viewBox coords, and the mini-vp rect is in those units).
-  // `getScreenCTM()` is vp-local→screen; its inverse is screen→vp-local.
-  // (`getCTM()` is vp-local to svg-user, *not* screen; fed screen-pixel
-  // corners it drifts and scales whenever svg-pan-zoom sizes the SVG to the
-  // container.)
+  // The container's screen corners in viewport-local coords, the minimap
+  // clone's frame. getScreenCTM, not getCTM: getCTM maps to svg-user units.
   const m=vp.getScreenCTM();
   if(!m||m.a===0)return null;
   const r=gw.getBoundingClientRect();
@@ -703,14 +677,8 @@ function buildMM(mainSvg,vbStr){
   mm.innerHTML="";miniVR=null;mainSvgRef=mainSvg;
   const vb=parseVB(vbStr);if(!vb)return;
 
-  // Clone the full SVG; reset the svg-pan-zoom viewport transform so the
-  // whole graph is visible at the minimap scale.
-  //
-  // The CSS scopes `pointer-events:none` and the highlight stripping to
-  // `#minimap svg *` and `#minimap svg .gv-sn/...` (see <style> above), so
-  // this function does constant-cost work only: clone, drop the viewport
-  // transform, and resize via the wrapping <svg>'s attributes. A clone-time
-  // per-element walk would be O(N+E) per render.
+  // Clone with the pan-zoom transform dropped; CSS under `#minimap svg`
+  // strips highlights and pointer events, so no per-element walk.
   const clone=mainSvg.cloneNode(true);
   const vpClone=clone.querySelector(".svg-pan-zoom_viewport");
   if(vpClone)vpClone.removeAttribute("transform");
@@ -853,9 +821,6 @@ function pickHit(ev){
   return edgeHit;
 }
 function installEvents(svg){
-  // Cursor styling moved to CSS (`#gw svg g.node,#gw svg g.edge{cursor:pointer}`)
-  // so we no longer walk every node/edge here.  Constant-cost regardless of
-  // node count.
   svg.addEventListener("click",ev=>{
     if(drag)return;
     const g=pickHit(ev);
