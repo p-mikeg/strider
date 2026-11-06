@@ -20,8 +20,8 @@ the section walk).
   `got_is_rom` also `.got`, PPC32 `.got2` and `.data.rel.ro` as ROM.
 - Under `elf::`: `RegionSource`, `ElfSectionLayout` (an ET_REL's section
   placement and each undefined symbol's `extern_address`), `OpdTable` (ppc64
-  ELFv1 descriptors) and `mapping_symbol_data_ranges` / `mapping_symbol_kind` (ARM / AArch64
-  `$a`, `$d`, `$t`, `$x`).
+  ELFv1 descriptors) and `mapping_symbol_data_ranges` /
+  `mapping_symbol_kind` (ARM / AArch64 `$a`, `$d`, `$t`, `$x`).
 
 ## Loading is lazy
 
@@ -43,9 +43,9 @@ ET_EXEC / ET_DYN load from PT_LOAD headers, everything else from sections.
 Relocating an ET_REL stands in for the link: an undefined or `SHN_COMMON`
 symbol gets an address in an unmapped range past the image, and a GOT
 reference loads from a synthetic slot. The synthetic link binds every symbol
-locally, so those slots are ROM whatever `got_is_rom` says. An undefined weak symbol's address is
-computed only where it cannot be observed (a branch displacement, a GOT slot
-left unmapped), so `if (&w)` folds neither way. Encodings are applied for x86,
+locally, so those slots are ROM whatever `got_is_rom` says. An undefined weak
+symbol's address is computed only where it cannot be observed (a branch
+displacement, a GOT slot left unmapped), so `if (&w)` folds neither way. Encodings are applied for x86,
 ARM, AArch64, MIPS and PowerPC. A relocation that cannot be computed (TLS,
 MIPS GP-relative, a branch needing a veneer) makes its field a hole, so a read
 across it fails naming the type; in writable non-executable bytes the
