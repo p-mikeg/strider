@@ -29,9 +29,9 @@ impl<'py> FromPyObject<'py> for KnownTarget {
                 ))),
             };
         }
-        let targets: Vec<Addr> = ob.extract()?;
+        let targets: crate::bigint::IntSeq<Addr> = ob.extract()?;
         Ok(KnownTarget::Targets(
-            targets.into_iter().map(|a| a.0).collect(),
+            targets.0.into_iter().map(|a| a.0).collect(),
         ))
     }
 }

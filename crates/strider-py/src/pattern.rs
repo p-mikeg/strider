@@ -1130,7 +1130,7 @@ pub enum IntConstArg {
     #[pyo3(annotation = "int")]
     One(crate::bigint::PyBigInt),
     #[pyo3(annotation = "list[int]")]
-    Set(Vec<crate::bigint::PyBigInt>),
+    Set(crate::bigint::IntSeq<crate::bigint::PyBigInt>),
     #[pyo3(annotation = "Capture")]
     Cap(Py<PyCapture>),
 }
@@ -1148,10 +1148,10 @@ pub fn int_const(value: Option<CapOr<IntConstArg>>) -> PyResult<PyPat> {
         Some(CapOr::Cap(c) | CapOr::Else(IntConstArg::Cap(c))) => any(Some(c.get().inner)),
         Some(CapOr::Else(IntConstArg::One(v))) => PyPat::from(int_const_repr(v.value()?)),
         Some(CapOr::Else(IntConstArg::Set(vs))) => {
-            let vs = vs
-                .into_iter()
-                .map(crate::bigint::PyBigInt::value)
-                .collect::<PyResult<Vec<_>>>()?;
+            let vs =
+                vs.0.into_iter()
+                    .map(crate::bigint::PyBigInt::value)
+                    .collect::<PyResult<Vec<_>>>()?;
             let make = move || ex(sp::int_const(vs.clone()));
             PyPat::from(leaf("int_const([..])", Kind::Build, Box::new(make)))
         }
@@ -1164,7 +1164,7 @@ pub enum IntConstAnyWidthArg {
     #[pyo3(annotation = "int")]
     One(crate::bigint::PyBigInt),
     #[pyo3(annotation = "list[int]")]
-    Set(Vec<crate::bigint::PyBigInt>),
+    Set(crate::bigint::IntSeq<crate::bigint::PyBigInt>),
 }
 
 /// Match an `IntConst` holding `value` exactly, zero-extended or
@@ -1179,10 +1179,10 @@ pub fn int_const_any_width(value: IntConstAnyWidthArg) -> PyResult<PyPat> {
             leaf("int_const_any_width()", Kind::Build, Box::new(make))
         }
         IntConstAnyWidthArg::Set(vs) => {
-            let vs: Vec<i64> = vs
-                .into_iter()
-                .map(crate::bigint::PyBigInt::to)
-                .collect::<PyResult<_>>()?;
+            let vs: Vec<i64> =
+                vs.0.into_iter()
+                    .map(crate::bigint::PyBigInt::to)
+                    .collect::<PyResult<_>>()?;
             let make = move || ex(sp::int_const_any_width(vs.clone()));
             leaf("int_const_any_width([..])", Kind::Build, Box::new(make))
         }
