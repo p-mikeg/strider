@@ -47,35 +47,39 @@ strider.explore.shutdown(port)
 
 ## What's new since 0.1.0
 
-Releases 0.2.0 and 0.3.0. [CHANGELOG.md](CHANGELOG.md) has the details,
-breaking changes first.
+[CHANGELOG.md](CHANGELOG.md) has the details, breaking changes first.
 
-- **Inputs.** ppc64 ELFv1 (`.opd` descriptors, `r2` set to the TOC on entry),
-  symbols for a stripped image (`add_symbol_file`, `add_symbols`), GCC
-  `.cold` fragments, ARM / AArch64 `$d` literal pools left undecoded, `.o`
-  files linked at a synthetic base, and `load_elf(relocated_got_is_rom=True)`
-  to fold loads through the GOT and `.data.rel.ro` (PIC jump tables need it).
-- **Completeness.** `cfg.incomplete`: every address the analysis cannot vouch
-  for, and why.
-- **Mixed ISAs.** ARM/Thumb and MIPS16 code decodes in the mode its edge
-  carries.
-- **Your own answers.** Branch targets, no-return callees, data ranges and
-  user-op ABIs (`CfgOptions`); `cc.preserves_all()` / `preserves_regs()` for
-  a `per_address_ccs` callee (a callee-cleanup `ret $imm16`, a PC thunk);
-  target presets (`SleighArch.preset`, `CallingConvention.preset`).
-- **Kernels.** PowerPC `*_linux_kernel` conventions, which `load_elf` picks
-  from the entry address.
-- **Assumptions.** `AssumptionOptions`: nine claims the analysis cannot check,
-  five on by default; `none()` is the sound floor.
-- **Queries.** `one_of` / `first_of` in any slot, `field`, `code_ptr`, joins
-  and `JoinPredicate`, heap / non-stack filters, float and stack arguments,
-  constants of any width.
-- **Tooling.** `Function.optimize`, `Function.to_text`, a background explorer,
-  and handles usable from any thread.
+**0.3.0**
 
-New in 0.3.0: `Function.optimize`, the `preset` constructors, constants past
-128 bits, handles usable from any thread, `.cold` fragments and the ELFv1 TOC
-on entry; see the [0.3.0 section](CHANGELOG.md#030-unreleased).
+- `cfg.incomplete`: every address the analysis cannot vouch for, with its
+  reason. `analyze` and `build_cfg` report it rather than raise.
+- `Function.optimize`; `Function.assumptions`, the claims in force, which
+  accumulate on the function; `Function.optimizer_converged`.
+- Target presets: `SleighArch.preset`, `CallingConvention.preset`,
+  `CC_PRESETS`.
+- Constants of any width up to 512 bits.
+- Handles usable from any thread.
+- GCC `.cold` fragments; a ppc64 ELFv1 function enters with `r2` holding its
+  TOC.
+
+**0.2.0**
+
+- Inputs: ppc64 ELFv1 `.opd` descriptors, symbols for a stripped image
+  (`add_symbol_file`, `add_symbols`), ARM / AArch64 `$d` literal pools left
+  undecoded, `.o` files at a synthetic base, and
+  `load_elf(relocated_got_is_rom=True)` to fold loads through the GOT and
+  `.data.rel.ro` (PIC jump tables need it).
+- ARM/Thumb and MIPS16 code decodes in the mode its edge carries.
+- Your own answers: `CfgOptions` branch targets, no-return callees, data
+  ranges and user-op ABIs; `cc.preserves_all()` / `preserves_regs()` for a
+  `per_address_ccs` callee (a callee-cleanup `ret $imm16`, a PC thunk).
+- PowerPC `*_linux_kernel` conventions, which `load_elf` picks from the entry
+  address.
+- `AssumptionOptions`: the claims the analysis cannot check; `none()` is the
+  sound floor.
+- Queries: `one_of` / `first_of` in any slot, `field`, `code_ptr`, joins and
+  `JoinPredicate`, heap / non-stack filters, float and stack arguments.
+- `Function.to_text` and a background explorer.
 
 ## Upgrading
 
@@ -86,7 +90,9 @@ changes do too:
 
 - `ConstantFold` turns `x + x*2` into `x*3`, and a `Call`'s outputs are
   numbered per clobbered register.
-- Five `AssumptionOptions` claims default on.
+- `return_slots_survive_untracked_writes` joins the two claims 0.1.0 already
+  made by default; 0.3.0 adds `msr_register_keeps_mode` and
+  `fp_rounding_mode_is_nearest`, for five.
 - `hit[c] is None` is always false: test `c in hit`.
 
 ## Documentation
