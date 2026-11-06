@@ -13,7 +13,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 cfg
   0x401020 0 ops goto -> [0x401024]
   0x401024 165 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9c00:8, u:0xd300:4, u:0x23e00:4, u:0x58c00:8, u:0x58d00:1, u:0x58e00:1]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9c00:8, u:0xd300:4, u:0x24600:4, u:0x59400:8, u:0x59500:1, u:0x59600:1]
 arg 1 [%v13]
 arg 2 [%v14]
 arg 3 [%v15]
@@ -116,7 +116,7 @@ cfg
   0x4010d4 59 ops goto -> [0x401100]
   0x401100 0 ops goto -> [0x401104]
   0x401104 3 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0xaa00:8, u:0xac00:8, u:0x50100:8, u:0x58c00:8, u:0x58d00:1, u:0x58e00:1, u:0x7eb00:8, u:0xafe00:8]
+tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0xaa00:8, u:0xac00:8, u:0x50900:8, u:0x59400:8, u:0x59500:1, u:0x59600:1, u:0x7f300:8, u:0xb0600:8]
 frame_address_in_call_register reach=8
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -184,7 +184,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 cfg
   0x4011c0 0 ops goto -> [0x4011c4]
   0x4011c4 26 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58c00:8, u:0x58d00:1, u:0x58e00:1]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x59400:8, u:0x59500:1, u:0x59600:1]
 arg 0 [%v8]
 arg 1 [%v11]
 arg 2 [%v12]
@@ -233,7 +233,7 @@ cfg
   0x4011e4.4 3 ops cbranch 0x4011e4.9 -> [0x4011e4.7, 0x4011e4.9]
   0x4011e4.7 2 ops goto -> [0x4011e4.4]
   0x4011e4.9 15 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58c00:4, u:0x58d00:1, u:0x58e00:1, u:0x6eb00:4, u:0x6ed00:1, u:0x6ee00:4, u:0x6ef00:1]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x59400:4, u:0x59500:1, u:0x59600:1, u:0x6f300:4, u:0x6f500:1, u:0x6f600:4, u:0x6f700:1]
 arg 0 [%v1]
 arg 2 [%v26]
 float_arg 0 [%v27]
@@ -250,7 +250,7 @@ float_arg 1 [%v28]
 %v10:i32 = iconst[0x1f]
 
 %v11:ctrl, %v12:token = region %v9, %v16
-%v13:i32<u:0x6eb00:4> = phi %v12, %v10, %v19
+%v13:i32<u:0x6f300:4> = phi %v12, %v10, %v19
 %v14:i32 = int.shift_right %v2, %v13
 %v15:i1 = icmp.equal %v14, %v3
 %v16:ctrl, %v17:ctrl = if %v11, %v15
@@ -258,7 +258,7 @@ float_arg 1 [%v28]
 %v19:i32 = int.add %v13, %v18
 
 %v20:ctrl, %v21:token = region %v8, %v17
-%v22:i32<u:0x6eb00:4> = phi %v21, %v10, %v13
+%v22:i32<u:0x6f300:4> = phi %v21, %v10, %v13
 %v23:mem = initial_memory
 %v24:i32 = int.xor %v22, %v10
 %v25:i64 = extend.zero %v24
@@ -276,7 +276,7 @@ cfg
   0x4011f6.2 3 ops cbranch 0x4011f6.9 -> [0x4011f6.5, 0x4011f6.9]
   0x4011f6.5 4 ops goto -> [0x4011f6.2]
   0x4011f6.9 7 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58c00:4, u:0x58d00:1, u:0x58e00:1, u:0x353900:4, u:0x353a00:4, u:0x353b00:4, u:0x353c00:1, u:0x353e00:4]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x59400:4, u:0x59500:1, u:0x59600:1, u:0x354100:4, u:0x354200:4, u:0x354300:4, u:0x354400:1, u:0x354600:4]
 arg 0 [%v1]
 arg 2 [%v19]
 float_arg 0 [%v20]
@@ -286,8 +286,8 @@ float_arg 1 [%v21]
 %v2:i32 = truncate %v1
 
 %v3:ctrl, %v4:token = region %v0, %v11
-%v5:i32<u:0x353a00:4> = phi %v4, %v2, %v15
-%v6:i32<u:0x353900:4> = phi %v4, %v9, %v16
+%v5:i32<u:0x354200:4> = phi %v4, %v2, %v15
+%v6:i32<u:0x354100:4> = phi %v4, %v9, %v16
 %v7:i32 = iconst[0x1]
 %v8:i32 = int.and %v5, %v7
 %v9:i32 = iconst[0x0]
@@ -310,7 +310,7 @@ return %v12, %v17, %v18, %v19, %v20, %v21, %v22, %v23
 cfg
   0x401200 0 ops goto -> [0x401204]
   0x401204 24 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58c00:8, u:0x58d00:1, u:0x58e00:1]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x59400:8, u:0x59500:1, u:0x59600:1]
 arg 0 [%v8]
 arg 1 [%v9]
 arg 2 [%v10]
@@ -357,7 +357,7 @@ cfg
   0x401224.4 3 ops cbranch 0x401224.9 -> [0x401224.7, 0x401224.9]
   0x401224.7 2 ops goto -> [0x401224.4]
   0x401224.9 14 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58c00:4, u:0x58d00:1, u:0x58e00:1, u:0x6f100:8, u:0x6f300:1, u:0x6f400:8, u:0x6f500:1]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x59400:4, u:0x59500:1, u:0x59600:1, u:0x6f900:8, u:0x6fb00:1, u:0x6fc00:8, u:0x6fd00:1]
 arg 0 [%v1]
 arg 2 [%v27]
 float_arg 0 [%v28]
@@ -373,7 +373,7 @@ float_arg 1 [%v29]
 %v9:i64 = iconst[0x3f]
 
 %v10:ctrl, %v11:token = region %v8, %v15
-%v12:i64<u:0x6f100:8> = phi %v11, %v9, %v18
+%v12:i64<u:0x6f900:8> = phi %v11, %v9, %v18
 %v13:i64 = int.shift_right %v1, %v12
 %v14:i1 = icmp.equal %v13, %v2
 %v15:ctrl, %v16:ctrl = if %v10, %v14
@@ -381,7 +381,7 @@ float_arg 1 [%v29]
 %v18:i64 = int.add %v12, %v17
 
 %v19:ctrl, %v20:token = region %v7, %v16
-%v21:i64<u:0x6f100:8> = phi %v20, %v9, %v12
+%v21:i64<u:0x6f900:8> = phi %v20, %v9, %v12
 %v22:mem = initial_memory
 %v23:i32 = truncate %v21
 %v24:i32 = iconst[0x3f]
@@ -400,7 +400,7 @@ cfg
   0x401234 14 ops cbranch 0x401240 -> [0x401239, 0x401240]
   0x401239 6 ops return -> []
   0x401240 4 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8e00:8, u:0x26200:1, u:0x26300:1, u:0x26500:1, u:0x58c00:4, u:0x58d00:1, u:0x58e00:1, u:0x82600:4, u:0x82800:4]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8e00:8, u:0x26a00:1, u:0x26b00:1, u:0x26d00:1, u:0x59400:4, u:0x59500:1, u:0x59600:1, u:0x82e00:4, u:0x83000:4]
 arg 0 [%v2]
 arg 2 [%v9]
 float_arg 0 [%v10]
@@ -429,7 +429,7 @@ return %v6, %v7, %v17, %v9, %v10, %v11, %v12, %v13
 cfg
   0x401250 0 ops goto -> [0x401254]
   0x401254 202 ops return -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58c00:8, u:0x58d00:1, u:0x58e00:1, u:0x59100:1, u:0x59300:1, u:0x59400:1, u:0x59500:1, u:0x59600:1, u:0x59900:1, u:0x59a00:1, u:0x59b00:1, u:0x59c00:1, u:0x59e00:8, u:0x59f00:1, u:0x5a000:1, u:0x5a200:1, u:0x5a300:1, u:0x5a400:1, u:0x5a500:1, u:0x5ab00:16, u:0x5f600:1, u:0x5f700:4, u:0x5f800:8, u:0x5f900:8, u:0x5fb00:1, u:0x5fc00:1, u:0x5fd00:1, u:0x5fe00:1, u:0x60100:1, u:0x60300:1, u:0x60400:1, u:0x60500:1, u:0x60600:1, u:0x9be00:16, u:0x9bf00:16, u:0x9c100:16, u:0x9c400:8, u:0xeb300:8, u:0xebb00:4, u:0xebc00:8]
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x59400:8, u:0x59500:1, u:0x59600:1, u:0x59900:1, u:0x59b00:1, u:0x59c00:1, u:0x59d00:1, u:0x59e00:1, u:0x5a100:1, u:0x5a200:1, u:0x5a300:1, u:0x5a400:1, u:0x5a600:8, u:0x5a700:1, u:0x5a800:1, u:0x5aa00:1, u:0x5ab00:1, u:0x5ac00:1, u:0x5ad00:1, u:0x5b300:16, u:0x5fe00:1, u:0x5ff00:4, u:0x60000:8, u:0x60100:8, u:0x60300:1, u:0x60400:1, u:0x60500:1, u:0x60600:1, u:0x60900:1, u:0x60b00:1, u:0x60c00:1, u:0x60d00:1, u:0x60e00:1, u:0x9c600:16, u:0x9c700:16, u:0x9c900:16, u:0x9cc00:8, u:0xebb00:8, u:0xec300:4, u:0xec400:8]
 arg 0 [%v2]
 float_arg 0 [%v24]
 float_arg 1 [%v25]

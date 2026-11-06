@@ -52,6 +52,11 @@ fn register_after(insn: &[u8], reg: Reg) -> Option<u128> {
         Reg::Rdi => [0x48, 0x89, 0xf8],
     });
     bytes.push(0xc3);
+    returned_constant(bytes)
+}
+
+/// The constant `bytes` returns in `rax`, if any.
+fn returned_constant(bytes: Vec<u8>) -> Option<u128> {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let f = strider
         .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
@@ -97,6 +102,17 @@ fn an_address_size_override_clears_the_upper_half_of_the_string_registers() {
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A 0x67 string operand and a 0x67 ModRM operand reach the same byte through
+/// the same zero-extended address, so the store forwards to the load.
+#[test]
+fn an_address_size_override_string_load_reads_a_modrm_store() {
+    // mov esi, edi; mov byte [esi], 5; lodsb; movzx eax, al; ret
+    let bytes = vec![
+        0x89, 0xfe, 0x67, 0xc6, 0x06, 0x05, 0x67, 0xac, 0x0f, 0xb6, 0xc0, 0xc3,
+    ];
+    assert_eq!(returned_constant(bytes), Some(5));
 }
 
 /// With a 0x67 prefix a `rep` counts in ECX, clearing the upper half of RCX.
