@@ -366,15 +366,13 @@ def test_standalone_strider_rejects_name_targets():
 
 
 def test_standalone_strider_requires_an_explicit_cc():
-    """The binding gives `cc` a default only so it can raise for it; the stub
-    types it required, so the call below is a type error as well as a runtime
-    one. Only `ElfLifter`, which derives a default from the ELF header, may
-    omit it."""
+    """Only `ElfLifter`, which derives a default from the ELF header, may
+    omit `cc`."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded._elf.reader()
     s = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    with pytest.raises(strider.StriderError, match="cc"):
+    with pytest.raises(TypeError, match="cc"):
         s.analyze(loaded.symbol("add").address)  # type: ignore[call-arg]
 
 

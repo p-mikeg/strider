@@ -149,14 +149,6 @@ def _class_members(tree: ast.Module) -> dict[str, set[str]]:
 #: Owner key for a function declared at module level rather than in a class.
 _MODULE = "<module>"
 
-#: `(module, class, method, parameter)` the stub deliberately declares as
-#: required while the binding gives it a default.
-#:
-#: `Lifter.analyze` takes `cc=None` only to raise "`cc` is required on a plain
-#: Lifter" for it; typing it optional would type-check a call that can never
-#: succeed. `ElfLifter.analyze`, which does derive a default, is not exempt.
-_OPTIONALITY_EXEMPT = {("strider.lift", "Lifter", "analyze", "cc")}
-
 #: One declared parameter: its name, how it may be passed, whether it is
 #: optional, and its default source when the stub spells one out (`...`, the
 #: conventional `.pyi` placeholder, says "optional" without naming the value).
@@ -360,8 +352,6 @@ def test_function_signatures_match_the_stub(mod_name):
                     f"runtime {got_kind.description}"
                 )
             elif opt != got_opt:
-                if (mod_name, owner_name, method, name) in _OPTIONALITY_EXEMPT:
-                    continue
                 state = "optional" if opt else "required"
                 wrong.append(f"{where}({name}=): stub {state}, runtime is not")
             elif want is not None and want != got:
