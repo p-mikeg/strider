@@ -28,7 +28,6 @@ impl PcodeInsnAddr {
         }
     }
 
-    /// The machine address, as a plain `u64`.
     #[must_use]
     pub fn machine(self) -> u64 {
         self.machine_addr.addr

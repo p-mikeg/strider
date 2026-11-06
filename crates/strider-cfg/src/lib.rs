@@ -106,8 +106,8 @@ impl Cfg {
     }
 
     /// The ISA-mode bit flowing into the indirect branch at `site`, which a
-    /// mode-less target seated there decodes in. `None` off a sealed indirect
-    /// branch, or with no ISA-mode var.
+    /// mode-less target seated there decodes in. `None` at any other address,
+    /// or with no ISA-mode var.
     pub fn flowing_isa_bit_at_site(&self, site: PcodeInsnAddr) -> Option<bool> {
         self.report.flowing_isa_bits.get(&site).copied()
     }
