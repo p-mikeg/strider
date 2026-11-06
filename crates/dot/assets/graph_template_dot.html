@@ -297,11 +297,11 @@ document.getElementById("dotSrc").value=ORIG;
 // ── node-kind rules ───────────────────────────────────────────────────────────
 // First match wins; matched against both the raw and the pretty labels.
 const KINDS=[
+  [/\b(Phi|MemPhi)\b|φ/i,      "nk-phi",  "Phi",         "#0e7490"],
   [/\b(Entry|InitialVar|init)\b/i,"nk-entry","Entry",   "#3a7ee8"],
   [/\b(Region|If|Switch|IndirectBranch|Unreachable)\b/i,"nk-ctrl","Control","#7c3aed"],
   [/\b(Call|CallOther)\b/i,    "nk-call", "Call",        "#9a3412"],
   [/\bReturn\b/i,              "nk-ret",  "Return",      "#1e3a5f"],
-  [/\b(Phi|MemPhi)\b|φ/i,      "nk-phi",  "Phi",         "#0e7490"],
   [/\b(IntConst|FloatConst|const)\b/i,"nk-const","Const","#15803d"],
   [/\b(Load|Store|InitialMemory)\b/i,"nk-mem","Memory","#be123c"],
   [/\b(IntCmpOp|FloatCmpOp|Equal|Less|Sless|Carry|Scarry|Sborrow)\b/i,"nk-cmp","Compare","#0f766e"],
