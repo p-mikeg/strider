@@ -1190,7 +1190,7 @@ fn memory_chain_orphaned_store_flagged() {
     stamp(&mut s.f, addr_n);
     let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::int(64));
     stamp(&mut s.f, data_n);
-    let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
+    let (st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
     let ret =
         s.f.graph_mut()
             .create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
@@ -1198,15 +1198,10 @@ fn memory_chain_orphaned_store_flagged() {
 
     s.f.graph_mut().corrupt_clear_first_use(st_mem);
 
-    assert_validation_err(&s.f, |e| {
-        matches!(
-            e,
-            ValidationError::OrphanedMemoryOutput {
-                kind: NodeKind::Store(_),
-                ..
-            }
-        )
-    });
+    assert_validation_err(
+        &s.f,
+        |e| matches!(e, ValidationError::OrphanedMemoryOutput { node } if *node == st),
+    );
 }
 
 /// A stamped `Store(mem_in, 0x2000, 0x42)` and a `Load` of the same address
