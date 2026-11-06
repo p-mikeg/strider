@@ -175,9 +175,9 @@ pub(crate) fn root_output_vertex_for(
         .find(|&out_vertex| pat.graph.value_kind_ref(out_vertex).slot as u32 == ir_slot)
 }
 
-/// Whether anchoring `pat`'s root at `out_id` re-runs the attempt made at `anchored`: only
-/// distinct per-slot vertices over one anchor value type do, since [`bind_sibling_outputs`]
-/// checks the rest at their slots.
+/// Whether anchoring `pat`'s root at `out_id` re-runs the attempt made at `anchored`: over one
+/// anchor value type, two outputs with no vertex do, and so do distinct per-slot vertices,
+/// since [`bind_sibling_outputs`] checks the rest at their slots.
 pub(crate) fn anchor_repeats(
     matcher: &Matcher,
     pat: &Pattern,
@@ -185,20 +185,19 @@ pub(crate) fn anchor_repeats(
     anchored: ValueId,
     out_id: ValueId,
 ) -> bool {
-    let (Some(prev), Some(cur)) = (
+    let f = matcher.function();
+    let same_ty = f.value_kind(anchored).as_value() == f.value_kind(out_id).as_value();
+    match (
         root_output_vertex_for(pat, root, matcher, anchored),
         root_output_vertex_for(pat, root, matcher, out_id),
-    ) else {
-        return false;
-    };
-    if prev == cur
-        || pat.graph.value_kind_ref(prev).slot_mode == SlotMode::Enumerated
-        || pat.graph.value_kind_ref(cur).slot_mode == SlotMode::Enumerated
-    {
-        return false;
+    ) {
+        (None, None) => same_ty,
+        (Some(prev), Some(cur)) => {
+            let enumerated = |v| pat.graph.value_kind_ref(v).slot_mode == SlotMode::Enumerated;
+            prev != cur && !enumerated(prev) && !enumerated(cur) && same_ty
+        }
+        _ => false,
     }
-    let f = matcher.function();
-    f.value_kind(anchored).as_value() == f.value_kind(out_id).as_value()
 }
 
 /// A pat node offered an IR node and, at a value position, the IR output and its pat vertex.
