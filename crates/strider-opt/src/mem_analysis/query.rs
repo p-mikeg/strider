@@ -133,7 +133,7 @@ impl MemQuery {
             query: self,
             policy,
             loc,
-            stores: Some(&index.stores),
+            stores: &index.stores,
             private_frame: OnceCell::new(),
         };
         // Taken out for the walk: a call's arg-window scan inside it queries

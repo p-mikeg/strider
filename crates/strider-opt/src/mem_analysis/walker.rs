@@ -15,8 +15,7 @@ pub(super) struct MemWalker<'a> {
     pub(super) policy: Policy,
     /// The probed location, which need not belong to a `Load`.
     pub(super) loc: Loc,
-    /// Absent only for a walker that never climbs.
-    pub(super) stores: Option<&'a StoreIndex>,
+    pub(super) stores: &'a StoreIndex,
     /// Memo of [`Self::frame_is_private`], fixed for the walk.
     pub(super) private_frame: std::cell::OnceCell<bool>,
 }
@@ -29,9 +28,7 @@ thread_local! {
 
 impl ClobberProbe for MemWalker<'_> {
     fn candidate(&mut self, lo: u32, hi: u32) -> Option<u32> {
-        self.stores
-            .expect("a climbing walker has a store index")
-            .candidate(&self.loc, self.policy, lo, hi)
+        self.stores.candidate(&self.loc, self.policy, lo, hi)
     }
 
     /// Whether `def` may write the probed location.
@@ -99,11 +96,11 @@ impl MemWalker<'_> {
     }
 
     /// Whether the probed slot lies in the region `call` hands its callee:
-    /// everything below `call_sp + base_offset`, and above it the window of
-    /// the argument-slot prefix stored before the call
-    /// ([`super::arg_window::ArgPrefix`]), which errs wide. Under
-    /// `Calls::Forward`, [`crate::AssumptionOptions::callee_preserves_stack_args`]
-    /// empties the window.
+    /// everything below `call_sp + base_offset`, any slot on another SP base,
+    /// and above it the [`super::arg_window::ArgPrefix`] window, which an
+    /// unwritten slot ends. Under `Calls::Forward`,
+    /// [`crate::AssumptionOptions::callee_preserves_stack_args`] empties the
+    /// window.
     pub(super) fn in_outgoing_arg_area(&self, function: &Function, call: NodeId) -> bool {
         let AddrClass::StackRooted {
             base: load_base,

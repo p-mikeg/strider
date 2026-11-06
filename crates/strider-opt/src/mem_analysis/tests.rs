@@ -1986,6 +1986,7 @@ mod arg_window_bounds {
         else {
             panic!("the call's SP is the entry SP plus 8")
         };
+        let stores = StoreIndex::build(&fg, &crate::mem_ssa::MemLayout::build(&fg));
         let walker = MemWalker {
             query: &query,
             policy,
@@ -1995,7 +1996,7 @@ mod arg_window_bounds {
                 bits: 32,
                 space: rsleigh::VnSpace::RAM,
             },
-            stores: None,
+            stores: &stores,
             private_frame: std::cell::OnceCell::new(),
         };
         assert!(
@@ -3648,7 +3649,7 @@ mod store_index {
                             query: &query,
                             policy,
                             loc: probe,
-                            stores: None,
+                            stores: &stores,
                             private_frame: std::cell::OnceCell::new(),
                         };
                         let mut highest = None;
