@@ -4,7 +4,9 @@ use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Pre
 use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static AARCH64: Family = Family {
+    #[cfg(any(test, feature = "test-util"))]
     name: "aarch64",
+    #[cfg(any(test, feature = "test-util"))]
     ghidra_ldefs: "AARCH64/data/languages/AARCH64.ldefs",
     facts: DecodeFacts {
         isa_mode_var: None,

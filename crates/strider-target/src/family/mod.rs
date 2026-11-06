@@ -22,9 +22,11 @@ use crate::calling_convention::CcPreset;
 /// No `Default`: a new family answers every field.
 pub(crate) struct Family {
     /// `"x86"`, `"arm32"`, `"aarch64"`, `"mips"` or `"ppc"`.
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) name: &'static str,
     /// The Ghidra language definitions file this family's presets are rows
     /// of, under the vendored processors tree.
+    #[cfg(any(test, feature = "test-util"))]
     pub(crate) ghidra_ldefs: &'static str,
     pub(crate) facts: DecodeFacts,
     /// The ops [`crate::call_other_abi::is_rounding_mode_control`] names.
