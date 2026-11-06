@@ -44,7 +44,7 @@ class DictRom(strider.reader.ReadOnlyMemory):
         self.calls = 0
 
     def read(self, addr: int, size: int) -> bytes | None:
-        # Return exactly size RAW bytes; no byte-swap (the optimizer decodes per endianness).
+        # Exactly `size` raw bytes, not byte-swapped (decoded per endianness downstream).
         self.calls += 1
         if addr < self.base or addr + size > self.base + len(self.blob):
             return None

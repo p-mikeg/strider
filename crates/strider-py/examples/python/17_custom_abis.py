@@ -119,8 +119,8 @@ assert setup_constants(overridden) == 4
 
 
 # EBX and ECX carry the arguments, EAX the result, and `ret` pops the 4-byte
-# return address x86's `call` pushed. An unknown register name, or a link
-# register missing from callee_saved_regs, raises StriderError here.
+# return address x86's `call` pushed. An unknown register name or a broken ABI
+# invariant raises StriderError here.
 reg_abi = sleigh.CallingConvention.custom(
     sleigh=x86,
     arg_passing_regs=["EBX", "ECX"],

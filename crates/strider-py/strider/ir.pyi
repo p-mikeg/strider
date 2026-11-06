@@ -249,10 +249,10 @@ class Function:
         """Apply one `find` -> `replace` rewrite in one walk (not a fixed
         point), returning how often it fired. `replace` is a `Template`, a
         `Capture` or a capture name (a `Pat` raises `TypeError`, one nested in
-        a `Template` `StriderError`). Raises
-        `StriderError` up front for a `.when()` guard on `find` or a capture
-        `find` does not bind, and at a match holding no instruction-produced
-        node (an `initial_var` or `phi` root) when `replace` builds nodes.
+        a `Template` `StriderError`). Raises `StriderError` up front for a
+        `.when()` guard on `find` or a capture `find` does not bind, and at a
+        match holding no instruction-produced node (an `initial_var` or `phi`
+        root) when `replace` builds nodes.
 
         A match is skipped when the replacement has another width, or, for a
         `find` through a phi or region, would read the matched value or is

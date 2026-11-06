@@ -678,7 +678,8 @@ class SwitchPat(NodePat, InputPat, CtrlPat, OutputPat):
     """Builder for multi-way dispatch (`Switch`) patterns, returned by
     `switch()`.
 
-    Inputs are `[ctrl, selector]`, outputs one control edge per arm.
+    Inputs are `[ctrl, selector]` plus the optional interworking ISA mode,
+    outputs one control edge per arm.
     """
     def selector(self, p: Union[ValueLike, list[ValueLike]]) -> "SwitchPat":
         """The value the switch dispatches on (`inputs[1]`). A raw int matches

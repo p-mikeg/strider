@@ -37,9 +37,8 @@ class MemReader:
 
 class ReadOnlyMemory:
     """Read-only memory backed by Python: subclass and override `read`. Only
-    RAM loads reach it.
-    Each subclass instance keeps a reference to its class (PyO3 0.22): define
-    a subclass once, not per call."""
+    RAM loads reach it. Each subclass instance keeps a reference to its class
+    (PyO3 0.22): define a subclass once, not per call."""
 
     def __init__(self, *args, **kwargs) -> None:
         """Base initialiser; subclasses may take whatever arguments they like."""
