@@ -95,6 +95,46 @@ fn render_float_const_beyond_f64_shows_raw_bits() {
     }
 }
 
+/// Every NaN prints as `NaN`, so a NaN label spells its bits instead.
+#[test]
+fn render_float_const_nan_shows_bits() {
+    for (ty, quiet, signalling) in [
+        (ValueType::float(32), 0x7fc0_0000_u64, 0x7fa0_0000_u64),
+        (
+            ValueType::float(64),
+            0x7ff8_0000_0000_0000,
+            0xfff4_0000_0000_0000,
+        ),
+    ] {
+        let mut f = test_function();
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let mut rets = vec![];
+        for bits in [quiet, signalling] {
+            let c =
+                f.graph_mut()
+                    .create_node(NodeKind::FloatConst(bits), [], [ValueKind::Typed(ty)]);
+            let [v] = f.node_outputs_exact::<1>(c).unwrap();
+            rets.push(v);
+        }
+        f.graph_mut()
+            .create_node(NodeKind::Return, [ctrl, mem_value, rets[0], rets[1]], []);
+
+        let dot = render(&f);
+        for bits in [quiet, signalling] {
+            let label = format!("const {bits:#x}:{ty}");
+            assert!(dot.contains(&label), "missing {label}: {dot}");
+        }
+        assert!(!dot.contains("NaN"), "{dot}");
+    }
+}
+
 /// A wide `IntConst` must render its value, not the interning id.
 #[test]
 fn render_int_const_wide_shows_value_not_debug() {

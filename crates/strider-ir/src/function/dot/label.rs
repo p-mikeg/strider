@@ -62,15 +62,13 @@ impl FunctionDotDumper<'_> {
                 Some(cv) => format!("const {cv:#x}{}", ty_suffix(self.out_type(node), ":")),
             },
             NodeKind::FloatConst(bits) => match self.out_type(node) {
-                Some(ValueType::Float(32)) => {
-                    let v = f32::from_bits(*bits as u32);
-                    format!("const {v}:f32")
+                Some(ValueType::Float(32)) if !f32::from_bits(*bits as u32).is_nan() => {
+                    format!("const {}:f32", f32::from_bits(*bits as u32))
                 }
-                Some(ValueType::Float(64)) => {
-                    let v = f64::from_bits(*bits);
-                    format!("const {v}:f64")
+                Some(ValueType::Float(64)) if !f64::from_bits(*bits).is_nan() => {
+                    format!("const {}:f64", f64::from_bits(*bits))
                 }
-                // No native Rust carrier at these widths, so show raw bits.
+                // A NaN, or a width with no Rust carrier, shows raw bits.
                 Some(ty) => format!("const {bits:#x}:{ty}"),
                 None => format!("const {bits:#x}"),
             },
