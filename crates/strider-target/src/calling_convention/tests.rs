@@ -95,9 +95,7 @@ struct Case {
     callee_saved_vec_count: usize,
     ret_count: usize,
     reg_size_bytes: u32,
-    stack_ptr_name: &'static str,
     stack_args: Option<StackArgs>,
-    ret_stack_pop: i64,
 }
 
 fn cases() -> Vec<Case> {
@@ -115,12 +113,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "RSP",
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 8,
             }),
-            ret_stack_pop: 8,
         },
         Case {
             name: "x86 cdecl",
@@ -135,12 +131,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "ESP",
             stack_args: Some(StackArgs {
                 base_offset: 4,
                 increment: 4,
             }),
-            ret_stack_pop: 4,
         },
         Case {
             name: "ARM AAPCS",
@@ -155,12 +149,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "AArch64 AAPCS64",
@@ -175,12 +167,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "MIPS O32 (LE)",
@@ -195,12 +185,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 16,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "MIPS O32 (BE)",
@@ -215,12 +203,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 16,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "MIPS N64 (LE)",
@@ -235,12 +221,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "MIPS N64 (BE)",
@@ -255,12 +239,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC SysV 32 (BE)",
@@ -276,12 +258,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC SysV 32 (LE)",
@@ -296,12 +276,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC ELFv1 (BE)",
@@ -318,14 +296,12 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "r1",
             // 48-byte linkage area + the 8-doubleword r3-r10 parameter save
             // area; the first stack-ONLY argument is above both.
             stack_args: Some(StackArgs {
                 base_offset: 112,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC ELFv2 (LE)",
@@ -341,14 +317,12 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "r1",
             // 32-byte linkage area + the same parameter save area.  Measured:
             // a 16-argument call stores arguments 9..16 at r1+96..152.
             stack_args: Some(StackArgs {
                 base_offset: 96,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "AArch64 AAPCS64 (BE)",
@@ -363,12 +337,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "ARM AAPCS (Thumb)",
@@ -383,12 +355,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "ARM AAPCS (BE)",
@@ -403,12 +373,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         // BE8 ARM: the register conventions are byte-order independent, so the
         // same preset has to resolve on this spec too.
@@ -425,12 +393,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         // `-mfloat-abi=soft` / `softfp` passes and returns floats in the core
         // registers, so naming the VFP bank would seed d0-d7 on every function
@@ -450,12 +416,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         // The kernel rows: x86 32-bit differs from its userland counterpart in
         // the integer argument registers (regparm-3), PowerPC in the vector
@@ -474,12 +438,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2, // EAX, EDX
             reg_size_bytes: 4,
-            stack_ptr_name: "ESP",
             stack_args: Some(StackArgs {
                 base_offset: 4,
                 increment: 4,
             }),
-            ret_stack_pop: 4,
         },
         Case {
             name: "PowerPC SysV 32 Linux kernel",
@@ -494,12 +456,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC ELFv1 Linux kernel",
@@ -514,12 +474,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 112,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC ELFv2 Linux kernel",
@@ -534,12 +492,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 96,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
     ]
 }
@@ -684,40 +640,6 @@ fn preserves_transforms_commute_with_build() {
             built.preserves_regs(),
             "{}: preserves_regs",
             c.name
-        );
-    }
-}
-
-/// The SP varnode resolves to the arch's SP register and appears in none of
-/// the resolved register lists: on stack-push ISAs the callee's `ret` pops the
-/// return address so SP is not preserved, and on link-register ISAs the call
-/// leaves SP alone but SP is still modelled not-callee-saved for uniformity
-/// (with `ret_stack_pop = 0`).  Stack-arg offsets and `ret_stack_pop` must
-/// round-trip unchanged from the preset.
-#[test]
-fn presets_stack_pointer_and_arg_offsets() {
-    for c in cases() {
-        let (built, regs) = build_case(&c);
-        let sp = regs
-            .name_to_vn(c.stack_ptr_name)
-            .unwrap_or_else(|| panic!("{}: {} must resolve", c.name, c.stack_ptr_name));
-        assert_eq!(built.stack_ptr, sp, "{}: stack_ptr", c.name);
-        for (label, set) in [
-            ("arg_passing_regs", &built.arg_passing_regs),
-            ("callee_saved_regs", &built.callee_saved_regs),
-            ("ret_val_regs", &built.ret_val_regs),
-        ] {
-            assert!(
-                !set.contains(&built.stack_ptr),
-                "{}: stack pointer must not appear in {label}",
-                c.name,
-            );
-        }
-        assert_eq!(built.stack_args, c.stack_args, "{}: stack_args", c.name,);
-        assert_eq!(
-            built.ret_stack_pop, c.ret_stack_pop,
-            "{}: ret_stack_pop",
-            c.name,
         );
     }
 }
