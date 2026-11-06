@@ -7,7 +7,8 @@
 # loader refuses, a MIPS16 function in a MIPS32 image, an object whose
 # R_X86_64_32 values must zero-extend, a MIPS library and an x86-64 PIE with
 # a relro pointer, a ppc64 ELFv1 image and a ppc32 library whose table bases
-# sit in `.got2`, and executables with an R_*_COPY object:
+# sit in `.got2`, executables with an R_*_COPY object, and a non-PIC
+# executable taking an imported function's address:
 # out/<name>.{elf,o}, from src/.
 #
 # Not per-arch like ../Makefile: each image needs a link of its own (a shared
@@ -58,7 +59,8 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           x86_textrel.elf x86_textrel_noshdr.elf \
           x64_tls.elf x64_tlsdesc.elf aarch64_tls.elf aarch64_tls_trad.elf \
           ppc64le_tls.elf mips64le_tls.elf x86_tlsdesc.elf arm_tlsdesc.elf \
-          arm_lazy.elf ppc32be_lazy.elf x64_cold.elf aarch64_cold.elf
+          arm_lazy.elf ppc32be_lazy.elf x64_cold.elf aarch64_cold.elf \
+          x64_canonical_plt_lib.elf x64_canonical_plt.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -205,6 +207,13 @@ $(OUTDIR)/x64_cold.elf: src/cold.c | $(OUTDIR)
 	$(X64) $(CFLAGS) -Wl,-e,foo $< -o $@
 $(OUTDIR)/aarch64_cold.elf: src/cold.c | $(OUTDIR)
 	$(A64) $(CFLAGS) -freorder-blocks-and-partition -Wl,-e,foo $< -o $@
+
+# `-z now` puts the JUMP_SLOT in `.got`.
+$(OUTDIR)/x64_canonical_plt_lib.elf: src/canonical_plt_lib.c | $(OUTDIR)
+	$(X64) $(CFLAGS) -shared -Wl,-soname,libext.so $< -o $@
+$(OUTDIR)/x64_canonical_plt.elf: src/canonical_plt.c $(OUTDIR)/x64_canonical_plt_lib.elf
+	$(X64) $(filter-out -fPIC,$(CFLAGS)) -fno-pic -no-pie -Wl,-z,now \
+	  -Wl,-e,call_ext $< $(OUTDIR)/x64_canonical_plt_lib.elf -o $@
 
 clean:
 	rm -rf $(OUTDIR)

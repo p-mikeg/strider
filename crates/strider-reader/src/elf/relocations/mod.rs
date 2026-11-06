@@ -465,41 +465,41 @@ mod tests {
 
     /// The word rows, a `None` symbol matching both.
     const WORD_ROWS: &[WordRow] = {
-        use Value::{Abs, ImageRelative as Ir, Indirect as Ind, Pcrel, Slot};
+        use Value::{Abs, ImageRelative as Ir, Indirect as Ind, Pcrel, PltSlot as Plt, Slot};
         use object::elf as e;
         &[
             (A::X86_64, e::R_X86_64_RELATIVE, 0, None, Ir, D8),
             (A::X86_64, e::R_X86_64_IRELATIVE, 0, None, Ind, D8),
             (A::X86_64, e::R_X86_64_GLOB_DAT, 0, None, Slot, D8),
-            (A::X86_64, e::R_X86_64_JUMP_SLOT, 0, None, Slot, D8),
+            (A::X86_64, e::R_X86_64_JUMP_SLOT, 0, None, Plt, D8),
             (A::I386, e::R_386_RELATIVE, 0, None, Ir, D4),
             (A::I386, e::R_386_IRELATIVE, 0, None, Ind, D4),
             (A::I386, e::R_386_GLOB_DAT, 0, None, Slot, D4),
-            (A::I386, e::R_386_JMP_SLOT, 0, None, Slot, D4),
+            (A::I386, e::R_386_JMP_SLOT, 0, None, Plt, D4),
             (A::Aarch64, e::R_AARCH64_RELATIVE, 0, None, Ir, D8),
             (A::Aarch64, e::R_AARCH64_IRELATIVE, 0, None, Ind, D8),
             (A::Aarch64, e::R_AARCH64_GLOB_DAT, 0, None, Slot, D8),
-            (A::Aarch64, e::R_AARCH64_JUMP_SLOT, 0, None, Slot, D8),
+            (A::Aarch64, e::R_AARCH64_JUMP_SLOT, 0, None, Plt, D8),
             (A::Arm, e::R_ARM_RELATIVE, 0, None, Ir, D4),
             (A::Arm, e::R_ARM_IRELATIVE, 0, None, Ind, D4),
             (A::Arm, e::R_ARM_GLOB_DAT, 0, None, Slot, D4),
-            (A::Arm, e::R_ARM_JUMP_SLOT, 0, None, Slot, D4),
+            (A::Arm, e::R_ARM_JUMP_SLOT, 0, None, Plt, D4),
             (A::Arm, e::R_ARM_REL32, 0, None, Pcrel, S4),
             (A::PowerPc, e::R_PPC_RELATIVE, 0, None, Ir, D4),
             (A::PowerPc, e::R_PPC_IRELATIVE, 0, None, Ind, D4),
             (A::PowerPc, e::R_PPC_GLOB_DAT, 0, None, Slot, D4),
-            (A::PowerPc, e::R_PPC_JMP_SLOT, 0, None, Slot, D4),
+            (A::PowerPc, e::R_PPC_JMP_SLOT, 0, None, Plt, D4),
             (A::PowerPc, e::R_PPC_REL32, 0, None, Pcrel, S4),
             (A::PowerPc64, e::R_PPC64_RELATIVE, 0, None, Ir, D8),
             (A::PowerPc64, e::R_PPC64_IRELATIVE, 0, None, Ind, D8),
             (A::PowerPc64, e::R_PPC64_GLOB_DAT, 0, None, Slot, D8),
-            (A::PowerPc64, e::R_PPC64_JMP_SLOT, 0, None, Slot, D8),
+            (A::PowerPc64, e::R_PPC64_JMP_SLOT, 0, None, Plt, D8),
             (A::PowerPc64, e::R_PPC64_REL32, 0, None, Pcrel, S4),
             (A::PowerPc64, e::R_PPC64_REL64, 0, None, Pcrel, S8),
             (A::Mips, e::R_MIPS_REL32, 0, Some(false), Ir, D4),
             (A::Mips, e::R_MIPS_REL32, 0, Some(true), Abs, D4),
             (A::Mips, e::R_MIPS_GLOB_DAT, 0, None, Slot, D4),
-            (A::Mips, e::R_MIPS_JUMP_SLOT, 0, None, Slot, D4),
+            (A::Mips, e::R_MIPS_JUMP_SLOT, 0, None, Plt, D4),
             (A::Mips64, e::R_MIPS_REL32, 0, Some(false), Ir, D4),
             (
                 A::Mips64,
@@ -537,16 +537,9 @@ mod tests {
             (A::Mips64, e::R_MIPS_GLOB_DAT, 0, None, Slot, D8),
             (A::Mips64, e::R_MIPS_GLOB_DAT, e::R_MIPS_64, None, Slot, D8),
             (A::Mips64, e::R_MIPS_GLOB_DAT, e::R_MIPS_SUB, None, Slot, D8),
-            (A::Mips64, e::R_MIPS_JUMP_SLOT, 0, None, Slot, D8),
-            (A::Mips64, e::R_MIPS_JUMP_SLOT, e::R_MIPS_64, None, Slot, D8),
-            (
-                A::Mips64,
-                e::R_MIPS_JUMP_SLOT,
-                e::R_MIPS_SUB,
-                None,
-                Slot,
-                D8,
-            ),
+            (A::Mips64, e::R_MIPS_JUMP_SLOT, 0, None, Plt, D8),
+            (A::Mips64, e::R_MIPS_JUMP_SLOT, e::R_MIPS_64, None, Plt, D8),
+            (A::Mips64, e::R_MIPS_JUMP_SLOT, e::R_MIPS_SUB, None, Plt, D8),
         ]
     };
 
@@ -582,7 +575,7 @@ mod tests {
                     !matches!(
                         classify(arch, &r),
                         Some(Kind::Compute(
-                            Value::ImageRelative | Value::Indirect | Value::Slot,
+                            Value::ImageRelative | Value::Indirect | Value::Slot | Value::PltSlot,
                             _
                         ))
                     ),

@@ -299,6 +299,9 @@ pub(super) fn compute_classified(
     {
         return None;
     }
+    if value_kind == Value::PltSlot && target.is_some_and(|t| t.undefined) {
+        return None;
+    }
     // Outside code an IFUNC's value is unknown; a GOT reference needs only
     // its slot's address.
     if target.is_some_and(|t| t.ifunc)
@@ -311,8 +314,8 @@ pub(super) fn compute_classified(
 
     let mut a = match (value_kind, r.rela_addend) {
         (_, Some(a)) => a,
-        // A slot's `SHT_REL` field holds the PLT push address, not an addend.
-        (Value::Slot, None) => 0,
+        // A slot's `SHT_REL` field is no addend.
+        (Value::Slot | Value::PltSlot, None) => 0,
         (_, None) => implicit_addend(field, raw)?,
     };
     match field {
@@ -355,7 +358,7 @@ pub(super) fn compute_classified(
     let sa = apply_addend(branch_s, a);
     let page = |x: u64| x & !0xfff;
     let value = match value_kind {
-        Value::Abs | Value::Slot => sa,
+        Value::Abs | Value::Slot | Value::PltSlot => sa,
         Value::Pcrel => sa.wrapping_sub(p),
         Value::PagePcrel => page(sa).wrapping_sub(page(p)),
         Value::GotPcrel => apply_addend(got_slot(ctx)?, a).wrapping_sub(p),
@@ -448,6 +451,8 @@ pub(super) struct Target {
     isa: Isa,
     /// `STB_LOCAL`.
     local: bool,
+    /// `SHN_UNDEF`.
+    undefined: bool,
     /// `STB_WEAK` and undefined: it may resolve to 0, so the synthetic extern
     /// address stands in only where it cannot be observed.
     weak_undefined: bool,
@@ -506,6 +511,7 @@ pub(super) fn resolve_symbol_target(
         index: idx.0,
         isa,
         local: sym.is_local(),
+        undefined: sym.is_undefined(),
         weak_undefined: sym.is_weak() && sym.is_undefined(),
         ifunc: is_ifunc(&sym) && !sym.is_undefined(),
         gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
