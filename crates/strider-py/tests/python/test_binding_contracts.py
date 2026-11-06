@@ -122,6 +122,14 @@ def test_pcode_at_names_a_bad_entry_as_analyze_does(entry, says):
         _arm().pcode_at(entry, _BASE)
 
 
+def test_pcode_at_takes_a_thumb_address_with_its_mode_bit():
+    """A Thumb symbol address names the instruction one byte below it."""
+    prog = strider.lift.load_elf(fixture_path("arm_thumb", "memory"))
+    entry = next(s for s in prog.functions() if s.is_thumb).address
+    assert entry & 1
+    assert prog.pcode_at(entry, entry) == prog.pcode_at(entry, entry & ~1)
+
+
 @pytest.mark.parametrize("addr", [0x1000, 0x1004, 0x1008, 0x100C])
 def test_pcode_at_does_not_depend_on_earlier_calls(addr):
     """`pcode_at` answers the same whatever order the calls came in, a
