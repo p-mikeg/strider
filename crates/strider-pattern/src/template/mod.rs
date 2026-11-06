@@ -218,6 +218,10 @@ pub fn instantiate_guarded<B: IRBuilder>(
         let input_kinds =
             input_kinds(template, vtx, &materialised, &value_tys, builder.function())?;
         check_operand_types(&kind, &input_kinds, &outputs)?;
+        anyhow::ensure!(
+            vtx != root || outputs.iter().any(|k| k.as_value().is_some()),
+            "template root {kind:?} has no value output to replace the LHS with"
+        );
         checked.push((vtx, kind, outputs));
     }
 
@@ -235,12 +239,7 @@ pub fn instantiate_guarded<B: IRBuilder>(
         }
 
         if vtx == root {
-            root_value = Some(
-                builder
-                    .function()
-                    .first_value_output_of(node)
-                    .ok_or_else(|| anyhow!("instantiated root node has no value output"))?,
-            );
+            root_value = builder.function().first_value_output_of(node);
         }
     }
 
