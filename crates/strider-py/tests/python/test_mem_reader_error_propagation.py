@@ -130,3 +130,29 @@ def test_reader_failure_keeps_the_backtrace_and_the_decode_site(bad):
     assert isinstance(excinfo.value.__cause__, ValueError)
     if bad == 0x1000:
         assert "sleigh could not lift 0x1000" in str(excinfo.value)
+
+
+def test_a_swallowed_rom_exception_is_not_a_later_errors_cause():
+    """A `ReadOnlyMemory.read` exception reads as unmapped, so it must not
+    become the `__cause__` of an unrelated failure later in the run."""
+    import struct
+
+    from strider.reader import BufferReader, ReadOnlyMemory
+
+    # 0x1000: mov rax, [0x3000]; mov [0x4000], rax; jmp [0x2000]
+    # 0x1100: vmmcall (no CallOther ABI); ret
+    code = bytes.fromhex("488b042500300000" "4889042500400000" "ff242500200000")
+    code = code.ljust(0x100, b"\x90") + bytes.fromhex("0f01d9c3")
+
+    class Rom(ReadOnlyMemory):
+        def read(self, addr, size):
+            if addr == 0x3000:
+                raise RuntimeError("swallowed")
+            if addr == 0x2000 and size == 8:
+                return struct.pack("<Q", 0x1100)
+            return None
+
+    lift = strider.lift.lifter(SleighArch.x86_64(), BufferReader(0x1000, code), Rom())
+    with pytest.raises(StriderError, match="vmmcall") as excinfo:
+        lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+    assert excinfo.value.__cause__ is None, repr(excinfo.value.__cause__)
