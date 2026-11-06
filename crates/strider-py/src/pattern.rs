@@ -1426,7 +1426,7 @@ pub fn float_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
     PyPat::from(bin("float_le()", Kind::Match, Box::new(make), l, r))
 }
 
-/// The `any_*` ops: any variant of one op family, the variant bound to `c`.
+/// The `any_*` ops: any variant of one op family, the node bound to `c`.
 macro_rules! any_variant {
     ($($name:ident($($x:ident),+) = $doc:literal;)*) => {$(
         #[doc = $doc]
@@ -1447,19 +1447,25 @@ macro_rules! any_variant {
 
 any_variant! {
     any_int_binary(l, r)
-        = "Match any `IntBinaryOp` over `(l, r)` and bind the op variant to `c`.";
+        = "Match any integer binary op with these operands, binding the node to\n\
+           `c` (read the variant with `Match.op(c)`).";
     any_int_unary(operand)
-        = "Match any `IntUnaryOp` over `operand` and bind the op variant to `c`.";
+        = "Match any `IntUnaryOp` on `operand`, binding the node to `c`. The enum\n\
+           holds only `Neg`; `Popcount` and `Lzcount` are their own kinds.";
     any_int_cmp(l, r)
-        = "Match any `IntCmpOp` over `(l, r)` and bind the op variant to `c`.";
+        = "Match any integer comparison with these operands, binding the node to\n\
+           `c`.";
     any_bool_binary(l, r)
-        = "Match any boolean binary op over `(l, r)` and bind the op variant to `c`.";
+        = "Match any `IntBinaryOp` at `I1` with these operands, binding the node\n\
+           to `c`. A logical NOT is `Xor(x, 1)`, so it matches here.";
     any_float_binary(l, r)
-        = "Match any `FloatBinaryOp` over `(l, r)` and bind the op variant to `c`.";
+        = "Match any float binary op with these operands, binding the node to\n\
+           `c`.";
     any_float_unary(operand)
-        = "Match any `FloatUnaryOp` over `operand` and bind the op variant to `c`.";
+        = "Match any float unary op on `operand`, binding the node to `c`.";
     any_float_cmp(l, r)
-        = "Match any `FloatCmpOp` over `(l, r)` and bind the op variant to `c`.";
+        = "Match any float comparison with these operands, binding the node to\n\
+           `c`.";
 }
 
 fn clone_opt(py: Python<'_>, slot: &Option<Py<PyAny>>) -> Option<Py<PyAny>> {
@@ -2611,7 +2617,7 @@ node_builder! {
     ctor: region = "Matches any CFG-merge `Region` node.",
 }
 
-/// Typed builder for `FunctionArg` carrier patterns. Chain `.index(i)`,
+/// Builder for incoming-function-argument patterns. Chain `.index(i)`,
 /// `.source_register(vn)`, `.source_stack(space, offset)`.
 #[pyclass(name = "FunctionArgPat", module = "strider.pattern")]
 pub struct PyFunctionArgPat {
@@ -2704,35 +2710,37 @@ fn stack_source(space: crate::sleigh::PyVnSpace, offset: i128) -> FunctionArgSou
 
 builder_common_methods!(PyFunctionArgPat);
 
-/// Start a `FunctionArg` pattern builder at integer-class index `i`.
+/// Start a function-argument pattern at integer argument index `i`.
 #[pyfunction]
 pub fn function_arg(i: crate::bigint::Unsigned<u32>) -> PyFunctionArgPat {
     PyFunctionArgPat::new(sp::FunctionArgClass::Integer, Some(i.0), None)
 }
 
-/// Start a `FunctionArg` pattern builder at float-class index `i`, counting
-/// only float parameters.
+/// Start a function-argument pattern constrained to float argument
+/// index `i`, counting only float parameters.
 #[pyfunction]
 pub fn function_arg_float(i: crate::bigint::Unsigned<u32>) -> PyFunctionArgPat {
     PyFunctionArgPat::new(sp::FunctionArgClass::Float, Some(i.0), None)
 }
 
-/// Start a `FunctionArg` pattern builder matching any index of either class.
+/// Start a function-argument pattern matching any argument index of
+/// either class.
 #[pyfunction]
 pub fn any_function_arg() -> PyFunctionArgPat {
     PyFunctionArgPat::new(sp::FunctionArgClass::Any, None, None)
 }
 
-/// Match a `FunctionArg` whose source is register `vn` or a register containing it.
+/// Match a function argument arriving in register `vn` or one containing
+/// it.
 #[pyfunction]
 pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
     let source = FunctionArgSource::Register(vn.inner);
     PyFunctionArgPat::new(sp::FunctionArgClass::Any, None, Some(source))
 }
 
-/// Match a `FunctionArg` whose source is a specific stack slot. Only slots up
-/// to the first one no clean load reads are arguments (see
-/// `FunctionArgDetect`).
+/// Match a function argument arriving on the stack at `(space,
+/// offset)`. Only slots up to the first one no clean load reads are
+/// arguments (see `FunctionArgDetect`).
 #[pyfunction]
 pub fn function_arg_stack(
     space: crate::sleigh::PyVnSpace,
