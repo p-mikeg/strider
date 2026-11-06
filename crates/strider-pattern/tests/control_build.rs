@@ -209,11 +209,7 @@ fn a_capture_over_a_mixed_alternation_keeps_both_arms() {
         .unwrap();
     let kinds: Vec<_> = hits
         .iter()
-        .map(|h| {
-            function
-                .node_kind(h.node(c, function.graph()).unwrap())
-                .clone()
-        })
+        .map(|h| *function.node_kind(h.node(c, function.graph()).unwrap()))
         .collect();
     let returns = kinds
         .iter()
