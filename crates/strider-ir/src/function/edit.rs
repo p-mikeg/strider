@@ -669,19 +669,7 @@ pub(crate) mod test_fixtures {
     /// Trivial-convention builder with a single entry region, lift-addr
     /// pre-stamped.
     pub(crate) fn single_region_builder() -> FunctionBuilder {
-        let cc = strider_target::BuiltCallingConvention {
-            arg_passing_regs: Vec::new(),
-            callee_saved_regs: Vec::new(),
-            ret_val_regs: Vec::new(),
-            ret_val_regs_float: Vec::new(),
-            stack_ptr: strider_target::BuiltCallingConvention::default().stack_ptr,
-            stack_args: None,
-            ret_stack_pop: 0,
-            link_register: None,
-            preserves_memory: false,
-            preserves_all_registers: false,
-            ..Default::default()
-        };
+        let cc = strider_target::BuiltCallingConvention::default();
         let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
             .expect("FunctionBuilder::new");
         let region = b.create_region_all().expect("create_region");
