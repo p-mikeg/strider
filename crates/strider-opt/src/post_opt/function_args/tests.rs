@@ -344,6 +344,37 @@ fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     Ok(())
 }
 
+/// 8-byte loads at `sp+4`, `sp+8` and `sp+12` overlap: the one starting
+/// inside the first run reaches slot 2, so all three are one argument.
+#[test]
+fn a_load_starting_inside_a_run_widens_it() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 4))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let mut acc = None;
+    for offset in [4u64, 8, 12] {
+        let addr = b.build_const_binop(offset, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        acc = Some(match acc {
+            None => loaded,
+            Some(prev) => {
+                b.build_int_binary_operation(prev, loaded, IntBinaryOp::Add, ValueType::int(64))?
+            }
+        });
+    }
+    b.build_return(acc, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    detect(&mut fg)?;
+
+    assert_eq!(fg.side_tables().arg_index_to_values(0).len(), 3);
+    assert!(fg.side_tables().arg_index_to_values(1).is_empty());
+    Ok(())
+}
+
 /// Span 4: an `I128` at `sp+0` covers slots 0..3, so the ordinal must advance
 /// by exactly one across all of them and the following `I32` at `sp+16` must
 /// not be lost to the three covered slots.
