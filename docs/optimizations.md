@@ -174,7 +174,9 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 
 - Chained switches (a jump table whose arm holds another) are found one
   re-lift round per level; past 256 levels the next site is reported
-  `"unresolved_branch"` and deeper levels are never decoded.
+  `"unresolved_branch"` and deeper levels are never decoded. Each level
+  re-lifts the whole function, so time grows with the square of the depth
+  (200 levels of 8-way switches: about 11 s).
 - PowerPC float code lifts to far more p-code than other ISAs because the
   FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
 - A chain of about 500 constant guards held only in registers reaches the
@@ -189,8 +191,9 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   attempts, even when nothing matches; `.ordered()` pins the operand order.
 - Sibling KnownBits folds over one unfolded chain of depth `d` each copy the
   chain's instruction addresses, quadratic in `d`.
-- A return after a stack-clash probe loop (gcc `-fstack-clash-protection`,
-  frames of 64 KiB or more) is reported: the loop's exit SP is not derived.
+- A return after a stack-clash probe loop (gcc `-fstack-clash-protection`;
+  gcc 11 emits it from 16 KiB frames on x86, 64 KiB on ppc64le) is reported:
+  the loop's exit SP is not derived.
 
 ## Using a different pipeline
 
