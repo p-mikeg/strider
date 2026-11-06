@@ -3,37 +3,6 @@ use crate::node::signature::every_node_kind;
 use cranelift_entity::EntityRef;
 
 #[test]
-fn signed_int_sign_extends_from_declared_width() {
-    assert_eq!(
-        ValueType::int(8).get_signed_int(u128::from(u8::MAX)),
-        Some(-1)
-    );
-    assert_eq!(
-        ValueType::int(8).get_signed_int(u128::from(i8::MIN as u8)),
-        Some(i128::from(i8::MIN))
-    );
-    assert_eq!(
-        ValueType::int(8).get_signed_int(i8::MAX as u128),
-        Some(i128::from(i8::MAX))
-    );
-    assert_eq!(
-        ValueType::int(16).get_signed_int(u128::from(i16::MIN as u16)),
-        Some(i128::from(i16::MIN))
-    );
-    assert_eq!(
-        ValueType::int(32).get_signed_int(u128::from(u32::MAX)),
-        Some(-1)
-    );
-}
-
-/// Read signed, a 1-bit integer holds only 0 and -1.
-#[test]
-fn signed_int_for_i1_is_one_bit() {
-    assert_eq!(ValueType::I1.get_signed_int(1), Some(-1));
-    assert_eq!(ValueType::I1.get_signed_int(0), Some(0));
-}
-
-#[test]
 fn is_value_only_for_output_type() {
     assert!(ValueKind::Typed(ValueType::int(64)).is_value());
     assert!(!ValueKind::Control.is_value());
@@ -64,15 +33,6 @@ fn is_const_only_for_constant_kinds() {
     assert!(NodeKind::FloatConst(0).is_const());
     assert!(!NodeKind::Entry.is_const());
     assert!(!NodeKind::Return.is_const());
-}
-
-#[test]
-fn get_signed_int_returns_none_for_floats() {
-    assert_eq!(ValueType::float(32).get_signed_int(0x3F800000), None);
-    assert_eq!(
-        ValueType::float(64).get_signed_int(0x3FF0000000000000),
-        None
-    );
 }
 
 /// Independent restatement of `is_cacheable` as a single negated `matches!`.

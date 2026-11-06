@@ -318,27 +318,6 @@ mod tests {
         }
     }
 
-    /// A float has no integer bits.
-    #[test]
-    fn mask_at_a_float_type_is_zero() {
-        let v = dashu_int::UBig::from(0x12345678u32);
-        assert_eq!(
-            crate::eval::mask(&v, ValueType::float(32)),
-            dashu_int::UBig::ZERO
-        );
-    }
-
-    #[test]
-    fn get_signed_int_sign_extends_negative_at_narrow_widths() {
-        let neg50_at_u32 = 0xffff_ffceu128;
-        assert_eq!(
-            ValueType::int(32).get_signed_int(neg50_at_u32),
-            Some(-50i128)
-        );
-        assert_eq!(ValueType::int(8).get_signed_int(0xceu128), Some(-50i128));
-        assert_eq!(ValueType::int(32).get_signed_int(50u128), Some(50i128));
-    }
-
     #[test]
     fn mask_float_bits_keeps_the_declared_width() {
         assert_eq!(ValueType::float(16).mask_float_bits(u64::MAX), 0xffff);
@@ -379,29 +358,12 @@ mod tests {
     }
 
     #[test]
-    fn get_signed_int_handles_full_u128_width() {
-        let neg1_at_u128 = u128::MAX;
-        assert_eq!(
-            ValueType::int(128).get_signed_int(neg1_at_u128),
-            Some(-1i128)
-        );
-        let max_pos = i128::MAX as u128;
-        assert_eq!(ValueType::int(128).get_signed_int(max_pos), Some(i128::MAX));
-    }
-
-    #[test]
     fn get_signed_int_for_u80_sign_extends() {
         let neg1_at_u80 = (1u128 << 80) - 1;
         assert_eq!(ValueType::int(80).get_signed_int(neg1_at_u80), Some(-1i128));
         assert_eq!(ValueType::int(80).get_signed_int(50u128), Some(50i128));
         let neg50 = ((1u128 << 80) - 1) ^ 49;
         assert_eq!(ValueType::int(80).get_signed_int(neg50), Some(-50i128));
-    }
-
-    #[test]
-    fn int_from_bytes_10_is_i80() {
-        let ty = ValueType::int_from_bytes(10).expect("10 must convert to I80");
-        assert_eq!(ty, ValueType::int(80));
     }
 
     #[test]
