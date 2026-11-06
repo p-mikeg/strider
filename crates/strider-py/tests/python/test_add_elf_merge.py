@@ -82,3 +82,14 @@ def test_add_elf_refuses_an_image_another_decoder_reads(loaded, added, differs):
     with pytest.raises(strider.StriderError, match="one handle decodes one target") as e:
         elf.add_elf(str(fixture_path(added, "calls")))
     assert differs in str(e.value)
+
+
+@pytest.mark.parametrize("method", ["add_elf", "add_symbol_file"])
+def test_a_missing_or_non_elf_path_raises_as_load_elf_does(method, x86_memory_elf, tmp_path):
+    elf = strider.lift.load_elf(str(x86_memory_elf))
+    with pytest.raises(FileNotFoundError):
+        getattr(elf, method)(str(tmp_path / "missing.elf"))
+    text = tmp_path / "text.txt"
+    text.write_bytes(b"not an ELF at all")
+    with pytest.raises(ValueError, match="not an ELF"):
+        getattr(elf, method)(str(text))

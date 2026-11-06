@@ -369,26 +369,25 @@ class ElfLifter(Lifter):
         earlier-loaded ELF wins name collisions. `apply_relocations` and
         `relocated_got_is_rom` are as in `load_elf`, for this image only.
 
-        Raises `StriderError` if the new ELF's architecture, class, byte order
-        or (ARM) `EF_ARM_BE8` differs from the first image's, or it maps code
-        over an address already loaded with different bytes. Raises
-        `ValueError` for a microMIPS image."""
+        Raises `FileNotFoundError` for a missing `path`, `ValueError` for a
+        non-ELF or a microMIPS image, and `StriderError` if the new ELF's
+        architecture, class, byte order or (ARM) `EF_ARM_BE8` differs from
+        the first image's, or it maps code over an address already loaded
+        with different bytes."""
         path = os.fspath(path)
-        try:
-            header = _ElfHeader(path)
-        except (OSError, ValueError):
-            # Not a readable ELF: the merge reports it.
-            header = None
-        if header is not None:
-            _refuse_micromips(header, "add_elf cannot merge it")
+        _refuse_micromips(_ElfHeader(path), "add_elf cannot merge it")
         # One call, so a busy handle refuses before anything is merged.
         self._merge_elf(self._elf, path, apply_relocations, relocated_got_is_rom)
 
     def add_symbol_file(self, path: StrPath) -> None:
         """Add the symbols (`.symtab` and `.dynsym`) of `path` and none of its
         bytes, e.g. a separate debug file `add_elf` would refuse as an
-        overlap. Already-loaded ELFs keep a colliding name."""
-        self._elf.add_symbol_file(os.fspath(path))
+        overlap. Already-loaded ELFs keep a colliding name. Raises
+        `FileNotFoundError` for a missing `path` and `ValueError` for a
+        non-ELF."""
+        path = os.fspath(path)
+        _ElfHeader(path)
+        self._elf.add_symbol_file(path)
 
     def add_symbols(
         self,
