@@ -13,9 +13,9 @@ use strider_ir::{IRBuilderExt, IRViewer};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, Matcher, any_float_binary, any_float_cmp, any_float_unary,
     bool_const_with, capture_typed, float_bits_to_int, float_const, float_const_with, int_add,
-    int_and, int_bits_to_float, int_const, int_const_with, int_mul, int_neg, int_or, int_sborrow,
-    int_scarry, int_shl, int_shr, int_sign_extend, int_sshr, int_sub, int_truncate, int_xor,
-    int_zero_extend, one_of, template, var,
+    int_and, int_bits_to_float, int_const, int_const_with, int_eq, int_lt, int_mul, int_neg,
+    int_or, int_sborrow, int_scarry, int_shl, int_shr, int_sign_extend, int_slt, int_sshr, int_sub,
+    int_truncate, int_xor, int_zero_extend, one_of, template, var,
 };
 
 /// Every constant-fold rule, in application order.
@@ -432,6 +432,10 @@ fn build_identity_rules() -> Vec<Rule> {
         // Neither `x - 0` nor `x + 0` overflows.
         Rule::rewrite(int_sborrow(var(x), int_const(0u128)), int_const(0u128)),
         Rule::rewrite(int_scarry(var(x), int_const(0u128)), int_const(0u128)),
+        Rule::rewrite(int_eq(var(x), var(x)), int_const(1u128)),
+        Rule::rewrite(int_lt(var(x), var(x)), int_const(0u128)),
+        Rule::rewrite(int_slt(var(x), var(x)), int_const(0u128)),
+        Rule::rewrite(int_sborrow(var(x), var(x)), int_const(0u128)),
         all_ones_rule,
         or_all_ones_rule,
     ]
