@@ -1058,8 +1058,8 @@ pub(crate) fn var_repr(c: Capture) -> Repr {
 
 /// Match any value output exactly `n` bits wide.
 #[pyfunction]
-pub fn value_of_width(n: u32) -> PyResult<PyPat> {
-    let n = width_arg(n)?;
+pub fn value_of_width(n: Width) -> PyResult<PyPat> {
+    let n = n.bits;
     let make = move || ex(sp::value_of_width(n));
     Ok(PyPat::from(leaf(
         "value_of_width()",
@@ -1091,8 +1091,8 @@ pub(crate) fn float_const_repr(bits: u64) -> Repr {
 
 /// Match `inner` and require all value inputs to be `n` bits wide.
 #[pyfunction]
-pub fn inputs_of_width(n: u32, inner: Py<PyAny>) -> PyResult<PyPat> {
-    let n = width_arg(n)?;
+pub fn inputs_of_width(n: Width, inner: Py<PyAny>) -> PyResult<PyPat> {
+    let n = n.bits;
     let make = move |e| ex(sp::inputs_of_width(n, e));
     Ok(PyPat::from(un(
         "inputs_of_width()",
@@ -1105,7 +1105,7 @@ pub fn inputs_of_width(n: u32, inner: Py<PyAny>) -> PyResult<PyPat> {
 /// Match `inner` whose value inputs are all 1-bit (`I1`).
 #[pyfunction]
 pub fn bool_inputs(inner: Py<PyAny>) -> PyResult<PyPat> {
-    inputs_of_width(1, inner)
+    inputs_of_width(Width { bits: 1 }, inner)
 }
 
 /// A `Capture`, tried first as a cheap downcast, else `T`.
