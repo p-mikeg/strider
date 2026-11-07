@@ -6,7 +6,7 @@ use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, CaptureExt, JoinConstraint, JoinedMatch, MatchPat, Matcher, anything, bool_const,
-    call, if_else, int_const, one_of,
+    call, if_else, int_const, one_of, region, var,
 };
 
 /// Diamond CFG with a `Call` in the true arm (`0xAAAA`), the false arm
@@ -650,6 +650,27 @@ fn a_capture_free_pattern_does_not_collapse_the_cross_product() {
         mixed, both_bare,
         "capturing one side must not change how many tuples exist"
     );
+}
+
+/// `c` binds the `If` node in one pattern and one of its edges in the other; both arm regions
+/// join with it whichever pattern comes first.
+#[test]
+fn a_node_binding_does_not_collapse_value_bindings_of_its_capture() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let c = Capture::new();
+    let on_if = if_else().capture(c).build();
+    let on_edge = region().input(0, var(c)).build();
+    let if_first = m
+        .find_joined_constrained(&[&on_if, &on_edge], &[])
+        .unwrap()
+        .len();
+    let edge_first = m
+        .find_joined_constrained(&[&on_edge, &on_if], &[])
+        .unwrap()
+        .len();
+    assert_eq!(edge_first, 2);
+    assert_eq!(if_first, 2);
 }
 
 /// `if (true) { store } else { }`, joining at a merge region.
