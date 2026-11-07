@@ -40,7 +40,7 @@ impl Patch {
     }
 
     /// `size_bytes` at `addr` that no read may serve: a relocation of type
-    /// `r_type` lands there and its value was not computed.
+    /// `r_type` lands there and its value was not computed. At most 8 bytes.
     pub(crate) fn hole(addr: u64, size_bytes: usize, r_type: u32) -> Self {
         Self {
             addr,

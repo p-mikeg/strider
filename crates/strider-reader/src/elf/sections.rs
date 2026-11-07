@@ -268,10 +268,9 @@ impl AddressSet {
     }
 }
 
-/// Where each ET_REL section is loaded, whose `sh_addr`s are all 0: in index
-/// order, an allocated non-TLS section below the watermark moves to
-/// `align_up(watermark, sh_addralign)`, starting at a base that leaves 0
-/// unmapped. Identity for a linked image. Independent of the filter, so every
+/// Where each ET_REL section is loaded: in index order, an allocated non-TLS
+/// section below the watermark moves to `align_up(watermark, sh_addralign)`,
+/// starting at a base that leaves 0 unmapped. Identity for a linked image. Independent of the filter, so every
 /// view agrees on where a section is.
 pub struct ElfSectionLayout(Option<Rebased>);
 
