@@ -14,7 +14,7 @@ pub use resolve::Classifier;
 
 use rustc_hash::FxHashMap;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 use strider_cfg::MachineInsnAddr;
 use strider_opt::{AssumptionOptions, ReadOnlyMemory};
@@ -83,8 +83,7 @@ where
         reader: R,
         rom: Option<Box<dyn ReadOnlyMemory>>,
     ) -> Result<Self> {
-        let lifter = Lifter::new(arch, reader)
-            .map_err(|e| anyhow!("Strider::new: Lifter::new failed: {e:?}"))?;
+        let lifter = Lifter::new(arch, reader)?;
         Ok(Self { lifter, rom })
     }
 
@@ -98,8 +97,7 @@ where
         self.lifter.arch()
     }
 
-    /// Every Sleigh user-op name this architecture can emit, indexed by
-    /// `user_op_id`.
+    /// Indexed by `user_op_id`, which for `read_volatile` is past the table.
     #[must_use]
     pub fn user_op_names(&self) -> &[String] {
         self.lifter.user_op_names()
