@@ -332,7 +332,7 @@ return %v4, %v6, %v2, %v7, %v8, %v9
 %v17:i1 = icmp.equal %v15, %v16
 %v18:ctrl, %v19:ctrl = if %v10, %v17
 %v20:i32 = int.add %v13, %v12
-return %v18, %v6, %v20, %v15, %v8, %v9
+return %v18, %v6, %v20, %v16, %v8, %v9
 
 == factorial @0x8049330
 cfg
@@ -362,7 +362,7 @@ arg 1 [%v20]
 %v17:i32 = int.mul %v10, %v9
 %v18:i80 = initial_var[ST0]
 %v19:i128 = initial_var[XMM0]
-return %v14, %v16, %v17, %v11, %v18, %v19
+return %v14, %v16, %v17, %v12, %v18, %v19
 %v20:i32 = initial_var[EDX]
 return %v5, %v16, %v1, %v20, %v18, %v19
 

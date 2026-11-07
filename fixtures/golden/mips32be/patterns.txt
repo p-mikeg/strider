@@ -153,7 +153,7 @@ arg 1 [%v2]
 %v19:i32 = int.add %v9, %v18
 %v20:i64 = initial_var[f0_1]
 %v21:i64 = initial_var[f2_3]
-return %v13, %v15, %v19, %v11, %v20, %v21
+return %v13, %v15, %v19, %v2, %v20, %v21
 return %v5, %v15, %v1, %v1, %v20, %v21
 
 == recursive_with_accumulator @0x4007d8

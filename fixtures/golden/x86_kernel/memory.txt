@@ -97,7 +97,7 @@ arg 1 [%v1]
 %v60:ctrl, %v61:token = region %v21, %v10
 %v62:i32<EAX> = phi %v61, %v59, %v2
 %v63:i32<EDX> = phi %v61, %v17, %v1
-%v64:i32<EDI> = phi %v61, %v19, %v2
+%v64:i32<EDI> = phi %v61, %v17, %v2
 %v65:i32 = int.and %v1, %v8
 %v66:i1 = icmp.equal %v65, %v2
 %v67:ctrl, %v68:ctrl = if %v60, %v66
@@ -120,7 +120,7 @@ arg 1 [%v1]
 
 %v86:ctrl, %v87:token = region %v67, %v76, %v4
 %v88:i32<EAX> = phi %v87, %v62, %v85, %v2
-%v89:i32<EDX> = phi %v87, %v63, %v74, %v1
+%v89:i32<EDX> = phi %v87, %v63, %v65, %v1
 %v90:mem = initial_memory
 %v91:i32 = initial_var[ESP]
 %v92:i32 = iconst[0xfffffffc]
@@ -220,7 +220,7 @@ arg 2 [%v89]
 %v65:ctrl, %v66:token = region %v23, %v34
 %v67:mem = memphi %v66, %v18, %v64
 %v68:i32<EDX> = phi %v66, %v1, %v30
-%v69:i32<EDI> = phi %v66, %v2, %v32
+%v69:i32<EDI> = phi %v66, %v2, %v30
 %v70:i32 = int.and %v1, %v21
 %v71:i1 = icmp.equal %v70, %v2
 %v72:ctrl, %v73:ctrl = if %v65, %v71
@@ -244,7 +244,7 @@ arg 2 [%v89]
 %v91:ctrl, %v92:token = region %v4, %v72, %v81
 %v93:mem = memphi %v92, %v18, %v67, %v90
 %v94:i32<EAX> = phi %v92, %v83, %v83, %v86
-%v95:i32<EDX> = phi %v92, %v1, %v68, %v79
+%v95:i32<EDX> = phi %v92, %v1, %v68, %v70
 %v96:i80 = initial_var[ST0]
 %v97:i128 = initial_var[XMM0]
 return %v91, %v93, %v94, %v95, %v96, %v97
@@ -344,7 +344,7 @@ arg 2 [%v1]
 
 %v61:ctrl, %v62:token = region %v23, %v34
 %v63:mem = memphi %v62, %v18, %v60
-%v64:i32<EDI> = phi %v62, %v2, %v32
+%v64:i32<EDI> = phi %v62, %v2, %v30
 %v65:i32 = int.and %v1, %v21
 %v66:i1 = icmp.equal %v65, %v2
 %v67:ctrl, %v68:ctrl = if %v61, %v66
@@ -370,7 +370,7 @@ arg 2 [%v1]
 %v88:ctrl, %v89:token = region %v4, %v67, %v76
 %v90:mem = memphi %v89, %v18, %v63, %v87
 %v91:i32<EAX> = phi %v89, %v78, %v78, %v80
-%v92:i32<EDX> = phi %v89, %v83, %v83, %v74
+%v92:i32<EDX> = phi %v89, %v83, %v83, %v65
 %v93:i80 = initial_var[ST0]
 %v94:i128 = initial_var[XMM0]
 return %v88, %v90, %v91, %v92, %v93, %v94

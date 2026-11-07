@@ -311,7 +311,7 @@ float_arg 1 [%v30]
 
 %v25:ctrl, %v26:token = region %v4, %v15
 %v27:mem = memphi %v26, %v6, %v24
-%v28:i64<RAX> = phi %v26, %v7, %v13
+%v28:i64<RAX> = phi %v26, %v7, %v1
 %v29:i128 = initial_var[XMM0]
 %v30:i128 = initial_var[XMM1]
 %v31:i80 = initial_var[ST0]

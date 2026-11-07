@@ -598,7 +598,7 @@ arg 2 [%v76]
 
 %v248:ctrl, %v249:token = region %v216, %v206
 %v250:i32<ESI> = phi %v249, %v228, %v199
-%v251:i32<EDX> = phi %v249, %v214, %v63
+%v251:i32<EDX> = phi %v249, %v213, %v63
 %v252:mem = memphi %v249, %v247, %v202
 %v253:i32 = int.and %v76, %v51
 %v254:i1 = icmp.equal %v253, %v63

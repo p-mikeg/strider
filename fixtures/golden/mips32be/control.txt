@@ -228,7 +228,7 @@ return %v4, %v6, %v2, %v7, %v8, %v9
 %v17:i1 = icmp.equal %v15, %v16
 %v18:ctrl, %v19:ctrl = if %v10, %v17
 %v20:i32 = int.add %v13, %v12
-return %v18, %v6, %v20, %v15, %v8, %v9
+return %v18, %v6, %v20, %v16, %v8, %v9
 
 == factorial @0x400864
 cfg
@@ -259,7 +259,7 @@ return %v4, %v6, %v7, %v8, %v9, %v10
 %v17:i1 = icmp.equal %v15, %v16
 %v18:ctrl, %v19:ctrl = if %v11, %v17
 %v20:i32 = int.mul %v14, %v13
-return %v18, %v6, %v20, %v15, %v9, %v10
+return %v18, %v6, %v20, %v16, %v9, %v10
 
 == count_bits @0x400898
 cfg
@@ -334,7 +334,7 @@ arg 1 [%v12]
 
 %v28:ctrl, %v29:token = region %v15, %v24
 %v30:i32<v0> = phi %v29, %v9, %v26
-%v31:i32<v1> = phi %v29, %v10, %v22
+%v31:i32<v1> = phi %v29, %v10, %v12
 %v32:i32 = int.add %v11, %v21
 %v33:i1 = icmp.equal %v2, %v32
 %v34:ctrl, %v35:ctrl = if %v28, %v33

@@ -972,7 +972,7 @@ float_arg 7 [%v102]
 %v343:i32 = int.add %v59, %v342
 %v344:i32 = load[r] %v327, %v255
 %v345:i32 = int.add %v328, %v2
-%v346:ctrl, %v347:mem, %v348:i32<r0>, %v349:i32<r1>, %v350:i64<d0>, %v351:i64<d1>, %v352:i64<d2>, %v353:i64<d3>, %v354:i64<d4>, %v355:i64<d5>, %v356:i64<d6>, %v357:i64<d7>, %v358:i32<r2>, %v359:i32<r3>, %v360:i32<r12>, %v361:i32<pc>, %v362:i8<NG>, %v363:i8<ZR>, %v364:i8<CY>, %v365:i8<OV>, %v366:i8<tmpNG>, %v367:i8<tmpZR>, %v368:i8<tmpCY>, %v369:i8<tmpOV>, %v370:i8<shift_carry>, %v371:i8<TB>, %v372:i8<ISAModeSwitch>, %v373:i32<mult_addr> = call %v339, %v327, %v88, %v90, %v343, %v326, %v344, %v345, %v329, %v330, %v331, %v332, %v333, %v334, %v335, %v336
+%v346:ctrl, %v347:mem, %v348:i32<r0>, %v349:i32<r1>, %v350:i64<d0>, %v351:i64<d1>, %v352:i64<d2>, %v353:i64<d3>, %v354:i64<d4>, %v355:i64<d5>, %v356:i64<d6>, %v357:i64<d7>, %v358:i32<r2>, %v359:i32<r3>, %v360:i32<r12>, %v361:i32<pc>, %v362:i8<NG>, %v363:i8<ZR>, %v364:i8<CY>, %v365:i8<OV>, %v366:i8<tmpNG>, %v367:i8<tmpZR>, %v368:i8<tmpCY>, %v369:i8<tmpOV>, %v370:i8<shift_carry>, %v371:i8<TB>, %v372:i8<ISAModeSwitch>, %v373:i32<mult_addr> = call %v339, %v327, %v88, %v90, %v343, %v4, %v344, %v345, %v329, %v330, %v331, %v332, %v333, %v334, %v335, %v336
 %v374:i1 = icmp.sless %v359, %v273
 %v375:ctrl, %v376:ctrl = if %v346, %v374
 %v377:i32 = int.add %v337, %v358
@@ -1135,7 +1135,7 @@ float_arg 7 [%v102]
 %v650:i32<r4> = phi %v649, %v439, %v645
 %v651:i32<r1> = phi %v649, %v609, %v647
 %v652:i32<r5> = phi %v649, %v148, %v640
-%v653:i32<r3> = phi %v649, %v610, %v641
+%v653:i32<r3> = phi %v649, %v610, %v620
 %v654:i32 = iconst[0x64]
 %v655:i1 = icmp.sless %v654, %v650
 %v656:ctrl, %v657:ctrl = if %v648, %v655

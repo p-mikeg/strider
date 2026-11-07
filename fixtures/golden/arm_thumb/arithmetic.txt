@@ -897,7 +897,7 @@ return %v38, %v39, %v40, %v66, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49
 
 %v84:ctrl, %v85:token = region %v82, %v81
 %v86:i32<r0> = phi %v85, %v6, %v83
-return %v84, %v17, %v86, %v73, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37
+return %v84, %v17, %v86, %v74, %v30, %v31, %v32, %v33, %v34, %v35, %v36, %v37
 %v87:ctrl, %v88:ctrl = if %v77, %v12
 
 %v89:ctrl, %v90:token = region %v88, %v87

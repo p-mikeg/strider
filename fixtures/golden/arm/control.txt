@@ -486,7 +486,7 @@ float_arg 7 [%v73]
 %v50:i32 = int.add %v43, %v42
 
 %v51:ctrl, %v52:token = region %v38, %v47
-%v53:i32<r2> = phi %v52, %v36, %v45
+%v53:i32<r2> = phi %v52, %v36, %v25
 %v54:i32<r3> = phi %v52, %v31, %v49
 %v55:i32<r0> = phi %v52, %v23, %v50
 %v56:i32 = int.add %v24, %v44

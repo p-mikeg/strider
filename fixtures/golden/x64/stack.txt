@@ -437,7 +437,7 @@ return %v79, %v80, %v106, %v82, %v83, %v84, %v85, %v86
 %v121:i64 = extend.zero %v120
 %v122:i80 = initial_var[ST0]
 %v123:i80 = initial_var[ST1]
-return %v113, %v56, %v121, %v109, %v71, %v72, %v122, %v123
+return %v113, %v56, %v121, %v12, %v71, %v72, %v122, %v123
 
 == external_take_ptr @0x4012d0
 cfg

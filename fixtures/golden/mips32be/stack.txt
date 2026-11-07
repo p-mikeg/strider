@@ -264,7 +264,7 @@ return %v60, %v61, %v75, %v63, %v64, %v65
 %v86:i32 = int.add %v79, %v80
 %v87:i64 = initial_var[f0_1]
 %v88:i64 = initial_var[f2_3]
-return %v83, %v52, %v86, %v81, %v87, %v88
+return %v83, %v52, %v86, %v11, %v87, %v88
 
 == external_take_ptr @0x4008a0
 cfg

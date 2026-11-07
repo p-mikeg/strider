@@ -485,7 +485,7 @@ return %v77, %v78, %v106, %v80, %v81, %v82, %v83, %v84
 %v125:i32 = truncate %v111
 %v126:i32 = int.add %v124, %v125
 %v127:i64 = extend.zero %v126
-return %v114, %v57, %v127, %v109, %v69, %v70, %v71, %v72
+return %v114, %v57, %v127, %v112, %v69, %v70, %v71, %v72
 
 == external_take_ptr @0x924
 cfg

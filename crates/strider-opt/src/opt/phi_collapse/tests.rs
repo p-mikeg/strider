@@ -247,7 +247,8 @@ fn a_cascading_sweep_converges_in_one_iteration() -> crate::Result<()> {
 }
 
 /// One block of [`build_blocks`]: an optional constant written to `var`, then
-/// no successor (return `var`), one (branch) or two (`If` on `var == 0`).
+/// no successor (return `var`), one (branch) or two (`If` on `var <s 0`,
+/// which, unlike `var == 0`, moves no read below an edge).
 type Block<'a> = (Option<u64>, &'a [usize]);
 
 /// A function over one tracked `var` whose regions are `blocks`, block 0 the
@@ -275,7 +276,7 @@ fn build_blocks(blocks: &[Block<'_>]) -> crate::Result<strider_ir::Function> {
                 let cond = b.build_int_cmp_operation(
                     current,
                     zero,
-                    strider_ir::IntCmpOp::Equal,
+                    strider_ir::IntCmpOp::Sless,
                     ValueType::int(64),
                 )?;
                 b.build_if(cond, regions[taken], regions[not_taken])?;

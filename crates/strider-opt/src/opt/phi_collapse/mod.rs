@@ -6,7 +6,8 @@
 //! take no outside value. Inputs on unreachable predecessor slots count as
 //! outside values. Phis over a `Region` unreachable from entry are skipped:
 //! collapsing there can close a non-phi data cycle. Then folds `And(phi, C)`
-//! when every arm masked by `C` agrees ([`masked`]).
+//! when every arm masked by `C` agrees ([`masked`]), and moves a phi's reads
+//! below an edge that finds it equal to a value ([`equal_edge`]).
 
 use cranelift_entity::SecondaryMap;
 use strider_ir::IRViewer;
@@ -15,6 +16,9 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use crate::Result;
 use crate::pipeline::{OptCtx, Optimizer};
 
+mod equal_edge;
+#[cfg(test)]
+mod equal_edge_tests;
 mod masked;
 
 #[cfg(test)]
@@ -51,7 +55,8 @@ impl Optimizer for PhiCollapse {
                 Outside::Many(_) | Outside::None => {}
             }
         }
-        masked::fold_masked_uses(edit, &phis)
+        masked::fold_masked_uses(edit, &phis)?;
+        equal_edge::fold_equal_edges(edit)
     }
 }
 

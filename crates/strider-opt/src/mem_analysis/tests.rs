@@ -1493,7 +1493,7 @@ mod heap_tests {
         Ok(())
     }
 
-    /// `p = malloc(); while p == 0 { p += 8 }; return p`, collapsed: the
+    /// `p = malloc(); while p != 0 { p += 8 }; return p`, collapsed: the
     /// returned phi is the allocation's walking pointer, one of its own arms'
     /// operands.
     fn walking_pointer() -> crate::Result<(Function, ValueId)> {
@@ -1515,7 +1515,7 @@ mod heap_tests {
         let zero = b.build_int_const(0u64, ValueType::int(64))?;
         let cond =
             b.build_int_cmp_operation(phi, zero, strider_ir::IntCmpOp::Equal, ValueType::int(64))?;
-        b.build_if(cond, body, exit)?;
+        b.build_if(cond, exit, body)?;
 
         b.set_region(body);
         let next = b.build_const_binop(8u64, phi, IntBinaryOp::Add, ValueType::int(64))?;
