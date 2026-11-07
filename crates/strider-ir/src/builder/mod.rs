@@ -59,7 +59,7 @@ impl FunctionBuilder {
                 .chain(&cc.arg_passing_regs)
                 .chain(&cc.arg_passing_regs_float),
         );
-        let mut function = Function::new(cc, byte_order, all_used_variables);
+        let mut function = Function::new(cc, byte_order, &all_used_variables);
         let memory_node =
             function
                 .graph_mut()

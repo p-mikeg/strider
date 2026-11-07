@@ -21,7 +21,7 @@ pub(crate) fn test_function_tracking(vns: Vec<rsleigh::Vn>) -> Function {
     let mut f = Function::new(
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
-        vns,
+        &vns,
     );
     // Mirrors the `InitialMemory` the builder mints.
     f.graph_mut().create_node(

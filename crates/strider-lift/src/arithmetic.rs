@@ -57,11 +57,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lift_int_unary(insn, false, |b, v, t| b.build_popcount(v, t))
+        self.lift_int_unary(insn, false, FunctionBuilder::build_popcount)
     }
 
     pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lift_int_unary(insn, false, |b, v, t| b.build_lzcount(v, t))
+        self.lift_int_unary(insn, false, FunctionBuilder::build_lzcount)
     }
 
     /// Narrows a shift count wider than the output so an out-of-range count

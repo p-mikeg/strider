@@ -410,7 +410,7 @@ pub(crate) fn raw_entries<Elf: object::read::elf::FileHeader>(
         && let Ok(crel) = object::read::elf::CrelIterator::new(bytes)
     {
         let rela = crel.is_rela();
-        crel.map_while(|e| e.ok())
+        crel.map_while(core::result::Result::ok)
             .map(|e| (e.r_offset, e.r_type, e.r_sym, rela.then_some(e.r_addend)))
             .collect()
     } else {

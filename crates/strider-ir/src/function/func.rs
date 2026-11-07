@@ -53,7 +53,7 @@ impl Function {
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         byte_order: impl Into<strider_target::ByteOrder>,
-        tracked_vns: Vec<rsleigh::Vn>,
+        tracked_vns: &[rsleigh::Vn],
     ) -> Self {
         let mut graph = Graph::default();
         graph.create_node(
@@ -61,7 +61,7 @@ impl Function {
             [],
             [crate::node::ValueKind::Control],
         );
-        let mut tracked_vns = vn_container::dedup_overlapping_largest(&tracked_vns);
+        let mut tracked_vns = vn_container::dedup_overlapping_largest(tracked_vns);
         tracked_vns.sort_by_key(|vn| (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size));
         let mut vn_interner = entity_utils::EntityInterner::default();
         for vn in tracked_vns {

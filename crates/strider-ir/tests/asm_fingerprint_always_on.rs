@@ -10,7 +10,7 @@ fn default_validate_flags_missing_asm_fingerprint() {
     let mut function = Function::new(
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
-        Vec::new(),
+        &[],
     );
     let entry = function.entry();
     // Dedups against the skeleton `Function::new` already built.
