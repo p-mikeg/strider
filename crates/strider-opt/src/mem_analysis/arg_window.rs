@@ -122,11 +122,11 @@ impl ArgPrefix {
     }
 }
 
-/// Each slot after `prefix` whose nearest clobber is a `MemPhi` every arm of
-/// which reaches a whole store of one type at the slot's start (the `MemPhi`
-/// and those stores in arm order) or, after the first such slot, that reaches
-/// a whole store at its start (`None` and the store), up to the first other
-/// slot.
+/// The slots after `prefix`, up to the first that is neither: one whose
+/// nearest clobber is a `MemPhi` every arm of which reaches a whole store of
+/// one type at its start (`Some(phi)`, the stores in arm order), or, once one
+/// such slot is taken, one whose nearest clobber is a whole store at its start
+/// (`None`, it).
 pub(crate) fn merged_slots(
     function: &Function,
     query: &MemQuery,

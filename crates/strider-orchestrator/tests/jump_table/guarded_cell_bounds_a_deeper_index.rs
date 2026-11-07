@@ -124,7 +124,7 @@ fn thumb_cell_guard_excludes_a_cell_past_the_table() {
 }
 
 /// clang 14 -O2 AArch64 `g_phi2`, 0xa4 bytes at 0x40031c, over an extern
-/// `xm8` holding `['b']=2, ['f']=9, ['g']=13`:
+/// `xm8` holding, among others, `['b']=2, ['f']=9, ['g']=13`:
 ///
 /// ```c
 /// int g_phi2(int k) { int r = k; unsigned char c;
