@@ -44,22 +44,87 @@ fn volatile_reads(f: &strider_ir::Function) -> usize {
 }
 
 /// The first returned register is `t1 - t0`: unknown, from two reads.
-fn assert_elapsed_is_opaque(arch: Arch, words: &[u32]) {
+fn assert_elapsed_is_opaque(what: &str, arch: Arch, words: &[u32]) {
     let f = analyze(arch, words);
     let elapsed = returned(&f)[0];
     assert_eq!(
         f.int_const_u128(elapsed),
         None,
-        "{arch:?}: two counter reads folded to one value"
+        "{what} on {arch:?}: two counter reads folded to one value"
     );
-    assert_eq!(volatile_reads(&f), 2, "{arch:?}");
+    assert_eq!(volatile_reads(&f), 2, "{what} on {arch:?}");
 }
 
 /// The first returned register is `r - r` of a plain register: zero.
-fn assert_difference_folds(arch: Arch, words: &[u32]) {
+fn assert_difference_folds(what: &str, arch: Arch, words: &[u32]) {
     let f = analyze(arch, words);
-    assert_eq!(f.int_const_u128(returned(&f)[0]), Some(0), "{arch:?}");
-    assert_eq!(volatile_reads(&f), 0, "{arch:?}");
+    assert_eq!(
+        f.int_const_u128(returned(&f)[0]),
+        Some(0),
+        "{what} on {arch:?}"
+    );
+    assert_eq!(volatile_reads(&f), 0, "{what} on {arch:?}");
+}
+
+/// `mfspr r10, X; mfspr r9, X; subf r3, r10, r9; blr` for each counter X.
+const PPC_COUNTERS: [(&str, [u32; 2]); 6] = [
+    ("mftb", [0x7d4c_42a6, 0x7d2c_42a6]),
+    ("mfdec", [0x7d56_02a6, 0x7d36_02a6]),
+    ("pmc1 (787)", [0x7d53_c2a6, 0x7d33_c2a6]),
+    ("purr (309)", [0x7d55_4aa6, 0x7d35_4aa6]),
+    ("vtb (849)", [0x7d51_d2a6, 0x7d31_d2a6]),
+    ("pmc7 (793)", [0x7d59_c2a6, 0x7d39_c2a6]),
+];
+
+/// `mfc0 t0, X; mfc0 t1, X; subu v0, t1, t0; jr ra; nop` for each X.
+const MIPS_COUNTERS: [(&str, [u32; 2]); 4] = [
+    ("count $9", [0x4008_4800, 0x4009_4800]),
+    ("random $1", [0x4008_0800, 0x4009_0800]),
+    ("cause $13", [0x4008_6800, 0x4009_6800]),
+    ("perf counter $25, 1", [0x4008_c801, 0x4009_c801]),
+];
+
+/// As [`MIPS_COUNTERS`], for registers no spec marks volatile.
+const MIPS_PLAIN: [(&str, [u32; 2]); 2] = [
+    ("status $12", [0x4008_6000, 0x4009_6000]),
+    ("perf control $25, 0", [0x4008_c800, 0x4009_c800]),
+];
+
+const PPC_TAIL: [u32; 2] = [0x7c6a_4850, 0x4e80_0020];
+const MIPS_TAIL: [u32; 3] = [0x0128_1023, 0x03e0_0008, 0];
+
+fn with_tail(reads: [u32; 2], tail: &[u32]) -> Vec<u32> {
+    reads.iter().chain(tail).copied().collect()
+}
+
+#[test]
+fn powerpc_counter_reads_differ() {
+    for (name, reads) in PPC_COUNTERS {
+        let words = with_tail(reads, &PPC_TAIL);
+        for arch in PPC {
+            assert_elapsed_is_opaque(name, arch, &words);
+        }
+    }
+}
+
+#[test]
+fn mips_counter_reads_differ() {
+    for (name, reads) in MIPS_COUNTERS {
+        let words = with_tail(reads, &MIPS_TAIL);
+        for arch in MIPS {
+            assert_elapsed_is_opaque(name, arch, &words);
+        }
+    }
+}
+
+#[test]
+fn mips_plain_cp0_reads_are_one_value() {
+    for (name, reads) in MIPS_PLAIN {
+        let words = with_tail(reads, &MIPS_TAIL);
+        for arch in MIPS {
+            assert_difference_folds(name, arch, &words);
+        }
+    }
 }
 
 /// `sp_el0` is the kernel's `current`, which every writer a call can reach
@@ -69,7 +134,7 @@ fn aarch64_sp_el0_reads_are_one_value() {
     // mrs x0, sp_el0; mrs x1, sp_el0; sub x0, x1, x0; ret
     let words = [0xd538_4100, 0xd538_4101, 0xcb00_0020, 0xd65f_03c0];
     for arch in AARCH64 {
-        assert_difference_folds(arch, &words);
+        assert_difference_folds("sp_el0", arch, &words);
     }
 }
 
@@ -85,7 +150,7 @@ fn aarch64_sp_el0_survives_a_call() {
         0xd65f_03c0,
     ];
     for arch in AARCH64 {
-        assert_difference_folds(arch, &words);
+        assert_difference_folds("sp_el0 across a call", arch, &words);
     }
 }
 
@@ -94,16 +159,7 @@ fn aarch64_virtual_counter_reads_differ() {
     // mrs x0, cntvct_el0; mrs x1, cntvct_el0; sub x0, x1, x0; ret
     let words = [0xd53b_e040, 0xd53b_e041, 0xcb00_0020, 0xd65f_03c0];
     for arch in AARCH64 {
-        assert_elapsed_is_opaque(arch, &words);
-    }
-}
-
-#[test]
-fn powerpc_timebase_reads_differ() {
-    // mftb r10; mftb r9; subf r3, r10, r9; blr
-    let words = [0x7d4c_42a6, 0x7d2c_42a6, 0x7c6a_4850, 0x4e80_0020];
-    for arch in PPC {
-        assert_elapsed_is_opaque(arch, &words);
+        assert_elapsed_is_opaque("cntvct_el0", arch, &words);
     }
 }
 
@@ -112,52 +168,7 @@ fn powerpc_sprg0_reads_are_one_value() {
     // mfspr r10, 272; mfspr r9, 272; subf r3, r10, r9; blr
     let words = [0x7d50_42a6, 0x7d30_42a6, 0x7c6a_4850, 0x4e80_0020];
     for arch in PPC {
-        assert_difference_folds(arch, &words);
-    }
-}
-
-#[test]
-fn mips_cp0_count_reads_differ() {
-    // mfc0 t0, $9; mfc0 t1, $9; subu v0, t1, t0; jr ra; nop
-    let words = [0x4008_4800, 0x4009_4800, 0x0128_1023, 0x03e0_0008, 0];
-    for arch in MIPS {
-        assert_elapsed_is_opaque(arch, &words);
-    }
-}
-
-#[test]
-fn mips_cp0_random_reads_differ() {
-    // mfc0 t0, $1; mfc0 t1, $1; subu v0, t1, t0; jr ra; nop
-    let words = [0x4008_0800, 0x4009_0800, 0x0128_1023, 0x03e0_0008, 0];
-    for arch in MIPS {
-        assert_elapsed_is_opaque(arch, &words);
-    }
-}
-
-#[test]
-fn mips_cp0_status_reads_are_one_value() {
-    // mfc0 t0, $12; mfc0 t1, $12; subu v0, t1, t0; jr ra; nop
-    let words = [0x4008_6000, 0x4009_6000, 0x0128_1023, 0x03e0_0008, 0];
-    for arch in MIPS {
-        assert_difference_folds(arch, &words);
-    }
-}
-
-#[test]
-fn powerpc_decrementer_reads_differ() {
-    // mfdec r10; mfdec r9; subf r3, r10, r9; blr
-    let words = [0x7d56_02a6, 0x7d36_02a6, 0x7c6a_4850, 0x4e80_0020];
-    for arch in PPC {
-        assert_elapsed_is_opaque(arch, &words);
-    }
-}
-
-#[test]
-fn powerpc_pmc1_reads_differ() {
-    // mfspr r10, 787; mfspr r9, 787; subf r3, r10, r9; blr
-    let words = [0x7d53_c2a6, 0x7d33_c2a6, 0x7c6a_4850, 0x4e80_0020];
-    for arch in PPC {
-        assert_elapsed_is_opaque(arch, &words);
+        assert_difference_folds("sprg0", arch, &words);
     }
 }
 
@@ -188,33 +199,6 @@ fn powerpc_mfpmr_reads_differ() {
     }
 }
 
-#[test]
-fn powerpc_purr_reads_differ() {
-    // mfspr r10, 309; mfspr r9, 309; subf r3, r10, r9; blr
-    let words = [0x7d55_4aa6, 0x7d35_4aa6, 0x7c6a_4850, 0x4e80_0020];
-    for arch in PPC {
-        assert_elapsed_is_opaque(arch, &words);
-    }
-}
-
-#[test]
-fn mips_performance_counter_reads_differ() {
-    // mfc0 t0, $25, 1; mfc0 t1, $25, 1; subu v0, t1, t0; jr ra; nop
-    let words = [0x4008_c801, 0x4009_c801, 0x0128_1023, 0x03e0_0008, 0];
-    for arch in MIPS {
-        assert_elapsed_is_opaque(arch, &words);
-    }
-}
-
-#[test]
-fn mips_performance_control_reads_are_one_value() {
-    // mfc0 t0, $25, 0; mfc0 t1, $25, 0; subu v0, t1, t0; jr ra; nop
-    let words = [0x4008_c800, 0x4009_c800, 0x0128_1023, 0x03e0_0008, 0];
-    for arch in MIPS {
-        assert_difference_folds(arch, &words);
-    }
-}
-
 /// ARM reads the generic timer through `mrrc`, which the sla lifts as a
 /// `CallOther` per read, so two reads are two nodes without any volatile list.
 #[test]
@@ -230,33 +214,6 @@ fn arm_generic_timer_reads_differ() {
         .filter(|&n| f.call_other_name(n) == Some("coprocessor_movefromRt"))
         .count();
     assert_eq!(low_word_reads, 2);
-}
-
-#[test]
-fn powerpc_vtb_reads_differ() {
-    // mfspr r10, 849; mfspr r9, 849; subf r3, r10, r9; blr
-    let words = [0x7d51_d2a6, 0x7d31_d2a6, 0x7c6a_4850, 0x4e80_0020];
-    for arch in PPC {
-        assert_elapsed_is_opaque(arch, &words);
-    }
-}
-
-#[test]
-fn powerpc_pmc7_reads_differ() {
-    // mfspr r10, 793; mfspr r9, 793; subf r3, r10, r9; blr
-    let words = [0x7d59_c2a6, 0x7d39_c2a6, 0x7c6a_4850, 0x4e80_0020];
-    for arch in PPC {
-        assert_elapsed_is_opaque(arch, &words);
-    }
-}
-
-#[test]
-fn mips_cp0_cause_reads_differ() {
-    // mfc0 t0, $13; mfc0 t1, $13; subu v0, t1, t0; jr ra; nop
-    let words = [0x4008_6800, 0x4009_6800, 0x0128_1023, 0x03e0_0008, 0];
-    for arch in MIPS {
-        assert_elapsed_is_opaque(arch, &words);
-    }
 }
 
 /// The region `n`'s control descends from, past straight-line control nodes.
