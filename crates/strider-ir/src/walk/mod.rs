@@ -1,6 +1,7 @@
 use core::iter;
 
 use entity_utils::DenseEntitySet;
+pub use graph_algorithms::walk::{FnSuccs, PostOrder, PreOrder, WalkPhase};
 
 use crate::IRViewer;
 use crate::function::Function;
@@ -13,7 +14,7 @@ mod tests;
 pub type NodeIdSet = DenseEntitySet<NodeId>;
 
 /// The control nodes `entry` reaches over `Control` edges.
-pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
+pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> NodeIdSet {
     let mut walk = PreOrder::new(FnSuccs::new(|n| cfg_succs(graph, n)), iter::once(entry));
     walk.by_ref().for_each(drop);
     walk.into_visited()
@@ -63,8 +64,6 @@ pub fn close_over_control_preds(
         }
     }
 }
-
-pub use graph_algorithms::walk::{FnSuccs, PostOrder, PreOrder, WalkPhase};
 
 /// Successors: every input's producer, then the control consumers (so
 /// `PreOrder` visits consumers first). A dead control predecessor is reached
@@ -127,9 +126,8 @@ pub(crate) fn live_def_use_succs<'a>(
 /// A walk's reachable set plus its input-less `roots`.
 #[derive(Debug, Clone)]
 pub struct GraphWalkInfo {
-    /// The reached nodes with no inputs.
     pub roots: Vec<NodeId>,
-    pub live_nodes: DenseEntitySet<NodeId>,
+    pub live_nodes: NodeIdSet,
 }
 
 impl GraphWalkInfo {

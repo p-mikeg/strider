@@ -1203,7 +1203,7 @@ fn out_of_bounds_remove_node_input_leaves_dedup_intact() {
 /// and the blanket relink would splice the orphaned first batch into the same
 /// values' use-lists, so `value_uses` reported consumers no live node owns.
 #[test]
-#[should_panic(expected = "the second input batch")]
+#[should_panic(expected = "`reachable` repeats")]
 fn retain_reachable_rejects_a_duplicate_node_id() {
     let mut g = TestGraph::new();
     let x = const_node(&mut g, 1);
