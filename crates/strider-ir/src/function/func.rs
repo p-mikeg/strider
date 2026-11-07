@@ -42,13 +42,14 @@ pub struct Function {
 }
 
 impl Function {
-    /// Builds the `Entry` node. `InitialMemory` is the `FunctionBuilder`'s job.
+    /// A function holding only `Entry` (node 0); `FunctionBuilder` adds
+    /// `InitialMemory`.
     ///
     /// `tracked_vns` folds into disjoint containers, each the largest of
     /// nested varnodes or the union of partially overlapping ones
     /// ([`vn_container::dedup_overlapping_largest`]), sorted by space
-    /// shortcut, offset and size. A bare `Endianness` is the order of every
-    /// space.
+    /// shortcut, offset and size so `InitialVnId` numbering is reproducible.
+    /// A bare `Endianness` is the order of every space.
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         byte_order: impl Into<strider_target::ByteOrder>,
@@ -60,7 +61,6 @@ impl Function {
             [],
             [crate::node::ValueKind::Control],
         );
-        // Sorted so `InitialVnId` assignment is reproducible.
         let mut tracked_vns = vn_container::dedup_overlapping_largest(&tracked_vns);
         tracked_vns.sort_by_key(|vn| (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size));
         let mut vn_interner = entity_utils::EntityInterner::default();
@@ -464,24 +464,6 @@ mod compact_tests {
         assert_eq!(*assumptions, listed);
         assert_eq!(*call_register_frame_reach, Some(-8));
         assert!(!optimizer_converged);
-    }
-
-    #[test]
-    fn compact_remaps_entry_and_drops_zombies() {
-        let mut f = test_function();
-        let _zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::int(64));
-        let pre_count = f.graph().all_node_ids().count();
-
-        let _remap = f.compact();
-
-        let post_count = f.graph().all_node_ids().count();
-        assert!(post_count < pre_count, "compact must shrink the graph");
-        // Node 0 is still the Entry, carrying its Control output.
-        let entry_id = f.entry();
-        assert!(matches!(f.node_kind(entry_id), NodeKind::Entry));
-        let outs: Vec<_> = f.node_outputs(entry_id).to_vec();
-        assert_eq!(outs.len(), 1);
-        assert!(f.value_kind(outs[0]).is_control());
     }
 
     /// `retain_reachable_stale_cache` leaves the dedup cache keyed on

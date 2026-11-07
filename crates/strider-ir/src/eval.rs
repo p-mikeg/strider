@@ -115,9 +115,8 @@ fn signed_max(ty: ValueType) -> IBig {
     (IBig::ONE << ty.bit_width().saturating_sub(1)) - IBig::ONE
 }
 
-/// Whether a shift by `amount` is at or past `ty`'s bit width, where Sleigh
-/// answers 0 (the sign fill for `IntSright`); Sleigh's bound is 8 bits at
-/// `I1`. Takes the raw, unmasked amount.
+/// `amount` (unmasked) is at or past `ty`'s width, where Sleigh shifts to 0
+/// (sign fill for `IntSright`). Sleigh's bound at `I1` is 8, not 1.
 #[inline]
 #[must_use]
 pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
@@ -230,18 +229,15 @@ pub fn lzcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// The variants are public and only the constructors check the width, so
     /// `Int(0)` reaches these `pub fn`s.
     #[test]
     fn the_width_primitives_are_total_at_width_zero() {
-        use super::{all_ones, mask};
-        use crate::UBig;
-        use crate::node::ValueType;
         assert_eq!(all_ones(ValueType::Int(0)), UBig::ZERO);
         assert_eq!(mask(&UBig::from(0xffu32), ValueType::Int(0)), UBig::ZERO);
     }
-
-    use super::*;
 
     fn set_bits(v: &UBig) -> usize {
         v.as_words().iter().map(|l| l.count_ones() as usize).sum()

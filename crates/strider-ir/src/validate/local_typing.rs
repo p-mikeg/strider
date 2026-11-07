@@ -12,8 +12,7 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
     let actual_inputs = graph.node_inputs(node);
     let actual_outputs = graph.node_outputs(node);
 
-    // A variadic list with `head_len = 0` (e.g. `Region`) passes at zero
-    // inputs; the ">= 1 predecessor" rule lives in graph_invariants.
+    // `Region`'s >= 1 predecessor rule is `check_region`'s.
     if let Some(expected) = sig.inputs.arity_violation(actual_inputs.len()) {
         errs.push(ValidationError::NodeInputCountMismatch {
             node,

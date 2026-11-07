@@ -29,7 +29,7 @@ pub(super) fn node_style(kind: &NodeKind) -> (&'static str, &'static str) {
         NodeKind::New => ("component", "#103a2a"),
         NodeKind::Return | NodeKind::IndirectBranch => ("doublecircle", "#103a10"),
         NodeKind::Switch(_) => ("trapezium", "#103a10"),
-        NodeKind::Unreachable => ("Msquare", "#3a1030"), // a sink control cannot leave
+        NodeKind::Unreachable => ("Msquare", "#3a1030"),
         NodeKind::IntConst(_) => ("ellipse", "#2d2d2d"),
         NodeKind::FloatConst(_) => ("ellipse", "#1a3020"),
         NodeKind::IntUnaryOp(_)

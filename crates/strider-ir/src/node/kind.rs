@@ -104,8 +104,7 @@ pub enum NodeKind {
     Lzcount,
     Extend(crate::node::ExtendOp),
 
-    /// Raw IEEE 754 bits, masked to the output width (upper 32 bits zero for
-    /// `F32`).
+    /// Raw IEEE 754 bits, masked to the output width, which is at most 64 bits.
     FloatConst(u64),
     FloatBinaryOp(crate::node::FloatBinaryOp),
     FloatUnaryOp(crate::node::FloatUnaryOp),
