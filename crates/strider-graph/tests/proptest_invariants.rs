@@ -205,6 +205,25 @@ fn canonicalize_merges_a_mutated_twin() {
     assert_eq!(g.canonicalize_node(d), None, "unique node has no twin");
 }
 
+/// Twins `rebuild_cache` keyed together: the one merged away gives up its
+/// entry, so a later lookup cannot return it.
+#[test]
+fn canonicalize_evicts_a_cached_twin_it_merges() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    let z = const_node(&mut g, 3);
+    let a = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    let c = g.create_node(TestKind::Add, [x, z], [TestVal::Int]);
+    let c_use1 = g.node_input_id_at(c, 1).expect("c has input slot 1");
+    g.update_input(c_use1, y);
+    g.rebuild_cache();
+    assert!(g.is_cached(a) && g.is_cached(c));
+    assert_eq!(g.canonicalize_node(c), Some(a));
+    assert!(!g.is_cached(c), "the merged twin keeps no entry");
+    assert_eq!(g.create_node(TestKind::Add, [x, y], [TestVal::Int]), a);
+}
+
 #[test]
 fn canonicalize_reinserts_unique_mutated_node_then_dedups() {
     // A node whose inputs change (so it is evicted) but has NO twin must be

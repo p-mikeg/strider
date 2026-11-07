@@ -119,6 +119,8 @@ impl NodeCache {
         if let Some(&twin) = self.table.find(h, |&cand| {
             cand != node && C::eq(store, cand, kind, &inputs, &outputs)
         }) {
+            // A twin `rebuild` keyed alongside `node` would outlive the merge.
+            self.invalidate(node);
             return Some(twin);
         }
         // Every edge or output edit invalidates first; a payload rewrite needs
