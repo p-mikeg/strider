@@ -35,10 +35,10 @@ type LazyRanges<'f> =
     LazyCell<index_range::RangeMap<'f>, Box<dyn FnOnce() -> index_range::RangeMap<'f> + 'f>>;
 
 /// One function's dispatch-site recogniser, with the memos its sites share.
-/// Every recogniser fails closed on a partial proof, never under-approximating
-/// the target set. A claim wrong for the input, a guard the range analysis
-/// does not connect to the index, or an infeasible phi arm no `If` on the
-/// same condition cuts can over-approximate it.
+/// Every recogniser fails closed on a partial proof. Under correct claims the
+/// set is never short; a guard the range analysis does not connect to the
+/// index, or an infeasible phi arm no `If` on the same condition cuts, can
+/// over-approximate it.
 pub(crate) struct SiteClassifier<'f> {
     function: &'f strider_ir::Function,
     /// Built on the first table query.

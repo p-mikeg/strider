@@ -68,8 +68,8 @@ impl<'a> Evaluator<'a> {
             .insert(idx_value, (Abs::Const(UBig::from(idx)), true));
     }
 
-    /// Evaluates `dispatch` over `order` against the open index. Bailing on
-    /// the first non-folding node is exact: every fold needs every operand.
+    /// Evaluates `dispatch` over `order` against the open index. Bails on the
+    /// first node that does not fold; the cone order puts every operand first.
     pub(crate) fn eval_root(&mut self, order: &[ValueId], dispatch: ValueId) -> Option<u64> {
         for &val in order {
             if self.map.contains_key(&val) {
@@ -196,30 +196,18 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
-    graph_algorithms::walk::PostOrder::new(
-        ValueInputSuccs {
-            function,
-            stop: None,
-        },
-        [root],
-    )
-    .collect()
-}
-
 /// Value-input edges, whose post-order is producers before consumers; `stop`
 /// is a leaf.
 struct ValueInputSuccs<'a> {
     function: &'a strider_ir::Function,
-    stop: Option<ValueId>,
+    stop: ValueId,
 }
 
 impl graph_algorithms::walk::GraphRef for ValueInputSuccs<'_> {
     type NodeId = ValueId;
 
     fn successors(&self, value: ValueId, mut f: impl FnMut(ValueId)) {
-        if Some(value) == self.stop {
+        if value == self.stop {
             return;
         }
         for succ in self.function.value_inputs(self.function.producer(value)) {
@@ -235,19 +223,12 @@ pub(crate) fn cone_order_pruned(
     root: ValueId,
     stop: ValueId,
 ) -> Vec<ValueId> {
-    graph_algorithms::walk::PostOrder::new(
-        ValueInputSuccs {
-            function,
-            stop: Some(stop),
-        },
-        [root],
-    )
-    .collect()
+    graph_algorithms::walk::PostOrder::new(ValueInputSuccs { function, stop }, [root]).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Evaluator, cone_order, cone_order_pruned};
+    use super::{Evaluator, cone_order_pruned};
     use crate::test_support::{COLLAPSE, run_passes};
     use strider_ir::node::{ValueId, ValueType};
     use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, UBig};
@@ -288,7 +269,7 @@ mod tests {
             .expect("dispatch");
         let function = returning(b, dispatch);
 
-        let full = cone_order(&function, dispatch);
+        let full = cone_order_pruned(&function, dispatch, idx_raw);
         let pruned = cone_order_pruned(&function, dispatch, idx);
 
         assert!(
@@ -447,7 +428,7 @@ mod tests {
             .expect("build_load");
         let mut function = returning(b, loaded);
         run_passes(&mut function, COLLAPSE).expect("pipeline");
-        let order = cone_order(&function, loaded);
+        let order = cone_order_pruned(&function, loaded, idx);
         let mut ev = Evaluator::new(&function, None);
         ev.begin_index(idx, 0);
         ev.eval_root(&order, loaded)
