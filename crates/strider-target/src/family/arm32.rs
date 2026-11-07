@@ -245,10 +245,10 @@ impl CallingConvention {
     /// `-mfloat-abi=soft` / `softfp` binary.
     #[must_use]
     pub const fn arm_aapcs_soft() -> Self {
-        // Floats travel in core registers; d8-d15 stay callee-saved.
+        // Floats travel in core registers; d8-d15 stay callee-saved. A
+        // 16-byte vector returns in r0..r3; only r0:r1 are listed, as a
+        // soft-float kernel would otherwise return r2:r3 everywhere.
         CallingConvention {
-            // A 16-byte vector returns in r0..r3.
-            ret_val_regs: &["r0", "r1", "r2", "r3"],
             arg_passing_regs_float: &[],
             ret_val_regs_float: &[],
             ..Self::arm_aapcs()
