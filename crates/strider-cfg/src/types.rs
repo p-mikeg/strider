@@ -86,8 +86,8 @@ pub enum RegionTerminator {
         target: crate::ResolvedTarget,
     },
     /// A seated jump table. Every target is an instruction start inside the
-    /// function bound or a fragment, or a `TailCall` stub a direct edge
-    /// already reported.
+    /// function bound or a fragment, or a `TailCall` stub an earlier edge or
+    /// fall-through reported.
     Switch {
         /// The `BranchIndirect`'s `inputs[0]`.
         target_vn: rsleigh::Vn,

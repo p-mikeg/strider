@@ -76,8 +76,8 @@ impl Cfg {
     }
 
     /// Seeded or derived arms dropped because they, or code they reach before
-    /// another `Switch`, failed to decode, each with its site. The failing
-    /// bytes are in [`Self::incomplete`].
+    /// another `Switch`, failed to decode or ran past the function end, each
+    /// with its site. The failing bytes are in [`Self::incomplete`].
     pub fn undecodable_seeded_targets(&self) -> &[UndecodableTarget] {
         &self.report.undecodable_seeded
     }

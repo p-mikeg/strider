@@ -97,7 +97,8 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         self.arch
     }
 
-    /// What every [`Cfg::space_ids`] this engine builds holds.
+    /// The sla's address spaces, which every [`Cfg::space_ids`] it builds
+    /// carries.
     #[must_use]
     pub fn space_ids(&self) -> &rsleigh::SpaceIds {
         &self.space_ids
