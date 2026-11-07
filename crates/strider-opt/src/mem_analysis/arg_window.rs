@@ -123,14 +123,16 @@ impl ArgPrefix {
 }
 
 /// Each slot after `prefix` whose nearest clobber is a `MemPhi` every arm of
-/// which reaches a whole store of one type at the slot's start: the `MemPhi`
-/// and those stores in arm order, up to the first other slot.
+/// which reaches a whole store of one type at the slot's start (the `MemPhi`
+/// and those stores in arm order) or, after the first such slot, that reaches
+/// a whole store at its start (`None` and the store), up to the first other
+/// slot.
 pub(crate) fn merged_slots(
     function: &Function,
     query: &MemQuery,
     call: NodeId,
     prefix: &ArgPrefix,
-) -> Vec<(NodeId, Vec<ReachingSpStore>)> {
+) -> Vec<(Option<NodeId>, Vec<ReachingSpStore>)> {
     let (Some(args), Some((base, sp_offset))) = (
         function.get_cc(call).stack_args,
         super::decompose::call_sp(function, call),
@@ -162,7 +164,19 @@ pub(crate) fn merged_slots(
         let start = wrap_to_addr_width(function, base, args.slot_offset(sp_offset, cursor));
         let phi = nearest(mem, start, args.increment);
         if !matches!(function.node_kind(phi), NodeKind::MemPhi) {
-            break;
+            // A store before the branch the arguments split at. The slot the
+            // prefix itself ended at stays refused.
+            let Some(hit) = (!merged.is_empty())
+                .then(|| anchored_store(function, phi, base))
+                .flatten()
+                .filter(|hit| hit.store_offset == start)
+                .filter(|hit| nearest(mem, start, hit.size(function)) == phi)
+            else {
+                break;
+            };
+            cursor += args.slots_spanned(hit.size(function));
+            merged.push((None, vec![hit]));
+            continue;
         }
         let stores: Option<Vec<ReachingSpStore>> = function
             .phi_data_inputs(phi)
@@ -180,7 +194,7 @@ pub(crate) fn merged_slots(
             break;
         }
         cursor += args.slots_spanned(size);
-        merged.push((phi, stores));
+        merged.push((Some(phi), stores));
     }
     merged
 }
