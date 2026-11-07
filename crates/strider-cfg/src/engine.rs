@@ -20,7 +20,9 @@ pub struct DecodeEngine<R: rsleigh::MemReader> {
 }
 
 impl<R: rsleigh::MemReader> DecodeEngine<R> {
-    /// An engine over `reader`, with the Sleigh built from `arch`.
+    /// An engine over `reader`, with the Sleigh built from `arch`. The
+    /// reader's bytes must not change while the engine lives: Sleigh caches
+    /// decodes.
     ///
     /// # Errors
     /// When the sla does not load.
