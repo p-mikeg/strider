@@ -354,8 +354,8 @@ impl CallingConvention {
             arg_passing_regs_float: &[],
             callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
             ret_val_regs: &["EAX", "EDX"],
-            // Scalar floats in ST0, COMPLEX_X87 in ST0/ST1, `__m128` in XMM0.
-            ret_val_regs_float: &["ST0", "ST1", "XMM0"],
+            // Scalar floats in ST0, `__m128` in XMM0.
+            ret_val_regs_float: &["ST0", "XMM0"],
             // Above the 4-byte return address.
             stack_args: Some(StackArgs {
                 base_offset: 4,

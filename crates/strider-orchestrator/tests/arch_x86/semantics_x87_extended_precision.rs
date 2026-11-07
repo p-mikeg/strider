@@ -183,8 +183,8 @@ fn a_double_operand_is_widened_before_the_x87_add() {
 #[test]
 fn cdecl_returns_a_long_double_in_st0() {
     let (f, cc) = analyze(LD_ROM);
-    assert_eq!(returned(&f).len(), 5, "EAX, EDX, ST0, ST1, XMM0");
+    assert_eq!(returned(&f).len(), 4, "EAX, EDX, ST0, XMM0");
     assert_eq!(cc.ret_val_regs.len(), 2);
-    assert_eq!(cc.ret_val_regs_float.len(), 3);
+    assert_eq!(cc.ret_val_regs_float.len(), 2);
     assert_eq!(cc.ret_val_regs_float[0].size, 10, "ST0 is 80 bits");
 }

@@ -6,13 +6,13 @@
 # popcount32: popcount|lzcount or call or 2 int.and|int.or|int.xor|int.shift_left|int.shift_right|int.sshift_right|int.neg
 # popcount64: popcount|lzcount or call or 2 int.and|int.or|int.xor|int.shift_left|int.shift_right|int.sshift_right|int.neg
 endian little
-default_cc arg_passing_regs=[EAX, EDX, ECX] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, ST1, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
+default_cc arg_passing_regs=[EAX, EDX, ECX] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == popcount32 @0x4010f0
 cfg
   0x4010f0 198 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x49e00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a300:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4a900:1, u:0x4ab00:4, u:0x4ac00:1, u:0x4ad00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b200:1, u:0x4b800:8, u:0x50300:1, u:0x50400:4, u:0x50500:4, u:0x50600:4, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50b00:1, u:0x50e00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x51300:1, u:0x7f900:8, u:0x7fa00:8, u:0x7fc00:8, u:0x7ff00:4, u:0xb7700:4, u:0xb7f00:4, u:0xb8000:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x49e00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a300:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4a900:1, u:0x4ab00:4, u:0x4ac00:1, u:0x4ad00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b200:1, u:0x4b800:8, u:0x50300:1, u:0x50400:4, u:0x50500:4, u:0x50600:4, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50b00:1, u:0x50e00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x51300:1, u:0x7f900:8, u:0x7fa00:8, u:0x7fc00:8, u:0x7ff00:4, u:0xb7700:4, u:0xb7f00:4, u:0xb8000:4]
 arg 0 [%v2]
 arg 1 [%v24]
 %v0:ctrl = entry
@@ -41,9 +41,8 @@ arg 1 [%v24]
 %v23:i32 = int.shift_right %v21, %v22
 %v24:i32 = initial_var[EDX]
 %v25:i80 = initial_var[ST0]
-%v26:i80 = initial_var[ST1]
-%v27:i128 = initial_var[XMM0]
-return %v0, %v1, %v23, %v24, %v25, %v26, %v27
+%v26:i128 = initial_var[XMM0]
+return %v0, %v1, %v23, %v24, %v25, %v26
 
 == clz32 @0x401130
 cfg
@@ -51,7 +50,7 @@ cfg
   0x401130.4 3 ops cbranch 0x401130.9 -> [0x401130.7, 0x401130.9]
   0x401130.7 2 ops goto -> [0x401130.4]
   0x401130.9 13 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x5e700:4, u:0x5e900:1, u:0x5ea00:4, u:0x5eb00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x5e700:4, u:0x5e900:1, u:0x5ea00:4, u:0x5eb00:1]
 arg 0 [%v1]
 arg 1 [%v24]
 %v0:ctrl = entry
@@ -78,9 +77,8 @@ arg 1 [%v24]
 %v23:i32 = int.xor %v21, %v9
 %v24:i32 = initial_var[EDX]
 %v25:i80 = initial_var[ST0]
-%v26:i80 = initial_var[ST1]
-%v27:i128 = initial_var[XMM0]
-return %v19, %v22, %v23, %v24, %v25, %v26, %v27
+%v26:i128 = initial_var[XMM0]
+return %v19, %v22, %v23, %v24, %v25, %v26
 
 == ctz32 @0x401140
 cfg
@@ -88,7 +86,7 @@ cfg
   0x401140.4 4 ops cbranch 0x401140.10 -> [0x401140.8, 0x401140.10]
   0x401140.8 2 ops goto -> [0x401140.4]
   0x401140.10 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ZF, EIP, ST0, ST1, XMM0, u:0x5da00:4, u:0x5dc00:1, u:0x5dd00:4, u:0x5de00:4, u:0x5df00:1]
+tracked [EAX, ECX, EDX, ESP, ZF, EIP, ST0, XMM0, u:0x5da00:4, u:0x5dc00:1, u:0x5dd00:4, u:0x5de00:4, u:0x5df00:1]
 arg 0 [%v1]
 arg 1 [%v23]
 %v0:ctrl = entry
@@ -114,14 +112,13 @@ arg 1 [%v23]
 %v22:mem = initial_memory
 %v23:i32 = initial_var[EDX]
 %v24:i80 = initial_var[ST0]
-%v25:i80 = initial_var[ST1]
-%v26:i128 = initial_var[XMM0]
-return %v19, %v22, %v21, %v23, %v24, %v25, %v26
+%v25:i128 = initial_var[XMM0]
+return %v19, %v22, %v21, %v23, %v24, %v25
 
 == popcount64 @0x401150
 cfg
   0x401150 402 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x49e00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a300:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4a900:1, u:0x4ab00:4, u:0x4ac00:1, u:0x4ad00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b200:1, u:0x4b800:8, u:0x50300:1, u:0x50400:4, u:0x50500:4, u:0x50600:4, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50b00:1, u:0x50e00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x51300:1, u:0x7f900:8, u:0x7fa00:8, u:0x7fc00:8, u:0x7ff00:4, u:0xb7700:4, u:0xb7f00:4, u:0xb8000:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x49e00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a300:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4a900:1, u:0x4ab00:4, u:0x4ac00:1, u:0x4ad00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b200:1, u:0x4b800:8, u:0x50300:1, u:0x50400:4, u:0x50500:4, u:0x50600:4, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50b00:1, u:0x50e00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x51300:1, u:0x7f900:8, u:0x7fa00:8, u:0x7fc00:8, u:0x7ff00:4, u:0xb7700:4, u:0xb7f00:4, u:0xb8000:4]
 arg 0 [%v2]
 arg 1 [%v24]
 %v0:ctrl = entry
@@ -164,9 +161,8 @@ arg 1 [%v24]
 %v37:i32 = int.shift_right %v36, %v22
 %v38:i32 = int.add %v23, %v37
 %v39:i80 = initial_var[ST0]
-%v40:i80 = initial_var[ST1]
-%v41:i128 = initial_var[XMM0]
-return %v0, %v1, %v38, %v19, %v39, %v40, %v41
+%v40:i128 = initial_var[XMM0]
+return %v0, %v1, %v38, %v19, %v39, %v40
 
 == clz64 @0x4011c0
 cfg
@@ -179,7 +175,7 @@ cfg
   0x4011c6.9 32 ops cbranch 0x4011d4 -> [0x4011d1.4, 0x4011d4]
   0x4011d1.4 1 ops goto -> [0x4011d4]
   0x4011d4 3 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17c00:1, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x5e700:4, u:0x5e900:1, u:0x5ea00:4, u:0x5eb00:1, u:0x69a00:4, u:0x69b00:1, u:0xbae00:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x17c00:1, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x5e700:4, u:0x5e900:1, u:0x5ea00:4, u:0x5eb00:1, u:0x69a00:4, u:0x69b00:1, u:0xbae00:4]
 arg 0 [%v22]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -227,16 +223,15 @@ arg 1 [%v1]
 %v47:i32<EAX> = phi %v46, %v43, %v44
 %v48:mem = initial_memory
 %v49:i80 = initial_var[ST0]
-%v50:i80 = initial_var[ST1]
-%v51:i128 = initial_var[XMM0]
-return %v45, %v48, %v47, %v1, %v49, %v50, %v51
+%v50:i128 = initial_var[XMM0]
+return %v45, %v48, %v47, %v1, %v49, %v50
 
 == expect_branch @0x4011e0
 cfg
   0x4011e0 14 ops cbranch 0x4011e9 -> [0x4011e5, 0x4011e9]
   0x4011e5 12 ops return -> []
   0x4011e9 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x6ae00:4, u:0x6b000:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x6ae00:4, u:0x6b000:4]
 arg 0 [%v2]
 arg 1 [%v8]
 %v0:ctrl = entry
@@ -248,17 +243,16 @@ arg 1 [%v8]
 %v7:i32 = iconst[0xffffffff]
 %v8:i32 = initial_var[EDX]
 %v9:i80 = initial_var[ST0]
-%v10:i80 = initial_var[ST1]
-%v11:i128 = initial_var[XMM0]
-return %v4, %v6, %v7, %v8, %v9, %v10, %v11
-%v12:i32 = iconst[0x1]
-%v13:i32 = int.add %v2, %v12
-return %v5, %v6, %v13, %v8, %v9, %v10, %v11
+%v10:i128 = initial_var[XMM0]
+return %v4, %v6, %v7, %v8, %v9, %v10
+%v11:i32 = iconst[0x1]
+%v12:i32 = int.add %v2, %v11
+return %v5, %v6, %v12, %v8, %v9, %v10
 
 == main @0x4011f0
 cfg
   0x4011f0 151 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 1 [%v13]
 arg 2 [%v14]
 %v0:ctrl = entry
@@ -276,46 +270,46 @@ arg 2 [%v14]
 %v12:i32 = iconst[0xdeadbeef]
 %v13:i32 = initial_var[EDX]
 %v14:i32 = initial_var[ECX]
-%v15:ctrl, %v16:mem, %v17:i32<EAX>, %v18:i32<EDX>, %v19:i80<ST0>, %v20:i80<ST1>, %v21:i128<XMM0>, %v22:i32<ECX>, %v23:i8<CF>, %v24:i8<PF>, %v25:i8<ZF>, %v26:i8<SF>, %v27:i8<OF>, %v28:i32<EIP> = call %v0, %v10, %v11, %v8, %v12, %v13, %v14
-%v29:i32 = load[r] %v16, %v4
-%v30:i32 = int.xor %v29, %v17
-%v31:mem = store[r] %v16, %v4, %v30
-%v32:i32 = iconst[0x401213]
-%v33:mem = store[r] %v31, %v8, %v32
-%v34:i32 = iconst[0x401130]
-%v35:i32 = iconst[0x10000]
-%v36:ctrl, %v37:mem, %v38:i32<EAX>, %v39:i32<EDX>, %v40:i80<ST0>, %v41:i80<ST1>, %v42:i128<XMM0>, %v43:i32<ECX>, %v44:i8<CF>, %v45:i8<PF>, %v46:i8<ZF>, %v47:i8<SF>, %v48:i8<OF>, %v49:i32<EIP> = call %v15, %v33, %v34, %v8, %v35, %v18, %v22
-%v50:i32 = load[r] %v37, %v4
-%v51:i32 = int.xor %v50, %v38
-%v52:mem = store[r] %v37, %v4, %v51
-%v53:i32 = iconst[0x401221]
-%v54:mem = store[r] %v52, %v8, %v53
-%v55:i32 = iconst[0x401140]
-%v56:ctrl, %v57:mem, %v58:i32<EAX>, %v59:i32<EDX>, %v60:i80<ST0>, %v61:i80<ST1>, %v62:i128<XMM0>, %v63:i32<ECX>, %v64:i8<CF>, %v65:i8<PF>, %v66:i8<ZF>, %v67:i8<SF>, %v68:i8<OF>, %v69:i32<EIP> = call %v36, %v54, %v55, %v8, %v35, %v39, %v43
-%v70:i32 = load[r] %v57, %v4
-%v71:i32 = int.xor %v70, %v58
-%v72:mem = store[r] %v57, %v4, %v71
-%v73:i32 = iconst[0x401234]
-%v74:mem = store[r] %v72, %v8, %v73
-%v75:i32 = iconst[0x401150]
-%v76:i32 = iconst[0xcafebabe]
-%v77:ctrl, %v78:mem, %v79:i32<EAX>, %v80:i32<EDX>, %v81:i80<ST0>, %v82:i80<ST1>, %v83:i128<XMM0>, %v84:i32<ECX>, %v85:i8<CF>, %v86:i8<PF>, %v87:i8<ZF>, %v88:i8<SF>, %v89:i8<OF>, %v90:i32<EIP> = call %v56, %v74, %v75, %v8, %v76, %v12, %v63
-%v91:i32 = load[r] %v78, %v4
-%v92:i32 = int.xor %v91, %v79
-%v93:mem = store[r] %v78, %v4, %v92
-%v94:i32 = iconst[0x401244]
-%v95:mem = store[r] %v93, %v8, %v94
-%v96:i32 = iconst[0x4011c0]
-%v97:ctrl, %v98:mem, %v99:i32<EAX>, %v100:i32<EDX>, %v101:i80<ST0>, %v102:i80<ST1>, %v103:i128<XMM0>, %v104:i32<ECX>, %v105:i8<CF>, %v106:i8<PF>, %v107:i8<ZF>, %v108:i8<SF>, %v109:i8<OF>, %v110:i32<EIP> = call %v77, %v95, %v96, %v8, %v35, %v5, %v84
-%v111:i32 = load[r] %v98, %v4
-%v112:i32 = int.xor %v111, %v99
-%v113:mem = store[r] %v98, %v4, %v112
-%v114:i32 = iconst[0x401252]
-%v115:mem = store[r] %v113, %v8, %v114
-%v116:i32 = iconst[0x4011e0]
-%v117:i32 = iconst[0x32]
-%v118:ctrl, %v119:mem, %v120:i32<EAX>, %v121:i32<EDX>, %v122:i80<ST0>, %v123:i80<ST1>, %v124:i128<XMM0>, %v125:i32<ECX>, %v126:i8<CF>, %v127:i8<PF>, %v128:i8<ZF>, %v129:i8<SF>, %v130:i8<OF>, %v131:i32<EIP> = call %v97, %v115, %v116, %v8, %v117, %v100, %v104
-%v132:i32 = load[r] %v119, %v4
-%v133:i32 = int.xor %v132, %v120
-%v134:mem = store[r] %v119, %v4, %v133
-return %v118, %v134, %v133, %v121, %v122, %v123, %v124
+%v15:ctrl, %v16:mem, %v17:i32<EAX>, %v18:i32<EDX>, %v19:i80<ST0>, %v20:i128<XMM0>, %v21:i32<ECX>, %v22:i8<CF>, %v23:i8<PF>, %v24:i8<ZF>, %v25:i8<SF>, %v26:i8<OF>, %v27:i32<EIP> = call %v0, %v10, %v11, %v8, %v12, %v13, %v14
+%v28:i32 = load[r] %v16, %v4
+%v29:i32 = int.xor %v28, %v17
+%v30:mem = store[r] %v16, %v4, %v29
+%v31:i32 = iconst[0x401213]
+%v32:mem = store[r] %v30, %v8, %v31
+%v33:i32 = iconst[0x401130]
+%v34:i32 = iconst[0x10000]
+%v35:ctrl, %v36:mem, %v37:i32<EAX>, %v38:i32<EDX>, %v39:i80<ST0>, %v40:i128<XMM0>, %v41:i32<ECX>, %v42:i8<CF>, %v43:i8<PF>, %v44:i8<ZF>, %v45:i8<SF>, %v46:i8<OF>, %v47:i32<EIP> = call %v15, %v32, %v33, %v8, %v34, %v18, %v21
+%v48:i32 = load[r] %v36, %v4
+%v49:i32 = int.xor %v48, %v37
+%v50:mem = store[r] %v36, %v4, %v49
+%v51:i32 = iconst[0x401221]
+%v52:mem = store[r] %v50, %v8, %v51
+%v53:i32 = iconst[0x401140]
+%v54:ctrl, %v55:mem, %v56:i32<EAX>, %v57:i32<EDX>, %v58:i80<ST0>, %v59:i128<XMM0>, %v60:i32<ECX>, %v61:i8<CF>, %v62:i8<PF>, %v63:i8<ZF>, %v64:i8<SF>, %v65:i8<OF>, %v66:i32<EIP> = call %v35, %v52, %v53, %v8, %v34, %v38, %v41
+%v67:i32 = load[r] %v55, %v4
+%v68:i32 = int.xor %v67, %v56
+%v69:mem = store[r] %v55, %v4, %v68
+%v70:i32 = iconst[0x401234]
+%v71:mem = store[r] %v69, %v8, %v70
+%v72:i32 = iconst[0x401150]
+%v73:i32 = iconst[0xcafebabe]
+%v74:ctrl, %v75:mem, %v76:i32<EAX>, %v77:i32<EDX>, %v78:i80<ST0>, %v79:i128<XMM0>, %v80:i32<ECX>, %v81:i8<CF>, %v82:i8<PF>, %v83:i8<ZF>, %v84:i8<SF>, %v85:i8<OF>, %v86:i32<EIP> = call %v54, %v71, %v72, %v8, %v73, %v12, %v60
+%v87:i32 = load[r] %v75, %v4
+%v88:i32 = int.xor %v87, %v76
+%v89:mem = store[r] %v75, %v4, %v88
+%v90:i32 = iconst[0x401244]
+%v91:mem = store[r] %v89, %v8, %v90
+%v92:i32 = iconst[0x4011c0]
+%v93:ctrl, %v94:mem, %v95:i32<EAX>, %v96:i32<EDX>, %v97:i80<ST0>, %v98:i128<XMM0>, %v99:i32<ECX>, %v100:i8<CF>, %v101:i8<PF>, %v102:i8<ZF>, %v103:i8<SF>, %v104:i8<OF>, %v105:i32<EIP> = call %v74, %v91, %v92, %v8, %v34, %v5, %v80
+%v106:i32 = load[r] %v94, %v4
+%v107:i32 = int.xor %v106, %v95
+%v108:mem = store[r] %v94, %v4, %v107
+%v109:i32 = iconst[0x401252]
+%v110:mem = store[r] %v108, %v8, %v109
+%v111:i32 = iconst[0x4011e0]
+%v112:i32 = iconst[0x32]
+%v113:ctrl, %v114:mem, %v115:i32<EAX>, %v116:i32<EDX>, %v117:i80<ST0>, %v118:i128<XMM0>, %v119:i32<ECX>, %v120:i8<CF>, %v121:i8<PF>, %v122:i8<ZF>, %v123:i8<SF>, %v124:i8<OF>, %v125:i32<EIP> = call %v93, %v110, %v111, %v8, %v112, %v96, %v99
+%v126:i32 = load[r] %v114, %v4
+%v127:i32 = int.xor %v126, %v115
+%v128:mem = store[r] %v114, %v4, %v127
+return %v113, %v128, %v127, %v116, %v117, %v118
