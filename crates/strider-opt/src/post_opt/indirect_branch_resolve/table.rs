@@ -6,7 +6,8 @@
 //!
 //! Known limit: a read guard's range is trusted as the table's bound even
 //! where an unread or lost test is tighter, and a test reading the cell
-//! through a phi reads no bits of it. Each seats cells the code rules out.
+//! through a phi reads no bits of it. Both over-approximate: they seat cells
+//! the code rules out.
 
 use super::index_range::{Interval, MAX_WALK, ScaleOp, Step, scale_of, strip_to_cell, width_mask};
 use super::{MAX_TABLE_ENTRIES, SiteClassifier};
@@ -294,7 +295,8 @@ impl SiteClassifier<'_> {
     /// Does `iv` cover every value `v`'s cell can produce (the [`strip_to_cell`]
     /// steps replayed, wrapping per [`wrap`]), making `v` table data rather than
     /// an index? An uncountable step or a strip past [`MAX_WALK`] answers `true`;
-    /// a field read through a pointer asks `cell_test_left_unread` instead.
+    /// a field read through a pointer or a register's entry value asks
+    /// `cell_test_left_unread` instead.
     fn is_width_only(&mut self, site: NodeId, v: ValueId, iv: Interval, narrowed: bool) -> bool {
         let function = self.function;
         let Some(strip) = strip_to_cell(function, v, |and| {
@@ -303,7 +305,9 @@ impl SiteClassifier<'_> {
             return true;
         };
         let base = strip.cell;
-        if self.loads_a_field(site, base) {
+        if matches!(function.kind_of_value(base), NodeKind::InitialVar(_))
+            || self.loads_a_field(site, base)
+        {
             return self
                 .ranges
                 .cell_test_left_unread(v, &strip, site, iv, narrowed);

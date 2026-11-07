@@ -525,10 +525,9 @@ fn decompose_index_picks_shallowest_narrowed_index() {
 
 #[test]
 fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
-    // A 256-case switch on a byte REGISTER is a real index, but its [0,255]
-    // fills the byte width and is indistinguishable by range from a loaded byte
-    // entry, so it defers.  Real byte indices arrive
-    // through a load/mask/shift that narrows below the width.
+    // A width-filling byte whose cell is a phi (the uncollapsed read of `bl`)
+    // may merge a loaded entry, so it defers. The register's entry value
+    // itself is an index (the `x >> 29` case below).
     let bl = reg_vn(0x0, 1);
     let mut b = RegisterSet::new()
         .tracked(bl)
@@ -547,8 +546,32 @@ fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
     assert_eq!(
         classify(&function, Some(&rom)),
         None,
-        "a width-filling byte index is conservatively deferred (indistinguishable from an entry by range)"
+        "a width-filling byte read through a phi defers"
     );
+}
+
+/// `switch (x >> 29)` on a register argument: the shift fills all 8 slots, as
+/// `*p >> 29` does, and is the index, not a table entry.
+/// Mutation: count a register's entry value as table data in `is_width_only`.
+#[test]
+fn classify_table_dispatch_resolves_an_unguarded_shift_of_a_register() {
+    let x = reg_vn(0x10, 4);
+    let mut b = RegisterSet::new()
+        .tracked(x)
+        .build_fn_single_region()
+        .unwrap();
+    let word = b.read_variable(&x).unwrap();
+    let idx = b
+        .build_const_binop(29u64, word, IntBinaryOp::ShiftRight, ValueType::int(32))
+        .unwrap();
+    let loaded = table_target(&mut b, idx, 4u64, 0x4000u64);
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_lift_addr(None);
+    let mut function = b.build().unwrap();
+    run_passes(&mut function, COLLAPSE).unwrap();
+    let entries: Vec<u64> = (0..8).map(|i| 0x5000 + 0x10 * i).collect();
+    let rom = MockRom::strided(0x4000, 4, entries.clone(), 4);
+    assert_eq!(arms(classify(&function, Some(&rom))), Some(entries));
 }
 
 /// `(tbl[i] & m) + base`: the mask puts the CELL's range below its load width,

@@ -168,8 +168,6 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   at a variable index (clang -O0 on aarch64be and arm_be, arm_be8's two-slot
   stack array).
 - A table of more than 4096 entries.
-- An unguarded index whose type already spans the table (`x >> 28` over 16
-  entries).
 - A 64-bit selector on a 32-bit target.
 - A wrapped narrow range (`unsigned short` cases 65529..65535 on x86).
 - PowerPC64 dispatch on a 32-bit parameter: the bound covers only the low
