@@ -487,7 +487,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     let here = decode_failure(&e).filter(|f| f.addr() == cur_addr.machine());
                     let (marked_data, reason) = match here {
                         Some(DecodeFailure::Unmapped(_)) if !off_arm => {
-                            return self.seal_and_report(cur_addr, crate::Reason::UnmappedTarget);
+                            return self
+                                .seal_and_report(cur_addr, crate::Reason::UnmappedTarget)
+                                .map(drop);
                         }
                         Some(DecodeFailure::Unmapped(_)) => (false, crate::Reason::UnmappedTarget),
                         Some(DecodeFailure::NotCode { marked_data, .. }) => {
@@ -505,18 +507,13 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     if (self.insns.is_empty() && !off_arm)
                         || !self.builder.calls_falling_into(self.parent_edge).is_empty()
                     {
-                        self.seal_and_report(cur_addr, reason)?;
-                        let sealed = self
-                            .builder
-                            .index
-                            .get(self.start_addr)
-                            .expect("just sealed");
+                        let sealed = self.seal_and_report(cur_addr, reason)?;
                         let fatal = (!marked_data).then_some(e);
                         self.builder.sealed_into_no_code.push((sealed, fatal));
                         return Ok(());
                     }
                     if marked_data && !off_arm {
-                        return self.seal_and_report(cur_addr, reason);
+                        return self.seal_and_report(cur_addr, reason).map(drop);
                     }
                     return Err(e);
                 }
@@ -582,13 +579,17 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
     /// Seals the region onto a [`Builder::edge_to_stub`] stub at `cur_addr`,
     /// where the fall-through found nothing to decode, reporting it as
-    /// `reason`.
-    fn seal_and_report(&mut self, cur_addr: PcodeInsnAddr, reason: crate::Reason) -> Result<()> {
+    /// `reason`. Returns the sealed region.
+    fn seal_and_report(
+        &mut self,
+        cur_addr: PcodeInsnAddr,
+        reason: crate::Reason,
+    ) -> Result<NodeIndex> {
         self.note_empty_span_to(cur_addr);
         let region = self.finish_current_region(RegionTerminator::Unconditional)?;
         self.builder.edge_to_stub(region, cur_addr)?;
         self.builder.report.incomplete.insert(cur_addr, reason);
-        Ok(())
+        Ok(region)
     }
 
     /// Records the bytes behind `cur_addr` as an empty region's span; a no-op
@@ -644,12 +645,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         if self.builder.calls_falling_into(self.parent_edge).is_empty() {
             return Err(DecodeFailure::PastEnd(cur_addr).into());
         }
-        self.seal_and_report(cur_addr, reason)?;
-        let sealed = self
-            .builder
-            .index
-            .get(self.start_addr)
-            .expect("just sealed");
+        let sealed = self.seal_and_report(cur_addr, reason)?;
         self.builder.sealed_into_no_code.push((sealed, None));
         Ok(true)
     }
