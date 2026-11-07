@@ -31,8 +31,8 @@ def capture_typed(c: Capture, inner: Union[Template, int]) -> Template:
     as `inner` raises `StriderError`."""
 def int_const(value: int) -> Template:
     """Build an integer constant whose stored value, wrapped into the width it
-    is evaluated at, is `value` (a shift count too wide saturates). A value
-    wider than 512 bits raises. Where nothing gives a width, as at a
+    is evaluated at, is `value`; a shift count that width cannot hold
+    saturates rather than wrapping. A value wider than 512 bits raises. Where nothing gives a width, as at a
     `Popcount` operand, the rewrite is refused; use `capture_typed`."""
 def bool_const(value: bool) -> Template:
     """Build a 1-bit boolean constant equal to `value`."""

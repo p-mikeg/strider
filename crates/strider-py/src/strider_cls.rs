@@ -410,8 +410,9 @@ pub(crate) fn machine_addrs(
 }
 
 /// Run `f`, then drain the pending-exception cell, so a later call cannot
-/// inherit a stash. A stashed callback exception wins over `f`'s result (see
-/// [`crate::errors::pending_over`]).
+/// inherit a stash. A stashed callback exception replaces `f`'s result,
+/// except that a stashed reader failure keeps `f`'s `StriderError`, chained
+/// to the failure's cause (see [`crate::errors::pending_over`]).
 pub(crate) fn with_pending_control_flow<T>(f: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
     let out = f();
     // A surviving callback cause would chain onto an unrelated later error.

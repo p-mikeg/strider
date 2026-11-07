@@ -112,28 +112,28 @@ class Match:
         ...
     def uint(self, key: CaptureKey) -> int:
         """The unsigned constant value bound to `key`, at any declared width.
-        Raises when unbound or not an integer-valued node."""
+        Raises when unbound or not an integer constant."""
         ...
     def uint_opt(self, key: CaptureKey) -> Optional[int]:
         """`uint`, or `None` instead of raising."""
         ...
     def sint(self, key: CaptureKey) -> int:
         """The signed constant value bound to `key`, at any declared width.
-        Raises when unbound or not an integer-valued node."""
+        Raises when unbound or not an integer constant."""
         ...
     def sint_opt(self, key: CaptureKey) -> Optional[int]:
         """`sint`, or `None` instead of raising."""
         ...
     def boolean(self, key: CaptureKey) -> bool:
         """The boolean constant value bound to `key`. Raises when unbound or
-        not a boolean-valued node."""
+        not a boolean constant."""
         ...
     def boolean_opt(self, key: CaptureKey) -> Optional[bool]:
         """`boolean`, or `None` instead of raising."""
         ...
     def float_bits(self, key: CaptureKey) -> int:
         """The raw float bit pattern bound to `key`. Raises when unbound or
-        not a float-valued node."""
+        not a float constant."""
         ...
     def float_bits_opt(self, key: CaptureKey) -> Optional[int]:
         """`float_bits`, or `None` instead of raising."""

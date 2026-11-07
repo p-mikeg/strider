@@ -281,7 +281,7 @@ def test_every_stub_alias_is_bound_at_runtime(mod_name):
 @pytest.mark.parametrize("mod_name", sorted(MODULES))
 def test_class_members_match_the_stub(mod_name):
     """Same rule one level down: a builder that grows a chainable method
-    (`CallPat.output`) is the exact drift that shipped in 1.0."""
+    (`CallPat.output`) is the drift this catches."""
     module = importlib.import_module(mod_name)
     for cls_name, declared in _class_members(_stub_ast(MODULES[mod_name])).items():
         cls = getattr(module, cls_name, None)
