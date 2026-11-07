@@ -639,11 +639,10 @@ impl PyLifterOptions {
              resolve_indirect_branches={}, assumptions={}, pipeline={})",
             cfg_repr,
             py_bool(self.compact),
-            if self.per_address_ccs.is_some() {
-                "<...>"
-            } else {
-                "None"
-            },
+            self.per_address_ccs.as_ref().map_or_else(
+                || "None".to_owned(),
+                |t| format!("{{{} entries}}", t.py.len())
+            ),
             py_bool(self.resolve_indirect_branches),
             assumptions_repr,
             if self.pipeline.is_some() {

@@ -46,18 +46,11 @@ fn build_cc(
     target: strider_target::SleighArch,
     addr: Option<u64>,
 ) -> PyResult<strider_target::BuiltCallingConvention> {
-    match addr {
-        None => check_source_arch(
-            cc.source_arch,
-            target,
-            format_args!("this custom CallingConvention"),
-        ),
-        Some(addr) => check_source_arch(
-            cc.source_arch,
-            target,
-            format_args!("the custom per-address CallingConvention at {addr:#x}"),
-        ),
-    }?;
+    let what = match addr {
+        None => "this custom CallingConvention".to_owned(),
+        Some(addr) => format!("the custom per-address CallingConvention at {addr:#x}"),
+    };
+    check_source_arch(cc.source_arch, target, format_args!("{what}"))?;
     match &cc.inner {
         crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
             into_strider_err(match addr {
@@ -440,7 +433,7 @@ pub struct PyLifter {
 struct SweepSleigh {
     entry: u64,
     sleigh: rsleigh::Sleigh<AnyMemReader>,
-    /// `sleigh`'s own.
+    /// The space ids of `sleigh`.
     space_ids: rsleigh::SpaceIds,
     /// `machine addr -> joined p-code`. Unbounded: an evicted entry would
     /// force a re-sweep from `entry`.
@@ -509,7 +502,7 @@ impl PyLifter {
             .mem_obj
             .as_ref()
             .map(|o| o.clone_ref(slf.py()))
-            .ok_or_else(|| into_strider_err(anyhow::anyhow!("reader is unavailable")))
+            .ok_or_else(cleared)
     }
 
     /// The `rom` this handle was built with, or `None`.
@@ -880,8 +873,7 @@ impl PyLifter {
             compact: opts.compact,
             entry_values: &entry_values,
         };
-        // A Python reader needs the GIL per read; keeping it also stops finalisation
-        // racing the analysis.
+        // Held for a Python reader, which needs it per read.
         let result = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(slf.bind(py))?;
             let reader_calls_python = lifter.reader_calls_python;

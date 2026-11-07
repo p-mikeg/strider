@@ -234,6 +234,13 @@ def test_cfg_options_repr():
     )
 
 
+def test_lifter_options_repr_counts_per_address_ccs():
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
+    assert "per_address_ccs=None," in repr(strider.lift.LifterOptions())
+    opts = strider.lift.LifterOptions(per_address_ccs={0x10: cc, 0x20: cc})
+    assert "per_address_ccs={2 entries}," in repr(opts)
+
+
 _ASSUMPTION_FIELDS = (
     "stack_global_disjoint",
     "assume_incoming_args_survive_calls",
