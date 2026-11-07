@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Changed answers
+
+These change an answer without an error:
+
+- `PhiCollapse` reads a phi as `y - c` below an `If` edge that found
+  `phi + c == y` (a counted loop's exit reads its bound), and
+  `DeadBranchElimination` runs before the collapses.
+- A return after a gcc `-fstack-clash-protection` probe loop is verified.
+- A switch on the top bits of a register argument (`x >> 29`) resolves.
+- A fall-through into a Thumb-32 instruction cut off by unmapped memory is
+  `unmapped_target` when 0xff padding decodes it; it raised.
+- Raw DOT spells a varnode as the text format does (`%:0x38:8`).
+
+### Fixed
+
+- A ROM load whose address is a short constant expression folds in one
+  optimizer iteration, so a chain of table lookups converges.
+- `Lifter.pcode_at` on an address inside a decode names that decode, and a
+  MIPS delay slot as such.
+- A template over the compile-step cap is refused with a message naming the
+  template.
+
 ## 0.3.0
 
 ### Breaking, Python

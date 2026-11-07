@@ -97,14 +97,14 @@ In default pipeline order:
 **CallStackArgCollect.** Attaches the stores into each call's outgoing argument
 window as ordinary arguments. Collection stops at the first slot no whole store
 reaches (an alignment hole, a ppc64 slot whose FP argument travels in an FPR),
-at a prologue save, or at a call between store and call; a tail call reusing
-the caller's arguments in place collects none. Of the stores of a preserved
-register's entry value on one stack base, only the highest is its save; a
-lower one (`__builtin_return_address(0)`) is an argument. A value stored once
-is taken for the save. Stores just above can come along (x86-64 clang's `push
-rax`, ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a
-non-loop join stores whole is collected as the phi of those values; past those,
-a slot stored whole before the branch as its value.
+at a prologue save, or at a call between store and call; a tail call reusing the
+caller's arguments in place collects none. An argument holding a preserved
+register's entry value, such as `__builtin_return_address(0)`, ends the
+collection: height and order cannot tell it from a save or a spill. Stores just
+above the arguments can come along (x86-64 clang's `push rax`, ARM gcc's `push
+{r3, lr}`, MIPS o32's `gp` save). A slot every arm of a non-loop join stores
+whole is collected as the phi of those values; past those, a slot stored whole
+before the branch as its value.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
 stack pointer read, after the register arguments: one ordinal per run of slots
@@ -186,7 +186,7 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   depth (200 levels of 8-way switches: about 3 s).
 - PowerPC float code lifts to far more p-code than other ISAs because the
   FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
-- A chain of about 500 constant guards held only in registers reaches the
+- A chain of about 1000 constant guards held only in registers reaches the
   1024-iteration cap, and the analysis returns it partly folded. So does a
   chain of about 1000 guards that each reload a stack slot the previous
   guard's arms store (`-O0` code), which folds one guard per iteration, and a

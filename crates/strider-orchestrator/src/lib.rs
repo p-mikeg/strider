@@ -97,7 +97,8 @@ where
         self.lifter.arch()
     }
 
-    /// Indexed by `user_op_id`, which for `read_volatile` is past the table.
+    /// The user-op names, indexed by `user_op_id`; `read_volatile`'s id is past
+    /// the end.
     #[must_use]
     pub fn user_op_names(&self) -> &[String] {
         self.lifter.user_op_names()
