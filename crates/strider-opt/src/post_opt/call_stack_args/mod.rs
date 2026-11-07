@@ -20,19 +20,13 @@ fn collect_stack_args(
     call_id: NodeId,
     increment: i128,
     query: &MemQuery,
+    saved: &[ValueId],
 ) -> Vec<ValueId> {
     let function = edit.function();
     let Some(prefix) = ArgPrefix::scan(function, query, call_id) else {
         return Vec::new();
     };
     let big_endian = function.byte_order().data == strider_target::Endianness::Big;
-    let tracked = function.all_vns();
-    let saved: Vec<ValueId> = function
-        .default_cc()
-        .callee_saved_regs
-        .iter()
-        .filter_map(|r| function.initial_var_value(&vn_container::largest_container_in(tracked, r)))
-        .collect();
     // An anchor a nearer store patched in part holds no one value to collect,
     // and a store inside the slot is its argument only right-justified on
     // big-endian.
@@ -78,6 +72,17 @@ fn collect_stack_args(
     args
 }
 
+/// The entry values of the registers the function's own convention preserves.
+fn callee_saved_entry_values(function: &strider_ir::Function) -> Vec<ValueId> {
+    let tracked = function.all_vns();
+    function
+        .default_cc()
+        .callee_saved_regs
+        .iter()
+        .filter_map(|r| function.initial_var_value(&vn_container::largest_container_in(tracked, r)))
+        .collect()
+}
+
 /// The inputs a `Call` carries before any collection: the head plus one per
 /// register-passed argument, integer then float. A second run truncates to it.
 fn register_arity(
@@ -116,6 +121,7 @@ impl Optimizer for CallStackArgCollect {
         let query = MemQuery::default();
         // Shared by every call without an override.
         let default_arity = register_arity(edit.function(), edit.function().default_cc());
+        let saved = callee_saved_entry_values(edit.function());
         for call_id in calls {
             let (stack_args, arity) = {
                 let function = edit.function();
@@ -130,7 +136,7 @@ impl Optimizer for CallStackArgCollect {
                 };
                 (stack_args, arity)
             };
-            let args = collect_stack_args(edit, call_id, stack_args.increment, &query);
+            let args = collect_stack_args(edit, call_id, stack_args.increment, &query, &saved);
             edit.truncate_node_inputs(call_id, arity);
             for arg_value in &args {
                 edit.add_node_input(call_id, *arg_value);

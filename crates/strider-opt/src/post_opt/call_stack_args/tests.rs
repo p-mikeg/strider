@@ -484,6 +484,7 @@ fn collect_walk_steps(slots: usize) -> Result<u64> {
             call_id,
             stack_args.increment,
             &MemQuery::default(),
+            &[],
         );
         assert_eq!(args.len(), slots, "every argument slot must be collected");
         Ok(())
