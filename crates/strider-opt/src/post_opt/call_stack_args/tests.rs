@@ -862,3 +862,69 @@ fn a_narrow_store_at_a_merged_slots_start_is_its_argument() -> Result<()> {
     }
     Ok(())
 }
+
+/// gcc -O2 aarch64 `c ? g(.., x, y, 9) : g(.., y, x, 9)`: the shared `9` is
+/// stored to slot 2 before the `if`, each arm stores slots 0 and 1, then one
+/// call. The stack inputs' producers.
+fn collect_hoisted_after_merge() -> Result<Vec<NodeKind>> {
+    let sp = strider_ir_test_utils::stack_vn_x86_64();
+    let i64_ty = ValueType::int(64);
+    let mut b = sp_frame(sp).stack_args(stack_args_at(0, 8)).build_fn()?;
+    let entry = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    let sp_v0 = b.read_variable(&sp)?;
+    let call_sp = b.build_const_binop((-32i64) as u64, sp_v0, IntBinaryOp::Add, i64_ty)?;
+    b.write_variable(&sp, call_sp)?;
+    let slot2 = b.build_const_binop(16u64, call_sp, IntBinaryOp::Add, i64_ty)?;
+    let nine = b.build_int_const(9u64, i64_ty)?;
+    b.build_store(slot2, nine, rsleigh::VnSpace::RAM)?;
+    let (then, els, merge) = (
+        b.create_region_all()?,
+        b.create_region_all()?,
+        b.create_region_all()?,
+    );
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, then, els)?;
+    for (region, first, second) in [(then, 0xAu64, 0xBu64), (els, 0xB, 0xA)] {
+        b.set_region(region);
+        let call_sp = b.read_variable(&sp)?;
+        let slot1 = b.build_const_binop(8u64, call_sp, IntBinaryOp::Add, i64_ty)?;
+        let v0 = b.build_int_const(first, i64_ty)?;
+        let v1 = b.build_int_const(second, i64_ty)?;
+        b.build_store(call_sp, v0, rsleigh::VnSpace::RAM)?;
+        b.build_store(slot1, v1, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+    }
+    b.set_region(merge);
+    let target = b.build_int_const(0x1000u64, i64_ty)?;
+    b.build_call_cc(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_passes(&mut fg, COLLAPSE)?;
+    crate::pipeline::run_post(&CallStackArgCollect, &mut fg, &crate::OptCtx::new(None))?;
+    let head = NodeKind::Call { cc: None }.input_head_len();
+    Ok(fg
+        .node_inputs(find_call(&fg))
+        .into_iter()
+        .skip(head)
+        .map(|v| *fg.node_kind(fg.producer(v)))
+        .collect())
+}
+
+/// A slot stored before the branch, past the merged ones, is an argument too.
+///
+/// Mutation: end the merged continuation at the first slot no `MemPhi` writes.
+#[test]
+fn a_slot_stored_before_the_merge_continues_the_arguments() -> Result<()> {
+    let kinds = collect_hoisted_after_merge()?;
+    assert!(
+        matches!(
+            kinds[..],
+            [NodeKind::Phi, NodeKind::Phi, NodeKind::IntConst(_)]
+        ),
+        "{kinds:?}"
+    );
+    Ok(())
+}

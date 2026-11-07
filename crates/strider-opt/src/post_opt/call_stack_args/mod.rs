@@ -15,7 +15,8 @@ mod tests;
 /// A slot holding the entry value of a register the function's own convention
 /// preserves (a prologue save) ends it, as does a `Call` on the chain. Slots
 /// past the prefix that every arm of a non-loop `MemPhi` stores whole continue
-/// it as a `Phi` of the stored values.
+/// it as a `Phi` of the stored values, and past those a slot stored whole
+/// before the branch continues it as its value.
 fn collect_stack_args(
     edit: &mut crate::EditFunction<'_>,
     call_id: NodeId,
@@ -49,6 +50,13 @@ fn collect_stack_args(
     for (mem_phi, stores) in merged_slots(function, query, call_id, &prefix) {
         let function = edit.function();
         let data: Vec<ValueId> = stores.iter().map(|hit| hit.data(function)).collect();
+        let Some(mem_phi) = mem_phi else {
+            if saved.contains(&data[0]) {
+                break;
+            }
+            args.push(data[0]);
+            continue;
+        };
         let region = function.phi_region(mem_phi);
         // A loop header's arms are a local's iterations, not one call's paths.
         let header = {
