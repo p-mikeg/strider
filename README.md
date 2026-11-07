@@ -64,8 +64,8 @@ strider.explore.shutdown(port)
   TOC in `r2`.
 - Jump tables are bounded by guards, known bits and phis of constants; one
   that cannot be bounded is deferred and reported.
-- Presets by name (`CC_PRESETS`, `.preset(name)`), constants up to 512 bits,
-  handles usable from any thread.
+- Presets by name (`ARCH_PRESETS` / `CC_PRESETS`, `.preset(name)`),
+  constants up to 512 bits, handles usable from any thread.
 - Sleigh fixes on every arch: float conversions round and saturate as the
   ISA does; x87 / SSE / VEX, PowerPC FPSCR, AArch64 narrow-register writes,
   ARM NEON, MIPS64 sign extension.
@@ -82,8 +82,8 @@ strider.explore.shutdown(port)
   callee.
 - `AssumptionOptions`, the claims the analysis cannot check; `none()` is the
   sound floor.
-- Queries: `first_of`, `field`, `code_ptr`, joins with constraints and
-  `JoinPredicate`, heap / non-stack filters, float and stack arguments.
+- Queries: `first_of`, `field`, `code_ptr`, `JoinPredicate` join
+  constraints, heap / non-stack filters, float arguments.
 - `Function.to_text` and a background explorer.
 
 ## Upgrading
@@ -148,9 +148,6 @@ uv run maturin develop    # build the Rust extension
 uv run pytest             # run the test suite
 uv run pyright            # type-check against the stubs
 ```
-
-After changing a case, rebuild it with `make -C fixtures ARCH=<arch>
-CASE=<case>`; [fixtures/README.md](fixtures/README.md) says what to re-bless.
 
 ## Crates
 

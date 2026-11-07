@@ -43,6 +43,7 @@ as the `mem` or `rom` of `strider.lift.lifter`, read on the Rust side.
 Subclass `MemReader` / `ReadOnlyMemory` (02, 07, 08) only for lazily produced
 bytes.
 
-- **Padding**: the disassembler prefetches past the last instruction. A
-  `BufferReader` short-reads there, so its padding is harmless; a `MemReader`
-  returning `None` needs real padding (02 and 08 carry 64 bytes).
+- **Padding**: Sleigh asks for 16 bytes at each instruction. A reader that
+  returns the bytes it has (a short read, as `BufferReader` does) needs
+  no padding; a `MemReader` returning `None` for the whole request needs that
+  much (02 and 08 carry 64 bytes).
