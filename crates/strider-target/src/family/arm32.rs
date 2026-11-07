@@ -51,14 +51,13 @@ const CALL_OTHER: &[Row] = &[
         }),
     ),
     // SMCCC HVC / SMC (the sla's `software_hvc` / `software_smc`, no output):
-    // r0..r7 in, r0..r3 out; SMCCC 1.0 may also leave r4..r12 unpredictable.
+    // r0..r7 in and out (r4..r7 carry results from SMCCC 1.2); r8..r14 are
+    // preserved.
     Row::new(
         &["software_hvc", "software_smc"],
         CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"],
-            implicit_writes: &[
-                "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12",
-            ],
+            implicit_writes: &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"],
             clobbers_memory: true,
             no_return: false,
         }),
