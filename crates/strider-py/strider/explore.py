@@ -643,8 +643,8 @@ def visualize(
     Opens on the whole graph (slow to lay out at a few thousand nodes);
     `whole=False` opens on a neighborhood around the entry. The neighborhood
     knobs open uncapped (0 is no limit); an integer `depth` seeds the depth
-    control. A negative or non-integer `depth` (`bool`, `float`) raises
-    `ValueError`.
+    control. A non-integer `depth` (`bool`, `float`) raises `TypeError`, a
+    negative one `ValueError`.
 
     `background=True` serves on a thread and returns the port at once; stop
     it with `shutdown(port)`. Rendering does not block analysis on the
@@ -656,7 +656,7 @@ def visualize(
                 raise TypeError
             depth = operator.index(depth)
         except TypeError:
-            raise ValueError(f"depth: {str(depth)!r} is not an integer") from None
+            raise TypeError(f"depth: expected an int, got {type(depth).__name__}") from None
         if depth < 0:
             raise ValueError(f"depth must be >= 0, got {depth}")
     seed = min(depth or 0, cast("int", _KNOB_UI["depth"]["max"]))

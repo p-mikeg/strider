@@ -275,7 +275,7 @@ def test_a_depth_that_is_not_an_integer_raises_before_serving(depth):
     fn = lift.analyze(lift.entry_point()).function
     try:
         port = strider.explore.visualize(fn, port=0, depth=depth, background=True)
-    except ValueError as e:
+    except TypeError as e:
         assert "depth" in str(e)
     else:
         strider.explore.shutdown(port)
