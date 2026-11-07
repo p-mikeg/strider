@@ -1301,17 +1301,18 @@ pub struct PyReadOnlyMemoryAdapter {
     pub py_obj: std::sync::Arc<Py<PyAny>>,
 }
 
-impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+impl PyReadOnlyMemoryAdapter {
+    /// Fills `buf`; `Ok(false)` when the reader returned `None` (unmapped).
+    fn fill(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<bool> {
         let size = buf.len();
-        Python::with_gil(|py| -> anyhow::Result<()> {
+        Python::with_gil(|py| {
             let result = call_py_read(py, &self.py_obj, (addr, size), "read", |e| {
                 anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}")
             })
             // Read as unmapped, so the exception is no later error's cause.
             .inspect_err(|_| crate::errors::clear_callback_cause())?;
             if result.is_none(py) {
-                anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
+                return Ok(false);
             }
             let bytes = extract_bytes(result.bind(py)).map_err(|e| {
                 anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}")
@@ -1323,8 +1324,25 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
                 );
             }
             buf.copy_from_slice(&bytes);
-            Ok(())
+            Ok(true)
         })
+    }
+}
+
+impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        if !self.fill(addr, buf)? {
+            anyhow::bail!(
+                "ReadOnlyMemory.read({addr:#x}, {}) returned None (unmapped)",
+                buf.len()
+            );
+        }
+        Ok(())
+    }
+
+    /// Builds no error for the common `None`.
+    fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
+        matches!(self.fill(addr, buf), Ok(true))
     }
 }
 
