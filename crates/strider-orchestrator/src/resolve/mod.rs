@@ -47,8 +47,8 @@ struct LoopState<'s> {
     derived_incomplete: Vec<PcodeInsnAddr>,
     /// Sticky: only the round that seats a guessed-mode arm flags it.
     assumed_modes: Vec<PcodeInsnAddr>,
-    /// Every round's target reasons: an inexact edge fed answers that
-    /// outlive its round.
+    /// Target reasons from every round: an edge refused in one round may have
+    /// shaped answers later rounds keep.
     incomplete: Incompleteness,
     /// Rounds folded into `sites`.
     folds: usize,

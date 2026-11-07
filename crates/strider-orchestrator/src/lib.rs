@@ -181,8 +181,9 @@ pub struct AnalyzeResult {
     /// The CFG `function` was lifted from, carrying this analysis's
     /// [`Incompleteness`] rather than that build's own.
     pub cfg: strider_cfg::Cfg,
-    /// At a [`Reason::UnresolvedBranch`] site, an `IndirectBranch` placeholder
-    /// or a `Switch` missing arms.
+    /// The optimised function. At a [`Reason::UnresolvedBranch`] site it holds
+    /// an `IndirectBranch` placeholder or a `Switch` whose arms are not proved
+    /// complete.
     pub function: strider_ir::Function,
 }
 

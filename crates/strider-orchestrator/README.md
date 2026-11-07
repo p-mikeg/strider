@@ -22,7 +22,9 @@ Each round builds the CFG from the caller's `known_targets` and the loop's
 own seats (`CfgOptions::derived_targets`), lifts and optimises it, and
 classifies every dispatch site: each `IndirectBranch` placeholder and each
 seated `Switch`, which can still widen. The answers fold into the seats, so
-one round seats one level of discovery.
+one round seats one level of discovery. Each round rebuilds the whole
+function, so code reachable only through k nested or chained tables costs
+k+1 full rebuilds.
 
 It converges when no site is left, or a round changes no seat and refuses
 none. 256 folds is the cap; sites still growing there are reported. These
