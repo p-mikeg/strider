@@ -6,6 +6,7 @@ garbage, cannot clear it, and promotes it to the old generation forever.
 """
 
 import gc
+import sys
 from typing import NamedTuple, Optional
 
 import pytest
@@ -109,3 +110,47 @@ def test_a_cleared_lifter_releases_its_reader():
     gc.collect()
     assert _live("_Marker") == base
 
+
+def _replaced_value_reenters(set_twice) -> list:
+    """Unraisable errors from a replaced setter value whose `__del__` calls
+    back into the builder."""
+    errs: list = []
+    old_hook = sys.unraisablehook
+    sys.unraisablehook = lambda u: errs.append(u.exc_value)
+    try:
+        set_twice()
+        gc.collect()
+    finally:
+        sys.unraisablehook = old_hook
+    return errs
+
+
+def test_replacing_when_drops_the_old_predicate_outside_the_borrow():
+    b = p.call()
+
+    class Pred:
+        def __call__(self, m):
+            return True
+
+        def __del__(self):
+            b.when(lambda m: True)
+
+    def set_twice():
+        b.when(Pred())
+        b.when(lambda m: True)
+
+    assert _replaced_value_reenters(set_twice) == []
+
+
+def test_replacing_an_operand_drops_the_old_one_outside_the_borrow():
+    b = p.load()
+
+    class Operand:
+        def __del__(self):
+            b.addr(p.anything())
+
+    def set_twice():
+        b.addr(Operand())  # type: ignore[arg-type]
+        b.addr(p.anything())
+
+    assert _replaced_value_reenters(set_twice) == []

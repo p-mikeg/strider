@@ -1501,7 +1501,9 @@ macro_rules! builder_common_methods {
             /// Attach a Python predicate that runs after the match, returning
             /// a `bool`.
             fn when(slf: PyRef<'_, Self>, f: PyObject) -> PyRef<'_, Self> {
-                slf.common.borrow_mut().when = Some(f);
+                // Dropped after the borrow: its `__del__` may re-enter `slf`.
+                let old = slf.common.borrow_mut().when.replace(f);
+                drop(old);
                 slf
             }
             /// Finalise into a `Pat`. A bad operand raises here.
@@ -1759,7 +1761,8 @@ macro_rules! node_builder {
             #[doc = $doc]
             fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyResult<PyRef<'py, Self>> {
                 $( let p = $coerce(slf.py(), p)?; )?
-                slf.inner.borrow_mut().$name = Some(p);
+                let old = slf.inner.borrow_mut().$name.replace(p);
+                drop(old);
                 Ok(slf)
             }
         ] $($rest)*);
