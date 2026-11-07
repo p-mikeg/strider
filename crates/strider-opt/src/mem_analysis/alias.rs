@@ -140,10 +140,6 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
         | (StackRooted { .. } | Constant { .. }, HeapRooted { .. } | HeapOpaque) => {
             AliasVerdict::Disjoint
         }
-        // An unknown allocation may be the very base it is paired with.
-        (HeapOpaque, HeapRooted { .. } | HeapOpaque) | (HeapRooted { .. }, HeapOpaque) => {
-            AliasVerdict::MayAlias
-        }
         (Constant { addr: la }, Constant { addr: sa }) => offset_range_verdict(load, la, store, sa),
         (Anchor { value: lout }, Anchor { value: sout }) => {
             if lout == sout {
@@ -160,7 +156,8 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
                 AliasVerdict::MayAlias
             }
         }
-        // Anything against an `Anchor`.
+        // An unknown allocation may be the base it is paired with; anything
+        // against an `Anchor`.
         _ => AliasVerdict::MayAlias,
     }
 }

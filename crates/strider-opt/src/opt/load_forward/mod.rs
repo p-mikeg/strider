@@ -1,12 +1,3 @@
-//! Store-to-load forwarding.
-//!
-//! Forwards a store's value to a later load when the nearest may-aliasing
-//! memory def is a store at the same address covering the load's bytes (a
-//! wider store is sliced). Anything else blocks; no value `Phi` is
-//! synthesized. A `MemPhi` whose arms agree once a constant `If`'s untaken
-//! arms are dropped reads as that one arm. Calls and opaque stores pass per
-//! the function's claims (`Policy::forward`).
-
 use std::cell::Cell;
 
 use rustc_hash::FxHashMap;
@@ -17,6 +8,12 @@ use crate::Result;
 use crate::const_eval::LoadSlice;
 use crate::mem_analysis::{Loc, MemQuery, Policy, ReachingDef, narrow_load_to};
 
+/// Store-to-load forwarding: a load whose nearest may-aliasing memory def is
+/// a store at its address covering its bytes takes the stored value (a wider
+/// store is sliced). Anything else blocks; no value `Phi` is synthesized. A
+/// `MemPhi` whose arms agree once a constant `If`'s untaken arms are dropped
+/// reads as that one arm. Calls and opaque stores pass per the function's
+/// claims (`Policy::forward`).
 pub struct LoadForward;
 
 /// One sweep's memory query and [`settle`] memo.
