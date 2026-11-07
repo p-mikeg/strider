@@ -10,7 +10,7 @@ from typing import Optional
 
 PF_X, PF_W, PF_R = 1, 2, 4
 SHF_WRITE, SHF_ALLOC, SHF_EXECINSTR = 1, 2, 4
-STT_NOTYPE, STT_OBJECT, STT_FUNC = 0, 1, 2
+STT_NOTYPE, STT_OBJECT, STT_FUNC, STT_FILE = 0, 1, 2, 4
 STB_LOCAL, STB_GLOBAL = 0, 1
 ET_REL, ET_EXEC = 1, 2
 
@@ -31,6 +31,8 @@ class Sym:
     section: Optional[int]
     size: int = 0
     kind: int = STT_FUNC
+    #: Locals must precede every global in `Elf.symbols`.
+    bind: int = STB_GLOBAL
 
 
 @dataclass
@@ -60,8 +62,11 @@ class Elf:
         for sym in self.symbols:
             name_off = len(strtab)
             strtab += sym.name.encode() + b"\0"
-            shndx = 0 if sym.section is None else sym.section + 1
-            info = (STB_GLOBAL << 4) | sym.kind
+            if sym.kind == STT_FILE:
+                shndx = 0xFFF1  # SHN_ABS
+            else:
+                shndx = 0 if sym.section is None else sym.section + 1
+            info = (sym.bind << 4) | sym.kind
             symtab += struct.pack("<IBBHQQ", name_off, info, 0, shndx, sym.value, sym.size)
 
         rela_secs = sorted({r[0] for r in self.relocs})
@@ -95,6 +100,10 @@ class Elf:
             cursor += len(rela[s])
         shoff = cursor + (-cursor) % 8
         nsec = len(self.sections)
+        first_global = 1 + next(
+            (i for i, sym in enumerate(self.symbols) if sym.bind != STB_LOCAL),
+            len(self.symbols),
+        )
         shnum = nsec + 4 + len(rela_secs)
 
         out = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(8)
@@ -118,7 +127,7 @@ class Elf:
             )
         out += struct.pack(
             "<IIQQQQIIQQ", name_offs[nsec], 2, 0, 0, symtab_off, len(symtab),
-            nsec + 2, 1, 8, 24,
+            nsec + 2, first_global, 8, 24,
         )
         out += struct.pack(
             "<IIQQQQIIQQ", name_offs[nsec + 1], 3, 0, 0, strtab_off, len(strtab), 0, 0, 1, 0

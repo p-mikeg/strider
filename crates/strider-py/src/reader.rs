@@ -391,8 +391,8 @@ struct SymbolTable {
     by_addr: Vec<usize>,
     /// Over `[start, covered_end)`.
     extents: RegionIndex,
-    /// Sized cold fragments by function name.
-    cold_fragments: HashMap<String, Vec<std::ops::Range<u64>>>,
+    /// Sized cold fragments by the index into `syms` of the function owning them.
+    cold_fragments: HashMap<usize, Vec<std::ops::Range<u64>>>,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -581,15 +581,14 @@ impl PyLoadedElf {
             let first = t
                 .by_addr
                 .partition_point(|&i| t.syms[i].start() < entry.saturating_sub(1));
-            let names = t.by_addr[first..]
+            let functions = t.by_addr[first..]
                 .iter()
-                .map(|&i| &t.syms[i])
-                .take_while(|s| s.start() <= entry)
-                .filter(|s| s.is_function && s.address == entry)
-                .map(|s| s.name.as_str());
+                .copied()
+                .take_while(|&i| t.syms[i].start() <= entry)
+                .filter(|&i| t.syms[i].is_function && t.syms[i].address == entry);
             strider_cfg::DataRanges::new(
-                names
-                    .filter_map(|name| t.cold_fragments.get(name))
+                functions
+                    .filter_map(|i| t.cold_fragments.get(&i))
                     .flatten()
                     .cloned(),
             )
@@ -681,6 +680,9 @@ impl PyLoadedElf {
             Some((r.start_addr(), r.end_addr()))
         };
         let mut syms: Vec<PySymbol> = Vec::new();
+        // Per symbol: the object file (`STT_FILE` group) of a local, `None` for a global.
+        let mut file_scope: Vec<Option<usize>> = Vec::new();
+        let mut scopes = 0usize;
         let mut by_name: HashMap<String, usize> = HashMap::new();
         // Taken only for names no ELF defines.
         let mut imports: Vec<(String, usize)> = Vec::new();
@@ -718,7 +720,14 @@ impl PyLoadedElf {
             // An exported symbol is in both `.symtab` and `.dynsym`.
             let mut seen: std::collections::HashSet<(String, u64)> =
                 std::collections::HashSet::new();
+            scopes += 1;
+            let mut scope = scopes;
             for sym in file.symbols().chain(file.dynamic_symbols()) {
+                if sym.kind() == object::SymbolKind::File {
+                    scopes += 1;
+                    scope = scopes;
+                    continue;
+                }
                 let Ok(name) = sym.name() else { continue };
                 // A mapping symbol marks a code or data span, not a symbol.
                 if name.is_empty() || (marks_spans && mapping_symbol_kind(name).is_some()) {
@@ -777,6 +786,7 @@ impl PyLoadedElf {
                     },
                     region: None,
                 });
+                file_scope.push(sym.is_local().then_some(scope));
                 if matches!(place, SymbolPlace::Import(_)) {
                     imports.push((name.to_string(), ix));
                     continue;
@@ -803,6 +813,7 @@ impl PyLoadedElf {
         for extra in &self.extra_symbols {
             let ix = syms.len();
             syms.push(extra.clone());
+            file_scope.push(None);
             by_name.entry(extra.name.clone()).or_insert(ix);
         }
         for sym in &mut syms {
@@ -811,11 +822,28 @@ impl PyLoadedElf {
         let mut by_addr: Vec<usize> = (0..syms.len()).collect();
         by_addr.sort_by_key(|&i| syms[i].start());
         let extents: Vec<(u64, u64)> = syms.iter().map(|s| (s.start(), s.covered_end())).collect();
-        let mut cold_fragments: HashMap<String, Vec<std::ops::Range<u64>>> = HashMap::new();
-        for sym in syms.iter().filter(|s| s.is_function) {
-            if let (Some(base), Some(size)) = (cold_fragment_base(&sym.name), sym.size) {
+        let functions = || syms.iter().enumerate().filter(|(_, s)| s.is_function);
+        let mut owners: HashMap<(&str, Option<usize>), Vec<usize>> = HashMap::new();
+        for (i, sym) in functions() {
+            owners
+                .entry((sym.name.as_str(), file_scope[i]))
+                .or_default()
+                .push(i);
+        }
+        // GCC emits `<f>.cold` local to `f`'s object, and the linker gathers
+        // every object's cold code apart from the bodies; a global `f` owns
+        // the fragments of an object with no local `f`.
+        let mut cold_fragments: HashMap<usize, Vec<std::ops::Range<u64>>> = HashMap::new();
+        for (i, sym) in functions() {
+            let (Some(base), Some(size)) = (cold_fragment_base(&sym.name), sym.size) else {
+                continue;
+            };
+            let owner = owners
+                .get(&(base, file_scope[i]))
+                .or_else(|| owners.get(&(base, None)));
+            for &o in owner.into_iter().flatten() {
                 cold_fragments
-                    .entry(base.to_owned())
+                    .entry(o)
                     .or_default()
                     .push(sym.start()..sym.start().saturating_add(size));
             }
