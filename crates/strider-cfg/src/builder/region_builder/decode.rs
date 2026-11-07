@@ -235,14 +235,15 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
             // Display, not Debug: the error's `Debug` nests its source's, which
             // for a reader error carries a captured backtrace.
             let msg = format!("sleigh could not lift {addr:#x}: {e}");
-            // Both mean the reader had no (or not all) bytes.
+            // The reader had none, or not all, of the bytes.
             match e {
                 rsleigh::error::GenericError::MemReadErr(_)
                 | rsleigh::error::GenericError::Base(
                     rsleigh::error::BaseError::DataUnavailErr
                     | rsleigh::error::BaseError::PartiallyInitializedInsn,
                 ) => anyhow::Error::new(DecodeFailure::Unmapped(addr)).context(msg),
-                // `BadDataError` (no constructor) or `UnimplError` (no p-code).
+                // Any Sleigh exception: chiefly `BadDataError` (no constructor) or
+                // `UnimplError` (no p-code).
                 rsleigh::error::GenericError::Base(
                     rsleigh::error::BaseError::UnexpectedCppException(_),
                 ) => anyhow::Error::new(DecodeFailure::NotCode {

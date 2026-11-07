@@ -42,7 +42,8 @@ pub struct RegionInstruction {
     /// A LOAD / STORE's `inputs[0]` is a space id only the decoding engine
     /// resolves ([`crate::Cfg::space_ids`]).
     pub insn: rsleigh::Insn,
-    /// Byte length of the machine instruction this pcode op came from.
+    /// Byte length of the machine instruction this pcode op came from, a MIPS
+    /// branch's delay slot included.
     pub len: u32,
 }
 
@@ -163,7 +164,7 @@ impl Region {
             .ok()
     }
 
-    /// The ascending order [`Self::insn_index_at`] bisects over. O(len).
+    /// Whether `insns` ascend, as [`Self::insn_index_at`] needs. O(len).
     pub(crate) fn insns_are_ascending(&self) -> bool {
         self.insns
             .iter()
