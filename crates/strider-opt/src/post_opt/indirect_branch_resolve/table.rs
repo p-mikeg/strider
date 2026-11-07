@@ -191,7 +191,7 @@ impl SiteClassifier<'_> {
     /// The bounded index nearest the target in `chain`, the target's dominators
     /// in its variability cone. Dominance excludes a bypassed sub-branch: in a
     /// rotate `(x<<2) | (x>>30)`, `x>>30` is tightest but does not dominate.
-    /// With it, the guard-narrowed cell the index was taken below.
+    /// Also returns the guarded cell the index was found below, if any.
     fn decompose_index(
         &mut self,
         chain: &[ValueId],
