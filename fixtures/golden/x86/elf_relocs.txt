@@ -1,12 +1,12 @@
 # x86/elf_relocs: Strider::analyze, default options
 endian little
-default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, ST1, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
+default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == helper_a @0x12b0
 cfg
   0x12b0 15 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -18,14 +18,13 @@ arg 0 [%v5]
 %v7:i32 = int.add %v5, %v6
 %v8:i32 = initial_var[EDX]
 %v9:i80 = initial_var[ST0]
-%v10:i80 = initial_var[ST1]
-%v11:i128 = initial_var[XMM0]
-return %v0, %v1, %v7, %v8, %v9, %v10, %v11
+%v10:i128 = initial_var[XMM0]
+return %v0, %v1, %v7, %v8, %v9, %v10
 
 == helper_b @0x12c0
 cfg
   0x12c0 17 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -37,14 +36,13 @@ arg 0 [%v5]
 %v7:i32 = int.add %v5, %v6
 %v8:i32 = initial_var[EDX]
 %v9:i80 = initial_var[ST0]
-%v10:i80 = initial_var[ST1]
-%v11:i128 = initial_var[XMM0]
-return %v0, %v1, %v7, %v8, %v9, %v10, %v11
+%v10:i128 = initial_var[XMM0]
+return %v0, %v1, %v7, %v8, %v9, %v10
 
 == helper_c @0x12d0
 cfg
   0x12d0 17 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -56,14 +54,13 @@ arg 0 [%v5]
 %v7:i32 = int.add %v5, %v6
 %v8:i32 = initial_var[EDX]
 %v9:i80 = initial_var[ST0]
-%v10:i80 = initial_var[ST1]
-%v11:i128 = initial_var[XMM0]
-return %v0, %v1, %v7, %v8, %v9, %v10, %v11
+%v10:i128 = initial_var[XMM0]
+return %v0, %v1, %v7, %v8, %v9, %v10
 
 == helper_d @0x12e0
 cfg
   0x12e0 17 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -75,15 +72,14 @@ arg 0 [%v5]
 %v7:i32 = int.add %v5, %v6
 %v8:i32 = initial_var[EDX]
 %v9:i80 = initial_var[ST0]
-%v10:i80 = initial_var[ST1]
-%v11:i128 = initial_var[XMM0]
-return %v0, %v1, %v7, %v8, %v9, %v10, %v11
+%v10:i128 = initial_var[XMM0]
+return %v0, %v1, %v7, %v8, %v9, %v10
 
 == dispatch_via_table @0x12f0
 cfg
   0x12f0 15 ops goto -> [0x12f9]
   0x12f9 56 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6800:4, u:0x6a00:4, u:0x6c00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x68200:4, u:0x8c300:4]
+tracked [EAX, ECX, EDX, EBX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x6800:4, u:0x6a00:4, u:0x6c00:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1, u:0x68200:4, u:0x8c300:4]
 arg 0 [%v23]
 arg 1 [%v15]
 %v0:ctrl = entry
@@ -115,13 +111,13 @@ arg 1 [%v15]
 %v26:i32 = int.mul %v25, %v21
 %v27:i32 = int.add %v20, %v26
 %v28:i32 = load[r] %v16, %v27
-%v29:ctrl, %v30:mem, %v31:i32<EAX>, %v32:i32<EDX>, %v33:i80<ST0>, %v34:i80<ST1>, %v35:i128<XMM0>, %v36:i32<ECX>, %v37:i8<CF>, %v38:i8<PF>, %v39:i8<ZF>, %v40:i8<SF>, %v41:i8<OF>, %v42:i32<EIP> = call %v0, %v18, %v28, %v8, %v15
-return %v29, %v30, %v31, %v32, %v33, %v34, %v35
+%v29:ctrl, %v30:mem, %v31:i32<EAX>, %v32:i32<EDX>, %v33:i80<ST0>, %v34:i128<XMM0>, %v35:i32<ECX>, %v36:i8<CF>, %v37:i8<PF>, %v38:i8<ZF>, %v39:i8<SF>, %v40:i8<OF>, %v41:i32<EIP> = call %v0, %v18, %v28, %v8, %v15
+return %v29, %v30, %v31, %v32, %v33, %v34
 
 == compute_via_helper @0x1320
 cfg
   0x1320 15 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x7600:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -133,6 +129,5 @@ arg 0 [%v5]
 %v7:i32 = int.add %v5, %v6
 %v8:i32 = initial_var[EDX]
 %v9:i80 = initial_var[ST0]
-%v10:i80 = initial_var[ST1]
-%v11:i128 = initial_var[XMM0]
-return %v0, %v1, %v7, %v8, %v9, %v10, %v11
+%v10:i128 = initial_var[XMM0]
+return %v0, %v1, %v7, %v8, %v9, %v10

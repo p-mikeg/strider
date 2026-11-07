@@ -10,9 +10,9 @@ const XMM0_7: &[&str] = &[
 /// COMPLEX_X87 imaginary half in ST1.
 const X64_RET_F: &[&str] = &["XMM0", "XMM1", "ST0", "ST1"];
 /// Intel386 psABI: every float argument is stack-passed (the SSE argument
-/// class is a documented omission); X87 / COMPLEX_X87 return in ST0/ST1 and
-/// the SSE class in XMM0.
-const X86_RET_F: &[&str] = &["ST0", "ST1", "XMM0"];
+/// class is a documented omission); X87 returns in ST0 and the SSE class in
+/// XMM0; `_Complex double` returns through memory.
+const X86_RET_F: &[&str] = &["ST0", "XMM0"];
 /// AAPCS64 6.4.1 / 6.4.2: v0-v7 in, a 4-member HFA back in v0-v3.
 const Q0_7: &[&str] = &["q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7"];
 const Q0_3: &[&str] = &["q0", "q1", "q2", "q3"];

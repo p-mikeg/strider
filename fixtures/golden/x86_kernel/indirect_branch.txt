@@ -1,7 +1,7 @@
 # x86_kernel/indirect_branch: Strider::analyze, default options
 # indirect_branch_resolved: no unresolved_branch and cfg.switch
 endian little
-default_cc arg_passing_regs=[EAX, EDX, ECX] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, ST1, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
+default_cc arg_passing_regs=[EAX, EDX, ECX] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == indirect_branch_resolved @0x401100
@@ -9,7 +9,7 @@ cfg
   0x401100 13 ops switch@0x401103.3 [0x40110a, 0x40110d]
   0x40110a 12 ops return -> []
   0x40110d 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 0 [%v2]
 arg 1 [%v13]
 %v0:ctrl = entry
@@ -26,15 +26,14 @@ arg 1 [%v13]
 %v12:i32 = iconst[0x0]
 %v13:i32 = initial_var[EDX]
 %v14:i80 = initial_var[ST0]
-%v15:i80 = initial_var[ST1]
-%v16:i128 = initial_var[XMM0]
-return %v10, %v1, %v12, %v13, %v14, %v15, %v16
-return %v11, %v1, %v3, %v13, %v14, %v15, %v16
+%v15:i128 = initial_var[XMM0]
+return %v10, %v1, %v12, %v13, %v14, %v15
+return %v11, %v1, %v3, %v13, %v14, %v15
 
 == main @0x401120
 cfg
   0x401120 73 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49900:4, u:0x49a00:1, u:0x49b00:1]
 arg 1 [%v12]
 arg 2 [%v13]
 %v0:ctrl = entry
@@ -51,15 +50,15 @@ arg 2 [%v13]
 %v11:i32 = iconst[0x401100]
 %v12:i32 = initial_var[EDX]
 %v13:i32 = initial_var[ECX]
-%v14:ctrl, %v15:mem, %v16:i32<EAX>, %v17:i32<EDX>, %v18:i80<ST0>, %v19:i80<ST1>, %v20:i128<XMM0>, %v21:i32<ECX>, %v22:i8<CF>, %v23:i8<PF>, %v24:i8<ZF>, %v25:i8<SF>, %v26:i8<OF>, %v27:i32<EIP> = call %v0, %v10, %v11, %v8, %v5, %v12, %v13
-%v28:i32 = load[r] %v15, %v4
-%v29:i32 = int.xor %v28, %v16
-%v30:mem = store[r] %v15, %v4, %v29
-%v31:i32 = iconst[0x401140]
-%v32:mem = store[r] %v30, %v8, %v31
-%v33:i32 = iconst[0x1]
-%v34:ctrl, %v35:mem, %v36:i32<EAX>, %v37:i32<EDX>, %v38:i80<ST0>, %v39:i80<ST1>, %v40:i128<XMM0>, %v41:i32<ECX>, %v42:i8<CF>, %v43:i8<PF>, %v44:i8<ZF>, %v45:i8<SF>, %v46:i8<OF>, %v47:i32<EIP> = call %v14, %v32, %v11, %v8, %v33, %v17, %v21
-%v48:i32 = load[r] %v35, %v4
-%v49:i32 = int.xor %v48, %v36
-%v50:mem = store[r] %v35, %v4, %v49
-return %v34, %v50, %v49, %v37, %v38, %v39, %v40
+%v14:ctrl, %v15:mem, %v16:i32<EAX>, %v17:i32<EDX>, %v18:i80<ST0>, %v19:i128<XMM0>, %v20:i32<ECX>, %v21:i8<CF>, %v22:i8<PF>, %v23:i8<ZF>, %v24:i8<SF>, %v25:i8<OF>, %v26:i32<EIP> = call %v0, %v10, %v11, %v8, %v5, %v12, %v13
+%v27:i32 = load[r] %v15, %v4
+%v28:i32 = int.xor %v27, %v16
+%v29:mem = store[r] %v15, %v4, %v28
+%v30:i32 = iconst[0x401140]
+%v31:mem = store[r] %v29, %v8, %v30
+%v32:i32 = iconst[0x1]
+%v33:ctrl, %v34:mem, %v35:i32<EAX>, %v36:i32<EDX>, %v37:i80<ST0>, %v38:i128<XMM0>, %v39:i32<ECX>, %v40:i8<CF>, %v41:i8<PF>, %v42:i8<ZF>, %v43:i8<SF>, %v44:i8<OF>, %v45:i32<EIP> = call %v14, %v31, %v11, %v8, %v32, %v17, %v20
+%v46:i32 = load[r] %v34, %v4
+%v47:i32 = int.xor %v46, %v35
+%v48:mem = store[r] %v34, %v4, %v47
+return %v33, %v48, %v47, %v36, %v37, %v38
