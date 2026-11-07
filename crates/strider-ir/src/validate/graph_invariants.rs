@@ -1,73 +1,42 @@
-use core::ops::ControlFlow;
-
 use cranelift_entity::SecondaryMap;
 
 use crate::DominatorTree;
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use crate::schedule::{ScheduleContext, schedule_early};
-use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
+use crate::node::{
+    Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType, WidthTie, width_tie,
+};
+use crate::schedule::{ScheduleContext, data_producers, live_arms, schedule_early};
+use crate::walk::{FnSuccs, NodeIdSet, PostOrder, WalkPhase};
 
 use super::ValidationError;
 
-/// The data producers of a node, restricted to `universe`. `Phi` / `MemPhi`
-/// expand to nothing: closing a data cycle is what they are for.
-#[derive(Clone, Copy)]
-struct DataProducers<'a> {
-    graph: &'a Graph,
-    universe: &'a NodeIdSet,
-}
-
-impl DataProducers<'_> {
-    fn of(self, node: NodeId) -> impl Iterator<Item = NodeId> {
-        let phi = matches!(self.graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi);
-        (!phi)
-            .then(|| self.graph.node_inputs(node))
-            .into_iter()
-            .flatten()
-            .filter(move |&value| !self.graph.value_kind(value).is_control())
-            .map(move |value| self.graph.value_definition(value).0)
-            .filter(move |&producer| self.universe.contains(producer))
-    }
-}
-
-impl graph_algorithms::walk::GraphRef for DataProducers<'_> {
-    type NodeId = NodeId;
-
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        self.of(node).try_for_each(f)
-    }
-}
-
-/// No non-phi node is its own transitive data producer.
-///
-/// The DFS post-order's Pre/Post events bound the current path, so a producer
-/// still on it is a back edge.
+/// No non-phi node is its own transitive data producer: a producer still on
+/// the DFS path is a back edge.
 pub(super) fn check_function_invariants_data_cycles(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    let producers = DataProducers {
-        graph: function.graph(),
-        universe: reachable,
+    let graph = function.graph();
+    // `Phi` / `MemPhi` expand to nothing: they may close a data cycle.
+    let producers = move |node| {
+        let phi = matches!(graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi);
+        (!phi)
+            .then(|| data_producers(graph, node))
+            .into_iter()
+            .flatten()
+            .filter(move |&producer| reachable.contains(producer))
     };
-    let mut walk = PostOrder::new(producers, reachable.iter());
-    // Not a `NodeIdSet`: the walk is seeded from every reachable node, so the
-    // path empties once per seed, and `DenseEntitySet::remove` costs
-    // O(max_index / 64) each time it drops the set's maximum.
+    let mut walk = PostOrder::new(FnSuccs::new(producers), reachable.iter());
+    // Not a `NodeIdSet`, whose `remove` of the maximum is O(max_index / 64).
     let mut on_path: SecondaryMap<NodeId, bool> = SecondaryMap::new();
     while let Some((phase, node)) = walk.next_event() {
         match phase {
             WalkPhase::Pre => {
                 on_path[node] = true;
-                if producers.of(node).any(|p| on_path[p]) {
+                if producers(node).any(|p| on_path[p]) {
                     errs.push(ValidationError::DataCycle {
                         node,
                         kind: *function.node_kind(node),
@@ -79,344 +48,266 @@ pub(super) fn check_function_invariants_data_cycles(
     }
 }
 
-/// At most one live [`NodeKind::Entry`] and one live
-/// [`NodeKind::InitialMemory`]. Neither is required.
-pub(super) fn check_function_invariants_uniqueness(
-    function: &Function,
-    reachable: &NodeIdSet,
-    errs: &mut Vec<ValidationError>,
-) {
-    let graph = function.graph();
-    // Only the first two of each kind matter.
-    let mut entry: (Option<NodeId>, Option<NodeId>) = (None, None);
-    let mut initial_memory: (Option<NodeId>, Option<NodeId>) = (None, None);
+/// The first two reachable [`NodeKind::Entry`] and [`NodeKind::InitialMemory`]
+/// nodes.
+#[derive(Default)]
+pub(super) struct UniqueKinds {
+    entry: (Option<NodeId>, Option<NodeId>),
+    initial_memory: (Option<NodeId>, Option<NodeId>),
+}
 
-    let record = |slot: &mut (Option<NodeId>, Option<NodeId>), node: NodeId| {
-        if slot.0.is_none() {
-            slot.0 = Some(node);
-        } else if slot.1.is_none() {
-            slot.1 = Some(node);
-        }
+pub(super) fn note_unique_kinds(seen: &mut UniqueKinds, node: NodeId, kind: &NodeKind) {
+    let slot = if *kind == NodeKind::Entry {
+        &mut seen.entry
+    } else if *kind == NodeKind::InitialMemory {
+        &mut seen.initial_memory
+    } else {
+        return;
     };
-
-    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
-        match kind {
-            NodeKind::Entry => record(&mut entry, node),
-            NodeKind::InitialMemory => record(&mut initial_memory, node),
-            _ => {}
-        }
+    if slot.0.is_none() {
+        slot.0 = Some(node);
+    } else if slot.1.is_none() {
+        slot.1 = Some(node);
     }
+}
 
-    if let (Some(first), Some(second)) = entry {
+/// At most one reachable [`NodeKind::Entry`] and one
+/// [`NodeKind::InitialMemory`].
+pub(super) fn check_unique_kinds(seen: &UniqueKinds, errs: &mut Vec<ValidationError>) {
+    if let (Some(first), Some(second)) = seen.entry {
         errs.push(ValidationError::MultipleEntryNodes { first, second });
     }
-    if let (Some(first), Some(second)) = initial_memory {
+    if let (Some(first), Some(second)) = seen.initial_memory {
         errs.push(ValidationError::MultipleInitialMemoryNodes { first, second });
     }
 }
 
+/// The type of `node`'s first output; `None` without one or when untyped.
+fn first_output_type(graph: &Graph, node: NodeId) -> Option<ValueType> {
+    graph
+        .node_outputs(node)
+        .first()
+        .and_then(|&o| graph.value_kind(o).as_value())
+}
+
 /// Every reachable `Region` needs at least one predecessor.
-pub(super) fn check_function_invariants_region(
+pub(super) fn check_region(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
-        if !matches!(kind, NodeKind::Region) {
-            continue;
-        }
-        if graph.node_inputs(node).is_empty() {
-            errs.push(ValidationError::EmptyRegionPredecessors { region: node });
-        }
+    if !matches!(kind, NodeKind::Region) {
+        return;
+    }
+    if graph.node_inputs(node).is_empty() {
+        errs.push(ValidationError::EmptyRegionPredecessors { region: node });
     }
 }
 
 /// Every reachable node's `Control` output must have exactly one consumer.
-pub(super) fn check_function_invariants_control_single_use(
+pub(super) fn check_control_single_use(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, _kind) in function.reachable_kind_iter(reachable) {
-        for &value in function.node_outputs(node) {
-            if function.value_kind(value) != ValueKind::Control {
-                continue;
+    for &value in function.node_outputs(node) {
+        if function.value_kind(value) != ValueKind::Control {
+            continue;
+        }
+        let mut uses = graph.value_uses(value);
+        match (uses.next(), uses.next()) {
+            (None, _) => errs.push(ValidationError::UnusedControlOutput { node, value }),
+            (Some(_), Some(_)) => {
+                errs.push(ValidationError::ReusedControlOutput { node, value });
             }
-            // Peek at most two uses to classify 0 / 1 / many.
-            let mut uses = graph.value_uses(value);
-            match (uses.next(), uses.next()) {
-                (None, _) => errs.push(ValidationError::UnusedControlOutput { node, value }),
-                (Some(_), Some(_)) => {
-                    errs.push(ValidationError::ReusedControlOutput { node, value });
-                }
-                (Some(_), None) => {}
-            }
+            (Some(_), None) => {}
         }
     }
 }
 
-/// An arithmetic node is evaluated at ONE width, so every value operand must
-/// carry it: for `IntBinaryOp` / `IntUnaryOp` / `FloatBinaryOp` /
-/// `FloatUnaryOp` that width is the output's, and for the comparisons (whose
-/// output is `I1`) it is the first operand's. A shift's count (operand 1) may
-/// be any width, as in p-code. `Extend` / `Truncate` are how a width change is
-/// spelled.
-pub(super) fn check_function_invariants_arith_widths(
+/// Every operand [`NodeKind::operand_width`] ties to an arithmetic node
+/// carries its width: the output's, or for a comparison its first operand's.
+/// A shift count is free. A bitcast keeps its byte size. `Extend` / `Truncate`
+/// are checked by [`check_extend_truncate`].
+pub(super) fn check_arith_widths(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        // A shift's COUNT is unconstrained in p-code (`INT_LEFT` pins only
-        // input0 to the output size), so only operand 0 carries the width.
-        let checked = match kind {
-            NodeKind::IntBinaryOp(
-                IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight,
-            ) => 1,
-            _ => usize::MAX,
-        };
-        // A bitcast reinterprets the SAME bits, so the two types must be the
-        // same SIZE. Bytes rather than bits only because that is what every
-        // float type is measured in; the two agree for every admissible
-        // (int, float) pair here, no float having a one-byte size for `I1` to
-        // collide with.
-        if matches!(kind, NodeKind::IntBitsToFloat | NodeKind::FloatBitsToInt) {
-            let inp = graph
-                .node_inputs(node)
-                .into_iter()
-                .next()
-                .and_then(|v| function.value_type_opt(v));
-            let outp = graph
-                .node_outputs(node)
-                .first()
-                .and_then(|&o| function.value_type_opt(o));
-            if let (Some(i), Some(o)) = (inp, outp)
-                && i.byte_size() != o.byte_size()
-            {
-                errs.push(ValidationError::ArithmeticWidthMismatch {
-                    node,
-                    kind: *kind,
-                    operand_idx: 0,
-                    operand_width: i.bit_width(),
-                    expected_width: o.bit_width(),
-                });
-            }
-            continue;
-        }
-        let width_from_output = match kind {
-            NodeKind::IntBinaryOp(_)
-            | NodeKind::IntUnaryOp(_)
-            | NodeKind::FloatBinaryOp(_)
-            | NodeKind::FloatUnaryOp(_) => true,
-            NodeKind::IntCmpOp(_) | NodeKind::FloatCmpOp(_) => false,
-            _ => continue,
-        };
-        // Carries the real input slot, not a position in the filtered list: a
-        // node with an untyped input would otherwise report an index that
-        // names a different operand, and `checked` below would count from the
-        // wrong one.
-        let operands: Vec<(usize, usize)> = graph
+    let out = first_output_type(graph, node);
+    // The real input slot, not a position among the typed ones.
+    let operands = || {
+        graph
             .node_inputs(node)
             .into_iter()
             .enumerate()
-            .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t.bit_width())))
-            .collect();
-        let expected = if width_from_output {
-            match graph
-                .node_outputs(node)
-                .first()
-                .and_then(|&o| function.value_type_opt(o))
-            {
-                Some(t) => t.bit_width(),
+            .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t)))
+    };
+    let first = operands().next().map(|(_, t)| t);
+    for (slot, got) in operands() {
+        let want = match width_tie(kind, slot, out, first) {
+            WidthTie::Tied(want) => want,
+            WidthTie::Conversion(Conversion::SameSize) => match out {
+                Some(out) => out,
                 None => continue,
-            }
-        } else {
-            match operands.first() {
-                Some(&(_, w)) => w,
-                None => continue,
-            }
+            },
+            WidthTie::Conversion(Conversion::Widen | Conversion::Narrow)
+            | WidthTie::Free
+            | WidthTie::NoHead => continue,
         };
-        for &(slot, w) in operands.iter().filter(|&&(slot, _)| slot < checked) {
-            if w != expected {
-                errs.push(ValidationError::ArithmeticWidthMismatch {
-                    node,
-                    kind: *kind,
-                    operand_idx: slot,
-                    operand_width: w,
-                    expected_width: expected,
-                });
-            }
+        if got.bit_width() != want.bit_width() {
+            errs.push(ValidationError::ArithmeticWidthMismatch {
+                node,
+                kind: *kind,
+                operand_idx: slot,
+                operand_width: got.bit_width(),
+                expected_width: want.bit_width(),
+            });
         }
     }
 }
 
 /// `Extend` must strictly widen its input; `Truncate` must strictly narrow it.
-/// Non-integer input/output is skipped.
-pub(super) fn check_function_invariants_extend_truncate(
+pub(super) fn check_extend_truncate(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let widening = match kind {
-            NodeKind::Extend(_) => true,
-            NodeKind::Truncate => false,
-            _ => continue,
-        };
-        let (Some(in_value), Some(&out_value)) = (
-            graph.node_inputs(node).into_iter().next(),
-            graph.node_outputs(node).first(),
-        ) else {
-            continue;
-        };
-        let (Some(in_ty), Some(out_ty)) = (
-            function.value_type_opt(in_value),
-            function.value_type_opt(out_value),
-        ) else {
-            continue;
-        };
-        let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());
-        let ok = if widening {
-            out_width > in_width
-        } else {
-            out_width < in_width
-        };
-        if !ok {
-            errs.push(ValidationError::ExtendTruncateWidthDirection {
-                node,
-                kind: *kind,
-                in_width,
-                out_width,
-            });
-        }
+    let conversion = match kind.operand_width(0) {
+        OperandWidth::Conversion(c @ (Conversion::Widen | Conversion::Narrow)) => c,
+        OperandWidth::Conversion(Conversion::SameSize)
+        | OperandWidth::OfOutput
+        | OperandWidth::OfFirstOperand
+        | OperandWidth::Free => return,
+    };
+    let (Some(in_ty), Some(out_ty)) = (
+        graph
+            .node_inputs(node)
+            .into_iter()
+            .next()
+            .and_then(|v| function.value_type_opt(v)),
+        first_output_type(graph, node),
+    ) else {
+        return;
+    };
+    let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());
+    if !conversion.admits(in_ty, out_ty) {
+        errs.push(ValidationError::ExtendTruncateWidthDirection {
+            node,
+            kind: *kind,
+            in_width,
+            out_width,
+        });
     }
 }
 
 /// Every reachable [`NodeKind::Switch`] needs a table of this function's, at
 /// least one control output, and one case address per control output.
-pub(super) fn check_function_invariants_switch(
+pub(super) fn check_switch(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let NodeKind::Switch(id) = *kind else {
-            continue;
-        };
-        let Some(targets) = function.switch_table(id) else {
-            errs.push(ValidationError::DanglingSwitchTableId { node, id });
-            continue;
-        };
-        let n_out = graph.node_outputs(node).len();
-        if n_out == 0 {
-            // Never the only error: `Switch`'s signature head is one Control,
-            // so `local_typing`'s arity check reports
-            // `NodeOutputCountMismatch` for the same node in the same call.
-            // Kept because it names WHICH arity rule a zero-arm `Switch`
-            // breaks, which the generic count does not.
-            errs.push(ValidationError::EmptySwitchTargets { node });
-        } else if n_out != targets.len() {
-            errs.push(ValidationError::SwitchTargetArityMismatch {
-                node,
-                outputs: n_out,
-                targets: targets.len(),
-            });
-        }
+    let NodeKind::Switch(id) = *kind else {
+        return;
+    };
+    let Some(targets) = function.switch_table(id) else {
+        errs.push(ValidationError::DanglingSwitchTableId { node, id });
+        return;
+    };
+    let n_out = graph.node_outputs(node).len();
+    if n_out != targets.len() {
+        errs.push(ValidationError::SwitchTargetArityMismatch {
+            node,
+            outputs: n_out,
+            targets: targets.len(),
+        });
     }
 }
 
 /// Every reachable [`NodeKind::Call`] override names a convention of this
 /// function's.
-pub(super) fn check_function_invariants_call_cc(
+pub(super) fn check_call_cc(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        if let NodeKind::Call { cc: Some(id) } = *kind
-            && function.cc(id).is_none()
-        {
-            errs.push(ValidationError::DanglingCcId { node, id });
-        }
+    if let NodeKind::Call { cc: Some(id) } = *kind
+        && function.cc(id).is_none()
+    {
+        errs.push(ValidationError::DanglingCcId { node, id });
     }
 }
 
 /// Every `Phi` / `MemPhi` takes its dispatch token (`input[0]`) from a
 /// `Region`'s `PhiToken` output, and has one value input per predecessor of
 /// that owning `Region`.
-pub(super) fn check_function_invariants_phis(
+pub(super) fn check_phis(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let is_phi = matches!(kind, NodeKind::Phi | NodeKind::MemPhi);
-        if !is_phi {
-            continue;
-        }
+    let is_phi = matches!(kind, NodeKind::Phi | NodeKind::MemPhi);
+    if !is_phi {
+        return;
+    }
 
-        let inputs = graph.node_inputs(node);
-        if inputs.is_empty() {
-            // Local typing already reports empty-input phis.
-            continue;
-        }
-        let token = inputs[0];
-        let token_kind = graph.value_kind(token);
-        if token_kind != ValueKind::PhiToken {
-            let (producer, _) = graph.value_definition(token);
-            errs.push(ValidationError::PhiTokenNotFromRegion {
-                phi: node,
-                producer,
-                producer_kind: token_kind,
-            });
-            continue;
-        }
+    let inputs = graph.node_inputs(node);
+    if inputs.is_empty() {
+        // Local typing already reports empty-input phis.
+        return;
+    }
+    let token = inputs[NodeKind::PHI_TOKEN_SLOT];
+    let token_kind = graph.value_kind(token);
+    let owner = graph.producer(token);
+    if token_kind != ValueKind::PhiToken || !matches!(graph.node_kind(owner), NodeKind::Region) {
+        errs.push(ValidationError::PhiTokenNotFromRegion {
+            phi: node,
+            producer: owner,
+            token_kind,
+        });
+        return;
+    }
 
-        let (owner, _idx) = graph.value_definition(token);
-        if !matches!(graph.node_kind(owner), NodeKind::Region) {
-            errs.push(ValidationError::PhiTokenNotFromRegion {
-                phi: node,
-                producer: owner,
-                producer_kind: token_kind,
-            });
-            continue;
-        }
+    let expected_preds = graph.node_inputs(owner).len();
+    let actual_values = inputs.len() - 1;
+    if expected_preds != actual_values {
+        errs.push(ValidationError::PhiValueArityMismatch {
+            phi: node,
+            owner_region: owner,
+            expected_predecessors: expected_preds,
+            actual_values,
+        });
+    }
 
-        let expected_preds = graph.node_inputs(owner).len();
-        let actual_values = inputs.len() - 1;
-        if expected_preds != actual_values {
-            errs.push(ValidationError::PhiValueArityMismatch {
-                phi: node,
-                owner_region: owner,
-                expected_predecessors: expected_preds,
-                actual_values,
-            });
-        }
-
-        // Every value input must carry the phi's own output type. `MemPhi` is
-        // exempt: Memory tokens have no value type.
-        if matches!(kind, NodeKind::Phi) {
-            let phi_out_ty = function
-                .first_value_output_of(node)
-                .and_then(|o| function.value_type_opt(o));
-            if let Some(out_ty) = phi_out_ty {
-                for (i, inp) in inputs.iter().enumerate().skip(1) {
-                    if let Some(in_ty) = graph.value_kind(inp).as_value()
-                        && in_ty != out_ty
-                    {
-                        errs.push(ValidationError::PhiInputTypeMismatch {
-                            phi: node,
-                            input_index: i,
-                            output_ty: out_ty,
-                            input_ty: in_ty,
-                        });
-                    }
+    // Every value input carries the phi's output type; `MemPhi` arms have none.
+    if matches!(kind, NodeKind::Phi) {
+        let phi_out_ty = function
+            .first_value_output_of(node)
+            .and_then(|o| function.value_type_opt(o));
+        if let Some(out_ty) = phi_out_ty {
+            for (i, inp) in inputs.iter().enumerate().skip(1) {
+                if let Some(in_ty) = graph.value_kind(inp).as_value()
+                    && in_ty != out_ty
+                {
+                    errs.push(ValidationError::PhiInputTypeMismatch {
+                        phi: node,
+                        input_index: i,
+                        output_ty: out_ty,
+                        input_ty: in_ty,
+                    });
                 }
             }
         }
@@ -425,91 +316,74 @@ pub(super) fn check_function_invariants_phis(
 
 /// Every reachable, non-exempt node carries at least one asm-fingerprint
 /// contributor.
-pub(super) fn check_function_invariants_asm_fingerprints(
+pub(super) fn check_asm_fingerprint(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        if kind.asm_fingerprint_exempt() {
-            continue;
-        }
-        if function.side_tables().asm_fingerprint_is_empty(node) {
-            errs.push(ValidationError::MissingAsmFingerprint { node, kind: *kind });
-        }
+    if kind.asm_fingerprint_exempt() {
+        return;
+    }
+    if function.side_tables().asm_fingerprint_is_empty(node) {
+        errs.push(ValidationError::MissingAsmFingerprint { node, kind: *kind });
     }
 }
 
-/// Every reachable `Store` has its Memory output consumed by a reachable node.
-///
-/// Scoped to `Store`: a memory-preserving `Call` / `CallOther` legitimately
-/// leaves its Memory output unconsumed.
-///
-/// The entry walk reaches a `Store` only through a consumer of that output, so
-/// a violation means a severed use-list. The stronger shape, every `Store` the
-/// memory chain reaches is entry-reachable, is false: `PhiCollapse` can make
-/// two stores identical, and the node cache subsumes one into the other,
-/// leaving a corpse that still consumes the chain.
-pub(super) fn check_function_invariants_memory_chain(
+/// Every reachable `Store`'s Memory output has a reachable consumer. Only a
+/// severed use-list breaks it: the walk reaches a `Store` through a
+/// consumer's input.
+pub(super) fn check_memory_chain(
     function: &Function,
     reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        if !matches!(kind, NodeKind::Store(_)) {
+    if !matches!(kind, NodeKind::Store(_)) {
+        return;
+    }
+    for &out in graph.node_outputs(node) {
+        if graph.value_kind(out) != ValueKind::Memory {
             continue;
         }
-        for &out in graph.node_outputs(node) {
-            if graph.value_kind(out) != ValueKind::Memory {
-                continue;
-            }
-            let anchored = graph
-                .value_uses(out)
-                .any(|(consumer, _)| reachable.contains(consumer));
-            if !anchored {
-                errs.push(ValidationError::OrphanedMemoryOutput { node, kind: *kind });
-            }
+        let anchored = graph
+            .value_uses(out)
+            .any(|(consumer, _)| reachable.contains(consumer));
+        if !anchored {
+            errs.push(ValidationError::OrphanedMemoryOutput { node });
         }
     }
 }
 
 /// Every reachable `InitialVar(id)` names a minted varnode and is typed as the
 /// integer of that varnode's size.
-pub(super) fn check_function_invariants_initial_vars(
+pub(super) fn check_initial_vars(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let NodeKind::InitialVar(id) = *kind else {
-            continue;
-        };
-        let Some(vn) = function.initial_vn_opt(id) else {
-            errs.push(ValidationError::DanglingInitialVnId { node, id });
-            continue;
-        };
-        let Some(&out) = graph.node_outputs(node).first() else {
-            continue; // arity reported elsewhere
-        };
-        let ValueKind::Typed(ty) = graph.value_kind(out) else {
-            continue;
-        };
-        if ValueType::int_for_byte_size(vn.size).ok() != Some(ty) {
-            errs.push(ValidationError::InitialVarTypeMismatch { node, vn, ty });
-        }
+    let NodeKind::InitialVar(id) = *kind else {
+        return;
+    };
+    let Some(vn) = function.initial_vn_opt(id) else {
+        errs.push(ValidationError::DanglingInitialVnId { node, id });
+        return;
+    };
+    let Some(ty) = first_output_type(graph, node) else {
+        return; // arity reported elsewhere
+    };
+    if ValueType::int_from_bytes(vn.size).ok() != Some(ty) {
+        errs.push(ValidationError::InitialVarTypeMismatch { node, vn, ty });
     }
 }
 
-/// The side-indices must not have drifted from the live graph.
-///
-/// * Every reachable `initial_var_index` entry resolves to an
-///   `InitialVar(vn)` node with the same varnode. Unreachable entries are
-///   tolerated.
-/// * Every `value_vn` key with a reachable producer is produced by a `Phi` /
-///   `Call` / `CallOther`.
-///
+/// The side-indices match the live graph: every reachable `initial_var_index`
+/// entry resolves to an `InitialVar` of the same varnode, and every `value_vn`
+/// key with a reachable producer is produced by a `Phi` / `Call` / `CallOther`.
 /// An entry keyed by an unminted id is a `DanglingInitialVnId`.
 pub(super) fn check_function_invariants_side_indices(
     function: &Function,
@@ -517,7 +391,10 @@ pub(super) fn check_function_invariants_side_indices(
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (id, node) in function.initial_var_index_entries() {
+    for (id, &node) in function.side_tables().initial_var_index.iter() {
+        let Some(node) = node else {
+            continue;
+        };
         if !reachable.contains(node) {
             continue;
         }
@@ -535,7 +412,7 @@ pub(super) fn check_function_invariants_side_indices(
         }
     }
 
-    for (value, id) in function.value_vn_entries() {
+    for (&value, &id) in &function.side_tables().value_vn {
         let producer = graph.producer(value);
         if !reachable.contains(producer) {
             continue;
@@ -563,70 +440,44 @@ pub(super) fn check_function_invariants_side_indices(
 /// value fits the node's declared output width, and every reachable
 /// `FloatConst` is declared at most 8 bytes wide and carries no bits above
 /// that width.
-pub(super) fn check_function_invariants_consts(
+pub(super) fn check_consts(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        if let NodeKind::FloatConst(bits) = *kind {
-            let Some(&out) = graph.node_outputs(node).first() else {
-                continue; // arity reported elsewhere
-            };
-            let ValueKind::Typed(ty) = graph.value_kind(out) else {
-                continue;
-            };
-            if ty.is_float() {
-                if ty.byte_size() > 8 {
-                    errs.push(ValidationError::FloatConstUnrepresentableType { node, ty });
-                } else if ty.mask_float_bits(bits) != bits {
-                    errs.push(ValidationError::FloatConstWidthMismatch { node, bits });
-                }
+    if let NodeKind::FloatConst(bits) = *kind {
+        let Some(ty) = first_output_type(graph, node) else {
+            return; // arity reported elsewhere
+        };
+        if ty.is_float() {
+            if ty.byte_size() > 8 {
+                errs.push(ValidationError::FloatConstUnrepresentableType { node, ty });
+            } else if ty.mask_float_bits(bits) != bits {
+                errs.push(ValidationError::FloatConstWidthMismatch { node, bits });
             }
-            continue;
         }
-        let NodeKind::IntConst(id) = *kind else {
-            continue;
-        };
-        let Some(value) = function.const_interner.get(id) else {
-            errs.push(ValidationError::DanglingConstId { node, id });
-            continue;
-        };
-        let outputs = graph.node_outputs(node);
-        let Some(&out) = outputs.first() else {
-            continue; // arity reported elsewhere
-        };
-        let ValueKind::Typed(ty) = graph.value_kind(out) else {
-            continue;
-        };
-        // Canonical masking: every bit above the declared width is zero.
-        let too_wide = match value {
-            crate::node::const_value::ConstValue::Bits(v) => v & !ty.bit_mask_u128() != 0,
-            crate::node::const_value::ConstValue::Wide(limbs) => {
-                let bits = ty.bit_width();
-                limbs.iter().enumerate().any(|(i, &l)| {
-                    let low = i * 64;
-                    // The limb the width ends inside keeps its low `bits - low`
-                    // bits; whole limbs above it must be zero.
-                    match bits.checked_sub(low) {
-                        None | Some(0) => l != 0,
-                        Some(spare) if spare < 64 => (l >> spare) != 0,
-                        _ => false,
-                    }
-                })
-            }
-        };
-        if too_wide {
-            errs.push(ValidationError::ConstWidthMismatch { node, id });
-        }
+        return;
+    }
+    let NodeKind::IntConst(id) = *kind else {
+        return;
+    };
+    let Some(value) = function.side_tables().const_interner.get(id) else {
+        errs.push(ValidationError::DanglingConstId { node, id });
+        return;
+    };
+    let Some(ty) = first_output_type(graph, node) else {
+        return; // arity reported elsewhere
+    };
+    // No bit above the declared width.
+    if *value != crate::eval::mask(value, ty) {
+        errs.push(ValidationError::ConstWidthMismatch { node, id });
     }
 }
 
-/// Every control-reachable node must reach a terminator. The use-count checks
-/// pass an exit-free control cycle: its back-edge consumes the header's control
-/// output, so nothing there is unused or reused, yet no terminator exists to
-/// anchor liveness and compaction drops the whole body.
+/// Every control-reachable node reaches a terminator, which the use-count
+/// checks miss for an exit-free control cycle.
 pub(super) fn check_function_invariants_terminator_reachable(
     function: &Function,
     errs: &mut Vec<ValidationError>,
@@ -643,45 +494,30 @@ pub(super) fn check_function_invariants_terminator_reachable(
 
 /// Every live `Store` is on a memory chain that reaches a sink: the memory
 /// input of a live `Return`, `IndirectBranch`, `Unreachable`, `Call` or
-/// `CallOther`. The chain steps back through `Store`, the live-edge arms of a
-/// `MemPhi` and `Call` / `CallOther` memory inputs. A
-/// `Load` is no sink, so a write only a `Load` reads, while the chain carries
-/// on from the `Store`'s own input token, is lost. A token may fork: each arm
-/// of a branch continues the same chain.
+/// `CallOther`. The chain steps back through `Store`s, live `MemPhi` arms and
+/// call memory inputs. A `Load` is no sink. A token may fork across branch arms.
 pub(super) fn check_function_invariants_memory_linearity(
     ctx: &ScheduleContext<'_>,
     errs: &mut Vec<ValidationError>,
 ) {
-    let graph = ctx.function.graph();
-    let memory_input = |node: NodeId| {
-        graph
-            .nth_input(node, 1)
-            .filter(|&v| graph.value_kind(v) == ValueKind::Memory)
-    };
-    let mut stack: Vec<ValueId> = Vec::new();
-    for node in ctx.pinned_nodes() {
-        match graph.node_kind(node) {
-            NodeKind::Return
-            | NodeKind::IndirectBranch
-            | NodeKind::Unreachable
-            | NodeKind::Call { .. }
-            | NodeKind::CallOther { .. } => stack.extend(memory_input(node)),
-            _ => {}
-        }
-    }
+    let function = ctx.function;
+    let graph = function.graph();
+    let mut stack: Vec<ValueId> = ctx
+        .domtree
+        .preorder()
+        .iter()
+        .filter_map(|&node| ctrl_memory_input(graph, node))
+        .collect();
     let mut on_chain = NodeIdSet::new();
     while let Some(value) = stack.pop() {
-        let producer = graph.value_definition(value).0;
+        let producer = graph.producer(value);
         if !on_chain.insert(producer) {
             continue;
         }
-        match graph.node_kind(producer) {
-            NodeKind::Store(_) => stack.extend(graph.nth_input(producer, 0)),
-            NodeKind::MemPhi => stack.extend(live_arms(graph, &ctx.domtree, producer)),
-            NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
-                stack.extend(memory_input(producer));
-            }
-            _ => {}
+        if matches!(graph.node_kind(producer), NodeKind::MemPhi) {
+            stack.extend(live_arms(function, &ctx.domtree, producer));
+        } else {
+            stack.extend(function.memory_input_of(producer));
         }
     }
     for node in &ctx.live {
@@ -692,20 +528,19 @@ pub(super) fn check_function_invariants_memory_linearity(
     check_memory_order(ctx, &on_chain, errs);
 }
 
-/// Memory state follows control: every PINNED read of it takes the latest
-/// memory effect on each path in.
+/// Every pinned memory read takes the latest memory effect on each path in. A
+/// `Load` is unpinned and not judged: an earlier token is its pre-store value.
 ///
-/// A `Load` is unpinned, so its own memory input is not judged here: a `Load`
-/// on an earlier token legitimately denotes the pre-store value, and the case
-/// where that leaves a write unobserved is `LostStore`'s.
-///
-/// A control node's state is the nearest memory effect dominating it: the
-/// entry, a `Region` with a `MemPhi` on the chain, a `Call` whose convention
-/// does not preserve memory, or a `Call` / `CallOther` on the chain. A memory
-/// input steps back through `Store`s to one of these, which must be the state
-/// before its consumer. A `MemPhi` arm must be its edge's state, and at a
-/// `Region` with no such `MemPhi` every live edge carries the state the
-/// `Region`'s immediate dominator has.
+/// A control node's state is the nearest dominating memory effect: the entry,
+/// a `Region` with a `MemPhi` on the chain, a non-memory-preserving `Call`, or
+/// a `Call` / `CallOther` on the chain. A memory input, stepped back through
+/// `Store`s, must reach the state before its consumer. A `MemPhi` arm must be
+/// its edge's state; at a `Region` with no `MemPhi`, every live edge carries
+/// its immediate dominator's state. A non-effect `Call` / `CallOther` passes
+/// its input token on: every memory read and `MemPhi` arm it reaches before
+/// the next effect, across merges and back edges, must reach that token
+/// through `Store`s, and a node two such calls reach needs one token to build
+/// on the other.
 fn check_memory_order(
     ctx: &ScheduleContext<'_>,
     on_chain: &NodeIdSet,
@@ -724,14 +559,43 @@ fn check_memory_order(
         NodeKind::Region => chain_mem_phis(node).next().is_some(),
         NodeKind::Call { .. } => !function.get_cc(node).preserves_memory || on_chain.contains(node),
         NodeKind::CallOther { .. } => on_chain.contains(node),
-        _ => false,
+        NodeKind::InitialMemory
+        | NodeKind::InitialVar(_)
+        | NodeKind::MemPhi
+        | NodeKind::Phi
+        | NodeKind::If
+        | NodeKind::Switch(_)
+        | NodeKind::Return
+        | NodeKind::IndirectBranch
+        | NodeKind::Unreachable
+        | NodeKind::Load(_)
+        | NodeKind::Store(_)
+        | NodeKind::IntConst(_)
+        | NodeKind::IntUnaryOp(_)
+        | NodeKind::IntBinaryOp(_)
+        | NodeKind::IntCmpOp(_)
+        | NodeKind::Truncate
+        | NodeKind::Popcount
+        | NodeKind::Lzcount
+        | NodeKind::Extend(_)
+        | NodeKind::FloatConst(_)
+        | NodeKind::FloatBinaryOp(_)
+        | NodeKind::FloatUnaryOp(_)
+        | NodeKind::FloatCmpOp(_)
+        | NodeKind::IntToFloat
+        | NodeKind::FloatToInt
+        | NodeKind::FloatToFloat
+        | NodeKind::IntBitsToFloat
+        | NodeKind::FloatBitsToInt
+        | NodeKind::CPoolRef
+        | NodeKind::New => false,
     };
 
     // The effect a memory token was last advanced by, memoized per `Store`.
     let mut store_origin: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
     let mut stores: Vec<NodeId> = Vec::new();
     let mut origin = |value: ValueId| {
-        let mut producer = graph.value_definition(value).0;
+        let mut producer = graph.producer(value);
         let found = loop {
             match graph.node_kind(producer) {
                 NodeKind::Store(_) => {
@@ -739,16 +603,45 @@ fn check_memory_order(
                         break known;
                     }
                     stores.push(producer);
-                    producer = graph
-                        .value_definition(graph.nth_input(producer, 0).expect("a Store has memory"))
-                        .0;
+                    producer = graph.producer(
+                        graph
+                            .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                            .expect("a Store has memory"),
+                    );
                 }
-                NodeKind::MemPhi => {
-                    let token = graph.nth_input(producer, 0).expect("a phi has a token");
-                    break graph.value_definition(token).0;
-                }
+                NodeKind::MemPhi => break function.phi_region(producer),
                 NodeKind::InitialMemory => break tree.root(),
-                _ => break producer,
+                NodeKind::Entry
+                | NodeKind::InitialVar(_)
+                | NodeKind::Region
+                | NodeKind::Phi
+                | NodeKind::If
+                | NodeKind::Switch(_)
+                | NodeKind::Call { .. }
+                | NodeKind::Return
+                | NodeKind::IndirectBranch
+                | NodeKind::Unreachable
+                | NodeKind::Load(_)
+                | NodeKind::IntConst(_)
+                | NodeKind::IntUnaryOp(_)
+                | NodeKind::IntBinaryOp(_)
+                | NodeKind::IntCmpOp(_)
+                | NodeKind::Truncate
+                | NodeKind::Popcount
+                | NodeKind::Lzcount
+                | NodeKind::Extend(_)
+                | NodeKind::FloatConst(_)
+                | NodeKind::FloatBinaryOp(_)
+                | NodeKind::FloatUnaryOp(_)
+                | NodeKind::FloatCmpOp(_)
+                | NodeKind::IntToFloat
+                | NodeKind::FloatToInt
+                | NodeKind::FloatToFloat
+                | NodeKind::IntBitsToFloat
+                | NodeKind::FloatBitsToInt
+                | NodeKind::CallOther { .. }
+                | NodeKind::CPoolRef
+                | NodeKind::New => break producer,
             }
         };
         for store in stores.drain(..) {
@@ -757,9 +650,76 @@ fn check_memory_order(
         found
     };
 
+    // Whether `memory`, stepped back through `Store`s, reaches `token`. A
+    // Store's depth is its count of Stores down to the chain's base, so a walk
+    // stops at `token`'s depth; `jump` skips to a token a Store already reached.
+    let mut sdepth: SecondaryMap<NodeId, Option<u32>> = SecondaryMap::new();
+    {
+        let mut chain = Vec::new();
+        for node in &ctx.live {
+            let mut producer = node;
+            let mut d = 0;
+            while matches!(graph.node_kind(producer), NodeKind::Store(_)) {
+                if let Some(k) = sdepth[producer] {
+                    d = k;
+                    break;
+                }
+                chain.push(producer);
+                producer = graph.producer(
+                    graph
+                        .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                        .expect("mem"),
+                );
+            }
+            for st in chain.drain(..).rev() {
+                d += 1;
+                sdepth[st] = Some(d);
+            }
+        }
+    }
+    let vdepth = |v: ValueId, sdepth: &SecondaryMap<NodeId, Option<u32>>| {
+        let p = graph.producer(v);
+        if matches!(graph.node_kind(p), NodeKind::Store(_)) {
+            sdepth[p].unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    let mut jump: SecondaryMap<NodeId, Option<ValueId>> = SecondaryMap::new();
+    let mut walked: Vec<NodeId> = Vec::new();
+    let mut builds_on = |memory: ValueId, token: ValueId| {
+        let td = vdepth(token, &sdepth);
+        let mut value = memory;
+        let found = loop {
+            if value == token {
+                break true;
+            }
+            if vdepth(value, &sdepth) <= td {
+                break false;
+            }
+            let producer = graph.producer(value);
+            walked.push(producer);
+            value = match jump[producer] {
+                Some(u) if vdepth(u, &sdepth) >= td => u,
+                _ => graph
+                    .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                    .expect("a Store has memory"),
+            };
+        };
+        if found {
+            for store in walked.drain(..) {
+                jump[store] = Some(token);
+            }
+        } else {
+            walked.clear();
+        }
+        found
+    };
+
     // Pre-order with a stack of ancestors: the top that dominates a node is its
-    // immediate dominator.
+    // immediate dominator. `reads` are the non-effect calls with their tokens.
     let mut state: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
+    let mut reads: Vec<(NodeId, ValueId)> = Vec::new();
     let mut idom: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
     let mut ancestors: Vec<NodeId> = Vec::new();
     for &node in tree.preorder() {
@@ -769,14 +729,22 @@ fn check_memory_order(
         let parent = ancestors.last().copied();
         idom[node] = parent;
         let before = parent.and_then(|p| state[p]);
-        state[node] = if is_effect(node) { Some(node) } else { before };
+        let effect = is_effect(node);
+        state[node] = if effect { Some(node) } else { before };
         ancestors.push(node);
 
-        // Of the control nodes, exactly the memory readers take Memory there.
-        let memory = graph
-            .nth_input(node, 1)
-            .filter(|&v| graph.value_kind(v) == ValueKind::Memory);
-        if let (Some(memory), Some(effect)) = (memory, before)
+        let Some(memory) = ctrl_memory_input(graph, node) else {
+            continue;
+        };
+        if !effect
+            && matches!(
+                graph.node_kind(node),
+                NodeKind::Call { .. } | NodeKind::CallOther { .. }
+            )
+        {
+            reads.push((node, memory));
+        }
+        if let Some(effect) = before
             && origin(memory) != effect
         {
             errs.push(ValidationError::MemoryRewind { node, effect });
@@ -790,7 +758,7 @@ fn check_memory_order(
         let edge_states = graph
             .node_inputs(region)
             .into_iter()
-            .map(|edge| state[graph.value_definition(edge).0]);
+            .map(|edge| state[graph.producer(edge)]);
         if is_effect(region) {
             for phi in chain_mem_phis(region) {
                 let arms = graph.node_inputs(phi).into_iter().skip(1);
@@ -811,32 +779,78 @@ fn check_memory_order(
             }
         }
     }
+
+    reads.sort_by_key(|&(_, token)| std::cmp::Reverse(vdepth(token, &sdepth)));
+
+    // Each call floods the control nodes it reaches before an effect, deepest
+    // token first, so a node an earlier flood claimed needs only its claimer's
+    // token to build on this one. Every node is expanded at most once, and
+    // each call also once as its own flood's seed.
+    let mut claimed: SecondaryMap<NodeId, Option<ValueId>> = SecondaryMap::new();
+    let mut stack: Vec<NodeId> = Vec::new();
+    for &(call, token) in &reads {
+        // A token of another origin is reported by the state checks.
+        let home = origin(token);
+        let mut rewinds = |memory: ValueId| origin(memory) == home && !builds_on(memory, token);
+        stack.push(call);
+        while let Some(node) = stack.pop() {
+            for (succ, slot) in
+                crate::walk::cfg_outputs(graph, node).flat_map(|v| graph.value_uses(v))
+            {
+                let mut lost =
+                    |node: NodeId| errs.push(ValidationError::MemoryRewind { node, effect: call });
+                if is_effect(succ) {
+                    if matches!(graph.node_kind(succ), NodeKind::Region) {
+                        for phi in chain_mem_phis(succ) {
+                            if let Some(arm) = graph.nth_input(phi, slot as usize + 1)
+                                && rewinds(arm)
+                            {
+                                lost(phi);
+                            }
+                        }
+                    } else if let Some(memory) = ctrl_memory_input(graph, succ)
+                        && rewinds(memory)
+                    {
+                        lost(succ);
+                    }
+                } else if let Some(claimer) = claimed[succ] {
+                    if rewinds(claimer) {
+                        if matches!(graph.node_kind(succ), NodeKind::Region) {
+                            errs.push(ValidationError::UnmergedMemoryEffect {
+                                region: succ,
+                                effect: call,
+                            });
+                        } else {
+                            lost(succ);
+                        }
+                    }
+                } else {
+                    claimed[succ] = Some(token);
+                    if let Some(memory) = ctrl_memory_input(graph, succ)
+                        && rewinds(memory)
+                    {
+                        lost(succ);
+                    }
+                    stack.push(succ);
+                }
+            }
+        }
+    }
 }
 
-/// A phi's value inputs on edges from a node of `tree`.
-fn live_arms<'a>(
-    graph: &'a Graph,
-    tree: &'a DominatorTree<NodeId>,
-    phi: NodeId,
-) -> impl Iterator<Item = ValueId> + 'a {
-    let token = graph.nth_input(phi, 0).expect("a phi has a token");
-    let region = graph.value_definition(token).0;
+/// A control node's memory input; of the control nodes, exactly the memory
+/// readers take Memory at [`NodeKind::CTRL_MEM_SLOT`].
+fn ctrl_memory_input(graph: &Graph, node: NodeId) -> Option<ValueId> {
     graph
-        .node_inputs(phi)
-        .into_iter()
-        .skip(1)
-        .zip(graph.node_inputs(region))
-        .filter(|&(_, edge)| tree.contains(graph.value_definition(edge).0))
-        .map(|(arm, _)| arm)
+        .nth_input(node, NodeKind::CTRL_MEM_SLOT)
+        .filter(|&v| graph.value_kind(v) == ValueKind::Memory)
 }
 
-/// Every data input is available where it is used, judged on an early schedule
-/// ([`schedule_early`]): a floating node sits at the latest of its inputs'
-/// positions, which must lie on one dominator chain; a control node's latest
-/// input must dominate it; a phi's input must dominate the predecessor edge it
-/// arrives on. An input with no position at all, computed only in unreachable
-/// code or on a data cycle, is unavailable to a live use. A phi input on an
-/// unreachable edge can never be selected, and is not judged.
+/// Every data input is available where it is used, on the early schedule
+/// ([`schedule_early`]): a floating node's input positions lie on one dominator
+/// chain; a control node's latest input dominates it; a phi input dominates its
+/// predecessor edge. An input with no position is unavailable. A phi input on
+/// an unreachable edge is not judged.
 pub(super) fn check_function_invariants_availability(
     ctx: &ScheduleContext<'_>,
     errs: &mut Vec<ValidationError>,
@@ -870,12 +884,10 @@ pub(super) fn check_function_invariants_availability(
         for phi in ctx.attached_phis(cfg_node) {
             let arms = graph.node_inputs(phi).into_iter().skip(1);
             for ((input_idx, value), edge) in (1..).zip(arms).zip(preds) {
-                let Some(edge_at) = at[graph.value_definition(edge).0] else {
+                let Some(edge_at) = at[graph.producer(edge)] else {
                     continue;
                 };
-                if !at[graph.value_definition(value).0]
-                    .is_some_and(|pos| tree.dominates(pos, edge_at))
-                {
+                if !at[graph.producer(value)].is_some_and(|pos| tree.dominates(pos, edge_at)) {
                     errs.push(ValidationError::InputNotAvailable {
                         node: phi,
                         input_idx,
@@ -901,7 +913,7 @@ fn latest_input(
         if graph.value_kind(value).is_control() {
             continue;
         }
-        let Some(pos) = at[graph.value_definition(value).0] else {
+        let Some(pos) = at[graph.producer(value)] else {
             errs.push(ValidationError::InputNotAvailable { node, input_idx });
             continue;
         };

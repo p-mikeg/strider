@@ -1,7 +1,8 @@
 use super::*;
-use strider_ir::node::{NodeKind, ValueId, ValueKind, ValueType};
-use strider_ir::{IRBuilderExt, IRWalker};
-use strider_ir_test_utils::make_empty_fn;
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::{Function, IRBuilderExt};
+use strider_ir_test_utils::{IrWalkerEx, make_empty_fn};
 
 /// Aliases exactly the listed memory outputs; every other def is disjoint.
 fn alias_set(aliasing: Vec<ValueId>) -> impl FnMut(&Function, NodeId) -> bool {
@@ -17,14 +18,33 @@ fn never_alias() -> impl FnMut(&Function, NodeId) -> bool {
     |_function: &Function, _def: NodeId| false
 }
 
-/// Walk from the def that produced `start_mem`.
-fn run(
-    fg: &mut Function,
-    walker: &mut dyn FnMut(&Function, NodeId) -> bool,
+/// Every def a candidate: the climb's answer with no index to lean on.
+struct EveryDef<'a>(&'a mut dyn FnMut(&Function, NodeId) -> bool);
+
+impl ClobberProbe for EveryDef<'_> {
+    fn clobbers(&mut self, function: &Function, def: NodeId) -> bool {
+        (self.0)(function, def)
+    }
+
+    fn candidate(&mut self, lo: u32, hi: u32) -> Option<u32> {
+        (lo <= hi).then_some(hi)
+    }
+}
+
+/// The dominator climb from the def that produced `start_mem`, asked the way
+/// `MemQuery::nearest` asks it: a start the layout does not cover bounds
+/// itself.
+fn climb(
+    fg: &Function,
+    clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
     start_mem: ValueId,
 ) -> NodeId {
+    let layout = MemLayout::build(fg);
+    assert!(layout.is_reducible(), "the graph is reducible");
     let start = fg.producer(start_mem);
-    super::find_nearest_clobber(fg, start, walker, &mut WalkAnswers::default())
+    layout
+        .nearest_clobber(fg, start, &mut EveryDef(clobbers), &mut Answers::default())
+        .unwrap_or(start)
 }
 
 fn assert_clean(fg: &Function, r: NodeId) {
@@ -36,11 +56,8 @@ fn assert_clean(fg: &Function, r: NodeId) {
 }
 
 fn empty_chain() -> (Function, ValueId) {
-    let fg = make_empty_fn(|b| b.build_int_const(7u64, ValueType::I64)).unwrap();
-    let im = fg
-        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
-        .next()
-        .expect("InitialMemory must exist");
+    let fg = make_empty_fn(|b| b.build_int_const(7u64, ValueType::int(64))).unwrap();
+    let im = fg.first_kind(|k| matches!(k, NodeKind::InitialMemory));
     let im_value = fg.node_outputs_exact::<1>(im).unwrap()[0];
     (fg, im_value)
 }
@@ -50,33 +67,29 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
     let fg = make_empty_fn(|b| {
         for i in 0..depth {
             let addr = b
-                .build_int_const(0x1000u64 + (i as u64) * 8, ValueType::I64)
+                .build_int_const(0x1000u64 + (i as u64) * 8, ValueType::int(64))
                 .unwrap();
-            let v = b.build_int_const(i as u64, ValueType::I64).unwrap();
+            let v = b.build_int_const(i as u64, ValueType::int(64)).unwrap();
             b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
         }
-        b.build_int_const(7u64, ValueType::I64)
+        b.build_int_const(7u64, ValueType::int(64))
     })
     .unwrap();
-    let ret = fg
-        .walk_kind(|k| matches!(k, NodeKind::Return))
-        .next()
-        .expect("Return must exist");
+    let ret = fg.first_kind(|k| matches!(k, NodeKind::Return));
     let head = fg.node_inputs(ret)[1];
-    // Head to tail, i.e. most recent store first.
+    let store_mems = stores_below(&fg, head);
+    (fg, head, store_mems)
+}
+
+/// The store memory outputs from `head` down, most recent first.
+fn stores_below(fg: &Function, head: ValueId) -> Vec<ValueId> {
     let mut store_mems = Vec::new();
     let mut cur = head;
-    loop {
-        let node = fg.producer(cur);
-        match *fg.node_kind(node) {
-            NodeKind::Store(_) => {
-                store_mems.push(cur);
-                cur = fg.node_inputs(node)[0];
-            }
-            _ => break,
-        }
+    while let NodeKind::Store(_) = fg.node_kind(fg.producer(cur)) {
+        store_mems.push(cur);
+        cur = fg.node_inputs(fg.producer(cur))[0];
     }
-    (fg, head, store_mems)
+    store_mems
 }
 
 /// Returns `(function, load_node, load_memory_input,
@@ -84,45 +97,30 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
 fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<ValueId>) {
     let fg = make_empty_fn(|b| {
         for i in 0..depth {
-            let addr = b.build_int_const(0x1000u64 + (i as u64) * 8, ValueType::I64)?;
-            let v = b.build_int_const(i as u64, ValueType::I64)?;
+            let addr = b.build_int_const(0x1000u64 + (i as u64) * 8, ValueType::int(64))?;
+            let v = b.build_int_const(i as u64, ValueType::int(64))?;
             b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
         }
-        let laddr = b.build_int_const(0x9000u64, ValueType::I64)?;
-        b.build_load(laddr, rsleigh::VnSpace::RAM, ValueType::I64)
+        let laddr = b.build_int_const(0x9000u64, ValueType::int(64))?;
+        b.build_load(laddr, rsleigh::VnSpace::RAM, ValueType::int(64))
     })
     .unwrap();
-    let load = fg
-        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
-        .next()
-        .expect("Load must exist");
+    let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
     let head = fg.node_inputs(load)[0];
-    let mut store_mems = Vec::new();
-    let mut cur = head;
-    loop {
-        let node = fg.producer(cur);
-        match *fg.node_kind(node) {
-            NodeKind::Store(_) => {
-                store_mems.push(cur);
-                cur = fg.node_inputs(node)[0];
-            }
-            _ => break,
-        }
-    }
+    let store_mems = stores_below(&fg, head);
     (fg, load, head, store_mems)
 }
 
-/// Walk plus the caller-side `narrow_load_to` rewrite.
+/// The climb plus the caller-side `narrow_load_to` rewrite.
 fn run_load(
     fg: &mut Function,
-    walker: &mut dyn FnMut(&Function, NodeId) -> bool,
+    clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
     load: NodeId,
 ) -> NodeId {
     let mem = fg.node_inputs(load)[0];
-    let mem_node = fg.producer(mem);
-    let clobber = super::find_nearest_clobber(fg, mem_node, walker, &mut WalkAnswers::default());
+    let clobber = climb(fg, clobbers, mem);
     let mut ctx = crate::EditFunction::new(fg);
-    super::narrow_load_to(&mut ctx, load, clobber);
+    crate::mem_analysis::narrow_load_to(&mut ctx, load, clobber);
     clobber
 }
 
@@ -171,24 +169,15 @@ fn narrowing_is_idempotent() {
 /// `(function, initial_memory_output, store_memory_output, region_phi_token)`.
 fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
     let fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x10u64, ValueType::I64)?;
-        let v = b.build_int_const(0x42u64, ValueType::I64)?;
+        let addr = b.build_int_const(0x10u64, ValueType::int(64))?;
+        let v = b.build_int_const(0x42u64, ValueType::int(64))?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
+        b.build_int_const(7u64, ValueType::int(64))
     })
     .unwrap();
-    let im_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
-        .next()
-        .expect("InitialMemory must exist");
-    let store_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
-        .next()
-        .expect("Store must exist");
-    let region_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Region))
-        .next()
-        .expect("Region must exist");
+    let im_node = fg.first_kind(|k| matches!(k, NodeKind::InitialMemory));
+    let store_node = fg.first_kind(|k| matches!(k, NodeKind::Store(_)));
+    let region_node = fg.first_kind(|k| matches!(k, NodeKind::Region));
     let im = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
@@ -196,12 +185,12 @@ fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
 }
 
 fn mk_const(fg: &mut Function, v: u64) -> ValueId {
-    let const_id = fg.intern_int_const(u128::from(v), ValueType::I64);
+    let const_id = fg.intern_int_const(u128::from(v), ValueType::int(64));
     let n = strider_ir_test_utils::sentinel_node(
         fg,
         NodeKind::IntConst(const_id),
         [],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     fg.node_outputs_exact::<1>(n).unwrap()[0]
 }
@@ -222,7 +211,7 @@ fn mk_load(fg: &mut Function, mem: ValueId, addr: ValueId) -> NodeId {
         fg,
         NodeKind::Load(rsleigh::VnSpace::RAM),
         [mem, addr],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     )
 }
 
@@ -306,20 +295,20 @@ fn narrowing_stops_at_disagreeing_phi_skipping_disjoint_prefix() {
 }
 
 #[test]
-fn initial_memory_with_no_alias_returns_none() {
-    let (mut fg, im_value) = empty_chain();
-    let r = run(&mut fg, &mut never_alias(), im_value);
+fn initial_memory_with_no_alias_is_clean() {
+    let (fg, im_value) = empty_chain();
+    let r = climb(&fg, &mut never_alias(), im_value);
     assert_clean(&fg, r);
 }
 
 #[test]
 fn linear_chain_finds_nearest_aliasing_store() {
-    let (mut fg, head, store_mems) = linear_store_chain(4);
+    let (fg, head, store_mems) = linear_store_chain(4);
     assert_eq!(store_mems.len(), 4, "four stores in the chain");
     // Second-from-head aliases, so the walk must skip the first store.
     let nearest = store_mems[1];
     let mut walker = alias_set(vec![nearest]);
-    let r = run(&mut fg, &mut walker, head);
+    let r = climb(&fg, &mut walker, head);
     assert_eq!(
         r,
         fg.producer(nearest),
@@ -328,166 +317,51 @@ fn linear_chain_finds_nearest_aliasing_store() {
 }
 
 #[test]
-fn linear_chain_all_clean_returns_none() {
-    let (mut fg, head, _store_mems) = linear_store_chain(5);
-    let r = run(&mut fg, &mut never_alias(), head);
+fn linear_chain_all_clean_is_clean() {
+    let (fg, head, _store_mems) = linear_store_chain(5);
+    let r = climb(&fg, &mut never_alias(), head);
     assert_clean(&fg, r);
 }
 
-/// One Store, so a Region exists to hang a `MemPhi` on; the phi's `n_arms`
-/// predecessors all route straight to `InitialMemory`.
+/// A `MemPhi` whose `n_arms` predecessors all route straight to
+/// `InitialMemory`.
 fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
-    let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x100u64, ValueType::I64)?;
-        let v = b.build_int_const(0x42u64, ValueType::I64)?;
-        b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
-    })
-    .unwrap();
-    let im_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
-        .next()
-        .expect("InitialMemory must exist");
-    let region_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Region))
-        .next()
-        .expect("Region must exist");
-    let im_value = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
-    let phi_token = fg.node_outputs(region_node)[1];
-    let mut inputs: Vec<ValueId> = vec![phi_token];
-    for _ in 0..n_arms {
-        inputs.push(im_value);
-    }
-    let phi = strider_ir_test_utils::sentinel_node(
-        &mut fg,
-        NodeKind::MemPhi,
-        inputs.iter().copied(),
-        [ValueKind::Memory],
-    );
-    let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
-    (fg, phi_value)
+    let (mut fg, im, _store, phi_token) = base_with_store();
+    let phi = mk_mem_phi(&mut fg, phi_token, &vec![im; n_arms]);
+    (fg, phi)
 }
 
 /// An armless `MemPhi` joins nothing, so no path under it reaches
-/// `InitialMemory` and the walk has no clean bottom to name.  It must answer
+/// `InitialMemory` and the climb has no clean bottom to name.  It must answer
 /// conservatively instead of panicking.
 #[test]
 fn armless_mem_phi_answers_at_the_chain_start() {
-    let (mut fg, phi_value) = mem_phi_all_initial(0);
-    let r = run(&mut fg, &mut never_alias(), phi_value);
+    let (fg, phi_value) = mem_phi_all_initial(0);
+    let r = climb(&fg, &mut never_alias(), phi_value);
     assert_eq!(
         r,
         fg.producer(phi_value),
-        "with nothing proven the walk stops where it started",
+        "with nothing proven the query stops where it started",
     );
 }
 
 #[test]
-fn mem_phi_all_arms_clean_returns_none() {
-    let (mut fg, phi_value) = mem_phi_all_initial(3);
-    let r = run(&mut fg, &mut never_alias(), phi_value);
+fn mem_phi_all_arms_clean_is_clean() {
+    let (fg, phi_value) = mem_phi_all_initial(3);
+    let r = climb(&fg, &mut never_alias(), phi_value);
     assert_clean(&fg, r);
-}
-
-#[test]
-fn mem_phi_disagreeing_arms_returns_phi_boundary() {
-    // Two arms: one through an aliasing Store, one through InitialMemory.
-    let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x200u64, ValueType::I64)?;
-        let v = b.build_int_const(0x99u64, ValueType::I64)?;
-        b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
-    })
-    .unwrap();
-    let im_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
-        .next()
-        .unwrap();
-    let store_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
-        .next()
-        .unwrap();
-    let region_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Region))
-        .next()
-        .unwrap();
-    let im_value = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
-    let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
-    let phi_token = fg.node_outputs(region_node)[1];
-    let phi = strider_ir_test_utils::sentinel_node(
-        &mut fg,
-        NodeKind::MemPhi,
-        [phi_token, store_mem, im_value],
-        [ValueKind::Memory],
-    );
-    let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
-
-    let mut walker = alias_set(vec![store_mem]);
-    let r = run(&mut fg, &mut walker, phi_value);
-    assert_eq!(
-        r,
-        fg.producer(phi_value),
-        "a MemPhi whose arms disagree (one clobbers, one clean) is itself the boundary",
-    );
-}
-
-#[test]
-fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
-    let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x300u64, ValueType::I64)?;
-        let v = b.build_int_const(0x77u64, ValueType::I64)?;
-        b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
-    })
-    .unwrap();
-    let store_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
-        .next()
-        .unwrap();
-    let region_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Region))
-        .next()
-        .unwrap();
-    let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
-    let phi_token = fg.node_outputs(region_node)[1];
-    let phi = strider_ir_test_utils::sentinel_node(
-        &mut fg,
-        NodeKind::MemPhi,
-        [phi_token, store_mem, store_mem],
-        [ValueKind::Memory],
-    );
-    let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
-
-    let mut walker = alias_set(vec![store_mem]);
-    let r = run(&mut fg, &mut walker, phi_value);
-    assert_eq!(
-        r,
-        fg.producer(store_mem),
-        "agreeing MemPhi arms pass through to the shared dominating store",
-    );
 }
 
 #[test]
 fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
-    let (fg, _head, store_mems) = linear_store_chain(2);
-    let mut fg = fg;
-    let region_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Region))
-        .next()
-        .unwrap();
+    let (mut fg, _head, store_mems) = linear_store_chain(2);
+    let region_node = fg.first_kind(|k| matches!(k, NodeKind::Region));
     let phi_token = fg.node_outputs(region_node)[1];
-    let arm_a = store_mems[0];
-    let arm_b = store_mems[1];
-    let phi = strider_ir_test_utils::sentinel_node(
-        &mut fg,
-        NodeKind::MemPhi,
-        [phi_token, arm_a, arm_b],
-        [ValueKind::Memory],
-    );
-    let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
+    let [arm_a, arm_b] = [store_mems[0], store_mems[1]];
+    let phi_value = mk_mem_phi(&mut fg, phi_token, &[arm_a, arm_b]);
 
     let mut walker = alias_set(vec![arm_a, arm_b]);
-    let r = run(&mut fg, &mut walker, phi_value);
+    let r = climb(&fg, &mut walker, phi_value);
     assert_eq!(
         r,
         fg.producer(phi_value),
@@ -499,10 +373,7 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
 fn call_on_chain_is_the_nearest_clobber() {
     // InitialMemory <- Store(disjoint) <- CallOther(clobbering) <- load.
     let (mut fg, _im, store_mem, _phi_token) = base_with_store();
-    let region_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Region))
-        .next()
-        .expect("Region must exist");
+    let region_node = fg.first_kind(|k| matches!(k, NodeKind::Region));
     let control = fg.node_outputs(region_node)[0];
     let call_mem = mk_call_other(&mut fg, control, store_mem);
     let a = mk_const(&mut fg, 0x40);
@@ -525,17 +396,14 @@ fn call_on_chain_is_the_nearest_clobber() {
 #[test]
 fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
     let (mut fg, im, _store_mem, phi_token) = base_with_store();
-    let region_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::Region))
-        .next()
-        .expect("Region must exist");
+    let region_node = fg.first_kind(|k| matches!(k, NodeKind::Region));
     let control = fg.node_outputs(region_node)[0];
     // arm 0: a clobbering CallOther rooted at InitialMemory.  arm 1: clean.
     let call_mem = mk_call_other(&mut fg, control, im);
     let phi_mem = mk_mem_phi(&mut fg, phi_token, &[call_mem, im]);
 
     let mut walker = alias_set(vec![call_mem]);
-    let r = run(&mut fg, &mut walker, phi_mem);
+    let r = climb(&fg, &mut walker, phi_mem);
     assert_eq!(
         r,
         fg.producer(phi_mem),
@@ -603,12 +471,12 @@ fn loop_header_phi_back_edge_is_dropped_not_a_disagreement() {
 }
 
 /// A loop-header `MemPhi` feeding back to its own output must not diverge the
-/// walk, with or without a real clobber present.
+/// climb, with or without a real clobber present.
 #[test]
 fn cyclic_loop_header_phi_terminates() {
     // All-clean: cut the cycle and reach InitialMemory.
-    let (mut fg, _entry_store_mem, _load, phi_value) = cyclic_loop_chain();
-    let r_clean = run(&mut fg, &mut never_alias(), phi_value);
+    let (fg, _entry_store_mem, _load, phi_value) = cyclic_loop_chain();
+    let r_clean = climb(&fg, &mut never_alias(), phi_value);
     assert_clean(&fg, r_clean);
 
     // One aliasing store below the merge: terminates with a clobber too.
@@ -628,10 +496,9 @@ fn cyclic_loop_header_phi_terminates() {
 }
 
 /// A loop header `outer` whose arms are an exit edge out of an inner loop's
-/// body `inner_body`, the inner header `inner`, and its own back-edge.
-/// `inner_body`'s memo entry cycled to `inner`, which is closed by the time
-/// `outer` reads it on the exit edge, so it degrades to a clobber even though
-/// `inner`'s entry arm reaches `InitialMemory`.  Returns `(function, outer)`.
+/// body `inner_body`, the inner header `inner`, and its own back-edge.  The
+/// inner loop is closed by the time the exit edge is read, and `inner`'s entry
+/// arm reaches `InitialMemory`.  Returns `(function, outer)`.
 fn loop_exit_from_a_closed_inner_loop() -> (Function, ValueId) {
     let (mut fg, im, _store_mem, phi_token) = base_with_store();
     let inner = mk_mem_phi(&mut fg, phi_token, &[im, im]);
@@ -646,64 +513,13 @@ fn loop_exit_from_a_closed_inner_loop() -> (Function, ValueId) {
     (fg, outer)
 }
 
-/// The degraded arm is a clobber, never a `Cycle` that would let the walk
-/// name the `InitialMemory` it entered.
-#[test]
-fn a_degraded_arm_stops_the_walk_at_the_loop_header() {
-    let (mut fg, outer) = loop_exit_from_a_closed_inner_loop();
-    let r = run(&mut fg, &mut never_alias(), outer);
-    assert_eq!(r, fg.producer(outer), "got {:?}", fg.node_kind(r));
-}
-
-/// Every def a candidate: the climb's answer with no index to lean on.
-struct EveryDef<'a>(&'a mut dyn FnMut(&Function, NodeId) -> bool);
-
-impl ClobberProbe for EveryDef<'_> {
-    fn clobbers(&mut self, function: &Function, def: NodeId) -> bool {
-        (self.0)(function, def)
-    }
-
-    fn candidate(&mut self, _layout: &MemLayout, lo: u32, hi: u32) -> Option<u32> {
-        (lo <= hi).then_some(hi)
-    }
-}
-
-/// The dominator climb from the def that produced `start_mem`.
-fn climb(
-    fg: &Function,
-    clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
-    start_mem: ValueId,
-) -> NodeId {
-    let layout = MemLayout::build(fg).expect("a reducible graph is laid out");
-    layout
-        .nearest_clobber(
-            fg,
-            fg.producer(start_mem),
-            &mut EveryDef(clobbers),
-            &mut Answers::default(),
-        )
-        .expect("the start is laid out")
-}
-
-/// The walk re-reads `inner_body` after the inner loop closed and degrades it
-/// to a clobber; the climb has no such history and finds every path clean.
+/// The climb has no walk history to degrade `inner_body` with: every path out
+/// of the closed inner loop is clean.
 #[test]
 fn the_climb_does_not_degrade_a_closed_inner_loop() {
     let (fg, outer) = loop_exit_from_a_closed_inner_loop();
     let r = climb(&fg, &mut never_alias(), outer);
     assert_clean(&fg, r);
-}
-
-#[test]
-fn the_climb_steps_through_a_loop_back_edge_to_the_dominating_store() {
-    let (mut fg, _im, store_dom_mem, phi_token) = base_with_store();
-    let phi_mem = mk_mem_phi(&mut fg, phi_token, &[store_dom_mem, store_dom_mem]);
-    let (ba, bd) = (mk_const(&mut fg, 0x77), mk_const(&mut fg, 0x88));
-    let back_store_mem = mk_store(&mut fg, phi_mem, ba, bd);
-    let use_id = fg.node_input_id_at(fg.producer(phi_mem), 2).unwrap();
-    fg.graph_mut().update_input(use_id, back_store_mem);
-    let r = climb(&fg, &mut alias_set(vec![store_dom_mem]), phi_mem);
-    assert_eq!(r, fg.producer(store_dom_mem));
 }
 
 /// An inner loop header whose entry arm leads to the outer header: the outer
@@ -728,7 +544,7 @@ fn the_climb_resolves_a_query_at_an_inner_loop_header_through_the_outer_loop() {
 
 /// Two loops entered at each other's bodies: no header dominates the cycle.
 #[test]
-fn an_irreducible_loop_is_not_laid_out() {
+fn an_irreducible_loop_is_flagged() {
     let (mut fg, im, _store, phi_token) = base_with_store();
     let (a, d) = (mk_const(&mut fg, 0x20), mk_const(&mut fg, 0x21));
     let left_in = mk_store(&mut fg, im, a, d);
@@ -737,12 +553,13 @@ fn an_irreducible_loop_is_not_laid_out() {
     let right = mk_mem_phi(&mut fg, phi_token, &[right_in, left]);
     let use_id = fg.node_input_id_at(fg.producer(left), 2).unwrap();
     fg.graph_mut().update_input(use_id, right);
-    assert!(MemLayout::build(&fg).is_none());
+    assert!(!MemLayout::build(&fg).is_reducible());
 }
 
 /// Random structured memory graphs: sequences of stores, merges of two or
 /// three arms, top-tested and bottom-tested loops, and loops left from the
-/// middle of their body.
+/// middle of their body. A nested body may be empty, so a merge arm can be the
+/// merge's immediate dominator and a loop's back arm its own header.
 struct ShapeGen {
     fg: Function,
     token: ValueId,
@@ -768,7 +585,7 @@ impl ShapeGen {
     }
 
     fn next(&mut self, bound: u64) -> u64 {
-        self.rng.next() % bound
+        self.rng.next_u64() % bound
     }
 
     fn phi(&mut self, arms: &[ValueId]) -> ValueId {
@@ -791,6 +608,9 @@ impl ShapeGen {
     }
 
     fn body(&mut self, mem: ValueId, depth: u32) -> ValueId {
+        if depth > 0 && self.next(6) == 0 {
+            return mem;
+        }
         let mut m = mem;
         for _ in 0..=self.next(3) {
             let nested = depth < 4;
@@ -838,6 +658,28 @@ impl ShapeGen {
             };
         }
         m
+    }
+
+    /// Every third merge's LAST arm becomes an edge to an arbitrary def, which
+    /// may enter a loop away from its header. The first arm is left alone, so
+    /// every def stays reachable from `InitialMemory`.
+    fn rewire_every_third_merge(&mut self) {
+        let phis: Vec<ValueId> = self
+            .values
+            .iter()
+            .copied()
+            .filter(|&v| matches!(self.fg.node_kind(self.fg.producer(v)), NodeKind::MemPhi))
+            .collect();
+        for (i, &p) in phis.iter().enumerate().filter(|(i, _)| i % 3 == 0) {
+            let node = self.fg.producer(p);
+            let arms = self.fg.phi_data_inputs(node).count();
+            let target = self.values[(i * 13 + 7) % self.values.len()];
+            let use_id = self
+                .fg
+                .node_input_id_at(node, arms)
+                .expect("a merge has an arm at its own arity");
+            self.fg.graph_mut().update_input(use_id, target);
+        }
     }
 }
 
@@ -992,6 +834,21 @@ fn mem_preds(fg: &Function, n: NodeId) -> Vec<NodeId> {
     }
 }
 
+/// The generated defs and their memory successors by index, the form the
+/// brute-force oracles take.  The fixture's own store, left out of `values`,
+/// is a sink off `InitialMemory` and closes no cycle.
+fn succ_graph(fg: &Function, values: &[ValueId]) -> (Vec<NodeId>, Vec<Vec<u32>>) {
+    let nodes: Vec<NodeId> = values.iter().map(|&v| fg.producer(v)).collect();
+    let mut succs = vec![Vec::new(); nodes.len()];
+    for (i, &n) in nodes.iter().enumerate() {
+        for p in mem_preds(fg, n) {
+            let at = nodes.iter().position(|&m| m == p).expect("a generated def");
+            succs[at].push(i as u32);
+        }
+    }
+    (nodes, succs)
+}
+
 /// One nearest-clobber answer is sound iff no def that clobbers the slot and no
 /// `InitialMemory` but `answer` itself reaches `start` without passing it.
 fn assert_sound(
@@ -1021,86 +878,219 @@ fn assert_sound(
     }
 }
 
-/// Every walk answer is sound over graphs no [`MemLayout`] covers, from every
-/// def and for every slot, with one [`WalkAnswers`] carried across the queries
-/// the way a `LoadForward` sweep asks them.
+/// The climb names what its definition names, from every def and for every
+/// slot, over random graphs, rewired and irreducible ones included.
+/// [`ByDefinition`]'s dominators are the textbook iteration, checked against
+/// the brute-force ones on the irreducible graphs.
 #[test]
-fn the_walk_is_sound_on_random_irreducible_graphs() {
-    let mut irreducible = 0;
-    for seed in 0..40 {
-        let (mut shape, im) = ShapeGen::new(seed, true);
+fn the_climb_matches_its_definition_on_random_graphs() {
+    use strider_ir_test_utils::graph_oracle;
+    let (mut laid_out, mut rewired_laid_out, mut irreducible) = (0, 0, 0);
+    let (mut store_free_loops, mut empty_merges) = (0, 0);
+    for seed in 0..300 {
+        let allow_loops = seed % 3 != 0;
+        let rewired = seed % 2 == 0;
+        let (mut shape, im) = ShapeGen::new(seed, allow_loops);
         shape.body(im, 0);
-        // Every third merge's LAST arm becomes an edge to an arbitrary def,
-        // which may enter a loop away from its header.  The first arm is left
-        // alone, so every def stays reachable from `InitialMemory`.
-        let phis: Vec<ValueId> = shape
-            .values
-            .iter()
-            .copied()
-            .filter(|&v| matches!(shape.fg.node_kind(shape.fg.producer(v)), NodeKind::MemPhi))
-            .collect();
-        for (i, &p) in phis.iter().enumerate().filter(|(i, _)| i % 3 == 0) {
-            let node = shape.fg.producer(p);
-            let arms = shape.fg.phi_data_inputs(node).count();
-            let target = shape.values[(i * 13 + 7) % shape.values.len()];
-            let use_id = shape
-                .fg
-                .node_input_id_at(node, arms)
-                .expect("a merge has an arm at its own arity");
-            shape.fg.graph_mut().update_input(use_id, target);
+        if rewired {
+            shape.rewire_every_third_merge();
         }
         let ShapeGen {
             fg, slots, values, ..
         } = shape;
-        if MemLayout::build(&fg).is_none() {
+        let layout = MemLayout::build(&fg);
+        let definition = ByDefinition::new(&fg, &values);
+        if layout.is_reducible() {
+            laid_out += 1;
+            rewired_laid_out += u32::from(rewired);
+        } else {
+            assert!(rewired, "seed {seed}: a structured graph is reducible");
             irreducible += 1;
+            let (nodes, succs) = succ_graph(&fg, &values);
+            let oracle = graph_oracle::idoms(&graph_oracle::dom_matrix(&succs, 0), 0);
+            for (i, &n) in nodes.iter().enumerate() {
+                let want = oracle[i].map_or(nodes[0], |d| nodes[d as usize]);
+                assert_eq!(definition.idom[&n], want, "seed {seed}: the idom of {n:?}");
+            }
         }
+        for &v in &values {
+            let phi = fg.producer(v);
+            if !matches!(fg.node_kind(phi), NodeKind::MemPhi) {
+                continue;
+            }
+            let arms: Vec<NodeId> = fg.phi_data_inputs(phi).map(|a| fg.producer(a)).collect();
+            if !rewired && arms.contains(&phi) {
+                store_free_loops += 1;
+            }
+            if arms.iter().all(|&a| a == definition.idom[&phi]) {
+                empty_merges += 1;
+            }
+        }
+        // Last start first too, so a later ask reads what an arm's climb left
+        // in the memo rather than its own.
+        let orders = [values.clone(), values.iter().rev().copied().collect()];
         for &slot in &slots {
-            let mut walk_answers = WalkAnswers::default();
-            for &v in &values {
-                let start = fg.producer(v);
-                let got = find_nearest_clobber(&fg, start, &mut store_at(slot), &mut walk_answers);
-                assert_sound(&fg, start, got, &mut store_at(slot), seed);
+            for order in &orders {
+                // Every def a candidate, then exactly the clobbers, as an
+                // index offers them.
+                for indexed in [false, true] {
+                    let mut answers = Answers::default();
+                    let mut every = store_at(slot);
+                    let mut every = EveryDef(&mut every);
+                    let mut exact = SlotProbe::new(&fg, &layout, slot);
+                    let probe: &mut dyn ClobberProbe =
+                        if indexed { &mut exact } else { &mut every };
+                    for &v in order {
+                        let start = fg.producer(v);
+                        let got = layout
+                            .nearest_clobber(&fg, start, probe, &mut answers)
+                            .expect("every generated def is laid out");
+                        let want = definition.nearest(&fg, start, &mut store_at(slot));
+                        assert_eq!(got, want, "seed {seed} indexed {indexed}: from {start:?}");
+                        assert_sound(&fg, start, got, &mut store_at(slot), seed);
+                    }
+                }
             }
         }
     }
     assert!(
-        irreducible > 20,
-        "{irreducible} of 40 graphs had no layout, too few to exercise the walk"
+        laid_out > 200 && rewired_laid_out > 50 && irreducible > 50,
+        "{laid_out} reducible graphs, {rewired_laid_out} of them rewired, \
+         {irreducible} irreducible"
+    );
+    assert!(
+        store_free_loops > 20 && empty_merges > 20,
+        "{store_free_loops} store-free self-loops, {empty_merges} merges of only their \
+         immediate dominator"
     );
 }
 
-/// The climb names what its definition names, from every def and for every
-/// slot, over random reducible graphs; with no loop it also names what the
-/// path walk does.
+/// `build` flags exactly the irreducible memory graphs. The edges come from
+/// `memory_input_of` and `phi_data_inputs`, as in production; reducibility
+/// over them is by definition.
 #[test]
-fn the_climb_matches_its_definition_on_random_graphs() {
-    for seed in 0..300 {
-        let allow_loops = seed % 3 != 0;
-        let (mut shape, im) = ShapeGen::new(seed, allow_loops);
+fn the_layout_flags_exactly_the_irreducible_memory_graphs() {
+    use strider_ir_test_utils::graph_oracle;
+    let seeds = if cfg!(debug_assertions) { 60 } else { 2_000 };
+    let (mut irreducible, mut rewired_reducible_loops, mut reducible_loops, mut acyclic) =
+        (0, 0, 0, 0);
+    for seed in 0..seeds {
+        let (mut shape, im) = ShapeGen::new(seed, true);
         shape.body(im, 0);
-        let ShapeGen {
-            fg, slots, values, ..
-        } = shape;
-        let layout = MemLayout::build(&fg).expect("a structured graph is reducible");
-        let definition = ByDefinition::new(&fg, &values);
-        for &slot in &slots {
-            let mut answers = Answers::default();
-            let mut walk_answers = WalkAnswers::default();
-            for &v in &values {
-                let start = fg.producer(v);
-                let mut clobbers = store_at(slot);
-                let got = layout
-                    .nearest_clobber(&fg, start, &mut EveryDef(&mut clobbers), &mut answers)
-                    .expect("every generated def is laid out");
-                let want = definition.nearest(&fg, start, &mut store_at(slot));
-                assert_eq!(got, want, "seed {seed}: from {start:?}");
-                if !allow_loops {
-                    let walked =
-                        find_nearest_clobber(&fg, start, &mut store_at(slot), &mut walk_answers);
-                    assert_eq!(got, walked, "seed {seed}: the walk from {start:?}");
-                }
-            }
+        if seed % 2 == 0 {
+            shape.rewire_every_third_merge();
         }
+        let (nodes, succs) = succ_graph(&shape.fg, &shape.values);
+        let want = graph_oracle::is_reducible(&succs, 0);
+        assert_eq!(
+            MemLayout::build(&shape.fg).is_reducible(),
+            want,
+            "seed {seed}"
+        );
+        let cyclic = (0..nodes.len() as u32).any(|v| graph_oracle::reaches(&succs, v, v));
+        match (want, seed % 2 == 0) {
+            (false, _) => irreducible += 1,
+            (true, true) if cyclic => rewired_reducible_loops += 1,
+            (true, _) if cyclic => reducible_loops += 1,
+            (true, _) => acyclic += 1,
+        }
+    }
+    let floor = seeds / 30;
+    assert!(
+        [
+            irreducible,
+            rewired_reducible_loops,
+            reducible_loops,
+            acyclic
+        ]
+        .iter()
+        .all(|&c| c >= floor),
+        "floor {floor}: {irreducible} irreducible, {rewired_reducible_loops} rewired \
+         reducible with a loop, {reducible_loops} other reducible with a loop, \
+         {acyclic} acyclic"
+    );
+}
+
+/// A precise index over one slot: the candidates are exactly the clobbers.
+struct SlotProbe {
+    slot: ValueId,
+    clobbers: Vec<u32>,
+}
+
+impl SlotProbe {
+    fn new(fg: &Function, layout: &MemLayout, slot: ValueId) -> Self {
+        let clobbers = (0..layout.len() as u32)
+            .filter(|&p| layout.shape_at(p) == Shape::Def && store_at(slot)(fg, layout.node_at(p)))
+            .collect();
+        Self { slot, clobbers }
+    }
+}
+
+impl ClobberProbe for SlotProbe {
+    fn clobbers(&mut self, function: &Function, def: NodeId) -> bool {
+        store_at(self.slot)(function, def)
+    }
+
+    fn candidate(&mut self, lo: u32, hi: u32) -> Option<u32> {
+        let i = self.clobbers.partition_point(|&p| p <= hi);
+        (i > 0 && self.clobbers[i - 1] >= lo).then(|| self.clobbers[i - 1])
+    }
+}
+
+/// `n` merges, each of an untouched arm and a store to another slot, with a
+/// store to `p` off each on a dead-end path; then `if (c) p = ..`, its other
+/// arm storing another slot when `other_arm`.  Returns `(function, p, the
+/// final merge)`.
+fn guarded_store_after_merges(n: usize, other_arm: bool) -> (Function, ValueId, ValueId) {
+    let (mut fg, im, _store, token) = base_with_store();
+    let (p, q, d) = (
+        mk_const(&mut fg, 0x100),
+        mk_const(&mut fg, 0x108),
+        mk_const(&mut fg, 7),
+    );
+    let mut mem = im;
+    for _ in 0..n {
+        mk_store(&mut fg, mem, p, d);
+        let other = mk_store(&mut fg, mem, q, d);
+        mem = mk_mem_phi(&mut fg, token, &[mem, other]);
+    }
+    let unguarded = if other_arm {
+        mk_store(&mut fg, mem, q, d)
+    } else {
+        mem
+    };
+    let guarded = mk_store(&mut fg, mem, p, d);
+    let merge = mk_mem_phi(&mut fg, token, &[unguarded, guarded]);
+    (fg, p, merge)
+}
+
+/// A merge whose own arm stores the slot is decided without climbing above
+/// its immediate dominator, however many merges lie there, with no memo
+/// carried over: an arm that is the dominator is never climbed, and another
+/// clean arm's climb ends there.
+#[test]
+fn a_guarded_store_decides_its_merge_without_climbing_above_it() {
+    for other_arm in [false, true] {
+        let steps = |n: usize| {
+            let (fg, p, merge) = guarded_store_after_merges(n, other_arm);
+            let layout = MemLayout::build(&fg);
+            assert!(layout.is_reducible(), "the graph is reducible");
+            let mut probe = SlotProbe::new(&fg, &layout, p);
+            CLIMB_STEPS.with(|c| c.set(0));
+            let got = layout
+                .nearest_clobber(&fg, fg.producer(merge), &mut probe, &mut Answers::default())
+                .expect("the merge is laid out");
+            assert_eq!(
+                got,
+                fg.producer(merge),
+                "the guarded store makes the merge dirty"
+            );
+            CLIMB_STEPS.with(std::cell::Cell::get)
+        };
+        let (small, big) = (steps(100), steps(200));
+        assert!(
+            big <= small + 4,
+            "other arm {other_arm}: doubling the merges above took {small} steps to {big}"
+        );
     }
 }

@@ -1,47 +1,24 @@
 //! An x86 branch to an address one byte into a `lock`-prefixed instruction
-//! re-enters the same instruction's decode. The edge is exact, and not
-//! reported as interior, only while the region owning those bytes STARTS at
-//! the `lock` instruction, which is glibc's `je 0f; lock; 0:` shape. An owner
-//! starting earlier runs instructions the taken path never executes.
+//! (glibc's `je 0f; lock; 0:`) re-enters the same instruction's decode. The
+//! edge enters at the `lock` instruction, split out of its region, so it is
+//! exact and not reported as interior.
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, Cfg, CfgOptions};
+use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 fn build_x86(bytes: Vec<u8>) -> Cfg {
-    build_x86_with(bytes, &[])
-}
-
-/// `flow_commit_defaults` lent as `Lifter::build_cfg` lends it. Non-empty
-/// means this build re-derives committed context and `Builder::enqueue`
-/// therefore believes a snapshot of the engine, which is what bars the
-/// reentry probe's throwaway decode.
-fn build_x86_with(
-    bytes: Vec<u8>,
-    flow_commit_defaults: &[(&'static str, strider_target::FlowCommit, u32)],
-) -> Cfg {
     let arch = SleighArch::x86();
-    let mut sleigh = Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("sleigh");
-    Builder::for_arch(&arch, &mut sleigh, 0x1000, &CfgOptions::default())
-        .with_flow_commit_defaults(flow_commit_defaults)
-        .build()
+    DecodeEngine::new(arch, BufMemReader::new(bytes, 0x1000))
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &CfgOptions::default())
         .expect("build")
 }
 
-/// The `lock`-prefix shape above, which is the only one that reaches the
-/// probe's decode and accepts it.
-const LOCK_REENTRY: [u8; 9] = [0x74, 0x01, 0xf0, 0x0f, 0xc1, 0x08, 0x89, 0xc8, 0xc3];
-
 fn interior(cfg: &Cfg) -> Vec<u64> {
-    cfg.interior_branch_targets()
-        .iter()
-        .map(|a| a.machine_addr.addr)
+    cfg.incomplete()
+        .of(strider_cfg::Reason::InteriorTarget)
+        .map(|a| a.machine())
         .collect()
 }
 
@@ -66,27 +43,26 @@ fn a_branch_over_a_lock_prefix_its_own_region_starts_at_is_not_interior() {
         .if_true_region
         .expect("taken arm");
     assert_eq!(
-        cfg.region_graph()[taken].start_addr.machine_addr.addr,
+        cfg.region_graph()[taken].start_addr.machine(),
         0x1002,
         "the taken edge lands on the region the `lock` instruction starts",
     );
 }
 
 #[test]
-fn a_branch_over_a_lock_prefix_an_earlier_region_owns_is_reported() {
-    // An instruction between the branch's fall-through and the `lock` puts the
-    // owner's start before the containing instruction, so the taken path would
-    // run that instruction too.
+fn a_branch_over_a_lock_prefix_mid_region_enters_at_the_lock_instruction() {
+    // An instruction between the branch's fall-through and the `lock`: the
+    // taken edge splits it off and enters at the `lock` instruction.
     //
     // 0x1000 je 0x1005              (74 03)
-    // 0x1002 xor %eax,%eax          (31 c0)  fall-through, and the owner's start
+    // 0x1002 xor %eax,%eax          (31 c0)
     // 0x1004 lock xadd %ecx,(%eax)  (f0 0f c1 08) -- target 0x1005
     // 0x1008 ret                    (c3)
     let cfg = build_x86(vec![0x74, 0x03, 0x31, 0xc0, 0xf0, 0x0f, 0xc1, 0x08, 0xc3]);
+    assert!(interior(&cfg).is_empty(), "{:?}", interior(&cfg));
     assert_eq!(
-        interior(&cfg),
-        vec![0x1005],
-        "an owner starting before the `lock` instruction is not an exact edge",
+        taken_start(&cfg),
+        strider_cfg::PcodeInsnAddr::at_machine_start(0x1004)
     );
 }
 
@@ -108,30 +84,85 @@ fn a_branch_into_a_real_instruction_interior_is_still_reported() {
     );
 }
 
-/// The probe lifts a MID-INSTRUCTION address out of band, and `oneInstruction`
-/// applies that constructor's `globalset`s with no `RegionBuilder` to
-/// re-derive them. So it must not run where `Builder::enqueue` believes a
-/// snapshot of the engine, which it does exactly where this build re-derives
-/// committed context.
-///
-/// Asserted on the difference the guard makes, not on a `false` return: the
-/// probe answers `false` for almost any address, so a test that only checks
-/// `false` passes whether the guard is there or not.
+/// The region holding the start of the instruction the taken edge lands in.
+fn taken_start(cfg: &Cfg) -> strider_cfg::PcodeInsnAddr {
+    let taken = cfg
+        .region_if(cfg.entry())
+        .expect("entry is a CondBranch")
+        .if_true_region
+        .expect("taken arm");
+    cfg.region_graph()[taken].start_addr
+}
+
 #[test]
-fn lending_committed_context_bars_the_reentry_probe() {
-    assert!(
-        interior(&build_x86_with(LOCK_REENTRY.to_vec(), &[])).is_empty(),
-        "with nothing to re-derive the probe runs and the reentry is exact",
-    );
-    // `segover` is a real x86 flowing var (`ia.sinc:411`) that no constructor
-    // commits, standing in for an arch that does commit one: what is under
-    // test is the guard, not this var. It has to exist in the sla, because
-    // `rederive_flow` reads every name it is lent.
-    let lent = [("segover", strider_target::FlowCommit::NoFlow, 0u32)];
+fn a_branch_over_the_lock_of_a_multi_region_cmpxchg_is_not_interior() {
+    // `cmpxchg` lifts with internal p-code branches, so it spans several
+    // regions; the taken edge must land on its first op.
+    //
+    // 0x1000 je 0x1003                  (74 01)
+    // 0x1002 lock cmpxchg %ecx,(%edi)   (f0 0f b1 0f)
+    // 0x1006 ret                        (c3)
+    let cfg = build_x86(vec![0x74, 0x01, 0xf0, 0x0f, 0xb1, 0x0f, 0xc3]);
+    assert!(interior(&cfg).is_empty(), "{:?}", interior(&cfg));
     assert_eq!(
-        interior(&build_x86_with(LOCK_REENTRY.to_vec(), &lent)),
-        vec![0x1003],
-        "with committed context to re-derive the probe must be barred, so the \
-         reentry falls back to being reported as interior",
+        taken_start(&cfg),
+        strider_cfg::PcodeInsnAddr::at_machine_start(0x1002)
     );
+}
+
+#[test]
+fn a_branch_into_a_rep_string_op_lands_on_its_first_op() {
+    // `rep movsb` loops in p-code; a target past the `rep` is not the same
+    // instruction, so it is reported, but the inexact edge still runs the
+    // whole instruction rather than its last p-code slice.
+    //
+    // 0x1000 je 0x1003    (74 01)
+    // 0x1002 rep movsb    (f3 a4)
+    // 0x1004 ret          (c3)
+    let cfg = build_x86(vec![0x74, 0x01, 0xf3, 0xa4, 0xc3]);
+    assert_eq!(interior(&cfg), vec![0x1003]);
+    assert_eq!(
+        taken_start(&cfg),
+        strider_cfg::PcodeInsnAddr::at_machine_start(0x1002)
+    );
+}
+
+#[test]
+fn a_lock_reentry_report_is_independent_of_visit_order() {
+    // Both reach `lock cmpxchg` at 0x1004 and the bare `cmpxchg` at 0x1005;
+    // only which edge the work queue takes first differs.
+    //
+    // 0x1000 jne 0x1009; 0x1002 jmp 0x1005; 0x1004 lock cmpxchg; 0x1008 ret;
+    // 0x1009 jmp 0x1004
+    let unlocked_first = vec![
+        0x75, 0x07, 0xeb, 0x01, 0xf0, 0x0f, 0xb1, 0x0f, 0xc3, 0xeb, 0xf9,
+    ];
+    // 0x1000 jne 0x1009; 0x1002 jmp 0x1004; 0x1004 lock cmpxchg; 0x1008 ret;
+    // 0x1009 jmp 0x1005
+    let locked_first = vec![
+        0x75, 0x07, 0xeb, 0x00, 0xf0, 0x0f, 0xb1, 0x0f, 0xc3, 0xeb, 0xfa,
+    ];
+    let a = build_x86(unlocked_first).incomplete().to_string();
+    let b = build_x86(locked_first).incomplete().to_string();
+    assert_eq!(a, b);
+    assert_eq!(a, "");
+}
+
+#[test]
+fn a_lock_reentry_behind_an_earlier_instruction_is_benign_in_either_order() {
+    // As above, with `xor %eax,%eax` at 0x1004 heading the `lock` region:
+    // either order splits at the `lock`, so the 0x1007 re-entry is benign.
+    //
+    // 0x1000 jne 0x100b; 0x1002 jmp 0x1007; 0x1004 xor; 0x1006 lock cmpxchg;
+    // 0x100a ret; 0x100b jmp 0x1004
+    let unlocked_first = vec![
+        0x75, 0x09, 0xeb, 0x03, 0x31, 0xc0, 0xf0, 0x0f, 0xb1, 0x0f, 0xc3, 0xeb, 0xf7,
+    ];
+    // 0x1002 jmp 0x1004; 0x100b jmp 0x1007
+    let locked_first = vec![
+        0x75, 0x09, 0xeb, 0x00, 0x31, 0xc0, 0xf0, 0x0f, 0xb1, 0x0f, 0xc3, 0xeb, 0xfa,
+    ];
+    for bytes in [unlocked_first, locked_first] {
+        assert_eq!(interior(&build_x86(bytes)), Vec::<u64>::new());
+    }
 }

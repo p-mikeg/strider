@@ -19,22 +19,19 @@ const BYTES: [u8; 16] = [
 #[test]
 fn an_opaque_register_load_does_not_forward_across_a_named_register_write() {
     let arch = strider_target::SleighArch::ppc32be();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(BYTES.to_vec(), 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let sr0 = lifter.sleigh_regs().name_to_vn("sr0").expect("sr0");
     let cc = strider_target::CallingConvention::powerpc_sysv32()
         .build(lifter.sleigh_regs())
         .expect("cc");
-    let opts = strider_lift::LiftOptions::default();
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
         .expect("cfg");
-    let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
+    let f = lifter.build_ir(&cfg, cc).expect("ir").function;
 
     let is_register = |id, space_of: fn(&NodeKind) -> Option<rsleigh::VnSpace>| {
         space_of(f.node_kind(id)) == Some(rsleigh::VnSpace::REGISTER)

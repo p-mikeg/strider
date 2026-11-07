@@ -1,0 +1,149 @@
+//! Every DOT and HTML render of an analysed function is a function of the
+//! bytes alone. Two engines alive at once hold their Sleigh `AddrSpace`s at
+//! different host addresses, so whatever leaks one into a label differs here.
+
+use crate::common;
+
+use dot::{DotStyle, GraphDot};
+use strider_orchestrator::{AnalyzeOptions, AnalyzeResult, Strider};
+
+fn renders<R: rsleigh::MemReader>(
+    strider: &Strider<R>,
+    result: &AnalyzeResult,
+) -> Vec<(&'static str, String)> {
+    let names = strider.arch().names();
+    let (cfg, function) = (&result.cfg, &result.function);
+    let cfg_dot = GraphDot::new(cfg.dot_dumper(names), DotStyle::dark_cfg());
+    let fn_dot = GraphDot::new(function.dot_dumper(names), DotStyle::dark());
+    let entry = function.entry();
+    vec![
+        ("cfg dot", cfg_dot.as_dot().expect("cfg dot")),
+        ("cfg html", cfg_dot.as_html_from_dot().expect("cfg html")),
+        (
+            "cfg neighborhood",
+            cfg.neighborhood_dot(names, cfg.entry(), 5, 60)
+                .expect("cfg neighborhood"),
+        ),
+        ("function dot", fn_dot.as_dot().expect("function dot")),
+        (
+            "function html",
+            fn_dot.as_html_from_dot().expect("function html"),
+        ),
+        (
+            "function neighborhood",
+            function
+                .dot_dumper(names)
+                .neighborhood_dot(entry, 5, 32, 60, false)
+                .expect("function neighborhood"),
+        ),
+        ("raw dot", function.raw_dot().expect("raw dot")),
+        (
+            "raw html",
+            function
+                .raw_graph_dot()
+                .as_html_from_dot()
+                .expect("raw html"),
+        ),
+        (
+            "raw neighborhood",
+            function
+                .raw_neighborhood_dot(entry, 5, 32, 60, false)
+                .expect("raw neighborhood"),
+        ),
+    ]
+}
+
+fn assert_renders_identical_across_engines(arch: common::Arch, case: &str, fn_name: &str) {
+    let analyse = || {
+        let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
+        let result = strider
+            .analyze(addr, &cc, &AnalyzeOptions::default(), None)
+            .expect("analyze");
+        (strider, result)
+    };
+    let (strider_a, result_a) = analyse();
+    let (strider_b, result_b) = analyse();
+    let a = renders(&strider_a, &result_a);
+    let b = renders(&strider_b, &result_b);
+    for ((name, a), (_, b)) in a.iter().zip(&b) {
+        let first_diff = a.lines().zip(b.lines()).find(|(x, y)| x != y);
+        assert!(
+            a == b,
+            "{case}::{fn_name} {name} differs between two engines: {first_diff:?}"
+        );
+    }
+}
+
+#[test]
+fn x86_64_memory_renders_are_identical_across_engines() {
+    assert_renders_identical_across_engines(common::Arch::X64, "memory", "array_copy");
+}
+
+#[test]
+fn aarch64_switch_renders_are_identical_across_engines() {
+    assert_renders_identical_across_engines(common::Arch::Aarch64, "switch", "dispatch_value");
+}
+
+/// The bytes of each neighbourhood render, pinned: the determinism tests above
+/// only compare two engines.
+#[test]
+fn x86_add_neighborhood_renders_match_their_snapshots() {
+    let (mut strider, cc, addr) = common::fixture_strider(common::Arch::X86, "arithmetic", "add");
+    let result = strider
+        .analyze(addr, &cc, &AnalyzeOptions::default(), None)
+        .expect("analyze");
+    let names = strider.arch().names();
+    let (cfg, function) = (&result.cfg, &result.function);
+    let entry = function.entry();
+    expect_test::expect_file!["snapshots/add_cfg_neighborhood.dot"].assert_eq(
+        &cfg.neighborhood_dot(names, cfg.entry(), 5, 60)
+            .expect("cfg neighborhood"),
+    );
+    expect_test::expect_file!["snapshots/add_function_neighborhood.dot"].assert_eq(
+        &function
+            .dot_dumper(names)
+            .neighborhood_dot(entry, 5, 32, 60, false)
+            .expect("function neighborhood"),
+    );
+    expect_test::expect_file!["snapshots/add_raw_neighborhood.dot"].assert_eq(
+        &function
+            .raw_neighborhood_dot(entry, 5, 32, 60, false)
+            .expect("raw neighborhood"),
+    );
+}
+
+/// A depth-1 CFG neighbourhood centred mid-function, pinned: regions at its
+/// rim have predecessors outside the view, whose edges it must not draw.
+#[test]
+fn aarch64_switch_mid_cfg_neighborhood_matches_its_snapshot() {
+    let (mut strider, cc, addr) =
+        common::fixture_strider(common::Arch::Aarch64, "switch", "dispatch_value");
+    let result = strider
+        .analyze(addr, &cc, &AnalyzeOptions::default(), None)
+        .expect("analyze");
+    let cfg = &result.cfg;
+    let g = cfg.region_graph();
+    let edges: Vec<_> = g
+        .edge_indices()
+        .filter_map(|e| g.edge_endpoints(e))
+        .collect();
+    // The lowest-addressed non-entry region whose depth-1 view some edge
+    // enters from outside.
+    let mut ids: Vec<_> = cfg.region_ids().filter(|&r| r != cfg.entry()).collect();
+    ids.sort_by_key(|&r| g[r].start_addr);
+    let center = ids
+        .into_iter()
+        .find(|&c| {
+            let view: Vec<_> = std::iter::once(c)
+                .chain(g.neighbors_undirected(c))
+                .collect();
+            edges
+                .iter()
+                .any(|(src, dst)| view.contains(dst) && !view.contains(src))
+        })
+        .expect("a mid-function region with an out-of-view predecessor at its rim");
+    expect_test::expect_file!["snapshots/switch_cfg_mid_neighborhood.dot"].assert_eq(
+        &cfg.neighborhood_dot(strider.arch().names(), center, 1, 60)
+            .expect("cfg neighborhood"),
+    );
+}

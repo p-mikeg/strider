@@ -26,20 +26,16 @@ fn wrong_op_rejects() {
 fn int_bit_not_5() -> strider_ir::Function {
     let mut t = Tb::empty();
     let v = t.u64(5);
-    let nv = t.bit_not_at(v, strider_ir::node::ValueType::I64);
+    let nv = t.bit_not_at(v, strider_ir::node::ValueType::int(64));
     t.ret_val(nv)
 }
+/// The canonical bit-not shape is a binary Xor, so a unary neg pattern
+/// rejects it as a wrong operand does.
 #[test]
-fn bit_not_wrong_operand_rejects() {
+fn bit_not_rejects_a_wrong_operand_or_op() {
     let function = int_bit_not_5();
+    a::matches(&function, int_not(int_const(5u128)).into_pattern(), 1);
     a::none(&function, int_not(int_const(99u128)).into_pattern());
-}
-
-#[test]
-fn unary_wrong_op_rejects() {
-    // The canonical bit-not shape is a binary Xor, so a unary neg pattern
-    // must reject it.
-    let function = int_bit_not_5();
     a::none(&function, int_neg(int_const(5u128)).into_pattern());
 }
 #[test]
@@ -131,16 +127,74 @@ fn nested_any_partial_matches() {
     assert!(m.value(inner).is_some());
 }
 
-/// `bit_mask_u128` saturates at 128 bits, so at I256 an `IntConst(2^128-1)`
-/// is NOT the complement's all-ones; matching it would report a rewrite LHS
-/// that does not hold.
+/// At I256 the `u128` constant `2^128-1` is NOT the complement's all-ones, so
+/// `int_const(u128::MAX)` matching it would report a rewrite LHS that does not
+/// hold.
 #[test]
 fn bit_not_rejects_a_saturated_mask_past_the_carrier() {
     let mut t = Tb::empty();
-    let v = t.int_of(5, strider_ir::node::ValueType::I256);
+    let v = t.int_of(5, strider_ir::node::ValueType::int(256));
     // `build_int_const` masks to the declared width, so this is 2^128-1.
-    let nv = t.bit_not_at(v, strider_ir::node::ValueType::I256);
-    let narrowed = t.trunc_to(nv, strider_ir::node::ValueType::I64);
+    let nv = t.bit_not_at(v, strider_ir::node::ValueType::int(256));
+    let narrowed = t.trunc_to(nv, strider_ir::node::ValueType::int(64));
     let function = t.ret_val(narrowed);
     a::none(&function, int_not(anything()).into_pattern());
+}
+
+/// A true I256 all-ones IS the complement's mask, and `int_const_all_ones`
+/// is what names it: no `u128` literal reaches that value.
+#[test]
+fn bit_not_matches_a_true_all_ones_past_the_carrier() {
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, UBig};
+    let ty = ValueType::int(256);
+    let function = strider_ir_test_utils::make_empty_fn(|b| {
+        let v = b.build_int_const(5u64, ty)?;
+        let ones = b.build_int_const((UBig::ONE << 256usize) - UBig::ONE, ty)?;
+        let nv = b.build_int_binary_operation(v, ones, IntBinaryOp::Xor, ty)?;
+        b.truncate_if_needed(nv, ValueType::int(64))
+    })
+    .expect("build graph");
+    a::matches(&function, int_not(anything()).into_pattern(), 1);
+}
+
+/// A constant whose value is past `u128` is still a constant: the leaf
+/// reads it at its declared width, so `any_int_const` finds it.
+#[test]
+fn any_int_const_matches_a_value_past_the_carrier() {
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, UBig};
+    let ty = ValueType::int(256);
+    let function = strider_ir_test_utils::make_empty_fn(|b| {
+        let v = b.build_int_const(UBig::from_words(&[1, 2, 3, 4]), ty)?;
+        b.truncate_if_needed(v, ValueType::int(64))
+    })
+    .expect("build graph");
+    a::matches(&function, any_int_const().into_pattern(), 1);
+}
+
+/// `float_unary(op, x)` is the op-valued form of `float_neg` and friends.
+#[test]
+fn float_unary_matches_the_op_it_names() {
+    use strider_ir::FloatUnaryOp;
+    let function = {
+        let mut t = Tb::empty();
+        let x = t.f64(4.0);
+        let r = t.fun(
+            x,
+            FloatUnaryOp::Sqrt,
+            strider_ir::node::ValueType::float(64),
+        );
+        let as_int = t.float_to_int(r, strider_ir::node::ValueType::int(64));
+        t.ret_val(as_int)
+    };
+    a::matches(
+        &function,
+        float_unary(FloatUnaryOp::Sqrt, anything()).into_pattern(),
+        1,
+    );
+    a::none(
+        &function,
+        float_unary(FloatUnaryOp::Neg, anything()).into_pattern(),
+    );
 }

@@ -1,28 +1,29 @@
-//! One handle type for both data and control positions. After a match,
-//! `Match::node` gives the `NodeId` and `Match::value` the `ValueId`, the
-//! latter `None` for control-flow nodes with no single value output.
-
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
-fn next_id() -> u32 {
-    NEXT.fetch_add(1, Ordering::Relaxed)
+/// Ids stay below this; the top half is the join-dedup sentinels'.
+const ID_LIMIT: u32 = 1 << 31;
+
+fn successor(n: u32) -> Option<u32> {
+    (n < ID_LIMIT).then_some(n + 1)
 }
 
-/// Ids are globally unique via a process-wide atomic counter.
-///
-/// The same `Capture` may appear in several pattern positions; the matcher
-/// then requires every occurrence to bind the **same** node (and the same
-/// value output, where applicable).
+/// Panics once [`ID_LIMIT`] captures are minted, rather than reusing an id.
+fn next_id() -> u32 {
+    NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, successor)
+        .expect("Capture ids exhausted: 2^31 captures minted in this process")
+}
+
+/// A process-unique capture handle. Every position it appears at must bind the same node (and
+/// value, where applicable).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Capture {
     id: u32,
     internal: bool,
 }
 
-// Every `Capture` is minted explicitly: a `.default()` would let a
-// `#[derive(Default)]` on any containing struct silently allocate ids.
+// No `Default`: a derived one on a containing struct would silently mint ids.
 #[allow(clippy::new_without_default)]
 impl Capture {
     pub fn new() -> Self {
@@ -32,9 +33,8 @@ impl Capture {
         }
     }
 
-    /// Minted by a builder, never by a caller: it holds an identity the
-    /// pattern graph cannot express, and is filtered out of everything a
-    /// caller sees. See [`PatValue::identity`](crate::matcher::PatValue).
+    /// A builder-minted capture, hidden from callers; see
+    /// [`PatValue::identity`](crate::matcher::PatValue).
     pub(crate) fn internal() -> Self {
         Self {
             id: next_id(),
@@ -42,8 +42,7 @@ impl Capture {
         }
     }
 
-    /// Counts up from 0, leaving the top of the range for the sentinel keys
-    /// `find_joined_constrained`'s dedup mints for a capture-free pattern.
+    /// Counts up from 0, below 2^31.
     pub fn id(self) -> u32 {
         self.id
     }
@@ -53,7 +52,6 @@ impl Capture {
     }
 }
 
-// The flag is bookkeeping; error messages name a capture by its id alone.
 impl std::fmt::Debug for Capture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Capture({})", self.id)
@@ -69,5 +67,11 @@ mod tests {
         let n = 256;
         let ids: std::collections::HashSet<u32> = (0..n).map(|_| Capture::new().id()).collect();
         assert_eq!(ids.len(), n);
+    }
+
+    #[test]
+    fn the_id_counter_stops_below_the_sentinel_half() {
+        assert_eq!(successor(ID_LIMIT - 1), Some(ID_LIMIT));
+        assert_eq!(successor(ID_LIMIT), None);
     }
 }

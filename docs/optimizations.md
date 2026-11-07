@@ -1,207 +1,208 @@
 # Optimizations
 
-Before you query a function, Strider optimizes its IR for regularity rather than
-for speed: clutter folds away and equivalent code is rewritten into one agreed
-shape, so a single pattern matches every case instead of each near-miss.
-
-`analyze` runs the default set for you. The passes are worth knowing because when
-a pattern does not match, it is usually because one of them already reshaped what
-you were looking for.
+Strider optimizes IR for regularity, not speed: equivalent code is rewritten
+into one shape, so one pattern matches every variant. `analyze` runs the
+default set. When a pattern does not match, a pass has usually reshaped it.
 
 ## How the passes run
 
-There are two kinds:
-
-- **Rewriting passes** run together in a loop until nothing changes anymore (a
-  fixed point). Each can expose work for the others. A pass whose last run
+- **Rewriting passes** loop together to a fixed point. A pass whose last run
   changed nothing is skipped until another pass changes the graph. The loop is
-  capped at 1024 iterations and raises if it has not settled by then.
-- **Post-passes** run once, after the loop has settled. They mostly record facts,
-  but two of them edit: `CallStackArgCollect` wires a call's stack arguments in
-  as extra `Call` inputs, and `FunctionArgDetect` moves an argument load's
-  memory edge past the memory definitions that cannot overwrite it.
+  capped at 1024 iterations; a run that stops there keeps a valid, partly
+  folded graph and sets `Function.optimizer_converged` to `False`.
+- **Post-passes** run once afterwards (below).
 
 ## Rewriting passes
 
-In the order the default pipeline runs them:
+In default pipeline order:
 
-**ConstantFold.** Computes anything whose inputs are all constant, applies
-algebraic identities (`x + 0`, `x * 1`, and so on), and folds constant
-truncations and extensions.
+**ConstantFold.** Computes constant expressions, applies algebraic identities
+(`x + 0`, `x * 1`, ...) and folds constant truncations and extensions. Any sum
+or difference of `x`, `x*C` and `x<<C` becomes one `x * K`: `x + x*2` and
+`x + (x<<1)` are both `x*3`; search for `int_mul(x, int_const(k))`, `k` a
+value or a `Capture`.
+Also:
 
-It also collects a value against itself: `x + x*2` becomes `x*3`, and the same
-for a shift standing in for a multiply, so `x + (x<<1)` folds too. Thirteen
-pairings of add / subtract with multiply / shift reduce to one `x * K`, which
-means a pattern written against the shape in the source will not match. Search
-for the folded form, or for `int_mul(x, int_const_any_width(K))`.
+- a truncate of an add, mul, and, or or xor of two extends (or an extend and a
+  constant) from the truncate's width is that operation at the narrow width:
+  `trunc8(zext32(a) + zext32(b))` is `a + b` at 8 bits;
+- constant shifts compose: `(x << 2) << 3` is `x << 5`; a signed right shift
+  saturates at width minus one;
+- constant xors merge: `(x ^ 1) ^ 3` is `x ^ 2`;
+- a sign extend of a widening zero extend is that zero extend.
 
-**LoadReadOnly.** When a load reads a fixed address that lands in read-only
-memory, it replaces the load with the constant stored there. `load_elf` derives
-that image for you (the loaded file minus its writable mappings), so a load out
-of an RWX segment is fetched from but never folded. For a raw blob you pass one
-in as `rom=` (see the ROM reader in the [Python guide](python-guide.md)).
+**LoadReadOnly.** A load from a fixed address in read-only memory becomes the
+constant stored there. `load_elf` derives the read-only image (the file minus
+writable mappings), so an RWX segment is never folded; an image whose only
+`PT_LOAD` is RWX folds nothing, silently. Check `prog.rom()`, whose repr counts
+its regions, and pass your own `rom=` (see the [Python guide](python-guide.md)),
+as for a raw blob.
 
-An image whose only `PT_LOAD` is RWX therefore has no read-only part at all:
-every load fails to fold and the pass goes quiet rather than reporting anything.
-Check `prog.rom()`, whose repr counts its regions, when folding you expected does
-not happen; the fix is to hand in a `rom=` covering the constant data yourself.
+**KnownBits.** Tracks known-0/known-1 bits; a fully known result becomes a
+constant. A mask keeping every bit its operand may set is dropped:
+`zext32(x8) & 0xff` is `zext32(x8)`.
 
-**KnownBits.** Tracks which bits of each value are known to be 0 or 1. When every
-bit of a result is pinned down, it becomes a constant.
+**FlagCmpCanonicalize.** Rewrites flag-bit trees (carry, zero, sign,
+overflow) back into a plain comparison: `sign != overflow` is signed `a < b`.
 
-**FlagCmpCanonicalize.** CPUs compute a comparison as a little tree of flag bits
-(carry, zero, sign, overflow). This recognizes those trees, including the shapes
-left after a negated branch is normalized, and rewrites them back into a plain
-comparison like `a < b`. The signed relations need the overflow bit: `a < b` is
-`sign != overflow`.
-
-**IfCondInversion.** Makes every `if` test a non-negated condition. When the
-condition is a logical NOT, it drops the NOT and swaps the two branches. So you
-only ever have to match the positive form.
+**IfCondInversion.** An `if` on a logical NOT drops the NOT and swaps the arms,
+so you only match the positive form.
 
 **PhiCollapse.** A phi or memory phi whose inputs other than itself are all one
-value is replaced by that value, so a loop-carried `[x, itself]` collapses to
-`x`. A strongly connected group of phis whose only input from outside the group
-is one value folds to that value too, such as two loop phis feeding each other
-plus `x`.
+value becomes that value (`[x, itself]` is `x`). A strongly connected group of
+phis with a single outside input folds to it too. An `and` of a phi with a
+constant mask becomes the value every arm agrees on under that mask.
 
-**RegionCollapse.** A region with exactly one control input is removed, and each
-phi or memory phi over it is replaced by its single value input.
+**RegionCollapse.** A region with one control input is removed; its phis and
+memory phis become their single value input.
 
-**DeadBranchElimination.** An `if` on a constant condition, or a `switch` whose
-dispatch address is a constant naming one of its arms, can only take one arm.
-The branch is removed, and the arms no longer reached go with it. It declines
-when the surviving arm would reach no terminator, as for a loop whose only exit
-was the dead arm. It also declines an `if` whose dead arm feeds an `Unreachable`
-directly. A dead arm that calls a no-return function still folds, since it
-reaches its `Unreachable` through the call.
+**DeadBranchElimination.** An `if` on a constant, or a `switch` whose dispatch
+address is a constant naming one arm, is removed along with the arms no longer
+reached. It folds only if the surviving arm still reaches a terminator. Every
+run also removes never-taken control edges into merge regions, with their phi
+and memory-phi inputs.
 
-**CfgDetach.** Removes control edges into a merge region that can never be taken,
-along with the matching phi and memory-phi inputs.
+**LoadForward.** A load from exactly the location an earlier store wrote, with
+nothing overwriting it between, takes the stored value; a wider store is
+narrowed to the load's range. Forwarding is blocked by anything short of an
+exact base-and-offset match, a merge whose paths reach different definitions,
+and a call unless its convention declares `preserves_memory`
+(`cc.preserves_all()`, or `per_address_ccs={callee_addr: cc}` for a hook such
+as `__fentry__`). Memory is taken to be RAM: a memory-mapped register polled
+after a write folds to the value written.
 
-**LoadForward.** When a value is stored to some location (a stack slot, a
-constant address, a heap object) and later loaded back from exactly that
-location with nothing overwriting it in between, the stored value is handed
-straight to the load. A wider store is narrowed to the load's range; anything
-short of an exact base-and-offset match blocks, as does a control merge whose
-paths reach different definitions. So does an intervening call, unless its
-convention declares `preserves_memory`, which is what `cc.preserves_all()` and
-`per_address_ccs={callee_addr: cc}` buy for a transparent hook such as
-`__fentry__`.
+Each examined load's memory edge is also moved past definitions that cannot
+overwrite it (a provably disjoint slot or address, or one that
+`stack_global_disjoint` or `noalias_allocators` separates), never through a
+call a claim makes transparent: the jump-table walk and return-target
+verification read that edge without those claims.
 
-Memory is taken to be RAM under every option: a load reads back the last value
-the function stored there, so a memory-mapped register polled after a write
-folds to the value written.
-
-Each load it examines also has its memory edge moved past the memory
-definitions that cannot overwrite it. That move uses none of the
-`AssumptionOptions`, so re-optimising under `AssumptionOptions.none()` inherits
-no assumption from an earlier run.
-
-With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
-when no stack address escapes the frame anywhere in the function (as a call
-argument, a stored value, a return value, an input to pointer arithmetic, or a
-value in a register a call clobbers) and the slot is not one the call hands its
-callee as an argument. With `noalias_allocators=[addr, ...]` naming pure
-allocators, a load steps through a call to one when it reads a different
-allocation, or a slot of a frame no stack address escapes that lies outside
-that call's argument window; a load from a global does not. Under either of
-those two, and only then, `callee_preserves_stack_args=True` empties the
-outgoing-argument window, so a spill at the stack top, indistinguishable from a
-pushed argument once lowered to memory, forwards too. Set on its own it changes
-nothing.
+With `escape_analysis`, when no stack address escapes the frame, a spill load
+forwards across a call if the slot is outside the callee's argument window, and
+past a store through a pointer strider cannot place (under
+`stack_global_disjoint`). With `noalias_allocators`, a load steps through a
+call to a listed allocator when it reads another allocation or such a frame
+slot; a global load does not. `callee_preserves_stack_args` empties the
+argument window under either. [python-api
+§2](python-api.md#2-analyzing-a-function) says when each claim is safe.
 
 ## Post-passes
 
-In the order the default pipeline runs them:
+In default pipeline order:
 
-**StackOffsetDetect.** For every load and store whose address reduces to a base
-plus a constant, it records the pair. The base is a stack pointer, or the result
-of a call to a `noalias_allocators` entry. Offsets are comparable only against
-another access sharing the same base: an alignment-masked `sp & -16` is its own
-base, since its distance from the entry stack pointer depends on the caller.
-These pairs are what a query for stack accesses, or for one exact slot, reads.
-A pipeline run records them after its post-passes even when this pass is not
-in the pipeline.
+**CallStackArgCollect.** Attaches the stores into each call's outgoing argument
+window to the call as ordinary arguments, up to the first slot no whole store
+reaches, so arguments past an unwritten slot (an alignment hole, or a ppc64 slot
+whose FP argument travels in an FPR) are missed, and a tail call whose leading
+arguments are the caller's own, left in place, collects none. A store of the
+entry value of a register the function's own convention preserves (a prologue
+save), or a call between store and call, also ends the arguments; other stores
+just above them can come along (an alignment push such as x86-64 clang's `push
+rax` or ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a
+non-loop join stores whole is collected as the phi of those values, and past
+those a slot stored whole before the branch as its value.
 
-**CallStackArgCollect.** At each call, gathers the stores into the outgoing
-argument window that reach it and attaches them to the call node, so they read
-like ordinary call arguments. Once lowered to memory an argument push is
-indistinguishable from an incidental write to the same area, so the collection
-errs wide: a spill just above the arguments can come along.
+**FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
+stack pointer read, after the register arguments: one ordinal per run of slots
+one load spans, up to the first slot no clean load reads (a load a store or
+call may have overwritten is not clean). It narrows those loads'
+memory edges under the same claims as `LoadForward`. Register arguments are
+recorded at lift time.
 
-**FunctionArgDetect.** Finds where the function reads its incoming *stack-passed*
-arguments (loads off the entry stack pointer) and records which value carries
-each one. It also moves the memory edge of each load it examines in an
-incoming-argument slot past the memory definitions that cannot overwrite it,
-using none of the `AssumptionOptions`. Register-passed arguments are recorded
-at lift time, so they are already in place before this pass runs.
+Every run then records, for each load and store whose address is a base plus a
+constant, that pair. The base is a stack pointer or a `noalias_allocators`
+call result; offsets compare only within one base (an aligned `sp & -16` is its
+own base). Stack-access and exact-slot queries read these. Rust's
+`refresh_memory_classes` re-records them after an edit outside a pipeline.
 
 ## Indirect-branch resolution
 
-Jump tables, computed jumps and returns are resolved by their own post-pass,
-`IndirectBranchClassify`, which `analyze` appends to the pipeline it runs unless
-that pipeline already lists it (the Rust API can; `strider.opt` does not expose
-it). After optimizing, Strider classifies each unresolved indirect branch
-against the clean IR, feeds any newly discovered targets back in, and re-lifts,
-repeating until the set of edges stops changing. Whatever still cannot be
-resolved comes back as the `unresolved` list from `analyze`, never as an
-exception. It is one of the six channels
-[python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
-`cfg.is_complete()` reads together.
+After the pipeline, every round, `analyze` classifies each unresolved jump
+table, computed jump and return on the optimized IR, feeds new targets back and
+re-lifts until the edge set stops changing. This runs whatever the pipeline
+(`strider.opt` has no pass for it) unless `resolve_indirect_branches` is off.
+It reads IR optimized under the function's claims, so a wrong claim can seat a
+wrong edge (under `escape_analysis` and `callee_preserves_stack_args`, a target
+spilled to the stack forwards across a call that overwrote it). What stays
+unresolved is listed in `cfg.incomplete`
+([reasons](python-api.md#12-the-cfg-stridercfg)).
 
-An indirect CALL is not resolved and not reported: its target stays the `Call`
-node's input value, for a query to read.
+An indirect CALL is neither resolved nor reported; its target is the `Call`
+node's input value. A return is reported when its folded target is not
+provably the entry return address (the entry link register, or the entry-SP
+slot it was pushed to).
 
-A return instruction lands in `unresolved` too when its folded target is not
-provably the address the function was entered with: the entry link register,
-or the entry-SP slot the call pushed it into, followed back through the store
-that saved it.
+A resolved target decodes in the ISA mode the branch commits, else the one
+flowing into it (ARM/Thumb interworking, MIPS16). A seated `switch` keeps its
+committed mode for arms found later.
 
-A resolved target carries the ISA mode it decodes in, taken from the mode the
-branch commits or else the one flowing into it, so an ARM/Thumb interworking
-dispatch or a MIPS16 entry reaches the right decoder. A seated `switch` keeps
-the mode its instruction commits, so arms found when its table is derived again
-decode in that mode too.
-
-`CfgOptions(known_targets={dispatch_addr: [target, ...]})` seats answers of your
-own, which the loop then grows from; a site that ends up holding nothing but
-your seed is reported by `cfg.unverified_seeded_sites()`, since seating can stop
-the classifier deriving. `LifterOptions(resolve_indirect_branches=False)` turns
-the classifier off and leaves every site for you to answer.
+`CfgOptions(known_targets={dispatch_addr: [target, ...]})` seeds answers the
+loop grows from; a site holding only your seed is listed as
+`"unverified_seed"`.
 
 ### Dispatch shapes that need an opt-in
 
-These resolve, but only once handed something the default image or convention
-does not carry:
-
-- MIPS64 GOT-indirect dispatch: the entries lift as `Add(Load[GOT], const)`
-  rather than constants. The abicalls ABI puts the function's own entry address
-  in `t9`, which a convention names, and `load_elf(relocated_got_is_rom=True)`
-  serves the GOT slots the entry load reads.
-- PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, whose label
-  table sits in `.data.rel.ro`, which the immutable-only image leaves out:
-  `load_elf(relocated_got_is_rom=True)` serves it.
-- A dispatch in a loop whose arms call a function that clobbers the register
-  holding the table base. The arms are seated, but once the loop closes the
-  selector no longer derives, so nothing re-proves the set. Overriding the
-  callee with `per_address_ccs={callee: cc.preserves_regs()}` resolves it.
+- MIPS64 GOT-indirect dispatch (`Add(Load[GOT], const)` entries): needs a
+  convention naming `t9` (the abicalls entry address) and
+  `load_elf(relocated_got_is_rom=True)`. Local entries only; a global
+  (imported-symbol) entry stays unmapped.
+- A label table in writable `.data.rel.ro` (PIC tables on AArch64, ARM, MIPS
+  and PowerPC): no ROM serves it without `load_elf(relocated_got_is_rom=True)`.
+- A dispatch in a loop whose arms call a function the convention says
+  clobbers the table-base register, which the compiler kept live across the
+  call (GCC `-fipa-ra` on a same-unit callee): once the loop closes the
+  selector no longer derives. Use
+  `per_address_ccs={callee: cc.preserves_regs()}`.
 
 ### Dispatch shapes that do not resolve
 
-These shapes come back in `unresolved` rather than as an error:
+Reported as `"unresolved_branch"`; the rest of the function lifts:
 
-- AArch64 big-endian stack-array dispatch whose table base is built through a
-  `bfi` insert. Sleigh's lowering of `bfi` masks the SP-derived value, and the
-  stack decomposition cannot see through that mask. The table is also written
-  by one 16-byte `str q0`, so it arrives as one 128-bit constant holding two
-  entries.
-- A table index formed by a constant offset that takes a bounded value below
-  zero, such as `(x & 7) - 2`. Enumerating `x` would name slots before the
-  table that only the guards on the offset value exclude, so the site is left
-  unresolved.
+- AArch64 big-endian stack-array dispatch whose table base is built with
+  `bfi`: stack decomposition cannot see through the masked SP value, and one
+  16-byte `str q0` writes two entries as one 128-bit constant.
+- An index with a constant offset that can go below zero, such as
+  `(x & 7) - 2`.
+- A mask naming entries past the table (MIPS32 gcc: `& 7` over six entries).
+- An index or table entry read back from a stack slot through a memory phi or
+  at a variable index (clang -O0 on aarch64be and arm_be, arm_be8's two-slot
+  stack array).
+- A table of more than 4096 entries.
+- An unguarded index whose type already spans the table (`x >> 28` over 16
+  entries).
+- A 64-bit selector on a 32-bit target.
+- A wrapped narrow range (`unsigned short` cases 65529..65535 on x86).
+- PowerPC64 dispatch on a 32-bit parameter: the bound covers only the low
+  word, and the ABI's argument extension is not assumed.
+
+## Known limits
+
+- Switches reached only through another switch's arms (nested, or one after
+  another) are found one re-lift round per level; past 256 levels the next
+  site is reported `"unresolved_branch"` and deeper levels are never decoded.
+  Each level re-lifts the whole function, so time grows with the square of the
+  depth (200 levels of 8-way switches: about 3 s).
+- PowerPC float code lifts to far more p-code than other ISAs because the
+  FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
+- A chain of about 500 constant guards held only in registers reaches the
+  1024-iteration cap, and the analysis returns it partly folded. So does a
+  chain of about 1000 guards that each reload a stack slot the previous
+  guard's arms store (`-O0` code), which folds one guard per iteration. A
+  chain whose guards each test a different stack slot, with stores between
+  them, still costs quadratic settle work in the guard count.
+- Reloads of `n` distinct stack slots cost quadratic climb work past `n`
+  diamonds inside an irreducible loop, where the climb steps one dominator at
+  a time, and past `n` calls under `escape_analysis`, where every call is a
+  candidate for every slot.
+- A pattern nesting commutative nodes `d` deep can cost up to 2^d match
+  attempts, even when nothing matches; `.ordered()` pins the operand order.
+- Sibling KnownBits folds over one unfolded chain of depth `d` each copy the
+  chain's instruction addresses, quadratic in `d`.
+- A return after a stack-clash probe loop (gcc `-fstack-clash-protection`;
+  gcc 11 emits it from 16 KiB frames on x86, 64 KiB on ppc64le) is reported:
+  the loop's exit SP is not derived.
 
 ## Using a different pipeline
 
-Build a custom set of passes with the `strider.opt` builders and pass it through
+Build passes with the `strider.opt` builders and pass them as
 `LifterOptions(pipeline=...)`.

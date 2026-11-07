@@ -16,7 +16,7 @@ import strider
 
 
 def test_reader_error_on_overflowing_region_addr():
-    with pytest.raises(strider.StriderError, match=r"(?i)overflow"):
+    with pytest.raises(ValueError, match=r"(?i)overflow"):
         # 0xFFFFFFFFFFFFFFFE + 4 bytes overflows u64.
         strider.reader.BufferReader(0xFFFF_FFFF_FFFF_FFFE, b"\x00\x00\x00\x00")
 
@@ -36,14 +36,10 @@ def test_reader_error_on_unknown_symbol(x86_memory_elf):
 
 
 def test_pattern_error_on_reserved_capture_name():
-    """`"_"` and `"any_"` are reserved for the free constructors, so they
-    are rejected as `.capture(name)` strings."""
+    """`"_"` is reserved, so it is rejected as a `.capture(name)` string."""
     from strider.pattern import anything
-    p = anything()
     with pytest.raises(strider.StriderError):
-        p.capture("_")
-    with pytest.raises(strider.StriderError):
-        p.capture("any_")
+        anything().capture("_")
 
 
 def test_pattern_error_on_ordered_without_an_operand_pair():
@@ -84,10 +80,11 @@ def test_rewrite_error_via_multi_output_lhs_root():
         0x1000, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=0x100))
     )
 
-    from strider.pattern import call, int_const
+    from strider import template as tpl
+    from strider.pattern import call
 
     with pytest.raises(strider.StriderError):
-        g.rewrite(find=call(), replace=int_const(0))
+        g.rewrite(find=call(), replace=tpl.int_const(0))
 
 
 def test_unknown_call_other_via_x86_clflushopt_instruction():
@@ -119,20 +116,23 @@ def test_unresolved_indirect_branch_via_jmp_rax():
     arch = strider.sleigh.SleighArch.x86_64()
     cc = strider.sleigh.CallingConvention.x86_64_systemv()
 
-    _cfg, _function, unresolved = strider.lift.lifter(arch, mem).analyze(0x1000, cc)
+    _cfg, _function, unresolved = strider.lift.lifter(arch, mem).analyze(
+        0x1000,
+        cc,
+    )
     assert unresolved, (
-        "expected the unresolvable jmp rax to be reported in "
-        "unresolved_indirect_branches"
+        "expected the unresolvable jmp rax to be reported in unresolved"
     )
 
 
-def test_strider_error_catches_every_error_category():
-    """`except StriderError` stays the single catch-all: every category above
-    raises StriderError or a subclass of it."""
-    raised: BaseException | None = None
-    try:
-        strider.reader.BufferReader(0xFFFF_FFFF_FFFF_FFFF, b"\x00\x00")
-    except strider.StriderError as e:
-        raised = e
-    assert raised is not None, "expected StriderError from overflowing BufferReader"
-    assert isinstance(raised, strider.StriderError)
+def test_a_range_checked_constructor_argument_is_no_strider_error():
+    """A constructor argument out of its range is the caller's own value, a
+    `ValueError`, so `except StriderError` around an analysis does not
+    swallow it."""
+    for bad in (
+        lambda: strider.reader.BufferReader(0xFFFF_FFFF_FFFF_FFFF, b"\x00\x00"),
+        lambda: strider.cfg.CfgOptions(data_ranges=[(5, 5)]),
+    ):
+        with pytest.raises(ValueError) as e:
+            bad()
+        assert not isinstance(e.value, strider.StriderError)

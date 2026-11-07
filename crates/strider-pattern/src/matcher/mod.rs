@@ -1,30 +1,22 @@
 pub(crate) mod builder;
-mod cast_walk_through;
 pub(crate) mod graph;
+pub use graph::MAX_PATTERN_NODES;
 pub(crate) mod match_pat;
 pub(crate) mod vertex;
 pub(crate) mod walk;
 
 pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
-pub(crate) use cast_walk_through::cast_levels;
 pub use graph::Pattern;
-pub use strider_ir::walk::CastMask;
-pub use vertex::{
-    BindingWalkFn, KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn,
-    WalkCaptures,
-};
-
-/// Sentinel consumer slot marking an existential (`any_input`) input edge: the
-/// sub-pattern is matched against some input slot of the consumer rather than a
-/// fixed one. A sub reaches the slots of its own output kind (a value sub value
-/// edges, a memory sub memory edges); a wildcard reaches any input, control /
-/// memory / `PhiToken` slots included.
-pub(crate) const ANY_INPUT_SLOT: usize = usize::MAX;
+pub use strider_ir::node::CastMask;
+pub(crate) use vertex::{InputSlot, OutputKindSpec, PatNode, PatValue, Role, SlotMode};
+pub use vertex::{KindSpec, NodePredicate, PostMatchFn};
 
 use std::cell::OnceCell;
+use std::collections::BTreeSet;
 use std::mem::Discriminant;
 
-use itertools::Either;
+use either::Either;
+use petgraph::unionfind::UnionFind;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -41,14 +33,13 @@ fn root_kind_discriminant(pat: &Pattern, root: PatNodeId) -> Option<Discriminant
     pat.graph.node_kind(root).kind.discriminant()
 }
 
-/// The kinds an alternation root accepts: its arms', deduplicated, since the
-/// arms are tried against the SAME IR node. `None` for a non-alternation root
-/// and for one with a kind-`Any` arm, which admits every node.
+/// The deduplicated kinds an alternation root's arms accept. `None` for a non-alternation root or
+/// one with a kind-`Any` arm.
 fn alternation_kind_discriminants(
     pat: &Pattern,
     root: PatNodeId,
 ) -> Option<Vec<Discriminant<NodeKind>>> {
-    if !pat.graph.node_kind(root).alternation {
+    if !pat.graph.node_kind(root).is_alternation() {
         return None;
     }
     let mut kinds: Vec<Discriminant<NodeKind>> = Vec::new();
@@ -63,7 +54,7 @@ fn alternation_kind_discriminants(
                         kinds.push(d);
                     }
                 }
-                None if pat.graph.node_kind(arm).alternation => {
+                None if pat.graph.node_kind(arm).is_alternation() => {
                     if !seen.contains(&arm) {
                         seen.push(arm);
                         stack.push(arm);
@@ -78,365 +69,203 @@ fn alternation_kind_discriminants(
 
 pub struct Matcher<'f> {
     pub(crate) function: &'f Function,
-    kind_index: OnceCell<KindIndex>,
-    /// Configurations that have reached a ROOT continuation, i.e. produced a
-    /// match. `first_of` cuts on it. Shared across nested walks: a branch
-    /// pattern's own walk hands off to the enclosing continuation rather than
-    /// to a root, so a per-walk counter would cut a nested `first_of` on the
-    /// hand-off and drop the arms a later rejection needs.
-    ///
-    /// Restored per candidate root ([`Self::scoped_count`], taken in
-    /// `matches_at_node`). That covers a nested query too: caller-supplied
-    /// logic (`when_match`, a `JoinPredicate`) holds this same `Matcher`, and
-    /// its matches would otherwise count towards an enclosing arm's cut and
-    /// discard the arm holding the real match.
-    pub(crate) satisfied: std::cell::Cell<u64>,
-}
-
-/// Restores [`Matcher::satisfied`] when dropped.
-struct CountScope<'a> {
-    cell: &'a std::cell::Cell<u64>,
-    saved: u64,
-}
-
-impl Drop for CountScope<'_> {
-    fn drop(&mut self) {
-        self.cell.set(self.saved);
-    }
-}
-
-/// Reachable nodes bucketed by `NodeKind` discriminant.
-struct KindIndex {
-    by_kind: FxHashMap<Discriminant<NodeKind>, Vec<NodeId>>,
-}
-
-impl KindIndex {
-    fn build(function: &Function) -> Self {
-        let mut by_kind: FxHashMap<Discriminant<NodeKind>, Vec<NodeId>> = FxHashMap::default();
-        for node in function.walk() {
-            let d = std::mem::discriminant(function.node_kind(node));
-            by_kind.entry(d).or_default().push(node);
-        }
-        Self { by_kind }
-    }
-
-    fn nodes_of_kind(&self, d: Discriminant<NodeKind>) -> &[NodeId] {
-        self.by_kind.get(&d).map_or(&[], Vec::as_slice)
-    }
 }
 
 impl<'f> Matcher<'f> {
-    /// Pattern validity is checked per query, against the pattern.
+    /// Pattern validity is checked per query.
     pub fn new(function: &'f Function) -> Self {
-        Self {
-            function,
-            kind_index: OnceCell::new(),
-            satisfied: std::cell::Cell::new(0),
-        }
-    }
-
-    fn kind_index(&self) -> &KindIndex {
-        self.kind_index
-            .get_or_init(|| KindIndex::build(self.function))
-    }
-
-    /// Held for the length of one candidate root's walk; see [`Self::satisfied`].
-    fn scoped_count(&self) -> CountScope<'_> {
-        CountScope {
-            cell: &self.satisfied,
-            saved: self.satisfied.get(),
-        }
+        Self { function }
     }
 
     pub fn function(&self) -> &Function {
         self.function
     }
 
-    /// Every match for `pat`, lazily per candidate, so `.next()` walks no
-    /// further than the first matching node.
+    /// Every match for `pat`, lazily per candidate node.
     ///
-    /// # Several matches per root
-    ///
-    /// A root can match more than one way, most often a commutative node whose
-    /// two operands each satisfy a captured sub-pattern. Every distinct way is
-    /// yielded, deduplicated by the capture-to-binding map (see
-    /// `Bindings::binding_signature`): `int_add(var(x), var(x))` swapped binds
-    /// `x` identically and is ONE match, while
-    /// `int_add(anything().capture(k), anything())` binds
-    /// `k` to each operand in turn and is TWO. A pattern with no captures on
-    /// commutative operands never duplicates. Ordering is deterministic:
-    /// natural operand order before swapped.
+    /// Each distinct capture-to-binding map is yielded once, natural operand order before
+    /// swapped. `n` commutative nodes can yield, and cost, up to 2^n even when nothing matches;
+    /// `.ordered()` pins them.
     ///
     /// # Errors
-    /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
+    /// As [`Pattern::root`].
     pub fn matches<'p>(
         &'p self,
         pat: &'p Pattern,
     ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
-        let root = pat.root()?;
-        // Binding no VISIBLE capture, every configuration shares one signature,
-        // so the first to reach the root is the whole answer for that root and
-        // driving the rest only to discard them is waste.
-        // `bound_captures` never yields an internal capture: the one
-        // `Capture::internal()` caller writes `PatValue::identity`, not
-        // `captures`, and the constructor is `pub(crate)`. So this reads
-        // "binds no capture", and an all-internal pattern is not a shape that
-        // reaches here.
-        let first_only = pat.bound_captures().all(|c| c.is_internal());
-        Ok(self
-            .candidates(pat, root)
-            .flat_map(move |node| self.matches_at_node(node, pat, root, first_only)))
+        self.matches_over(pat, self.function.walk())
     }
 
-    /// [`matches`](Self::matches)`.collect()`. Use `matches` directly to stop
-    /// early or avoid the `Vec`.
+    /// [`matches`](Self::matches) over the reachable nodes `walk` yields.
+    fn matches_over<'p>(
+        &'p self,
+        pat: &'p Pattern,
+        walk: impl Iterator<Item = NodeId> + 'p,
+    ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
+        let root = pat.root()?;
+        // With no capture every configuration has one signature: the first is the whole answer.
+        let first_only = pat.bound_captures().next().is_none();
+        let mut scratch = Bindings::default();
+        Ok(self
+            .candidates(pat, root, walk)
+            .filter(move |&n| walk::may_match_at(self, pat, root, n))
+            .flat_map(move |node| self.matches_at_node(node, pat, root, first_only, &mut scratch)))
+    }
+
+    /// [`matches`](Self::matches)`.collect()`.
     ///
     /// # Errors
-    /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
+    /// As [`Pattern::root`].
     pub fn find_all(&self, pat: &Pattern) -> anyhow::Result<Vec<Match>> {
         Ok(self.matches(pat)?.collect())
     }
 
-    /// The IR nodes to attempt `pat` at: a discriminant-rooted pattern scans
-    /// only its `KindIndex` bucket, an alternation root the union of its arms'
-    /// buckets, a kind-`Any` root the whole reachable graph.
+    /// The IR nodes to attempt `pat` at, in walk order, filtered by the root's kind (or each
+    /// alternation arm's kind in turn).
     fn candidates<'p>(
         &'p self,
         pat: &Pattern,
         root: PatNodeId,
+        walk: impl Iterator<Item = NodeId> + 'p,
     ) -> impl Iterator<Item = NodeId> + 'p {
-        if let Some(d) = root_kind_discriminant(pat, root) {
-            return Either::Left(Either::Left(
-                self.kind_index().nodes_of_kind(d).iter().copied(),
-            ));
-        }
-        match alternation_kind_discriminants(pat, root) {
-            // Deduplicated, so no node is offered twice and no match is
-            // reported twice.
+        let f = self.function;
+        let is = move |n: NodeId, d| std::mem::discriminant(f.node_kind(n)) == d;
+        let kinds = root_kind_discriminant(pat, root)
+            .map(|d| vec![d])
+            .or_else(|| alternation_kind_discriminants(pat, root));
+        match kinds.as_deref() {
+            Some(&[d]) => Either::Left(Either::Left(walk.filter(move |&n| is(n, d)))),
             Some(ds) => {
-                Either::Left(Either::Right(ds.into_iter().flat_map(move |d| {
-                    self.kind_index().nodes_of_kind(d).iter().copied()
-                })))
+                let order: Vec<NodeId> = walk.collect();
+                let by_kind: Vec<NodeId> = ds
+                    .iter()
+                    .flat_map(|&d| order.iter().copied().filter(move |&n| is(n, d)))
+                    .collect();
+                Either::Left(Either::Right(by_kind.into_iter()))
             }
-            None => Either::Right(self.function.walk()),
+            None => Either::Right(walk),
         }
     }
 
-    /// Attempt `pat` at `node`, once per output whatever its kind (a `Store`
-    /// roots through its Memory output), less the outputs
-    /// [`walk::anchor_repeats`] shows impose the attempt already made, and
-    /// falling back to a node-rooted attempt only when the node has no outputs
-    /// at all.
-    ///
-    /// `first_only` stops at the first match. Otherwise every distinct match is
-    /// enumerated, deduplicated by capture-to-binding map. The dedup set is
-    /// per-node: two different roots are different matches whatever their
-    /// bindings, while one node's outputs share the set, so a pattern reachable
-    /// through several outputs does not double-report an identical binding.
+    /// Every match of `pat` rooted at `node`, deduplicated by capture-to-binding map; see
+    /// [`walk::anchor`]. `first_only` stops at the first, moving `scratch` into it.
     fn matches_at_node(
         &self,
         node: NodeId,
         pat: &Pattern,
         root: PatNodeId,
         first_only: bool,
+        scratch: &mut Bindings,
     ) -> Vec<Match> {
-        // One scope per candidate root; see `Matcher::satisfied`.
-        let _count = self.scoped_count();
-        let mut hits: Vec<Match> = Vec::new();
-        // Keyed on the bindings ALONE, deliberately: an existential
-        // (`any_input`, a commutative pair) reaches the same binding through
-        // different slots, and those are one match, not several. The cost is
-        // that two `one_of` arms binding identically but covering different
-        // nodes also collapse, and the first listed one's `matched_nodes`
-        // wins; see `alternation::OneOf`.
-        let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
-        // Records each fully guard-satisfying configuration the walk reaches.
-        // Returning `false` (the `find_all` case) rejects it only as a STOPPING
-        // POINT (the match is already banked in `hits`), which drives the
-        // engine's backtracking on to the next operand ordering / existential
-        // slot. `true` accepts and stops.
-        {
-            let mut collect = |b: &mut Bindings| -> bool {
-                if seen.insert(b.binding_signature()) {
-                    hits.push(Match::from_root_in(node, b.clone(), self.function.graph()));
-                }
-                first_only
-            };
-
-            let outputs = self.function.node_outputs(node);
-            if outputs.is_empty() {
-                let mut bindings = Bindings::default();
-                walk::try_match_node(self, pat, root, node, &mut bindings, &mut collect, true);
-            } else {
-                // An output whose anchor repeats the one already tried imposes
-                // the same constraint set, so it can only re-derive bindings
-                // the dedup set already holds.
-                //
-                // `IfPat::lower` declares a vertex per control slot and
-                // `root_output_vertex_for` picks by slot, so an `If` root's
-                // two outputs resolve to DIFFERENT vertices; what skips the
-                // second is `anchor_repeats`' `as_value()` clause, not its
-                // `prev == cur` one, which would answer "not a repeat" for
-                // one shared vertex anyway.
-                let mut anchored: Option<ValueId> = None;
-                for &out_id in outputs {
-                    if let Some(prev) = anchored
-                        && walk::anchor_repeats(self, pat, root, prev, out_id)
-                    {
-                        continue;
-                    }
-                    anchored = Some(out_id);
-                    let mut bindings = Bindings::default();
-                    // `try_match` returns `true` only when `collect` accepted,
-                    // i.e. under `first_only`; otherwise every output is swept.
-                    if walk::try_match(self, pat, root, out_id, &mut bindings, &mut collect) {
-                        break;
-                    }
-                }
-            }
+        if pat.holds_first_of || !pat.cast_mask.is_empty() {
+            return self.lowest_arm_matches(node, pat, root, first_only, scratch);
         }
+        let mut hits: Vec<Match> = Vec::new();
+        // Keyed on bindings alone: an existential reaching one binding through different slots is
+        // one match. Two `one_of` arms binding identically collapse too, the first one's
+        // `matched_nodes` winning. Filled lazily, since most roots have one configuration.
+        let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
+        // The callback's `true` stops the walk; `false` (match banked) moves it to the next
+        // configuration.
+        let generation = self.function.graph().generation();
+        walk::anchor(self, pat, root, node, scratch, None, &mut |b| {
+            if first_only {
+                hits.push(Match::new(node, std::mem::take(b), generation));
+            } else if hits.is_empty() || {
+                if seen.is_empty() {
+                    seen.insert(hits[0].bindings.binding_signature());
+                }
+                seen.insert(b.binding_signature())
+            } {
+                hits.push(Match::new(node, b.clone(), generation));
+            }
+            first_only
+        });
         hits
     }
 
-    /// The first match of `pat` at `node`, if any.
+    /// [`Self::matches_at_node`] for a pattern holding a `first_of` or a cast mask.
     ///
-    /// `node` is taken as given, so a node unreachable from the entry answers
-    /// here while [`find_all`](Self::find_all), which seeds from
-    /// [`IRWalker::walk`], never offers it.
+    /// Keeps, at each choice point (a `first_of` or a cast-mask read), only the matches that took
+    /// the lowest arm there, settled in a fixed order so the walk order does not matter.
+    #[inline(never)]
+    fn lowest_arm_matches(
+        &self,
+        node: NodeId,
+        pat: &Pattern,
+        root: PatNodeId,
+        first_only: bool,
+        scratch: &mut Bindings,
+    ) -> Vec<Match> {
+        let generation = self.function.graph().generation();
+        let mut found: Vec<(Match, Vec<walk::ArmTaken>)> = Vec::new();
+        let trail = walk::ArmTrail::default();
+        // An earlier match through a higher arm at another choice point can
+        // survive the settle, so only a capture-free pattern stops early.
+        let stop_early = first_only && pat.bound_captures().next().is_none();
+        walk::anchor(self, pat, root, node, scratch, Some(&trail), &mut |b| {
+            let arms = trail.arms.borrow();
+            if stop_early && arms.iter().all(|e| e.1 == 0) {
+                found = vec![(Match::new(node, std::mem::take(b), generation), Vec::new())];
+                return true;
+            }
+            found.push((Match::new(node, b.clone(), generation), arms.clone()));
+            false
+        });
+        // (key, match, arm), sorted into settle order.
+        let mut taken: Vec<(walk::ArmKey, usize, usize)> = found
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (_, arms))| arms.iter().map(move |&(key, arm)| (key, i, arm)))
+            .collect();
+        taken.sort_unstable_by_key(|&((c, (p, n, o), v, read), _, _)| {
+            let id = |v: Option<ValueId>| v.map(ValueId::as_u32);
+            (c, p.as_u32(), read, n.as_u32(), id(o), id(v))
+        });
+        let mut kept = vec![true; found.len()];
+        for group in taken.chunk_by(|a, b| a.0 == b.0) {
+            let Some(low) = group.iter().filter(|e| kept[e.1]).map(|e| e.2).min() else {
+                continue;
+            };
+            for e in group {
+                kept[e.1] &= e.2 == low;
+            }
+        }
+        let mut seen = FxHashSet::default();
+        let distinct = found
+            .into_iter()
+            .zip(kept)
+            .filter_map(|((m, _), keep)| keep.then_some(m))
+            .filter(|m| seen.insert(m.bindings.binding_signature()));
+        distinct
+            .take(if first_only { 1 } else { usize::MAX })
+            .collect()
+    }
+
+    /// The first match of `pat` at `node`, if any. `node` need not be reachable, unlike every
+    /// [`find_all`](Self::find_all) root.
     ///
     /// # Errors
-    /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
+    /// As [`Pattern::root`].
     pub fn match_at(&self, node: NodeId, pat: &Pattern) -> anyhow::Result<Option<Match>> {
         let root = pat.root()?;
-        // Root-kind gate: reject a mismatched candidate before allocating a
-        // `Bindings` per output and walking in. A kind-`Any` root skips it.
-        if let Some(rk) = root_kind_discriminant(pat, root)
-            && std::mem::discriminant(self.function.node_kind(node)) != rk
-        {
+        if !walk::may_match_at(self, pat, root, node) {
             return Ok(None);
         }
         Ok(self
-            .matches_at_node(node, pat, root, true)
+            .matches_at_node(node, pat, root, true, &mut Bindings::default())
             .into_iter()
             .next())
     }
 
-    /// Matches `pat` at `node` against the LIVE `bindings`, extending them in
-    /// place with what it binds. A capture already bound differently rejects
-    /// the match; on rejection `bindings` is unchanged.
-    ///
-    /// Continuation-passing: `k` runs once per configuration `pat` reaches, so
-    /// a `pat` able to bind several ways (commutative operands, existential
-    /// slots) offers each in turn. `true` accepts and stops, leaving `bindings`
-    /// in the accepted state; `false` drives the next. The return value is
-    /// whether `k` accepted.
-    ///
-    /// A multi-output `node` is anchored on the first output whose match
-    /// reaches `k` at all; the later outputs are a fallback for a mismatch, not
-    /// a second anchor beside a working one.
+    /// The tuples (one [`Match`] per pattern) whose shared captures agree and where every
+    /// [`JoinConstraint`] holds; an unanswerable constraint drops the tuple, negated or not.
+    /// Rows are deduplicated on their capture bindings plus the root of each match that binds
+    /// nothing or binds a pair no earlier match bound. Worst case O(N1 * ... * NM).
     ///
     /// # Errors
-    /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
-    pub(crate) fn match_at_into(
-        &self,
-        node: NodeId,
-        pat: &Pattern,
-        bindings: &mut Bindings,
-        k: &mut dyn FnMut(&mut Bindings) -> bool,
-    ) -> anyhow::Result<bool> {
-        let root = pat.root()?;
-        if let Some(rk) = root_kind_discriminant(pat, root)
-            && std::mem::discriminant(self.function.node_kind(node)) != rk
-        {
-            return Ok(false);
-        }
-        let outputs = self.function.node_outputs(node);
-        if outputs.is_empty() {
-            return Ok(walk::try_match_node(
-                self, pat, root, node, bindings, k, false,
-            ));
-        }
-        // Outputs are the mechanism for finding a root VALUE, not an axis of
-        // the match: a branch pattern is rooted at the consumer node. The first
-        // output the pattern reaches `k` through is that node's answer, so the
-        // rest are not tried and a bare wildcard does not report the consumer's
-        // control and memory edges as two.
-        //
-        // A later output whose anchor repeats the one already tried is skipped:
-        // the tried one did not reach `k`, so neither can its repeat, and
-        // without the skip one nesting level of branch patterns doubles the
-        // failure cost of everything below it.
-        let mut anchored: Option<ValueId> = None;
-        for &out_id in outputs {
-            if let Some(prev) = anchored
-                && walk::anchor_repeats(self, pat, root, prev, out_id)
-            {
-                continue;
-            }
-            anchored = Some(out_id);
-            let mut reached = false;
-            let mut counting = |b: &mut Bindings| {
-                reached = true;
-                k(b)
-            };
-            if walk::try_match_nested(self, pat, root, out_id, bindings, &mut counting) {
-                return Ok(true);
-            }
-            if reached {
-                return Ok(false);
-            }
-        }
-        Ok(false)
-    }
-
-    /// Run several patterns and keep only the joined tuples where every
-    /// [`crate::Capture`] appearing in more than one pattern binds the same
-    /// node (and value output, where applicable) in all of them.
-    ///
-    /// # Returns
-    ///
-    /// One entry per joined-match tuple; within a tuple, one [`Match`] per
-    /// input pattern in input order.
-    ///
-    /// # Complexity
-    ///
-    /// O(N1 * N2 * ... * NM) worst case, Ni being pattern i's match count.
-    /// Constraints run as soon as every pattern that can bind their captures is
-    /// in the row, so a selective one prunes the remaining factors.
-    ///
-    /// # Shared-capture requirement
-    ///
-    /// A capture-bearing pattern sharing no capture with the others is
-    /// rejected. A capture-free pattern (a pure filter like
-    /// `call().at(0x1234).build()`) is exempt and degrades to a deliberate
-    /// cross-product.
-    ///
-    /// # Deduplication
-    ///
-    /// Surviving tuples are deduplicated by the bindings of EVERY capture the
-    /// tuple binds, at value granularity: two tuples differing only in an
-    /// uncaptured internal binding collapse to one, but differing in a capture
-    /// no other pattern shares does not.
-    ///
-    /// # Constraints
-    ///
-    /// `constraints` are post-correlation [`JoinConstraint`] filters over
-    /// captured entities; a tuple survives iff it passes every one. Every
-    /// capture a constraint mentions must be bound by some pattern in the join
-    /// (range restriction); an unbound one is an error. A constraint the graph
-    /// cannot answer drops its tuple, which is not an error, and negating it
-    /// drops the tuple too rather than admitting it. Pass `&[]` for an
-    /// unconstrained join.
-    ///
-    /// A [`JoinConstraint::Where`] reads the whole tuple, so it runs last; the
-    /// built-ins read only the captures they name and run at the earliest row
-    /// length that settles them.
-    ///
-    /// # Errors
-    /// If any pattern is not a single-rooted, acyclic graph (see
-    /// [`Pattern::root`]), if a capture-bearing pattern is connected to the
-    /// rest by neither a shared capture nor a constraint, or if a constraint
-    /// mentions a capture no pattern binds.
+    /// If a pattern has no root (see [`Pattern::root`]), a capture-bearing pattern shares
+    /// neither a capture nor a constraint with the rest, or a constraint names an unbound capture.
     pub fn find_joined_constrained(
         &self,
         pats: &[&Pattern],
@@ -445,114 +274,25 @@ impl<'f> Matcher<'f> {
         if pats.is_empty() {
             return Ok(Vec::new());
         }
+        let cap_settled = correlate(pats, constraints)?;
 
-        // Capture-bearing patterns must form ONE connected component under
-        // "shares a capture", else the join is a cartesian product across an
-        // unrelated group. Union-find, so the check is order-independent: a
-        // pattern sharing a capture only with a LATER one is still connected.
-        // Capture-free patterns are exempt.
-        fn find(parent: &mut [usize], mut x: usize) -> usize {
-            while parent[x] != x {
-                parent[x] = parent[parent[x]]; // path halving
-                x = parent[x];
-            }
-            x
-        }
-        let mut parent: Vec<usize> = (0..pats.len()).collect();
-        let mut cap_owner: FxHashMap<crate::Capture, usize> = FxHashMap::default();
-        // The highest-indexed pattern that can bind each capture: the row
-        // length past which no further match can change how it resolves.
-        let mut cap_settled: FxHashMap<crate::Capture, usize> = FxHashMap::default();
-        let mut capture_bearing: Vec<usize> = Vec::new();
-        for (i, p) in pats.iter().enumerate() {
-            let mut has_cap = false;
-            for c in p.bound_captures() {
-                has_cap = true;
-                cap_settled.insert(c, i);
-                if let Some(&j) = cap_owner.get(&c) {
-                    let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
-                    parent[ri] = rj;
-                } else {
-                    cap_owner.insert(c, i);
-                }
-            }
-            if has_cap {
-                capture_bearing.push(i);
-            }
-        }
-        // Constraints correlate too: patterns linked by a constraint whose
-        // captures live one in each are connected without sharing a capture
-        // (`guard` captures `t`, `call` captures `c`, joined by
-        // `dominates(t, c)`).
-        for con in constraints {
-            // Range restriction. An unbound capture silently drops every tuple
-            // when positive, and matches everything under `Not`; reject it
-            // here, which also lets the union below be total.
-            let caps = con.captures();
-            if let Some(c) = caps.iter().find(|c| !cap_owner.contains_key(c)) {
-                anyhow::bail!(
-                    "find_joined_constrained: constraint mentions capture {c:?}, which no pattern \
-                     in the join binds, so it could never be satisfied (and under \
-                     `negate` would hold vacuously, true because nothing was seen); \
-                     bind it with a positive pattern"
-                );
-            }
-            // Union the owners of all of a constraint's captures into one
-            // component. Total, since the check above proved every capture has
-            // an owner.
-            let mut owners = caps.into_iter().map(|c| cap_owner[&c]);
-            if let Some(first) = owners.next() {
-                for j in owners {
-                    let (ri, rj) = (find(&mut parent, first), find(&mut parent, j));
-                    parent[ri] = rj;
-                }
-            }
-        }
-        if let Some((&first, rest)) = capture_bearing.split_first() {
-            let root0 = find(&mut parent, first);
-            for &i in rest {
-                if find(&mut parent, i) != root0 {
-                    anyhow::bail!(
-                        "find_joined_constrained: pattern {i} shares no capture (even transitively) \
-                         with the others; a join correlates on shared captures (use a \
-                         capture-free pattern for an intentional cross-product)"
-                    );
-                }
-            }
-        }
-
-        // One `find_all` result per pattern: a list of INDEPENDENT matches
-        // despite the shape, not a joined row.
+        // Each pattern's independent matches, not a joined row.
+        let order: Vec<NodeId> = self.function.walk().collect();
         let per_pat: Vec<Vec<Match>> = pats
             .iter()
-            .map(|p| self.find_all(p))
+            .map(|p| Ok(self.matches_over(p, order.iter().copied())?.collect()))
             .collect::<anyhow::Result<_>>()?;
         if per_pat.iter().any(|hits| hits.is_empty()) {
             return Ok(Vec::new());
         }
 
-        // A constraint's verdict is settled once every pattern that can bind
-        // its captures is in the row, so it runs at that length and prunes the
-        // remaining factors. `Where` reads the whole tuple and waits.
         let eval = ConstraintEval::new(self.function());
-        let mut by_level: Vec<Vec<&JoinConstraint>> = vec![Vec::new(); pats.len()];
-        let mut whole_tuple: Vec<&JoinConstraint> = Vec::new();
-        for c in constraints {
-            if c.reads_whole_tuple() {
-                whole_tuple.push(c);
-            } else {
-                let level = c
-                    .captures()
-                    .iter()
-                    .filter_map(|cap| cap_settled.get(cap).copied())
-                    .max()
-                    .unwrap_or(0);
-                by_level[level].push(c);
-            }
-        }
-
-        // Rows are index tuples into `per_pat` while the product builds, so a
-        // pruned prefix costs no `Match` clones.
+        let by_level = level_constraints(constraints, &cap_settled, pats.len());
+        let whole_tuple: Vec<_> = constraints
+            .iter()
+            .filter(|c| c.reads_whole_tuple())
+            .collect();
+        // Index rows, so a pruned prefix clones no `Match`.
         let passes_all = |cs: &[&JoinConstraint], idx: &[usize]| {
             let row = Row::Indices {
                 per_pat: &per_pat,
@@ -561,70 +301,11 @@ impl<'f> Matcher<'f> {
             cs.iter().all(|c| eval.passes(c, row) == Some(true))
         };
 
-        let mut acc: Vec<Vec<usize>> = (0..per_pat[0].len())
-            .map(|i| vec![i])
-            .filter(|idx| passes_all(&by_level[0], idx))
-            .collect();
-
-        for (j, next) in per_pat.iter().enumerate().skip(1) {
-            let mut new_acc: Vec<Vec<usize>> = Vec::new();
-            let graph = self.function().graph();
-            // Captures every match of `next` binds, and that some fixed prefix
-            // position binds in every accumulated row. Agreement implies
-            // the two bindings resolve to the same node (equal values share a
-            // producer, and the other arm compares nodes outright), so grouping
-            // by those nodes is a necessary condition: only rows in the same
-            // bucket can agree. The exact `row_agrees` check still runs inside
-            // the bucket, so the result is the cartesian product's, without
-            // visiting the pairs that cannot possibly agree.
-            let key_caps = join_key_captures(&per_pat, &acc, next, j);
-            if key_caps.is_empty() {
-                // Nothing shared to index on: every pair is a candidate.
-                for prefix in &acc {
-                    for (i, m) in next.iter().enumerate() {
-                        let row = Row::Indices {
-                            per_pat: &per_pat,
-                            idx: prefix,
-                        };
-                        if !row_agrees(row, m, graph) {
-                            continue;
-                        }
-                        let mut cand = prefix.clone();
-                        cand.push(i);
-                        if passes_all(&by_level[j], &cand) {
-                            new_acc.push(cand);
-                        }
-                    }
-                }
-            } else {
-                let mut buckets: FxHashMap<Vec<u32>, Vec<usize>> = FxHashMap::default();
-                for (i, m) in next.iter().enumerate() {
-                    let Some(k) = join_key(&m.bindings, &key_caps, graph) else {
-                        continue;
-                    };
-                    buckets.entry(k).or_default().push(i);
-                }
-                for prefix in &acc {
-                    let row = Row::Indices {
-                        per_pat: &per_pat,
-                        idx: prefix,
-                    };
-                    let Some(k) = row_join_key(row, &key_caps, graph) else {
-                        continue;
-                    };
-                    for &i in buckets.get(&k).into_iter().flatten() {
-                        if !row_agrees(row, &next[i], graph) {
-                            continue;
-                        }
-                        let mut cand = prefix.clone();
-                        cand.push(i);
-                        if passes_all(&by_level[j], &cand) {
-                            new_acc.push(cand);
-                        }
-                    }
-                }
-            }
-            acc = new_acc;
+        let mut acc: Vec<Vec<usize>> = vec![Vec::new()];
+        for (j, level) in by_level.iter().enumerate() {
+            acc = join_level(&per_pat, &acc, j, self.function().graph(), |cand| {
+                passes_all(level, cand)
+            });
             if acc.is_empty() {
                 break;
             }
@@ -633,131 +314,188 @@ impl<'f> Matcher<'f> {
         let mut out: Vec<JoinedMatch> = acc
             .iter()
             .map(|idx| {
-                Row::Indices {
-                    per_pat: &per_pat,
-                    idx,
-                }
-                .iter()
-                .cloned()
-                .collect()
+                idx.iter()
+                    .enumerate()
+                    .map(|(i, &j)| per_pat[i][j].clone())
+                    .collect()
             })
             .collect();
-        // A row survives iff every constraint returns `Some(true)`. Both
-        // `Some(false)` and `None` (a capture unbound in this row, so the
-        // relation is unanswerable) drop it.
-        if !whole_tuple.is_empty() {
-            out.retain(|tuple| {
-                whole_tuple
-                    .iter()
-                    .all(|c| eval.passes(c, Row::Full(tuple)) == Some(true))
-            });
-        }
+        out.retain(|tuple| {
+            whole_tuple
+                .iter()
+                .all(|c| eval.passes(c, Row::Full(tuple)) == Some(true))
+        });
 
-        dedup_on_shared_captures(&mut out, self.function().graph());
+        dedup_on_shared_captures(&mut out);
         Ok(out)
     }
 }
 
-/// A CFG relation between captured entities, applied by
-/// [`Matcher::find_joined_constrained`] as a post-correlation filter.
+/// Checks that capture-bearing patterns form one component under "shares a capture or a
+/// constraint" and that every constraint capture is bound. Returns each capture's
+/// highest-indexed binding pattern.
+fn correlate(
+    pats: &[&Pattern],
+    constraints: &[JoinConstraint],
+) -> anyhow::Result<FxHashMap<crate::Capture, usize>> {
+    let mut components = UnionFind::<usize>::new(pats.len());
+    let mut cap_owner: FxHashMap<crate::Capture, usize> = FxHashMap::default();
+    let mut cap_settled: FxHashMap<crate::Capture, usize> = FxHashMap::default();
+    let mut capture_bearing: Vec<usize> = Vec::new();
+    for (i, p) in pats.iter().enumerate() {
+        let mut has_cap = false;
+        for c in p.bound_captures() {
+            has_cap = true;
+            cap_settled.insert(c, i);
+            if let Some(&j) = cap_owner.get(&c) {
+                components.union(i, j);
+            } else {
+                cap_owner.insert(c, i);
+            }
+        }
+        if has_cap {
+            capture_bearing.push(i);
+        }
+    }
+    for con in constraints {
+        let caps = con.captures();
+        if let Some(c) = caps.iter().find(|c| !cap_owner.contains_key(c)) {
+            anyhow::bail!(
+                "find_joined_constrained: constraint mentions capture {c:?}, which no pattern \
+                 in the join binds, so it could never be satisfied (and under \
+                 `negate` would hold vacuously, true because nothing was seen); \
+                 bind it with a positive pattern"
+            );
+        }
+        let mut owners = caps.into_iter().map(|c| cap_owner[&c]);
+        if let Some(first) = owners.next() {
+            for j in owners {
+                components.union(first, j);
+            }
+        }
+    }
+    if let Some((&first, rest)) = capture_bearing.split_first() {
+        for &i in rest {
+            if !components.equiv(first, i) {
+                anyhow::bail!(
+                    "find_joined_constrained: pattern {i} shares no capture (even transitively) \
+                     with the others; a join correlates on shared captures (use a \
+                     capture-free pattern for an intentional cross-product)"
+                );
+            }
+        }
+    }
+    Ok(cap_settled)
+}
+
+/// Each constraint not reading the whole tuple, at the earliest row length that settles it.
+fn level_constraints<'c>(
+    constraints: &'c [JoinConstraint],
+    cap_settled: &FxHashMap<crate::Capture, usize>,
+    levels: usize,
+) -> Vec<Vec<&'c JoinConstraint>> {
+    let mut by_level = vec![Vec::new(); levels];
+    for c in constraints.iter().filter(|c| !c.reads_whole_tuple()) {
+        let caps = c.captures();
+        let level = caps.iter().filter_map(|cap| cap_settled.get(cap)).max();
+        by_level[level.copied().unwrap_or(0)].push(c);
+    }
+    by_level
+}
+
+/// Every row of `acc` extended by each match of pattern `j` it agrees with and `keep` accepts.
+/// Agreeing bindings resolve to the same node, so only pairs sharing a [`join_key`] are checked.
+fn join_level(
+    per_pat: &[Vec<Match>],
+    acc: &[Vec<usize>],
+    j: usize,
+    graph: &Graph,
+    keep: impl Fn(&[usize]) -> bool,
+) -> Vec<Vec<usize>> {
+    let next = &per_pat[j];
+    let key_caps = join_key_captures(per_pat, acc, next, j);
+    let mut buckets: FxHashMap<Vec<u32>, Vec<usize>> = FxHashMap::default();
+    for (i, m) in next.iter().enumerate() {
+        if let Some(k) = join_key(&m.bindings, &key_caps, graph) {
+            buckets.entry(k).or_default().push(i);
+        }
+    }
+    let mut out = Vec::new();
+    for prefix in acc {
+        let row = Row::Indices {
+            per_pat,
+            idx: prefix,
+        };
+        let Some(k) = row_join_key(row, &key_caps, graph) else {
+            continue;
+        };
+        for &i in buckets.get(&k).into_iter().flatten() {
+            if !row_agrees(row, &next[i], graph) {
+                continue;
+            }
+            let mut cand = prefix.clone();
+            cand.push(i);
+            if keep(&cand) {
+                out.push(cand);
+            }
+        }
+    }
+    out
+}
+
+/// A filter over captured entities for [`Matcher::find_joined_constrained`].
 ///
-/// Each captured entity resolves to a [`CtrlKey`] by WHAT IT BOUND: a
-/// control-output capture (e.g. via
-/// [`IfPat::capture_true`](crate::IfPat::capture_true)) becomes a
-/// `CtrlKey::Edge`, anything else a `CtrlKey::Node` (a value's producer).
-///
-/// Every variant is a pure filter: it decides, it never binds.
+/// A control-output capture (e.g. [`IfPat::capture_true`](crate::IfPat::capture_true)) resolves
+/// to a `CtrlKey::Edge`, anything else to a `CtrlKey::Node` (a value's producer).
 #[derive(Clone)]
 pub enum JoinConstraint {
-    /// `dominator` dominates `dominated` in the control subgraph. A capture
-    /// with no control-flow position fails it.
-    ///
-    /// One constraint subsuming three relations:
-    ///   * NODE dominates NODE: the plain control-dominance query.
-    ///   * EDGE dominates NODE: the node sits *exclusively* in the block that
-    ///     edge leads into, so `dominates(true_edge, c)` says "`c` is in the
-    ///     true block". This is EDGE dominance on the edge-split graph, NOT
-    ///     dominance by the edge's target: with an empty arm
-    ///     (`if (c) {} else { X }`) the edge runs straight into the join, which
-    ///     dominates everything past the merge, so target-dominance would claim
-    ///     post-merge nodes sit inside the branch.
-    ///   * EDGE dominates EDGE: every path through the inner edge first
-    ///     traversed the outer one.
-    ///
-    /// Answerable only for captures that carry a control edge. A `Load`,
-    /// `Store` or arithmetic node has no vertex in the dominator tree, so both
-    /// the constraint and its negation drop the tuple.
+    /// `dominator` dominates `dominated` in the control subgraph, an edge on the edge-split graph
+    /// (so `dominates(true_edge, c)` puts `c` in the true block). A capture outside the dominator
+    /// tree is unanswerable.
     Dominates {
         dominator: crate::Capture,
         dominated: crate::Capture,
     },
-    /// The `Phi`/`MemPhi` bound to `phi` merges `value` on the predecessor
-    /// reached through branch edge `edge`. Lets a pattern say "the value merged
-    /// from THIS branch is X" without a slot index. Works for a value `Phi` and
-    /// for a `MemPhi` (where `value` binds the merged memory token).
-    ///
-    /// A predecessor qualifies when `edge` dominates its control input as an
-    /// EDGE, i.e. every path traversing that predecessor first traversed
-    /// `edge`. That covers the direct case (`edge` IS the region's control
-    /// input) and an arm merged across intervening control such as a `Call` or
-    /// a whole guarded loop.
-    ///
-    /// `edge` must bind a control-output value and `phi` a value.
+    /// The `Phi`/`MemPhi` bound to `phi` merges `value` on a predecessor whose control input
+    /// `edge` dominates as an edge. `edge` must bind a control-output value and `phi` a value.
     PhiInputFromEdge {
         phi: crate::Capture,
         edge: crate::Capture,
         value: crate::Capture,
     },
-    /// A tuple survives iff `inner` does NOT hold on it. A capture left unbound
-    /// by the row makes `inner` unanswerable, which drops the row rather than
-    /// vacuously passing it.
+    /// Passes iff `inner` fails; an unanswerable `inner` still drops the row.
     Not(Box<JoinConstraint>),
     /// Passes iff any listed constraint does. An empty list passes nothing.
     Or(Vec<JoinConstraint>),
     /// Passes iff every listed constraint does. An empty list passes
     /// everything.
     And(Vec<JoinConstraint>),
-    /// A user-supplied predicate over the whole joined tuple. `captures` are
-    /// the captures it correlates: fed to the join's connectivity and range
-    /// checks like a built-in constraint's, and, before `pred` runs, resolved
-    /// against the row so that any left unbound drops it as unanswerable (`pred`
-    /// never sees a partial tuple). Otherwise `pred` decides, and its `None`
-    /// likewise drops the row and stays sound under `Not`.
+    /// A user predicate over the whole tuple; `None` is unanswerable. `captures` join the
+    /// correlation checks, and a row leaving any unbound drops before `pred` runs.
     Where {
         captures: Vec<crate::Capture>,
         pred: JoinPredicateFn,
     },
 }
 
-/// The tree is caller-shaped, so the derived glue would recurse one frame per
-/// level and abort on the free, after every walk over it has already returned.
+/// Iterative, since the tree's depth is the caller's.
 impl Drop for JoinConstraint {
     fn drop(&mut self) {
-        let mut stack = Vec::new();
-        take_children(self, &mut stack);
-        while let Some(mut child) = stack.pop() {
-            take_children(&mut child, &mut stack);
-        }
-    }
-}
-
-/// Steals `c`'s sub-constraints, leaving a leaf whose own drop is trivial.
-fn take_children(c: &mut JoinConstraint, out: &mut Vec<JoinConstraint>) {
-    match c {
-        JoinConstraint::Not(inner) => {
-            out.push(core::mem::replace(
+        match self {
+            Self::Not(inner) => crate::node_builders::defer_drop(std::mem::replace(
                 &mut **inner,
-                JoinConstraint::And(Vec::new()),
-            ));
+                Self::And(Vec::new()),
+            )),
+            Self::Or(list) | Self::And(list) => {
+                crate::node_builders::defer_drop(std::mem::take(list));
+            }
+            _ => {}
         }
-        JoinConstraint::Or(list) | JoinConstraint::And(list) => out.append(list),
-        _ => {}
     }
 }
 
 impl std::fmt::Debug for JoinConstraint {
-    /// The tree's depth is the caller's, so the walk carries its own stack
-    /// rather than the machine's.
+    /// Iterative, since the tree's depth is the caller's.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         enum DebugItem<'a> {
             Node(&'a JoinConstraint),
@@ -792,19 +530,15 @@ impl std::fmt::Debug for JoinConstraint {
                     .debug_struct("Where")
                     .field("captures", captures)
                     .finish_non_exhaustive()?,
-                Self::Not(inner) => {
-                    f.write_str("Not(")?;
-                    stack.push(DebugItem::Text(")"));
-                    stack.push(DebugItem::Node(inner));
-                }
-                Self::Or(cs) | Self::And(cs) => {
-                    f.write_str(if matches!(c, Self::Or(_)) {
-                        "Or(["
-                    } else {
-                        "And(["
-                    })?;
-                    stack.push(DebugItem::Text("])"));
-                    for (i, arm) in cs.iter().enumerate().rev() {
+                Self::Not(_) | Self::Or(_) | Self::And(_) => {
+                    let (open, close) = match c {
+                        Self::Not(_) => ("Not(", ")"),
+                        Self::Or(_) => ("Or([", "])"),
+                        _ => ("And([", "])"),
+                    };
+                    f.write_str(open)?;
+                    stack.push(DebugItem::Text(close));
+                    for (i, arm) in c.children().iter().enumerate().rev() {
                         stack.push(DebugItem::Node(arm));
                         if i > 0 {
                             stack.push(DebugItem::Text(", "));
@@ -817,8 +551,7 @@ impl std::fmt::Debug for JoinConstraint {
     }
 }
 
-/// A joined row: an index tuple into the per-pattern match lists while the
-/// product is building, a materialised tuple once it is complete.
+/// A joined row: indices into the per-pattern matches while building, then a full tuple.
 #[derive(Clone, Copy)]
 enum Row<'a> {
     Indices {
@@ -837,48 +570,47 @@ impl<'a> Row<'a> {
             Row::Full(tuple) => Either::Right(tuple.iter()),
         }
     }
-
-    /// `Some` once the row is complete.
-    fn as_tuple(&self) -> Option<&'a JoinedMatch> {
-        match *self {
-            Row::Full(tuple) => Some(tuple),
-            Row::Indices { .. } => None,
-        }
-    }
 }
 
 impl JoinConstraint {
-    /// Whether any part of it reads the tuple beyond the captures it names,
-    /// which pins it to a complete row.
-    fn reads_whole_tuple(&self) -> bool {
-        let mut stack = vec![self];
-        while let Some(c) = stack.pop() {
-            match c {
-                JoinConstraint::Where { .. } => return true,
-                JoinConstraint::Not(inner) => stack.push(inner),
-                JoinConstraint::Or(cs) | JoinConstraint::And(cs) => stack.extend(cs.iter().rev()),
-                JoinConstraint::Dominates { .. } | JoinConstraint::PhiInputFromEdge { .. } => {}
-            }
+    /// A connective's arms; none for a leaf.
+    fn children(&self) -> &[JoinConstraint] {
+        match self {
+            Self::Not(inner) => std::slice::from_ref(&**inner),
+            Self::Or(cs) | Self::And(cs) => cs,
+            _ => &[],
         }
-        false
+    }
+
+    /// The tree in preorder, on an explicit stack: its depth is the caller's.
+    fn nodes(&self) -> impl Iterator<Item = &JoinConstraint> {
+        let mut stack = vec![self];
+        std::iter::from_fn(move || {
+            let c = stack.pop()?;
+            stack.extend(c.children().iter().rev());
+            Some(c)
+        })
+    }
+
+    /// Whether it needs a complete row.
+    fn reads_whole_tuple(&self) -> bool {
+        self.nodes().any(|c| matches!(c, Self::Where { .. }))
     }
 
     /// Every capture this constraint correlates, in the order it names them.
     fn captures(&self) -> Vec<crate::Capture> {
         let mut out = Vec::new();
-        let mut stack = vec![self];
-        while let Some(c) = stack.pop() {
+        for c in self.nodes() {
             match c {
-                JoinConstraint::Dominates {
+                Self::Dominates {
                     dominator,
                     dominated,
                 } => out.extend([*dominator, *dominated]),
-                JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
+                Self::PhiInputFromEdge { phi, edge, value } => {
                     out.extend([*phi, *edge, *value]);
                 }
-                JoinConstraint::Not(inner) => stack.push(inner),
-                JoinConstraint::Or(cs) | JoinConstraint::And(cs) => stack.extend(cs.iter().rev()),
-                JoinConstraint::Where { captures, .. } => out.extend(captures.iter().copied()),
+                Self::Where { captures, .. } => out.extend(captures.iter().copied()),
+                Self::Not(_) | Self::Or(_) | Self::And(_) => {}
             }
         }
         out
@@ -892,10 +624,8 @@ pub type JoinedMatch = Vec<Match>;
 pub type JoinPredicateFn =
     std::sync::Arc<dyn Fn(&Function, &JoinedMatch) -> Option<bool> + Send + Sync>;
 
-/// Kleene fold over one connective's arms, one arm at a time. `dominant` is
-/// the verdict that settles it on sight and short-circuits the rest: `true`
-/// for OR, `false` for AND. An unknown arm poisons what would otherwise be
-/// `!dominant`; no arm at all yields `!dominant`, the connective's identity.
+/// Kleene fold over a connective's arms. `dominant` (`true` for OR, `false` for AND) settles it
+/// on sight; otherwise an unknown arm makes it unknown, and no arms yield `!dominant`.
 #[derive(Clone, Copy)]
 struct Kleene {
     dominant: bool,
@@ -903,22 +633,15 @@ struct Kleene {
 }
 
 impl Kleene {
-    fn or() -> Self {
+    /// `true` for OR, `false` for AND.
+    fn new(dominant: bool) -> Self {
         Self {
-            dominant: true,
+            dominant,
             saw_unknown: false,
         }
     }
 
-    fn and() -> Self {
-        Self {
-            dominant: false,
-            saw_unknown: false,
-        }
-    }
-
-    /// `Some` once the arms folded in settle the connective, whatever the
-    /// remaining ones say.
+    /// `Some` once the connective is settled.
     fn arm(&mut self, verdict: Option<bool>) -> Option<Option<bool>> {
         match verdict {
             Some(b) if b == self.dominant => Some(Some(self.dominant)),
@@ -936,8 +659,7 @@ impl Kleene {
     }
 }
 
-/// Evaluates [`JoinConstraint`]s against joined tuples, memoising both
-/// dominator trees for the whole `find_joined_constrained` call.
+/// Evaluates [`JoinConstraint`]s, memoising both dominator trees.
 struct ConstraintEval<'f> {
     function: &'f Function,
     doms: OnceCell<DominatorTree<NodeId>>,
@@ -954,10 +676,7 @@ impl<'f> ConstraintEval<'f> {
         }
     }
 
-    // `split_doms` subsumes this tree, so it is redundant for correctness and
-    // kept on measured grounds alone: a node-only join skips building the split
-    // tree, which has a vertex per control edge as well. `benches/matcher.rs`'s
-    // `join_dominates_only` measures it.
+    // Subsumed by `split_doms`, but cheaper for a node-only join.
     fn doms(&self) -> &DominatorTree<NodeId> {
         self.doms
             .get_or_init(|| control_dominator_tree(self.function))
@@ -968,12 +687,8 @@ impl<'f> ConstraintEval<'f> {
             .get_or_init(|| control_edge_dominator_tree(self.function))
     }
 
-    /// Resolve a capture to a [`CtrlKey`] by what it bound:
-    ///   1. a bound value of kind `Control` (an `If`'s
-    ///      `capture_true`/`capture_false` edge) gives [`CtrlKey::Edge`];
-    ///   2. any other bound value, [`CtrlKey::Node`] of its producer;
-    ///   3. else a bound node, [`CtrlKey::Node`];
-    ///   4. else `None`, feeding the three-valued [`Self::passes`].
+    /// A control value is a [`CtrlKey::Edge`], another value its producer's [`CtrlKey::Node`], a
+    /// node its own; `None` if unbound.
     fn ctrl_key_of(&self, tuple: Row<'_>, c: crate::Capture) -> Option<CtrlKey> {
         if let Some(v) = self.value_of(tuple, c) {
             return Some(if self.function.value_kind(v).is_control() {
@@ -993,11 +708,8 @@ impl<'f> ConstraintEval<'f> {
         tuple.iter().find_map(|m| m.value(c))
     }
 
-    /// Three-valued verdict: `Some(b)` is real, `None` means a referenced
-    /// capture was unbound in this row so the relation is unanswerable.
-    ///
-    /// The connectives are unwound on an explicit stack: the tree's depth is
-    /// the caller's, and recursing it deep enough overflows.
+    /// Three-valued verdict, `None` when unanswerable. Iterative, since the tree's depth is the
+    /// caller's.
     fn passes(&self, c: &JoinConstraint, tuple: Row<'_>) -> Option<bool> {
         /// A connective waiting on the arm being evaluated.
         enum Frame<'a> {
@@ -1011,7 +723,6 @@ impl<'f> ConstraintEval<'f> {
         let mut stack: Vec<Frame<'_>> = Vec::new();
         let mut next = c;
         loop {
-            // Down to the next leaf, stacking the connectives above it.
             let mut verdict = loop {
                 let (acc, cs) = match next {
                     JoinConstraint::Not(inner) => {
@@ -1019,8 +730,8 @@ impl<'f> ConstraintEval<'f> {
                         next = &**inner;
                         continue;
                     }
-                    JoinConstraint::Or(cs) => (Kleene::or(), cs),
-                    JoinConstraint::And(cs) => (Kleene::and(), cs),
+                    JoinConstraint::Or(cs) => (Kleene::new(true), cs),
+                    JoinConstraint::And(cs) => (Kleene::new(false), cs),
                     leaf => break self.leaf_passes(leaf, tuple),
                 };
                 let mut rest = cs.iter();
@@ -1032,7 +743,6 @@ impl<'f> ConstraintEval<'f> {
                     None => break acc.finish(),
                 }
             };
-            // Back up through the connectives the leaf settled.
             loop {
                 let Some(frame) = stack.last_mut() else {
                     return verdict;
@@ -1074,10 +784,8 @@ impl<'f> ConstraintEval<'f> {
                 ) else {
                     return None;
                 };
-                // Three-valued like `Dominates`: a `phi` capture bound to a
-                // non-phi, or an `edge` one carrying no control edge, leaves
-                // the relation unanswerable. Answering `false` would hand
-                // `Not` the rows it was asked to exclude.
+                // A non-phi `phi` or non-control `edge` is unanswerable, not `false`, so `Not`
+                // still drops the row.
                 if !self.function.value_kind(edge_v).is_control() {
                     return None;
                 }
@@ -1096,17 +804,11 @@ impl<'f> ConstraintEval<'f> {
                 ) else {
                     return None;
                 };
-                // Node to node stays on `doms` for the fast path; any edge
-                // operand routes to the subsuming `split_doms`.  Three-valued:
-                // a capture bound to a kind with no control edge has no vertex
-                // in either tree, and saying "does not dominate" there would
-                // hand `Not` the rows it was asked to exclude.
                 match (key_a, key_b) {
                     (CtrlKey::Node(na), CtrlKey::Node(nb)) => self.doms().dominance_verdict(na, nb),
                     (ka, kb) => self.split_doms().dominance_verdict(ka, kb),
                 }
             }
-            // `passes` unwinds these, so a leaf walk never sees one.
             JoinConstraint::Not(_) | JoinConstraint::Or(_) | JoinConstraint::And(_) => {
                 unreachable!("a connective reached the leaf walk")
             }
@@ -1114,9 +816,9 @@ impl<'f> ConstraintEval<'f> {
                 ref captures,
                 ref pred,
             } => {
-                let full = tuple.as_tuple()?;
-                // Unbound declared capture => unanswerable: drop the row before
-                // `pred` runs (sound under `Not`; matches the built-ins).
+                let Row::Full(full) = tuple else {
+                    return None;
+                };
                 if captures.iter().any(|&c| self.node_of(tuple, c).is_none()) {
                     return None;
                 }
@@ -1125,141 +827,60 @@ impl<'f> ConstraintEval<'f> {
         }
     }
 
-    /// Every value the `Phi`/`MemPhi` producing `phi_v` merges on a predecessor
-    /// reached through branch edge `edge_v`. `None` when `phi_v` does not come
-    /// from a phi at all, which no arm set can express.
-    ///
-    /// Slot alignment: a phi's inputs are `[PhiToken, v0, v1, ...]`, so data
-    /// input `i+1` is predecessor `i`'s value, while its owning `Region` (the
-    /// `PhiToken`'s producer) has control input `i` for predecessor `i`. A
-    /// qualifying region slot maps to the phi input one slot over.
-    ///
-    /// # Which arms come from an edge
-    ///
-    /// Predecessor `i` with control input `c_i` comes from `edge_v` when
-    ///
-    /// ```text
-    /// dominates(split_doms, Edge(edge_v), Edge(c_i))
-    /// ```
-    ///
-    /// One clause, edge against edge: both are control edges, so in the
-    /// edge-split graph this is plain dominance. The direct case
-    /// (`c_i == edge_v`) is subsumed, since `dominates(x, x)` is true.
-    ///
-    /// The relation is exclusive, holding only where every path traverses
-    /// `edge_v`, so an arm reachable from both sides of the branch belongs to
-    /// neither. A branch whose block splits and reaches the join more than once
-    /// yields one arm per qualifying predecessor.
+    /// Every value the phi producing `phi_v` merges on a predecessor whose control input `c` has
+    /// `Edge(edge_v)` dominating `Edge(c)`; `None` if `phi_v` is not a phi's.
     fn phi_arms_from_edge(
         &self,
         phi_v: ValueId,
         edge_v: ValueId,
     ) -> Option<impl Iterator<Item = ValueId> + '_> {
-        let (phi_inputs, region_inputs) = self.arm_scan(phi_v)?;
-        Some(
-            region_inputs
-                .into_iter()
-                .enumerate()
-                .filter(move |(_, c)| {
-                    // Edge against EDGE. Do NOT rewrite the right operand
-                    // as `producer(*c)`: that is the `If`, which PRECEDES
-                    // the edge, so the direct `c == edge_v` case breaks.
-                    self.split_doms()
-                        .dominates(CtrlKey::Edge(edge_v), CtrlKey::Edge(*c))
-                })
-                // Region control input `i` maps to phi data input `i + 1`.
-                .filter_map(move |(i, _)| phi_inputs.get(i + 1).copied()),
-        )
-    }
-
-    /// The phi's inputs and its region's control inputs.
-    fn arm_scan(&self, phi_v: ValueId) -> Option<(strider_ir::Inputs<'f>, strider_ir::Inputs<'f>)> {
         let f = self.function;
         let phi_node = f.producer(phi_v);
         if !matches!(f.node_kind(phi_node), NodeKind::Phi | NodeKind::MemPhi) {
             return None;
         }
-        let phi_inputs = f.node_inputs(phi_node);
-        // Slot 0 is the PhiToken; its producer is the owning Region.
-        let region = f.producer(*phi_inputs.get(0)?);
-        if !matches!(f.node_kind(region), NodeKind::Region) {
-            return None;
-        }
-        Some((phi_inputs, f.node_inputs(region)))
+        Some(
+            f.phi_arms(phi_node)
+                .filter(move |&(c, _)| {
+                    // Not `producer(c)`: that `If` precedes the edge, breaking `c == edge_v`.
+                    self.split_doms()
+                        .dominates(CtrlKey::Edge(edge_v), CtrlKey::Edge(c))
+                })
+                .map(|(_, arm)| arm),
+        )
     }
 }
 
-/// One capture's identity within a tuple, at the granularity [`row_agrees`]
-/// compares: a value binding is its own value, so two rows binding one capture
-/// to distinct outputs of one node are distinct rows rather than duplicates.
-#[derive(PartialEq, Eq, Hash)]
-enum CaptureKey {
-    Value(ValueId),
-    Node(NodeId),
-}
-
-/// Deduplicate joined tuples by capture binding signature: every capture bound
-/// anywhere in the tuple, sorted. Of equal signatures only the first is kept,
-/// order-preserving. An empty signature is always kept.
-///
-/// A pattern that binds NOTHING is identified by its root instead. Its matches
-/// are otherwise indistinguishable, so every tuple differing only in which one
-/// it holds would collapse to an arbitrary survivor, and adding a capture to
-/// one side of a join would then SHRINK the reported cross product.
-///
-/// KNOWN LIMIT: a pattern whose captures are ALL owned by an earlier slot adds
-/// no entry of its own, so tuples differing only in ITS root still collapse.
-/// That follows the shared-capture contract above rather than the carve-out.
-///
-/// `row_agrees` already made each tuple internally consistent, so a capture
-/// bound as a value anywhere in the tuple has the same value everywhere and the
-/// first one seen identifies it.
-fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>, graph: &Graph) {
-    let mut seen: FxHashSet<Vec<(u32, CaptureKey)>> = FxHashSet::default();
+/// Keep the first tuple of each signature: every (capture, binding) pair in the tuple, plus, for
+/// each match that binds nothing or binds a pair no earlier match did, its root and whether it
+/// binds. A match whose bindings all appear earlier adds nothing, so tuples differing only in its
+/// root collapse.
+fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>) {
+    let mut seen: FxHashSet<BTreeSet<(u32, bool, u32)>> = FxHashSet::default();
     acc.retain(|tuple| {
-        let mut sig: Vec<(u32, CaptureKey)> = Vec::new();
-        let mut sig_ids: FxHashSet<u32> = FxHashSet::default();
+        let mut sig: BTreeSet<(u32, bool, u32)> = BTreeSet::new();
         for (slot, m) in tuple.iter().enumerate() {
-            if m.bindings.iter().next().is_none() {
-                // Keyed by tuple POSITION, so two capture-free patterns get
-                // distinct ids and the sort below stays deterministic. Capture
-                // ids count up from 0, so counting down from `u32::MAX` cannot
-                // collide with one for any tuple that fits in memory.
-                let slot_id = u32::MAX - u32::try_from(slot).unwrap_or(0);
-                sig.push((slot_id, CaptureKey::Node(m.root())));
+            let before = sig.len();
+            sig.extend(m.bindings.iter().map(|(cap, binding)| match binding {
+                Binding::Node(n) => (cap.id(), false, n.as_u32()),
+                Binding::Value(v) => (cap.id(), true, v.as_u32()),
+            }));
+            let binds = m.bindings.iter().next().is_some();
+            if binds && sig.len() == before {
                 continue;
             }
-            for (cap, binding) in m.bindings.iter() {
-                let key = match binding {
-                    Binding::Value(v) => CaptureKey::Value(v),
-                    Binding::Node(_) => match m.bindings.get_node(cap, graph) {
-                        Some(node) => CaptureKey::Node(node),
-                        None => continue,
-                    },
-                };
-                if sig_ids.insert(cap.id()) {
-                    sig.push((cap.id(), key));
-                }
-            }
+            // Capture ids stay below 2^31, so ids counted down from the top cannot collide. The
+            // flag keeps a capture-free match apart from one that binds.
+            let slot_id =
+                u32::MAX - u32::try_from(slot).expect("a join has fewer than 2^32 patterns");
+            sig.insert((slot_id, binds, m.root().as_u32()));
         }
-        // Nothing to key on; never dedup.
-        if sig.is_empty() {
-            return true;
-        }
-        sig.sort_unstable_by_key(|(id, _)| *id);
         seen.insert(sig)
     });
 }
 
-/// Captures every match of `next` binds, and that some FIXED prefix position
-/// binds in every accumulated row.
-///
-/// Both sides must always bind a key capture, or the key is not computable:
-/// `row_agrees` treats a capture one side leaves unbound as agreeing with
-/// anything, which no single hash bucket can express. The prefix test is per
-/// position, not over the positions flattened together, which is what a chain
-/// join needs: in `P0(a) - P1(a, b) - P2(b)` no capture is bound at every
-/// position, yet `b` is bound at position 1 of every row.
+/// Captures every match of `next` binds and some fixed prefix position binds in every row. An
+/// unbound capture agrees with anything, which no bucket expresses.
 fn join_key_captures(
     per_pat: &[Vec<Match>],
     acc: &[Vec<usize>],
@@ -1301,10 +922,7 @@ fn join_key(b: &Bindings, key_caps: &[crate::Capture], graph: &Graph) -> Option<
         .collect()
 }
 
-/// A prefix row's key, each capture read from whichever position binds it.
-///
-/// Any binder is a valid representative: earlier levels' `row_agrees` already
-/// forced every position of the row that binds a capture onto the same node.
+/// A prefix row's key, each capture read from whichever position binds it (they agree).
 fn row_join_key(row: Row<'_>, key_caps: &[crate::Capture], graph: &Graph) -> Option<Vec<u32>> {
     key_caps
         .iter()
@@ -1316,12 +934,8 @@ fn row_join_key(row: Row<'_>, key_caps: &[crate::Capture], graph: &Graph) -> Opt
         .collect()
 }
 
-/// Whether every capture shared between `m` and the row so far agrees.
-///
-/// Agreement is at the resolved-NODE level, so one IR node captured as
-/// `Value(v)` by one pattern and `Node(producer(v))` by another still agrees.
-/// Two value captures are compared at value granularity, so distinct outputs of
-/// one multi-output node do not falsely agree.
+/// Whether every capture shared between `m` and the row agrees: by value when both bind values,
+/// else by resolved node.
 fn row_agrees(prefix: Row<'_>, m: &Match, graph: &Graph) -> bool {
     for prev in prefix.iter() {
         for (cap, prev_binding) in prev.bindings.iter() {
@@ -1340,8 +954,6 @@ fn row_agrees(prefix: Row<'_>, m: &Match, graph: &Graph) -> bool {
     true
 }
 
-// `Binding` and `bind_capture` are `pub(crate)`, out of reach of an
-// integration test.
 #[cfg(test)]
 mod join_key_tests {
     use super::{Binding, Bindings, Match, join_key_captures};
@@ -1354,7 +966,7 @@ mod join_key_tests {
         for &(c, node) in bound {
             assert!(b.bind_capture(c, Binding::Node(NodeId::from_u32(node))));
         }
-        Match::from_root(NodeId::from_u32(0), b)
+        Match::new(NodeId::from_u32(0), b, 0)
     }
 
     /// A chain join `P0(a) - P1(a, b) - P2(b)`: level 2's key is `b`, which the
@@ -1413,31 +1025,22 @@ mod kleene_tests {
     }
 
     #[test]
-    fn not_of_unknown_is_unknown() {
-        // The load-bearing case: an unanswerable `inner` stays unanswerable
-        // (dropping the row) rather than flipping to a vacuous `true`.
-        assert_eq!(U.map(|b: bool| !b), U);
-        assert_eq!(T.map(|b| !b), F);
-        assert_eq!(F.map(|b| !b), T);
-    }
-
-    #[test]
     fn or_truth_dominates_then_unknown_poisons() {
-        assert_eq!(fold(Kleene::or(), [U, T, F]), T);
+        assert_eq!(fold(Kleene::new(true), [U, T, F]), T);
         // Unknown poisons a would-be `false`.
-        assert_eq!(fold(Kleene::or(), [F, U, F]), U);
-        assert_eq!(fold(Kleene::or(), [F, F]), F);
+        assert_eq!(fold(Kleene::new(true), [F, U, F]), U);
+        assert_eq!(fold(Kleene::new(true), [F, F]), F);
         // Identity of `Or`.
-        assert_eq!(fold(Kleene::or(), []), F);
+        assert_eq!(fold(Kleene::new(true), []), F);
     }
 
     #[test]
     fn and_falsity_dominates_then_unknown_poisons() {
-        assert_eq!(fold(Kleene::and(), [U, F, T]), F);
+        assert_eq!(fold(Kleene::new(false), [U, F, T]), F);
         // Unknown poisons a would-be `true`.
-        assert_eq!(fold(Kleene::and(), [T, U, T]), U);
-        assert_eq!(fold(Kleene::and(), [T, T]), T);
+        assert_eq!(fold(Kleene::new(false), [T, U, T]), U);
+        assert_eq!(fold(Kleene::new(false), [T, T]), T);
         // Identity of `And`.
-        assert_eq!(fold(Kleene::and(), []), T);
+        assert_eq!(fold(Kleene::new(false), []), T);
     }
 }

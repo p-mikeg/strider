@@ -1,3 +1,4 @@
+use dashu_int::UBig;
 use expect_test::{Expect, expect};
 
 use crate::IRViewer;
@@ -11,8 +12,8 @@ const CTRL: ValueKind = ValueKind::Control;
 const MEM: ValueKind = ValueKind::Memory;
 const TOKEN: ValueKind = ValueKind::PhiToken;
 const I1: ValueKind = ValueKind::Typed(ValueType::I1);
-const I32: ValueKind = ValueKind::Typed(ValueType::I32);
-const I64: ValueKind = ValueKind::Typed(ValueType::I64);
+const I32: ValueKind = ValueKind::Typed(ValueType::int(32));
+const I64: ValueKind = ValueKind::Typed(ValueType::int(64));
 
 fn reg(offset: u64) -> rsleigh::Vn {
     rsleigh::Vn {
@@ -45,6 +46,7 @@ struct Net {
     args: Vec<(u32, Out)>,
     names: Vec<(u64, &'static str)>,
     call_ccs: Vec<(usize, strider_target::BuiltCallingConvention)>,
+    default_cc: strider_target::BuiltCallingConvention,
 }
 
 impl Net {
@@ -57,6 +59,7 @@ impl Net {
             args: Vec::new(),
             names: Vec::new(),
             call_ccs: Vec::new(),
+            default_cc: strider_target::BuiltCallingConvention::default(),
         };
         net.node(|_| NodeKind::Entry, &[], &[CTRL], &[]);
         net.node(|_| NodeKind::InitialMemory, &[], &[MEM], &[]);
@@ -114,13 +117,13 @@ impl Net {
     /// Node ids by spec index.
     fn build(&self, reverse: bool) -> (Function, Vec<NodeId>) {
         let mut f = Function::new(
-            strider_target::BuiltCallingConvention::default(),
+            self.default_cc.clone(),
             strider_target::Endianness::Little,
-            self.tracked.clone(),
+            &self.tracked,
         );
         if reverse {
             // Zombies ahead of the live nodes shift every arena id.
-            let id = f.intern_int_const(0xdead, ValueType::I64);
+            let id = f.intern_int_const(0xdeadu64, ValueType::int(64));
             let zombie = f.graph_mut().create_node(NodeKind::IntConst(id), [], [I64]);
             let [z] = f.node_outputs_exact::<1>(zombie).unwrap();
             f.graph_mut()
@@ -150,11 +153,11 @@ impl Net {
                 };
                 let Some(inputs) = inputs else { continue };
                 let kind = (spec.kind)(&mut f);
-                let node = match kind {
-                    NodeKind::Entry => f.entry(),
-                    _ => f
-                        .graph_mut()
-                        .create_node(kind, inputs, spec.outputs.iter().copied()),
+                let node = if kind == NodeKind::Entry {
+                    f.entry()
+                } else {
+                    f.graph_mut()
+                        .create_node(kind, inputs, spec.outputs.iter().copied())
                 };
                 f.side_tables_mut().extend_asm_fingerprint(node, &spec.asm);
                 ids[i] = Some(node);
@@ -209,7 +212,7 @@ fn check(net: &Net, expected: Expect) {
         text,
         "a clone prints differently"
     );
-    backward.compact().unwrap();
+    backward.compact();
     assert_eq!(backward.to_text(true), text, "compact changed the text");
     let bare: String = text
         .lines()
@@ -227,7 +230,7 @@ fn check(net: &Net, expected: Expect) {
 fn diamond_with_phi() {
     let mut net = Net::new(vec![reg(0), reg(0x38)]);
     let x = net.initial_var(reg(0x38));
-    let zero = net.int(0, ValueType::I64, 0x1000);
+    let zero = net.int(0, ValueType::int(64), 0x1000);
     let cond = net.plain(
         NodeKind::IntCmpOp(IntCmpOp::Equal),
         &[(x, 0), (zero, 0)],
@@ -237,8 +240,8 @@ fn diamond_with_phi() {
     let branch = net.plain(NodeKind::If, &[(0, 0), (cond, 0)], &[CTRL, CTRL], &[0x1004]);
     let then_ = net.plain(NodeKind::Region, &[(branch, 0)], &[CTRL, TOKEN], &[]);
     let else_ = net.plain(NodeKind::Region, &[(branch, 1)], &[CTRL, TOKEN], &[]);
-    let one = net.int(1, ValueType::I64, 0x1008);
-    let two = net.int(2, ValueType::I64, 0x100c);
+    let one = net.int(1, ValueType::int(64), 0x1008);
+    let two = net.int(2, ValueType::int(64), 0x100c);
     let merge = net.plain(
         NodeKind::Region,
         &[(then_, 0), (else_, 0)],
@@ -264,7 +267,7 @@ fn diamond_with_phi() {
         expect![[r#"
             endian little
             tracked [%:0x0:8, %:0x38:8]
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             arg 0 [%v1]
             %v0:ctrl = entry
             %v1:i64 = initial_var[%:0x38:8]
@@ -290,10 +293,10 @@ fn diamond_with_phi() {
 fn loop_with_phi_and_mem_phi() {
     let mut net = Net::new(Vec::new());
     let head = net.plain(NodeKind::Region, &[], &[CTRL, TOKEN], &[]);
-    let zero = net.int(0, ValueType::I64, 0x2000);
+    let zero = net.int(0, ValueType::int(64), 0x2000);
     let i = net.plain(NodeKind::Phi, &[], &[I64], &[]);
     let m = net.plain(NodeKind::MemPhi, &[], &[MEM], &[]);
-    let ten = net.int(10, ValueType::I64, 0x2004);
+    let ten = net.int(10, ValueType::int(64), 0x2004);
     let lt = net.plain(
         NodeKind::IntCmpOp(IntCmpOp::Less),
         &[(i, 0), (ten, 0)],
@@ -307,14 +310,14 @@ fn loop_with_phi_and_mem_phi() {
         &[0x2008],
     );
     let body = net.plain(NodeKind::Region, &[(branch, 0)], &[CTRL, TOKEN], &[]);
-    let addr = net.int(0x9000, ValueType::I64, 0x200c);
+    let addr = net.int(0x9000, ValueType::int(64), 0x200c);
     let store = net.plain(
         NodeKind::Store(RAM),
         &[(m, 0), (addr, 0), (i, 0)],
         &[MEM],
         &[0x200c],
     );
-    let one = net.int(1, ValueType::I64, 0x2010);
+    let one = net.int(1, ValueType::int(64), 0x2010);
     let next = net.plain(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         &[(i, 0), (one, 0)],
@@ -337,7 +340,7 @@ fn loop_with_phi_and_mem_phi() {
         expect![[r#"
             endian little
             tracked []
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             %v0:ctrl = entry
             %v1:i64 = iconst[0x0]  @{0x2000}
             %v2:mem = initial_memory
@@ -366,7 +369,7 @@ fn loop_with_phi_and_mem_phi() {
 fn load_store_and_call_with_an_override_convention() {
     let mut net = Net::new(vec![reg(0), reg(0x20)]);
     let sp = net.initial_var(reg(0x20));
-    let target = net.int(0x40_1000, ValueType::I64, 0x3000);
+    let target = net.int(0x40_1000, ValueType::int(64), 0x3000);
     let call = net.plain(
         NodeKind::Call { cc: None },
         &[(0, 0), (1, 0), (target, 0), (sp, 0)],
@@ -381,7 +384,7 @@ fn load_store_and_call_with_an_override_convention() {
             ..Default::default()
         },
     ));
-    let addr = net.int(0x2000, ValueType::I64, 0x3004);
+    let addr = net.int(0x2000, ValueType::int(64), 0x3004);
     let load = net.plain(
         NodeKind::Load(RAM),
         &[(call, 1), (addr, 0)],
@@ -406,7 +409,7 @@ fn load_store_and_call_with_an_override_convention() {
         expect![[r#"
             endian little
             tracked [%:0x0:8, %:0x20:8]
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             %v0:ctrl = entry
             %v1:mem = initial_memory
             %v2:i64 = iconst[0x401000]  @{0x3000}
@@ -446,7 +449,7 @@ fn switch_after_call_other() {
         expect![[r#"
             endian little
             tracked [%:0x38:8]
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             %v0:ctrl = entry
             %v1:mem = initial_memory
             %v2:i64 = initial_var[%:0x38:8]
@@ -467,19 +470,19 @@ fn wide_and_float_constants() {
     let mut net = Net::new(Vec::new());
     let wide = net.node(
         |f| {
-            NodeKind::IntConst(f.intern_int_const_limbs(
-                &[0x1122_3344_5566_7788, 0, 0, 0x8000_0000_0000_0000],
-                ValueType::I256,
+            NodeKind::IntConst(f.intern_int_const(
+                UBig::from_words(&[0x1122_3344_5566_7788, 0, 0, 0x8000_0000_0000_0000]),
+                ValueType::int(256),
             ))
         },
         &[],
-        &[ValueKind::Typed(ValueType::I256)],
+        &[ValueKind::Typed(ValueType::int(256))],
         &[0x5000],
     );
     let float = net.plain(
         NodeKind::FloatConst(0x3ff0_0000_0000_0000),
         &[],
-        &[ValueKind::Typed(ValueType::F64)],
+        &[ValueKind::Typed(ValueType::float(64))],
         &[0x5004],
     );
     net.plain(
@@ -493,7 +496,7 @@ fn wide_and_float_constants() {
         expect![[r#"
             endian little
             tracked []
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             %v0:ctrl = entry
             %v1:mem = initial_memory
             %v2:i256 = iconst[0x8000000000000000000000000000000000000000000000001122334455667788]  @{0x5000}
@@ -510,9 +513,9 @@ fn every_node_kind_prints() {
     let mut f = Function::new(
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Big,
-        Vec::new(),
+        &[],
     );
-    let mut kinds = crate::node_signature::every_node_kind();
+    let mut kinds = crate::node::signature::every_node_kind();
     kinds.push(NodeKind::Call {
         cc: Some(crate::node::CcId::new(3)),
     });
@@ -530,7 +533,7 @@ fn every_node_kind_prints() {
     expect![[r#"
         endian big
         tracked []
-        default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+        default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
         %v0:ctrl = entry
         %v1:i64, %v2:ctrl = entry
         %v3:i64, %v4:ctrl = initial_memory
@@ -571,4 +574,159 @@ fn every_node_kind_prints() {
         %v71:i64, %v72:ctrl = switch[?]
         return %v0, %v1, %v3, %v5, %v7, %v9, %v11, %v13, %v15, %v17, %v19, %v21, %v23, %v25, %v27, %v29, %v31, %v33, %v35, %v37, %v39, %v41, %v43, %v45, %v47, %v49, %v51, %v53, %v55, %v57, %v59, %v61, %v63, %v65, %v67, %v69, %v71
     "#]].assert_eq(&f.to_text(true));
+}
+
+/// Only a varnode the arch names changes spelling; layout and ids do not.
+#[test]
+fn named_text_respells_each_register_varnode_and_nothing_else() {
+    let mut net = Net::new(vec![reg(0), reg(0x38)]);
+    net.default_cc.link_register = Some(reg(0x38));
+    let x = net.initial_var(reg(0x38));
+    let target = net.int(0x40_1000, ValueType::int(64), 0x1000);
+    let call = net.plain(
+        NodeKind::Call { cc: None },
+        &[(0, 0), (1, 0), (target, 0), (x, 0)],
+        &[CTRL, MEM, I64],
+        &[0x1000],
+    );
+    net.call_ccs.push((
+        call,
+        strider_target::BuiltCallingConvention {
+            ret_val_regs: vec![reg(0)],
+            link_register: Some(reg(0x38)),
+            entry_address: Some(reg(0)),
+            ..Default::default()
+        },
+    ));
+    net.plain(
+        NodeKind::Return,
+        &[(call, 0), (call, 1), (call, 2)],
+        &[],
+        &[0x1004],
+    );
+    net.value_vns.push(((call, 2), reg(0)));
+    let (f, _) = net.build(false);
+    let named = f.to_text_named(true, strider_target::SleighArch::x86_64().names());
+    assert!(named.contains("tracked [RAX, RDI]\n"), "{named}");
+    assert!(named.contains(" = initial_var[RDI]"), "{named}");
+    assert!(named.contains(" link_register_vn=RDI "), "{named}");
+    assert!(
+        named.contains(":i64<RAX> = call[ret_val_regs=[RAX] entry_address_vn=RAX] "),
+        "{named}"
+    );
+    assert!(
+        named.contains(" stack_vn=%:0xffffffffffff0000:8 "),
+        "a varnode no register names keeps its spelling: {named}"
+    );
+    assert_eq!(
+        named,
+        f.to_text(true)
+            .replace("%:0x38:8", "RDI")
+            .replace("%:0x0:8", "RAX")
+    );
+}
+
+/// A call that received a stack address in a clobbered register is a fact
+/// no node carries, so the header names it, with its reach, right after
+/// `default_cc`.
+#[test]
+fn a_frame_address_in_a_call_register_prints_in_the_header() {
+    let empty = || {
+        let mut f = Function::new(
+            strider_target::BuiltCallingConvention::default(),
+            strider_target::Endianness::Little,
+            &[],
+        );
+        let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+        f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
+        f
+    };
+    let plain = empty().to_text(false);
+    assert!(!plain.contains("frame_address_in_call_register"), "{plain}");
+    for (reach, line) in [
+        (-4, "frame_address_in_call_register reach=-4"),
+        (16, "frame_address_in_call_register reach=16"),
+        (i128::MAX, "frame_address_in_call_register reach=unbounded"),
+    ] {
+        let mut f = empty();
+        f.set_call_register_frame_reach(Some(reach));
+        let flagged = f.to_text(false);
+        let lines: Vec<&str> = flagged.lines().collect();
+        assert!(lines[2].starts_with("default_cc "), "{flagged}");
+        assert_eq!(lines[3], line, "{flagged}");
+        assert_eq!(flagged.replacen(&format!("{line}\n"), "", 1), plain);
+    }
+}
+
+/// The claims in force are no node either: the header names the ones that
+/// are on, after `default_cc`, the allocators as sorted hex.
+#[test]
+fn the_claims_in_force_print_in_the_header() {
+    let mut f = Function::new(
+        strider_target::BuiltCallingConvention::default(),
+        strider_target::Endianness::Little,
+        &[],
+    );
+    let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+    f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
+    let plain = f.to_text(false);
+    assert!(!plain.contains("assumptions"), "{plain}");
+    f.assume(&crate::AssumptionOptions {
+        noalias_allocators: [0x2000, 0x1000].into_iter().collect(),
+        escape_analysis: true,
+        ..crate::AssumptionOptions::default()
+    });
+    let claimed = f.to_text(false);
+    let lines: Vec<&str> = claimed.lines().collect();
+    assert!(lines[2].starts_with("default_cc "), "{claimed}");
+    let line = "assumptions stack_global_disjoint assume_incoming_args_survive_calls \
+                noalias_allocators=[0x1000, 0x2000] escape_analysis \
+                return_slots_survive_untracked_writes msr_register_keeps_mode \
+                fp_rounding_mode_is_nearest";
+    assert_eq!(lines[3], line, "{claimed}");
+    assert_eq!(claimed.replacen(&format!("{line}\n"), "", 1), plain);
+}
+
+/// A REGISTER-space order that is not the data order is part of what a
+/// register-space load means, so the header names it; otherwise it is left out.
+#[test]
+fn a_register_order_unlike_the_data_order_prints_in_the_header() {
+    let header = |register| {
+        let mut f = Function::new(
+            strider_target::BuiltCallingConvention::default(),
+            strider_target::ByteOrder {
+                data: strider_target::Endianness::Big,
+                register,
+            },
+            &[],
+        );
+        let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+        f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
+        f.to_text(false).lines().next().unwrap().to_owned()
+    };
+    assert_eq!(
+        header(strider_target::Endianness::Little),
+        "endian big register=little"
+    );
+    assert_eq!(header(strider_target::Endianness::Big), "endian big");
+}
+
+/// One hex spelling however the value was spelled. `const_str` is what the
+/// golden pins, and the 64-bit carrier is where the paths meet.
+#[test]
+fn const_str_spells_a_value_the_same_however_it_was_built() {
+    use dashu_int::UBig;
+    let cases: [(UBig, &str); 5] = [
+        (UBig::ZERO, "0x0"),
+        (UBig::from(u64::MAX), "0xffffffffffffffff"),
+        (UBig::from_words(&[u64::MAX, 0]), "0xffffffffffffffff"),
+        (UBig::from_words(&[0, 1]), "0x10000000000000000"),
+        (
+            UBig::from_words(&[u64::MAX, u64::MAX, 0, 0]),
+            "0xffffffffffffffffffffffffffffffff",
+        ),
+    ];
+    for (value, want) in cases {
+        assert_eq!(super::const_str(&value), want, "{value:?}");
+    }
 }

@@ -15,7 +15,7 @@ from strider.pattern import (
     int_const, int_const_any_width, int_cmp, any_int_binary, any_int_cmp,
 )
 
-from .conftest import built_function, fixture_path
+from .conftest import built_function, lift_bytes
 
 
 def _patterns_graph():
@@ -85,8 +85,8 @@ def test_ret_pat_finds_returns_in_real_graph():
     assert len(hits) >= 1
 
 
-def test_if_pat_chain_sets_branches():
-    p = if_else(cond=Capture("x")).true_branch(anything()).false_branch(anything())
+def test_if_pat_chain_sets_edge_captures():
+    p = if_else(cond=Capture("x")).capture_true(Capture("t")).capture_false(Capture("f"))
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -129,8 +129,8 @@ def test_load_pat_finds_loads_in_real_graph():
 
 def test_load_pat_via_addr_chain():
     g = _switch_graph()
-    hits = g.find_all(load().addr(int_add(anything(), anything())))
-    assert isinstance(hits, list)
+    # Four of the five loads address `base + offset`.
+    assert len(g.find_all(load().addr(int_add(anything(), anything())))) == 4
 
 
 def test_store_stack_only_chain():
@@ -153,9 +153,7 @@ def test_phi_pat_input_chain():
 
 
 def test_phi_for_takes_vn_from_sleigh():
-    elf = fixture_path("x86", "patterns")
-    mem = strider.lift.load_elf(str(elf)).reader()
-    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
+    sleigh = strider.sleigh.SleighArch.x86()
     eax_vn = sleigh.reg("EAX")
     assert eax_vn is not None
     p = phi_for(eax_vn)
@@ -163,9 +161,7 @@ def test_phi_for_takes_vn_from_sleigh():
 
 
 def test_initial_var_for_constructs():
-    elf = fixture_path("x86", "patterns")
-    mem = strider.lift.load_elf(str(elf)).reader()
-    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
+    sleigh = strider.sleigh.SleighArch.x86()
     eax = sleigh.reg("EAX")
     assert eax is not None
     p = initial_var_for(eax)
@@ -178,9 +174,7 @@ def test_function_arg_pat_index_chain():
 
 
 def test_function_arg_reg_constructor():
-    elf = fixture_path("x64", "patterns")
-    mem = strider.lift.load_elf(str(elf)).reader()
-    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86_64(), mem)
+    sleigh = strider.sleigh.SleighArch.x86_64()
     rdi = sleigh.reg("RDI")
     assert rdi is not None
     p = function_arg_reg(rdi)
@@ -214,16 +208,18 @@ def test_int_const_any_width_handles_x64_zero_extended_neg50():
         "int_const should NOT match the zero-extended form; that is what "
         "int_const_any_width is for"
     )
-    assert len(g.find_all(int_const_any_width(-50))) >= 1
+    assert len(g.find_all(int_const_any_width(-50))) == 1
 
 
 def test_int_const_any_width_neg1_matches_at_every_width():
-    # -1 is all-ones at every width, and the zero-extension check covers the
-    # narrower-stored variants, so `int_const_any_width(-1)` fires on any
-    # function returning a negative literal.  Whether -1 appears in
-    # if_returns_const at all is compiler-dependent, so only pin "no raise".
-    g64 = _patterns_graph_for("x64")
-    assert isinstance(g64.find_all(int_const_any_width(-1)), list)
+    # `mov rax, -1` keeps -1 at I64; `mov eax, -1` zero-extends it to
+    # 0xffffffff at I64, which only the any-width form recognises.
+    full = lift_bytes(bytes.fromhex("48c7c0ffffffff" "c3"))
+    zext = lift_bytes(bytes.fromhex("b8ffffffff" "c3"))
+    assert len(full.find_all(int_const(-1))) == 1
+    assert len(full.find_all(int_const_any_width(-1))) == 1
+    assert len(zext.find_all(int_const(-1))) == 0
+    assert len(zext.find_all(int_const_any_width(-1))) == 1
 
 
 def test_int_const_any_width_takes_a_list():
@@ -237,14 +233,13 @@ def test_int_const_any_width_round_trips_via_match_int():
     c = Capture()
     g = _patterns_graph_for("x64")
     hits = g.find_all(int_const_any_width(-50).capture(c))
-    if not hits:
-        pytest.skip("no -50 constant in this graph (compiler may have folded it)")
+    assert len(hits) == 1
     # For the x64 zero-extended -50 the stored value is +4294967246 at U64
     # and sint does no further sign extension, so it recovers
     # +4294967246, not -50.  The pattern recognises the source-level value;
     # recovering the raw bit pattern is uint's job.
-    val = hits[0].uint(c)
-    assert val is not None
+    assert hits[0].uint(c) == 4294967246
+    assert hits[0].sint(c) == 4294967246
 
 
 def test_int_cmp_concrete_op():
@@ -339,8 +334,7 @@ def test_get_vn_returns_vn_for_initial_var_capture():
     g = _control_graph("abs_val")
     c = Capture()
     hits = g.find_all(initial_var().capture(c))
-    if not hits:
-        pytest.skip("no InitialVar nodes in abs_val (compiler may have folded entry args)")
+    assert hits, "abs_val reads its argument"
     vn = hits[0].vn(c)
     assert vn is not None
     assert vn.space.name() in {"REGISTER", "RAM"}
@@ -355,6 +349,24 @@ def test_cast_mask_combines_via_or():
 def test_cast_mask_all_vs_none():
     assert CastMask.all().bits() != 0
     assert CastMask.none().bits() == 0
+
+
+def test_a_cast_mask_is_true_when_it_selects_a_cast():
+    assert not CastMask.none()
+    assert not (CastMask.extend() & CastMask.truncate())
+    assert CastMask.extend() & CastMask.sign_extend()
+
+
+def test_a_cast_mask_reprs_as_the_calls_that_build_it():
+    for mask in (
+        CastMask.none(),
+        CastMask.zero_extend(),
+        CastMask.extend() | CastMask.float_bits_to_int(),
+        CastMask.all(),
+    ):
+        assert eval(repr(mask), {"CastMask": CastMask}) == mask
+    assert repr(CastMask.none()) == "CastMask.none()"
+    assert repr(CastMask.extend()) == "CastMask.zero_extend() | CastMask.sign_extend()"
 
 
 def test_ignore_casts_accepts_a_cast_mask():
@@ -401,9 +413,7 @@ def test_vn_constructor_and_repr():
 
 
 def test_sleigh_reg_returns_vn_or_none():
-    elf = fixture_path("x86", "patterns")
-    mem = strider.lift.load_elf(str(elf)).reader()
-    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
+    sleigh = strider.sleigh.SleighArch.x86()
     eax = sleigh.reg("EAX")
     assert eax is not None
     assert eax.size == 4
@@ -452,9 +462,7 @@ def test_mem_rejects_value_operand():
             load().addr(int_const(0x200))  # pyright: ignore[reportArgumentType]
         ).into_pat()
     with pytest.raises(strider.StriderError):
-        load().addr(int_const(0x100)).mem(
-            var(Capture())  # pyright: ignore[reportArgumentType]
-        ).into_pat()
+        load().addr(int_const(0x100)).mem(int_add(var(Capture()), 1)).into_pat()
 
 
 def test_deeply_nested_typed_builder_raises_not_aborts():

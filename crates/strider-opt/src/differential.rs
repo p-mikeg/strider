@@ -1,188 +1,59 @@
-//! Differential fuzzer: random IR, evaluated by a p-code reference
-//! interpreter before and after optimisation.
+//! Differential fuzzer: random IR, run on the reference interpreter
+//! (`strider_ir_test_utils::interp`) before and after optimisation. A
+//! consistency oracle: a misconception the interpreter shares with a pass is
+//! invisible here.
 //!
-//! A CONSISTENCY oracle, not an independent one: `ref_eval` runs on both
-//! sides, so a misconception it shares with a pass is invisible here. What it
-//! catches is a pass changing the meaning of a graph.
+//! The generators emit integer arithmetic (`I1` included), compares, shifts
+//! (counts of any width), casts, popcount/lzcount, phis and `If` / `Return` /
+//! `Unreachable` control; the CFG generator adds constant-address RAM loads
+//! and stores and a `Switch`. No call or float node. The DAG generator draws
+//! every width of [`TYPES`]; the CFG generator draws `I8`, `I32` and `I256`.
+//! The CFG test also runs each pass alone, validating its output.
 //!
-//! Both generators emit integer arithmetic, compares, shifts,
-//! extend/truncate, popcount/lzcount, phis and `If` / `Return` /
-//! `Unreachable` control, and nothing else: no `Load`, `Store`, `Call`,
-//! `CallOther`, `Switch` or float node, so `LoadForward`, the memory and
-//! SP-alias analyses and every float fold are outside what this checks.
-//!
-//! Four environment variables scale a run past the committed default:
-//! `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS` nodes per DAG,
-//! and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone instead of the whole
-//! pipeline.
+//! Environment: `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS`
+//! nodes per DAG, and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone in the DAG
+//! test; any other value runs the default pipeline.
 
+use crate::post_opt::indirect_branch_resolve::index_range;
 use rustc_hash::FxHashMap;
 use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
+use strider_ir::{UBig, eval};
+use strider_ir_test_utils::interp::{self, EntryVar, Outcome, Slot};
+use strider_ir_test_utils::{RegisterSet, reg_vn};
 
-use crate::test_support::Rng;
+use crate::test_support::{COLLAPSE, Rng, run_passes};
 
 pub(crate) const TYPES: &[(u32, ValueType)] = &[
-    (1, ValueType::I8),
-    (2, ValueType::I16),
-    (3, ValueType::I24),
-    (4, ValueType::I32),
-    (5, ValueType::I40),
-    (8, ValueType::I64),
-    (9, ValueType::I72),
-    (16, ValueType::I128),
+    (1, ValueType::int(8)),
+    (2, ValueType::int(16)),
+    (3, ValueType::int(24)),
+    (4, ValueType::int(32)),
+    (5, ValueType::int(40)),
+    (8, ValueType::int(64)),
+    (9, ValueType::int(72)),
+    (16, ValueType::int(128)),
+    (32, ValueType::int(256)),
+    (64, ValueType::int(512)),
 ];
 
+/// The `u128` carrier mask of `ty`, at most 128 bits wide.
 fn mask(ty: ValueType) -> u128 {
-    ty.bit_mask_u128()
+    ty.int_mask_u128()
+        .expect("an index-range oracle draws integers of at most 128 bits")
 }
 
-fn sext(v: u128, ty: ValueType) -> i128 {
-    ty.get_signed_int(v).unwrap()
+/// A random value spanning every limb of `ty`.
+fn wide_random(rng: &mut Rng, ty: ValueType) -> UBig {
+    let words: Vec<u64> = (0..ty.bit_width().div_ceil(64))
+        .map(|_| rng.next_u64())
+        .collect();
+    UBig::from_words(&words)
 }
 
-/// Independent reference semantics.
-pub(crate) fn ref_eval(
-    f: &strider_ir::Function,
-    v: ValueId,
-    inputs: &dyn Fn(usize, ValueType) -> u128,
-    memo: &mut FxHashMap<ValueId, Option<u128>>,
-) -> Option<u128> {
-    if let Some(r) = memo.get(&v) {
-        return *r;
-    }
-    let node = f.producer(v);
-    let kind = *f.node_kind(node);
-    let ty = f.value_type_opt(v).unwrap();
-    let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
-    let m = mask(ty);
-    let w = ty.bit_width() as u32;
-    let r: Option<u128> = (|| {
-        Some(match kind {
-            NodeKind::IntConst(_) => f.int_const_u128(v).unwrap(),
-            NodeKind::InitialVar(id) => inputs(id.index(), ty) & m,
-            NodeKind::IntBinaryOp(op) => {
-                let a = ref_eval(f, ins[0], inputs, memo)?;
-                let b = ref_eval(f, ins[1], inputs, memo)?;
-                let bty = f.value_type_opt(ins[1]).unwrap();
-                assert_eq!(f.value_type_opt(ins[0]).unwrap(), ty, "{kind:?}");
-                match op {
-                    IntBinaryOp::Add => a.wrapping_add(b) & m,
-                    IntBinaryOp::Mul => a.wrapping_mul(b) & m,
-                    IntBinaryOp::And => a & b,
-                    IntBinaryOp::Or => a | b,
-                    IntBinaryOp::Xor => a ^ b,
-                    IntBinaryOp::ShiftLeft => {
-                        if b >= u128::from(w) {
-                            0
-                        } else {
-                            (a << b) & m
-                        }
-                    }
-                    IntBinaryOp::ShiftRight => {
-                        if b >= u128::from(w) {
-                            0
-                        } else {
-                            a >> b
-                        }
-                    }
-                    IntBinaryOp::SShiftRight => {
-                        let sa = sext(a, ty);
-                        if b >= u128::from(w) {
-                            if sa < 0 { m } else { 0 }
-                        } else {
-                            ((sa >> b) as u128) & m
-                        }
-                    }
-                    IntBinaryOp::Div => {
-                        assert_eq!(bty, ty);
-                        if b == 0 {
-                            return None;
-                        }
-                        a / b
-                    }
-                    IntBinaryOp::Rem => {
-                        if b == 0 {
-                            return None;
-                        }
-                        a % b
-                    }
-                    IntBinaryOp::Sdiv | IntBinaryOp::Srem => {
-                        let (sa, sb) = (sext(a, ty), sext(b, ty));
-                        if sb == 0 {
-                            return None;
-                        }
-                        let min = if w == 128 {
-                            i128::MIN
-                        } else {
-                            -(1i128 << (w - 1))
-                        };
-                        if sa == min && sb == -1 {
-                            return None;
-                        }
-                        let q = if op == IntBinaryOp::Sdiv {
-                            sa.checked_div(sb)?
-                        } else {
-                            sa.checked_rem(sb)?
-                        };
-                        (q as u128) & m
-                    }
-                }
-            }
-            NodeKind::IntUnaryOp(IntUnaryOp::Neg) => {
-                let a = ref_eval(f, ins[0], inputs, memo)?;
-                a.wrapping_neg() & m
-            }
-            NodeKind::IntCmpOp(op) => {
-                let a = ref_eval(f, ins[0], inputs, memo)?;
-                let b = ref_eval(f, ins[1], inputs, memo)?;
-                let t = f.value_type_opt(ins[0]).unwrap();
-                assert_eq!(f.value_type_opt(ins[1]).unwrap(), t);
-                let tw = t.bit_width() as u32;
-                let (sa, sb) = (sext(a, t), sext(b, t));
-                let (min, max) = if tw == 128 {
-                    (i128::MIN, i128::MAX)
-                } else {
-                    (-(1i128 << (tw - 1)), (1i128 << (tw - 1)) - 1)
-                };
-                u128::from(match op {
-                    IntCmpOp::Equal => a == b,
-                    IntCmpOp::Less => a < b,
-                    IntCmpOp::Sless => sa < sb,
-                    IntCmpOp::Carry => a.checked_add(b).is_none_or(|s| s > t.bit_mask_u128()),
-                    IntCmpOp::Scarry => sa.checked_add(sb).is_none_or(|s| s < min || s > max),
-                    IntCmpOp::Sborrow => sa.checked_sub(sb).is_none_or(|s| s < min || s > max),
-                })
-            }
-            NodeKind::Truncate => ref_eval(f, ins[0], inputs, memo)? & m,
-            NodeKind::Extend(ExtendOp::ZeroExtend) => ref_eval(f, ins[0], inputs, memo)?,
-            NodeKind::Extend(ExtendOp::SignExtend) => {
-                let t = f.value_type_opt(ins[0]).unwrap();
-                (sext(ref_eval(f, ins[0], inputs, memo)?, t) as u128) & m
-            }
-            NodeKind::Popcount => u128::from(ref_eval(f, ins[0], inputs, memo)?.count_ones()) & m,
-            NodeKind::Lzcount => {
-                let t = f.value_type_opt(ins[0]).unwrap();
-                let a = ref_eval(f, ins[0], inputs, memo)?;
-                let bits = (t.byte_size() * 8) as u32;
-                let lz = if a == 0 {
-                    bits
-                } else {
-                    a.leading_zeros() - (128 - bits)
-                };
-                u128::from(lz) & m
-            }
-            NodeKind::Phi => {
-                let data: Vec<ValueId> = f.phi_data_inputs(node).collect();
-                assert_eq!(data.len(), 1, "multi-arm phi");
-                ref_eval(f, data[0], inputs, memo)?
-            }
-            other => panic!("ref_eval: unsupported {other:?}"),
-        })
-    })();
-    memo.insert(v, r);
-    r
+/// `a - b` in `ty`'s two's-complement ring.
+fn wrapping_sub(a: &UBig, b: &UBig, ty: ValueType) -> UBig {
+    eval::mask(&(a + eval::complement(b, ty) + UBig::ONE), ty)
 }
 
 pub(crate) struct Gen<'r> {
@@ -206,26 +77,26 @@ impl Gen<'_> {
         tys.sort_by_key(|t| t.bit_width());
         tys[self.rng.below(tys.len())]
     }
-    fn special(&mut self, ty: ValueType) -> u128 {
-        let m = mask(ty);
-        let w = ty.bit_width() as u128;
+    fn special(&mut self, ty: ValueType) -> UBig {
+        let m = eval::all_ones(ty);
+        let w = ty.bit_width();
         let c = match self.rng.below(14) {
-            0 => 0,
-            1 => 1,
-            2 => 2,
+            0 => UBig::ZERO,
+            1 => UBig::ONE,
+            2 => UBig::from(2u8),
             3 => m,
-            4 => m >> 1,
-            5 => (m >> 1) + 1,
-            6 => w - 1,
-            7 => w,
-            8 => w + 1,
-            9 => self.rng.u128() % 16,
-            10 => m - (self.rng.u128() % 4),
-            11 => 1u128 << (self.rng.below(w as usize)),
-            12 => !((1u128 << self.rng.below(8)) - 1),
-            _ => self.rng.u128(),
+            4 => m >> 1usize,
+            5 => (m >> 1usize) + UBig::ONE,
+            6 => UBig::from(w - 1),
+            7 => UBig::from(w),
+            8 => UBig::from(w + 1),
+            9 => UBig::from(self.rng.u128() % 16),
+            10 => m - UBig::from(self.rng.u128() % 4),
+            11 => UBig::ONE << self.rng.below(w),
+            12 => eval::complement(&((UBig::ONE << self.rng.below(8)) - UBig::ONE), ty),
+            _ => wide_random(self.rng, ty),
         };
-        c & m
+        eval::mask(&c, ty)
     }
     fn konst(&mut self, b: &mut FunctionBuilder, ty: ValueType) -> ValueId {
         let c = self.special(ty);
@@ -249,7 +120,7 @@ impl Gen<'_> {
         let nonconst: Vec<ValueId> = pool
             .iter()
             .copied()
-            .filter(|&v| b.function().int_const_u128(v).is_none())
+            .filter(|&v| b.function().int_const(v).is_none())
             .collect();
         if nonconst.is_empty() {
             self.val(b, ty)
@@ -259,36 +130,33 @@ impl Gen<'_> {
     }
 
     pub fn step(&mut self, b: &mut FunctionBuilder) {
-        const BIN: [IntBinaryOp; 12] = [
-            IntBinaryOp::Add,
-            IntBinaryOp::And,
-            IntBinaryOp::Or,
-            IntBinaryOp::Xor,
-            IntBinaryOp::Div,
-            IntBinaryOp::Sdiv,
-            IntBinaryOp::Rem,
-            IntBinaryOp::Srem,
-            IntBinaryOp::ShiftRight,
-            IntBinaryOp::SShiftRight,
-            IntBinaryOp::ShiftLeft,
-            IntBinaryOp::Mul,
-        ];
-        const CMP: [IntCmpOp; 6] = [
-            IntCmpOp::Equal,
-            IntCmpOp::Sless,
-            IntCmpOp::Less,
-            IntCmpOp::Carry,
-            IntCmpOp::Scarry,
-            IntCmpOp::Sborrow,
-        ];
         let ty = self.pick_ty();
         match self.rng.below(40) {
             0..=11 => {
-                let op = BIN[self.rng.below(BIN.len())];
+                let op = IntBinaryOp::ALL[self.rng.below(IntBinaryOp::ALL.len())];
+                let ty = if self.rng.chance(30) {
+                    ValueType::I1
+                } else {
+                    ty
+                };
                 let x = self.var_or_val(b, ty);
-                let y = self.val(b, ty);
-                let v = b.build_int_binary_operation(x, y, op, ty).unwrap();
+                let v = if op.is_shift() && self.rng.chance(50) {
+                    self.shift_by_any_width(b, op, x, ty)
+                } else {
+                    let y = self.val(b, ty);
+                    b.build_int_binary_operation(x, y, op, ty).unwrap()
+                };
                 self.push(v, ty);
+                if op.is_shift() && self.rng.chance(30) {
+                    let shifts = [
+                        IntBinaryOp::ShiftLeft,
+                        IntBinaryOp::ShiftRight,
+                        IntBinaryOp::SShiftRight,
+                    ];
+                    let op = shifts[self.rng.below(shifts.len())];
+                    let v = self.shift_by_any_width(b, op, v, ty);
+                    self.push(v, ty);
+                }
             }
             12 => {
                 let x = self.var_or_val(b, ty);
@@ -298,14 +166,14 @@ impl Gen<'_> {
             13 => {
                 // Sleigh IntNeg lowered: complement.
                 let x = self.var_or_val(b, ty);
-                let ones = b.build_int_const(mask(ty), ty).unwrap();
+                let ones = b.build_int_const(eval::all_ones(ty), ty).unwrap();
                 let v = b
                     .build_int_binary_operation(x, ones, IntBinaryOp::Xor, ty)
                     .unwrap();
                 self.push(v, ty);
             }
             14..=16 => {
-                let op = CMP[self.rng.below(CMP.len())];
+                let op = IntCmpOp::ALL[self.rng.below(IntCmpOp::ALL.len())];
                 let x = self.var_or_val(b, ty);
                 let y = self.val(b, ty);
                 let v = b.build_int_cmp_operation(x, y, op, ty).unwrap();
@@ -386,6 +254,23 @@ impl Gen<'_> {
         }
     }
 
+    /// `x <op> c`, the count `c` of a random width from `I1` to `I512`.
+    fn shift_by_any_width(
+        &mut self,
+        b: &mut FunctionBuilder,
+        op: IntBinaryOp,
+        x: ValueId,
+        ty: ValueType,
+    ) -> ValueId {
+        let count_ty = if self.rng.chance(10) {
+            ValueType::I1
+        } else {
+            TYPES[self.rng.below(TYPES.len())].1
+        };
+        let c = self.val(b, count_ty);
+        b.build_single_output_pure(NodeKind::IntBinaryOp(op), [x, c], ty)
+    }
+
     fn not(&mut self, b: &mut FunctionBuilder, x: ValueId) -> ValueId {
         let one = b.build_boolean_const(true);
         b.build_int_binary_operation(x, one, IntBinaryOp::Xor, ValueType::I1)
@@ -401,16 +286,6 @@ impl Gen<'_> {
         b.build_int_binary_operation(x, y, IntBinaryOp::Or, ValueType::I1)
             .unwrap()
     }
-    fn cmp(
-        &mut self,
-        b: &mut FunctionBuilder,
-        x: ValueId,
-        y: ValueId,
-        op: IntCmpOp,
-        ty: ValueType,
-    ) -> ValueId {
-        b.build_int_cmp_operation(x, y, op, ty).unwrap()
-    }
 
     fn flag_tree(&mut self, b: &mut FunctionBuilder, ty: ValueType) {
         let a = self.var_or_val(b, ty);
@@ -423,14 +298,26 @@ impl Gen<'_> {
             .build_int_binary_operation(a, nb, IntBinaryOp::Add, ty)
             .unwrap();
         let zero = b.build_int_const(0u128, ty).unwrap();
-        let z = self.cmp(b, diff, zero, IntCmpOp::Equal, ty);
-        let n = self.cmp(b, diff, zero, IntCmpOp::Sless, ty);
-        let lt = self.cmp(b, a, bb, IntCmpOp::Less, ty);
+        let z = b
+            .build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)
+            .unwrap();
+        let n = b
+            .build_int_cmp_operation(diff, zero, IntCmpOp::Sless, ty)
+            .unwrap();
+        let lt = b
+            .build_int_cmp_operation(a, bb, IntCmpOp::Less, ty)
+            .unwrap();
         let c = self.not(b, lt);
-        let v = self.cmp(b, a, bb, IntCmpOp::Sborrow, ty);
-        let eqab = self.cmp(b, a, bb, IntCmpOp::Equal, ty);
-        let slt = self.cmp(b, a, bb, IntCmpOp::Sless, ty);
-        let zty = [ValueType::I8, ValueType::I32][self.rng.below(2)];
+        let v = b
+            .build_int_cmp_operation(a, bb, IntCmpOp::Sborrow, ty)
+            .unwrap();
+        let eqab = b
+            .build_int_cmp_operation(a, bb, IntCmpOp::Equal, ty)
+            .unwrap();
+        let slt = b
+            .build_int_cmp_operation(a, bb, IntCmpOp::Sless, ty)
+            .unwrap();
+        let zty = [ValueType::int(8), ValueType::int(32)][self.rng.below(2)];
         let zn = b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [n], zty);
         let zv = b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [v], zty);
         let (zn, zv) = if self.rng.chance(50) {
@@ -438,7 +325,9 @@ impl Gen<'_> {
         } else {
             (zv, zn)
         };
-        let ge = self.cmp(b, zn, zv, IntCmpOp::Equal, zty);
+        let ge = b
+            .build_int_cmp_operation(zn, zv, IntCmpOp::Equal, zty)
+            .unwrap();
         let out = match self.rng.below(16) {
             0 => z,
             1 => {
@@ -473,7 +362,9 @@ impl Gen<'_> {
                 let zb =
                     b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [c], zty);
                 let z0 = b.build_int_const(0u128, zty).unwrap();
-                let e = self.cmp(b, zb, z0, IntCmpOp::Equal, zty);
+                let e = b
+                    .build_int_cmp_operation(zb, z0, IntCmpOp::Equal, zty)
+                    .unwrap();
                 if self.rng.chance(50) {
                     self.not(b, e)
                 } else {
@@ -483,7 +374,9 @@ impl Gen<'_> {
             12 => {
                 // Mixed: raw diff with different operands (should NOT fold).
                 let other = self.val(b, ty);
-                let lt2 = self.cmp(b, a, other, IntCmpOp::Less, ty);
+                let lt2 = b
+                    .build_int_cmp_operation(a, other, IntCmpOp::Less, ty)
+                    .unwrap();
                 self.bor(b, lt2, z)
             }
             13 => {
@@ -502,25 +395,28 @@ impl Gen<'_> {
     }
 
     fn const_cmp_shape(&mut self, b: &mut FunctionBuilder, ty: ValueType) {
-        let m = mask(ty);
         let a = self.var_or_val(b, ty);
         let n = self.special(ty);
         let out = match self.rng.below(6) {
             0 | 1 => {
                 // Or(Less(a,N), Equal(Add(a,M),0)), HI dual
                 let mv = if self.rng.chance(70) {
-                    n.wrapping_neg() & m
+                    wrapping_sub(&UBig::ZERO, &n, ty)
                 } else {
                     self.special(ty)
                 };
-                let nc = b.build_int_const(n, ty).unwrap();
+                let nc = b.build_int_const(n.clone(), ty).unwrap();
                 let mc = b.build_int_const(mv, ty).unwrap();
                 let z = b.build_int_const(0u128, ty).unwrap();
-                let lt = self.cmp(b, a, nc, IntCmpOp::Less, ty);
+                let lt = b
+                    .build_int_cmp_operation(a, nc, IntCmpOp::Less, ty)
+                    .unwrap();
                 let add = b
                     .build_int_binary_operation(a, mc, IntBinaryOp::Add, ty)
                     .unwrap();
-                let eq = self.cmp(b, add, z, IntCmpOp::Equal, ty);
+                let eq = b
+                    .build_int_cmp_operation(add, z, IntCmpOp::Equal, ty)
+                    .unwrap();
                 if self.rng.chance(50) {
                     self.bor(b, lt, eq)
                 } else {
@@ -532,22 +428,26 @@ impl Gen<'_> {
             2 | 3 => {
                 let c1 = self.special(ty);
                 let c2 = if self.rng.chance(70) {
-                    c1.wrapping_sub(n) & m
+                    wrapping_sub(&c1, &n, ty)
                 } else {
                     self.special(ty)
                 };
                 let c1c = b.build_int_const(c1, ty).unwrap();
                 let c2c = b.build_int_const(c2, ty).unwrap();
-                let nc = b.build_int_const(n, ty).unwrap();
+                let nc = b.build_int_const(n.clone(), ty).unwrap();
                 let z = b.build_int_const(0u128, ty).unwrap();
                 let x = b
                     .build_int_binary_operation(a, c1c, IntBinaryOp::Add, ty)
                     .unwrap();
-                let lt = self.cmp(b, x, nc, IntCmpOp::Less, ty);
+                let lt = b
+                    .build_int_cmp_operation(x, nc, IntCmpOp::Less, ty)
+                    .unwrap();
                 let add = b
                     .build_int_binary_operation(a, c2c, IntBinaryOp::Add, ty)
                     .unwrap();
-                let eq = self.cmp(b, add, z, IntCmpOp::Equal, ty);
+                let eq = b
+                    .build_int_cmp_operation(add, z, IntCmpOp::Equal, ty)
+                    .unwrap();
                 if self.rng.chance(50) {
                     self.bor(b, lt, eq)
                 } else {
@@ -564,7 +464,8 @@ impl Gen<'_> {
                     .build_int_binary_operation(a, cc, IntBinaryOp::ShiftLeft, ty)
                     .unwrap();
                 let z = b.build_int_const(0u128, ty).unwrap();
-                self.cmp(b, sh, z, IntCmpOp::Sless, ty)
+                b.build_int_cmp_operation(sh, z, IntCmpOp::Sless, ty)
+                    .unwrap()
             }
             _ => {
                 // Equal(op(x, C1), C2)
@@ -579,14 +480,15 @@ impl Gen<'_> {
                         .unwrap(),
                     _ => b.build_int_unary_operation(a, IntUnaryOp::Neg, ty).unwrap(),
                 };
-                self.cmp(b, inner, c2, IntCmpOp::Equal, ty)
+                b.build_int_cmp_operation(inner, c2, IntCmpOp::Equal, ty)
+                    .unwrap()
             }
         };
         self.push(out, ValueType::I1);
     }
 
     fn cr_pack(&mut self, b: &mut FunctionBuilder) {
-        let ty = [ValueType::I8, ValueType::I32, ValueType::I64][self.rng.below(3)];
+        let ty = [ValueType::int(8), ValueType::int(32), ValueType::int(64)][self.rng.below(3)];
         let w = ty.bit_width();
         let nterms = 1 + self.rng.below(4);
         let mut pack: Option<ValueId> = None;
@@ -644,7 +546,9 @@ impl Gen<'_> {
             b.build_single_output_pure(NodeKind::Truncate, [src], ValueType::I1)
         } else {
             let z = b.build_int_const(0u128, ty).unwrap();
-            let e = self.cmp(b, src, z, IntCmpOp::Equal, ty);
+            let e = b
+                .build_int_cmp_operation(src, z, IntCmpOp::Equal, ty)
+                .unwrap();
             self.not(b, e)
         };
         self.push(pack, ty);
@@ -815,7 +719,6 @@ pub(crate) fn build_random_fn(seed: u64, steps: usize) -> (strider_ir::Function,
         vns.push(vn);
     }
     let mut b = rs.build_fn_single_region().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let mut g = Gen {
         rng: &mut rng,
         pools: FxHashMap::default(),
@@ -852,24 +755,25 @@ pub(crate) fn return_values(f: &strider_ir::Function) -> Vec<ValueId> {
     g.node_inputs(ret).into_iter().skip(2).collect()
 }
 
-fn input_value(rng: &mut Rng, ty: ValueType) -> u128 {
-    let m = mask(ty);
-    let w = ty.bit_width() as u32;
-    (match rng.below(10) {
-        0 => 0,
+fn input_value(rng: &mut Rng, ty: ValueType) -> UBig {
+    let m = eval::all_ones(ty);
+    let w = ty.bit_width();
+    let v = match rng.below(10) {
+        0 => UBig::ZERO,
         1 => m,
-        2 => 1u128 << (w - 1),
-        3 => (1u128 << (w - 1)) - 1,
-        4 => rng.u128() % 8,
-        5 => m - rng.u128() % 8,
-        6 => 1u128 << rng.below(w as usize),
-        _ => rng.u128(),
-    }) & m
+        2 => UBig::ONE << (w - 1),
+        3 => (UBig::ONE << (w - 1)) - UBig::ONE,
+        4 => UBig::from(rng.u128() % 8),
+        5 => m - UBig::from(rng.u128() % 8),
+        6 => UBig::ONE << rng.below(w),
+        _ => wide_random(rng, ty),
+    };
+    eval::mask(&v, ty)
 }
 
 /// Returns the number of compared (trial, return value) pairs, or a
-/// description of the first mismatch. A pair whose reference value is `None`
-/// -- division by zero, `INT_MIN / -1` -- is not comparable and not counted.
+/// description of the first mismatch. A pair whose reference value is
+/// undefined (division by zero) is not counted.
 pub(crate) fn check_seed(
     seed: u64,
     steps: usize,
@@ -880,38 +784,20 @@ pub(crate) fn check_seed(
     let rets = return_values(&f);
     let mut rng = Rng(seed ^ 0xDEAD_BEEF_1234_5678 | 1);
     let ntrials = 48;
-    let mut vectors: Vec<Vec<u128>> = Vec::new();
+    let mut vectors: Vec<Vec<u64>> = Vec::new();
     for _ in 0..ntrials {
-        vectors.push((0..8).map(|_| rng.u128()).collect());
+        vectors.push((0..8).map(|_| rng.next_u64()).collect());
     }
-    // Map every input index to a width-appropriate special value.
-    let mut rng2 = Rng(seed ^ 0x1357_9BDF | 1);
-    let specials: Vec<Vec<u128>> = (0..ntrials)
-        .map(|_| {
-            (0..8)
-                .map(|_| input_value(&mut rng2, ValueType::I128))
-                .collect()
-        })
-        .collect();
-    let mut expected: Vec<Vec<Option<u128>>> = Vec::new();
-    for t in 0..ntrials {
-        let vec = &vectors[t];
-        let sp = &specials[t];
-        let inputs = |i: usize, ty: ValueType| {
-            let mut r = Rng(vec[i] as u64 | 1);
-            if t % 2 == 0 {
-                input_value(&mut r, ty)
-            } else {
-                sp[i]
-            }
-        };
-        let mut memo = FxHashMap::default();
-        expected.push(
-            rets.iter()
-                .map(|&v| ref_eval(&f, v, &inputs, &mut memo))
-                .collect(),
-        );
-    }
+    // Drawn at each register's own width, so wide high limbs are nonzero.
+    let entry = |t: usize, e: EntryVar| input_value(&mut Rng(vectors[t][e.index] | 1), e.ty);
+    let returned = |f: &strider_ir::Function, t: usize| match run_cfg(f, &|e| entry(t, e)) {
+        Ok(Outcome::Return { values, .. }) => Ok(values),
+        other => Err(format!("trial {t} ended {other:?}")),
+    };
+    let expected = (0..ntrials)
+        .map(|t| returned(&f, t))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("seed {seed}: before the pipeline, {e}\n{before_text}"))?;
     if let Err(e) = run(&mut f) {
         return Err(format!("seed {seed}: pipeline error {e:#}\n{before_text}"));
     }
@@ -920,31 +806,29 @@ pub(crate) fn check_seed(
         return Err(format!("seed {seed}: return arity changed"));
     }
     let mut compared = 0usize;
-    for t in 0..ntrials {
-        let vec = &vectors[t];
-        let sp = &specials[t];
-        let inputs = |i: usize, ty: ValueType| {
-            let mut r = Rng(vec[i] as u64 | 1);
-            if t % 2 == 0 {
-                input_value(&mut r, ty)
-            } else {
-                sp[i]
-            }
-        };
-        let mut memo = FxHashMap::default();
-        for (k, &v) in after.iter().enumerate() {
-            let got = ref_eval(&f, v, &inputs, &mut memo);
-            let Some(want) = expected[t][k] else { continue };
-            compared += 1;
-            if got != Some(want) {
-                let mut ins = Vec::new();
-                for i in 0..4 {
-                    ins.push(format!("{:#x}", inputs(i, ValueType::I128)));
+    for (t, wants) in expected.iter().enumerate() {
+        let gots = returned(&f, t).map_err(|e| {
+            format!(
+                "seed {seed}: after the pipeline, {e}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                f.to_text(false)
+            )
+        })?;
+        for (k, (want, got)) in wants.iter().zip(&gots).enumerate() {
+            match want.admits(got) {
+                Some(true) => compared += usize::from(matches!(want, Slot::Known(_))),
+                Some(false) => {
+                    return Err(format!(
+                        "seed {seed}: ret {k} trial {t}: want {want:?} got {got:?}; entry seeds {:x?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                        &vectors[t][..4],
+                        f.to_text(false)
+                    ));
                 }
-                return Err(format!(
-                    "seed {seed}: ret {k} trial {t}: want {want:#x} got {got:?}; raw inputs(before per-type mask) {ins:?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
-                    f.to_text(false)
-                ));
+                // The generator emits only kinds the interpreter runs.
+                None => {
+                    return Err(format!(
+                        "seed {seed}: ret {k} trial {t}: {want:?}\n{before_text}"
+                    ));
+                }
             }
         }
     }
@@ -955,193 +839,173 @@ pub(crate) fn check_seed(
 /// interpreter before and after the pipeline.
 #[test]
 fn the_pipeline_preserves_dag_semantics() {
-    let n: u64 = std::env::var("FUZZ_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_FUZZ_SEEDS);
-    let start: u64 = std::env::var("FUZZ_START")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let steps: usize = std::env::var("FUZZ_STEPS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(25);
-    let which = std::env::var("FUZZ_PASS").unwrap_or_default();
-    let mut failures = Vec::new();
+    let (n, seeds) = fuzz_seeds();
+    let steps: usize = env_or("FUZZ_STEPS", 25);
+    let which: String = env_or("FUZZ_PASS", String::new());
     let mut compared = 0usize;
-    for seed in start..start + n {
+    sweep(seeds, |seed| {
         let run = |f: &mut strider_ir::Function| -> crate::Result<()> {
             let mut p = crate::OptimizerPipeline::new();
             match which.as_str() {
-                "cf" => p.add(crate::ConstantFold::new()),
-                "kb" => p.add(crate::KnownBits),
-                "flag" => p.add(crate::FlagCmpCanonicalize::new()),
+                "cf" => p.add(&crate::ConstantFold),
+                "kb" => p.add(&crate::KnownBits),
+                "flag" => p.add(&crate::FlagCmpCanonicalize),
                 _ => p = crate::default_pipeline(),
             }
-            p.run(f, &mut crate::OptCtx::at_floor(None))
+            p.run(f, &crate::OptCtx::new(None))
         };
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            check_seed(seed, steps, &run)
-        }));
-        match r {
-            Ok(Ok(c)) => compared += c,
-            Ok(Err(e)) => failures.push(e),
-            Err(_) => failures.push(format!("seed {seed}: PANIC")),
-        }
-        if failures.len() >= 3 {
-            break;
-        }
-    }
-    // Reported BEFORE the yield floors: three real failures drive the
-    // counters far below them, so asserting a floor first would report a
-    // miscompile as a yield message and discard its BEFORE/AFTER dumps.
-    if !failures.is_empty() {
-        panic!(
-            "{} failures:\n{}",
-            failures.len(),
-            failures.join("\n=====\n")
-        );
-    }
-    // A floor on the yield: a generator change or an early `?` that stops
-    // producing comparable return values fails here rather than reading green.
+        compared += check_seed(seed, steps, &run)?;
+        Ok(())
+    });
+    // A floor on the yield, so a generator that stops producing fails.
     assert!(
         compared >= n as usize * 450,
         "only {compared} value comparisons over {n} seeds"
     );
 }
 
+/// The DAG generator emits wide arithmetic, and not mostly.
+#[test]
+fn the_dag_generator_emits_wide_values() {
+    let (mut seeds, mut wide_rets, mut rets, mut wide_ops) = (0usize, 0usize, 0usize, 0usize);
+    for seed in 0..DEFAULT_FUZZ_SEEDS {
+        let (f, _) = build_random_fn(seed, 25);
+        let wide = |v: ValueId| {
+            f.value_type_opt(v)
+                .is_some_and(|t| t.is_integer() && t.bit_width() > 128)
+        };
+        let here = return_values(&f).into_iter().filter(|&v| wide(v)).count();
+        rets += return_values(&f).len();
+        wide_rets += here;
+        seeds += usize::from(here > 0);
+        wide_ops += strider_ir::IRWalker::walk(&f)
+            .filter(|&n| {
+                matches!(
+                    f.node_kind(n),
+                    NodeKind::IntBinaryOp(_) | NodeKind::IntCmpOp(_) | NodeKind::IntUnaryOp(_)
+                ) && f.node_inputs(n).into_iter().any(wide)
+            })
+            .count();
+    }
+    eprintln!("seeds {seeds} wide_rets {wide_rets} of {rets} wide_ops {wide_ops}");
+    // Floors near half the measured yield at the committed seed count.
+    assert!(
+        seeds * 2 >= DEFAULT_FUZZ_SEEDS as usize && wide_ops >= 800,
+        "seeds {seeds} wide_rets {wide_rets} wide_ops {wide_ops}"
+    );
+    assert!(
+        wide_rets * 2 <= rets,
+        "wide values crowded out the narrow ones"
+    );
+}
+
+/// `Gen::step` draws an op by index into `ALL`, so a reordered or added
+/// variant changes every seed's graph: re-measure the yield floors then.
+#[test]
+fn the_op_rosters_keep_their_seeded_order() {
+    use IntBinaryOp::*;
+    use IntCmpOp::*;
+    assert_eq!(
+        IntBinaryOp::ALL,
+        [
+            Add,
+            And,
+            Or,
+            Xor,
+            Div,
+            Sdiv,
+            Rem,
+            Srem,
+            ShiftRight,
+            SShiftRight,
+            ShiftLeft,
+            Mul
+        ]
+    );
+    assert_eq!(IntCmpOp::ALL, [Equal, Sless, Less, Carry, Scarry, Sborrow]);
+}
+
 // CFG-level differential fuzzer.
 
-#[derive(Debug, PartialEq)]
-enum Outcome {
-    Ret(Vec<Option<u128>>),
-    Unreachable,
-    Diverge,
+/// The reference runs' environment, with a budget high enough that
+/// `Diverge` means a loop.
+fn reference_env(entry: &dyn Fn(EntryVar) -> UBig) -> interp::Env<'_> {
+    interp::Env {
+        entry,
+        rom: None,
+        seed: 0,
+        step_budget: 20_000,
+        private: None,
+        keeps: None,
+    }
 }
 
-fn run_cfg(f: &strider_ir::Function, inputs: &dyn Fn(usize, ValueType) -> u128) -> Outcome {
-    run_cfg_checked(f, inputs, &mut |_, _, _| {})
-}
-
-fn run_cfg_checked(
+fn run_cfg(
     f: &strider_ir::Function,
-    inputs: &dyn Fn(usize, ValueType) -> u128,
-    check: &mut dyn FnMut(strider_ir::node::NodeId, ValueId, u128),
-) -> Outcome {
-    use strider_ir::IRWalker;
-    // High enough that `Diverge` means a loop rather than "longer than the
-    // budget", which is what lets the comparison assert on it: at 400 a
-    // long-but-finite loop read as non-termination and the arm had to be
-    // exempt.  Raising it to 20 000 reclassifies only a handful of seeds.
-    const REF_STEP_BUDGET: usize = 20_000;
-    let live: rustc_hash::FxHashSet<strider_ir::node::NodeId> = f.walk().collect();
-    let mut phi_env: FxHashMap<strider_ir::node::NodeId, Option<u128>> = FxHashMap::default();
-    let entry = f.entry();
-    let mut ctrl = f.node_outputs(entry)[0];
-    for _ in 0..REF_STEP_BUDGET {
-        let uses: Vec<(strider_ir::node::NodeId, u32)> = f
-            .value_uses(ctrl)
-            .filter(|(n, _)| live.contains(n))
-            .collect();
-        assert_eq!(
-            uses.len(),
-            1,
-            "control value with {} live consumers",
-            uses.len()
-        );
-        let (node, slot) = uses[0];
-        match *f.node_kind(node) {
-            NodeKind::Region => {
-                let k = slot as usize;
-                let token = f.node_outputs(node)[1];
-                let phis: Vec<_> = f
-                    .value_uses(token)
-                    .map(|(n, _)| n)
-                    .filter(|n| live.contains(n) && matches!(f.node_kind(*n), NodeKind::Phi))
-                    .collect();
-                let mut new_vals = Vec::new();
-                for &phi in &phis {
-                    let data: Vec<ValueId> = f.phi_data_inputs(phi).collect();
-                    let mut memo = FxHashMap::default();
-                    new_vals.push(eval_env(f, data[k], inputs, &phi_env, &mut memo));
-                }
-                for (phi, v) in phis.into_iter().zip(new_vals) {
-                    phi_env.insert(phi, v);
-                }
-                ctrl = f.node_outputs(node)[0];
+    entry: &dyn Fn(EntryVar) -> UBig,
+) -> Result<Outcome, interp::Unsupported> {
+    interp::run(f, &reference_env(entry))
+}
+
+/// Whether the optimised `got` may stand for the raw `want`: equal, except
+/// that anything refines an undefined raw slot.
+fn refines(want: &Outcome, got: &Outcome) -> Result<bool, String> {
+    let slots = |want: &[Slot], got: &[Slot]| -> Result<bool, String> {
+        if want.len() != got.len() {
+            return Ok(false);
+        }
+        for (w, g) in want.iter().zip(got) {
+            match w.admits(g) {
+                Some(true) => {}
+                Some(false) => return Ok(false),
+                None => return Err(format!("the reference cannot evaluate {w:?}")),
             }
-            NodeKind::If => {
-                let cond = f.node_inputs(node)[1];
-                let mut memo = FxHashMap::default();
-                if matches!(f.node_kind(f.producer(cond)), NodeKind::IntCmpOp(_)) {
-                    for op in f.node_inputs(f.producer(cond)) {
-                        if let Some(val) = eval_env(f, op, inputs, &phi_env, &mut memo) {
-                            check(node, op, val);
-                        }
-                    }
-                }
-                let Some(c) = eval_env(f, cond, inputs, &phi_env, &mut memo) else {
-                    return Outcome::Diverge; // UB in the condition
-                };
-                ctrl = f.node_outputs(node)[if c != 0 { 0 } else { 1 }];
-            }
-            NodeKind::Return => {
-                let mut memo = FxHashMap::default();
-                let vals: Vec<Option<u128>> = f
-                    .node_inputs(node)
-                    .into_iter()
-                    .skip(2)
-                    .map(|v| eval_env(f, v, inputs, &phi_env, &mut memo))
-                    .collect();
-                for (v, val) in f.node_inputs(node).into_iter().skip(2).zip(&vals) {
-                    if let Some(val) = val {
-                        check(node, v, *val);
-                    }
-                }
-                return Outcome::Ret(vals);
-            }
-            NodeKind::Unreachable => return Outcome::Unreachable,
-            other => panic!("run_cfg: control reaches {other:?}"),
+        }
+        Ok(true)
+    };
+    let (
+        Outcome::Return {
+            values: wv,
+            writes: ww,
+            calls: wc,
+        },
+        Outcome::Return {
+            values: gv,
+            writes: gw,
+            calls: gc,
+        },
+    ) = (want, got)
+    else {
+        return Ok(false);
+    };
+    if ww != gw || wc.len() != gc.len() || !slots(wv, gv)? {
+        return Ok(false);
+    }
+    for (w, g) in wc.iter().zip(gc) {
+        if w.target != g.target || w.writes != g.writes || !slots(&w.args, &g.args)? {
+            return Ok(false);
         }
     }
-    Outcome::Diverge
+    Ok(true)
 }
 
-fn eval_env(
-    f: &strider_ir::Function,
-    v: ValueId,
-    inputs: &dyn Fn(usize, ValueType) -> u128,
-    phi_env: &FxHashMap<strider_ir::node::NodeId, Option<u128>>,
-    memo: &mut FxHashMap<ValueId, Option<u128>>,
-) -> Option<u128> {
-    // Seed the memo with every phi's current value, then reuse `ref_eval`.
-    let node = f.producer(v);
-    if matches!(f.node_kind(node), NodeKind::Phi) {
-        return *phi_env
-            .get(&node)
-            .expect("phi read before its region was entered");
-    }
-    for (&phi, &val) in phi_env {
-        let out = f.node_outputs(phi)[0];
-        memo.entry(out).or_insert(val);
-    }
-    ref_eval(f, v, inputs, memo)
-}
-
-fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
+pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
     let mut rng = Rng(seed.wrapping_mul(0xA24B_AED4_963E_E407) | 1);
     let nvars = 1 + rng.below(3);
     let mut rs = RegisterSet::new();
     let mut vns = Vec::new();
     for i in 0..nvars {
-        let (sz, _) = [(1, ValueType::I8), (4, ValueType::I32)][rng.below(2)];
+        // Includes a width past the `u128` carrier.
+        let (sz, _) = [
+            (1, ValueType::int(8)),
+            (4, ValueType::int(32)),
+            (32, ValueType::int(256)),
+        ][rng.below(3)];
         let vn = reg_vn(0x1000 * (i as u64 + 1), sz);
         rs = rs.tracked(vn).arg(vn);
         vns.push(vn);
     }
     let mut b = rs.build_fn().ok()?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let nregions = 2 + rng.below(8);
     let regions: Vec<_> = (0..nregions)
         .map(|_| b.create_region_all().unwrap())
@@ -1160,7 +1024,7 @@ fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
             let other = if tyk == ty && rng.chance(50) {
                 vk
             } else {
-                b.build_int_const(u128::from(rng.next() % 4), ty).ok()?
+                b.build_int_const(u128::from(rng.next_u64() % 4), ty).ok()?
             };
             let op = [
                 IntBinaryOp::Add,
@@ -1168,33 +1032,37 @@ fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 IntBinaryOp::And,
                 IntBinaryOp::Mul,
                 IntBinaryOp::Or,
-                // A shift by a constant is what `value_range` reads as a
-                // scaled hop; without one `ScaleOp` and `const_scale` were
-                // unreachable from this generator, and the range oracle below
-                // never exercised them.  The count deliberately reaches the
-                // output width and past it.
+                // A constant shift is what `index_range` reads as a scaled
+                // hop.
                 IntBinaryOp::ShiftLeft,
                 IntBinaryOp::ShiftRight,
                 IntBinaryOp::SShiftRight,
             ][rng.below(8)];
-            let shifting = matches!(
-                op,
-                IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight
-            );
+            let shifting = op.is_shift();
             let rhs = if shifting {
                 // 0..=w+1: at and past the width, where the saturating count
                 // and the lifter's `|W` guard matter.
                 let w = ty.bit_width() as u128 + 2;
-                b.build_int_const(u128::from(rng.next()) % w, ty).ok()?
+                b.build_int_const(u128::from(rng.next_u64()) % w, ty).ok()?
             } else {
                 other
             };
+            // Two RAM slots, for loads and stores across joins.
+            let slot = 0x100 + 0x40 * rng.below(2) as u64;
+            if rng.chance(15) {
+                let addr = b.build_int_const(slot, ValueType::int(64)).ok()?;
+                b.build_store(addr, vj, rsleigh::VnSpace::RAM).ok()?;
+                continue;
+            }
             let nv = if rng.chance(20) {
-                b.build_int_const(u128::from(rng.next() % 3), ty).ok()?
-            } else if rng.chance(15) && ty == ValueType::I32 {
-                // A truncate / extend round trip: the cast ladder `Hop` walks,
-                // and the only shape here that changes width.
-                let narrow = b.build_single_output_pure(NodeKind::Truncate, [vj], ValueType::I8);
+                b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?
+            } else if rng.chance(15) {
+                let addr = b.build_int_const(slot, ValueType::int(64)).ok()?;
+                b.build_load(addr, rsleigh::VnSpace::RAM, ty).ok()?
+            } else if rng.chance(15) && ty == ValueType::int(32) {
+                // A truncate / extend round trip, for the cast ladder.
+                let narrow =
+                    b.build_single_output_pure(NodeKind::Truncate, [vj], ValueType::int(8));
                 let ext = if rng.chance(50) {
                     ExtendOp::ZeroExtend
                 } else {
@@ -1215,9 +1083,22 @@ fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 b.build_return(None, &vals).ok()?;
             }
             2 => b.build_unreachable().ok()?,
-            3 | 4 => {
+            3 => {
                 let t = regions[rng.below(nregions)];
                 b.build_branch(t).ok()?;
+            }
+            4 => {
+                let vj = b.read_variable(&vns[rng.below(nvars)]).ok()?;
+                let ty = b.function().value_type_opt(vj)?;
+                let three = b.build_int_const(3u64, ty).ok()?;
+                let sel = if rng.chance(25) {
+                    three
+                } else {
+                    b.build_int_binary_operation(vj, three, IntBinaryOp::And, ty)
+                        .ok()?
+                };
+                let arms: Vec<_> = (0..4).map(|k| (regions[rng.below(nregions)], k)).collect();
+                b.build_switch(sel, &arms).ok()?;
             }
             _ => {
                 let j = rng.below(nvars);
@@ -1226,12 +1107,12 @@ fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 let mut cond = match rng.below(5) {
                     0 => b.build_boolean_const(rng.chance(50)),
                     1 => {
-                        let c = b.build_int_const(u128::from(rng.next() % 3), ty).ok()?;
-                        let d = b.build_int_const(u128::from(rng.next() % 3), ty).ok()?;
+                        let c = b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?;
+                        let d = b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?;
                         b.build_int_cmp_operation(c, d, IntCmpOp::Equal, ty).ok()?
                     }
                     _ => {
-                        let c = b.build_int_const(u128::from(rng.next() % 5), ty).ok()?;
+                        let c = b.build_int_const(u128::from(rng.next_u64() % 5), ty).ok()?;
                         let op = [IntCmpOp::Equal, IntCmpOp::Less, IntCmpOp::Sless][rng.below(3)];
                         if rng.chance(50) {
                             b.build_int_cmp_operation(vj, c, op, ty).ok()?
@@ -1258,113 +1139,111 @@ fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
     }
     b.set_lift_addr(None);
     let f = b.build().ok()?;
-    strider_ir::validate::validate(&f).ok()?;
     Some(f)
 }
 
+/// Whether `f`, optimised by `what`, keeps each of `outcomes` on its input
+/// vector; the count of returning runs compared.
+fn check_outcomes(
+    seed: u64,
+    what: &str,
+    f: &strider_ir::Function,
+    vecs: &[Vec<u64>],
+    outcomes: &[Outcome],
+    before_text: &str,
+) -> Result<usize, String> {
+    let mut cmp = 0;
+    for (vec, want) in vecs.iter().zip(outcomes) {
+        let dump = |why: String| {
+            format!(
+                "seed {seed} {what}: inputs {vec:?} {why}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                f.to_text(false)
+            )
+        };
+        let got = run_cfg(f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty))
+            .map_err(|why| dump(format!("after: {why:?}")))?;
+        match want {
+            Outcome::Return { .. } => {
+                cmp += 1;
+                if !refines(want, &got).map_err(dump)? {
+                    return Err(dump(format!("want {want:?} got {got:?}")));
+                }
+            }
+            Outcome::Unreachable { .. } => {
+                if !matches!(got, Outcome::Unreachable { .. }) {
+                    return Err(dump(format!("unreachable became {got:?}")));
+                }
+            }
+            // Folding a non-terminating loop into a sink is a miscompile; no
+            // pass here constructs an `Unreachable`.
+            Outcome::Diverge(_) => {
+                if !matches!(got, Outcome::Diverge(_)) {
+                    return Err(dump(format!("a non-terminating run became {got:?}")));
+                }
+            }
+        }
+    }
+    Ok(cmp)
+}
+
 /// Random CFGs: every return value agrees with a control-flow interpreter
-/// over the sea of nodes before and after the pipeline.
+/// over the sea of nodes before and after the pipeline, and after each of
+/// its passes alone, whose output must validate.
 #[test]
 fn the_pipeline_preserves_cfg_semantics() {
-    let n: u64 = std::env::var("FUZZ_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_FUZZ_SEEDS);
-    let start: u64 = std::env::var("FUZZ_START")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let mut failures = Vec::new();
+    let (n, seeds) = fuzz_seeds();
     let (mut built, mut compared) = (0, 0);
-    for seed in start..start + n {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || -> Result<(bool, usize), String> {
-                let Some(mut f) = build_random_cfg(seed) else {
-                    return Ok((false, 0));
-                };
-                let before_text = f.to_text(false);
-                let mut outcomes = Vec::new();
-                let mut rng = Rng(seed | 1);
-                let vecs: Vec<Vec<u128>> = (0..16)
-                    .map(|_| (0..4).map(|_| u128::from(rng.next())).collect())
-                    .collect();
-                for vec in &vecs {
-                    outcomes.push(run_cfg(&f, &|i, ty| {
-                        input_value(&mut Rng(vec[i] as u64 | 1), ty)
-                    }));
-                }
-                crate::default_pipeline()
-                    .run(&mut f, &mut crate::OptCtx::at_floor(None))
-                    .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
-                let mut cmp = 0;
-                for (vec, want) in vecs.iter().zip(&outcomes) {
-                    let got = run_cfg(&f, &|i, ty| input_value(&mut Rng(vec[i] as u64 | 1), ty));
-                    match want {
-                        Outcome::Ret(_) => {
-                            cmp += 1;
-                            if &got != want {
-                                return Err(format!(
-                                    "seed {seed}: inputs {vec:?} want {want:?} got {got:?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
-                                    f.to_text(false)
-                                ));
-                            }
-                        }
-                        Outcome::Unreachable => {
-                            if !matches!(got, Outcome::Unreachable) {
-                                return Err(format!(
-                                    "seed {seed}: unreachable became {got:?}\n{before_text}"
-                                ));
-                            }
-                        }
-                        // Folding a non-terminating loop into a `Return` is a
-                        // miscompile, and the one `DeadBranchElimination`'s
-                        // exit-free-cycle guard and `LoadForward`'s back-edge
-                        // handling exist to prevent.  `Unreachable` is not an
-                        // honest second answer: no pass here CONSTRUCTS one.
-                        // `Diverge` also covers budget exhaustion, so a long
-                        // but terminating run can reach a real sink once
-                        // folded. The same truncation already produced `Ret`,
-                        // which this arm already rejected, so accepting
-                        // `Unreachable` closed nothing and hid a rerouted
-                        // sink.
-                        Outcome::Diverge => {
-                            if !matches!(got, Outcome::Diverge) {
-                                return Err(format!(
-                                    "seed {seed}: a non-terminating run became \
-                                     {got:?}\n{before_text}\nAFTER:\n{}",
-                                    f.to_text(false)
-                                ));
-                            }
-                        }
-                    }
-                }
-                Ok((true, cmp))
-            },
-        ));
-        match r {
-            Ok(Ok((b, c))) => {
-                built += usize::from(b);
-                compared += c;
+    sweep(seeds, |seed| {
+        let Some(f0) = build_random_cfg(seed) else {
+            return Ok(());
+        };
+        let before_text = f0.to_text(false);
+        let mut outcomes = Vec::new();
+        let mut rng = Rng(seed | 1);
+        let vecs: Vec<Vec<u64>> = (0..16)
+            .map(|_| (0..4).map(|_| rng.next_u64()).collect())
+            .collect();
+        for vec in &vecs {
+            let want = run_cfg(&f0, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty)).map_err(
+                |why| {
+                    format!(
+                        "seed {seed}: inputs {vec:?} before the pipeline: {why:?}\n{before_text}"
+                    )
+                },
+            )?;
+            outcomes.push(want);
+        }
+        for &pass in crate::default_pipeline().passes() {
+            let mut f = f0.clone();
+            crate::run_one_unvalidated(pass, &mut f, &crate::OptCtx::new(None))
+                .map_err(|e| format!("seed {seed} {}: error {e:#}\n{before_text}", pass.name()))?;
+            if let Err(errors) = strider_ir::validate::validate(&f) {
+                return Err(format!(
+                    "seed {seed} {}: invalid IR {}\n{before_text}",
+                    pass.name(),
+                    errors.report(&f)
+                ));
             }
-            Ok(Err(e)) => failures.push(e),
-            Err(_) => failures.push(format!("seed {seed}: PANIC")),
+            // A quarter of the vectors keeps the per-pass runs cheap.
+            check_outcomes(
+                seed,
+                pass.name(),
+                &f,
+                &vecs[..4],
+                &outcomes[..4],
+                &before_text,
+            )?;
         }
-        if failures.len() >= 3 {
-            break;
-        }
-    }
-    // Reported BEFORE the yield floors: three real failures drive the
-    // counters far below them, so asserting a floor first would report a
-    // miscompile as a yield message and discard its BEFORE/AFTER dumps.
-    if !failures.is_empty() {
-        panic!(
-            "{} failures:\n{}",
-            failures.len(),
-            failures.join("\n=====\n")
-        );
-    }
-    // Floors on the yield. `build_random_cfg` bails for most seeds, so a
-    // change that drops it to none must not read as a pass.
+        let mut f = f0;
+        crate::default_pipeline()
+            .run(&mut f, &crate::OptCtx::new(None))
+            .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
+        let cmp = check_outcomes(seed, "pipeline", &f, &vecs, &outcomes, &before_text)?;
+        built += 1;
+        compared += cmp;
+        Ok(())
+    });
+    // Floors on the yield; `build_random_cfg` bails for most seeds.
     assert!(
         built >= n as usize / 5,
         "only {built} of {n} seeds built a CFG"
@@ -1377,95 +1256,281 @@ fn the_pipeline_preserves_cfg_semantics() {
 
 // Targeted proofs.
 
-/// `op(C1, C2)` at I256 with both constants past the u128 carrier. The
-/// pipeline leaves a `ConstValue::Wide` operand unfolded, so what the run must
-/// preserve is the operation and both operands' limbs, unswapped by
-/// const-on-right and untruncated by the u128 carrier.
+/// `op(C1, C2)` at I256 with both constants past the u128 carrier folds at
+/// the declared width, all four limbs kept.
 #[test]
-fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
+fn a_wide_constant_folds_across_every_limb() {
     fn le_limbs(f: &strider_ir::Function, v: ValueId) -> Vec<u64> {
-        f.int_const_wide_le_bytes(f.producer(v))
-            .unwrap_or_else(|| panic!("{v:?} is not a wide constant"))
+        let ty = f.value_kind(v).as_value().expect("a typed value");
+        assert!(ty.bit_width() > 64, "{v:?} is not a wide constant");
+        strider_ir::eval::le_bytes(f.int_const(v).expect("an int const"), ty)
             .chunks_exact(8)
             .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
             .collect()
     }
     let w1 = [1u64, 2, 3, 4];
     let w2 = [5u64, 6, 7, 8];
-    for op in [IntBinaryOp::And, IntBinaryOp::Add, IntBinaryOp::Xor] {
+    // No limb carries, so each result limb is the op of the two input limbs.
+    let cases = [
+        (IntBinaryOp::And, [1u64, 2, 3, 0]),
+        (IntBinaryOp::Add, [6, 8, 10, 12]),
+        (IntBinaryOp::Xor, [4, 4, 4, 12]),
+    ];
+    for (op, expected) in cases {
         let var = reg_vn(0x1000, 32);
         let mut b = RegisterSet::new()
             .tracked(var)
             .build_fn_single_region()
             .unwrap();
         b.set_lift_addr(Some(0xA0));
-        let c1 = b.build_int_const_limbs(&w1, ValueType::I256).unwrap();
-        let c2 = b.build_int_const_limbs(&w2, ValueType::I256).unwrap();
+        let c1 = b
+            .build_int_const(UBig::from_words(&w1), ValueType::int(256))
+            .unwrap();
+        let c2 = b
+            .build_int_const(UBig::from_words(&w2), ValueType::int(256))
+            .unwrap();
         let v = b
-            .build_int_binary_operation(c1, c2, op, ValueType::I256)
+            .build_int_binary_operation(c1, c2, op, ValueType::int(256))
             .unwrap();
         b.build_return(None, &[v]).unwrap();
         b.set_lift_addr(None);
         let mut f = b.build().unwrap();
         crate::default_pipeline()
-            .run(&mut f, &mut crate::OptCtx::at_floor(None))
+            .run(&mut f, &crate::OptCtx::new(None))
             .unwrap_or_else(|e| panic!("{op:?}: {e:#}"));
         let ret = return_values(&f);
         assert_eq!(ret.len(), 1, "{op:?}: return arity");
-        let node = f.producer(ret[0]);
-        assert_eq!(
-            *f.node_kind(node),
-            NodeKind::IntBinaryOp(op),
-            "{op:?}: the wide operation is gone\n{}",
+        assert!(
+            matches!(f.kind_of_value(ret[0]), NodeKind::IntConst(_)),
+            "{op:?}: the wide operation must fold\n{}",
             f.to_text(false)
         );
-        let ins = f.node_inputs(node);
         assert_eq!(
-            [le_limbs(&f, ins[0]), le_limbs(&f, ins[1])],
-            [w1.to_vec(), w2.to_vec()],
-            "{op:?}: operand limbs\n{}",
+            le_limbs(&f, ret[0]),
+            expected.to_vec(),
+            "{op:?}: result limbs\n{}",
             f.to_text(false)
         );
     }
+}
+
+/// One random bit extract of the `I32` word `w`, in the shapes the lifters
+/// emit: `srl`, a low mask, MIPS64 `ext` on the sign-extended word, casts, a
+/// scaled field, and an arithmetic shift's sign copies.
+fn random_extract(b: &mut FunctionBuilder, rng: &mut Rng, w: ValueId) -> ValueId {
+    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
+    let bin = |b: &mut FunctionBuilder, x: ValueId, c: u64, op: IntBinaryOp, ty: ValueType| {
+        let c = b.build_int_const(c, ty).unwrap();
+        b.build_int_binary_operation(x, c, op, ty).unwrap()
+    };
+    let k = 1 + rng.below(31) as u64;
+    let m = 1 + rng.below(8) as u64;
+    match rng.below(9) {
+        0 => w,
+        1 => bin(b, w, k, IntBinaryOp::ShiftRight, i32t),
+        2 => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftRight, i32t);
+            bin(b, up, (1 << m) - 1, IntBinaryOp::And, i32t)
+        }
+        3 => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftRight, i32t);
+            b.extend_if_needed(up, i64t, ExtendOp::SignExtend).unwrap()
+        }
+        4 => {
+            let wide = b.extend_if_needed(w, i64t, ExtendOp::SignExtend).unwrap();
+            let up = bin(b, wide, 32, IntBinaryOp::ShiftLeft, i64t);
+            let field = bin(b, up, 32 + k, IntBinaryOp::ShiftRight, i64t);
+            bin(b, field, 0xff, IntBinaryOp::And, i64t)
+        }
+        5 => {
+            let wide = b.extend_if_needed(w, i64t, ExtendOp::SignExtend).unwrap();
+            bin(b, wide, k, IntBinaryOp::ShiftRight, i64t)
+        }
+        6 => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftRight, i32t);
+            b.truncate_if_needed(up, ValueType::int(8)).unwrap()
+        }
+        7 => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftRight, i32t);
+            let field = bin(b, up, (1 << m) - 1, IntBinaryOp::And, i32t);
+            let wide = b
+                .extend_if_needed(field, i64t, ExtendOp::ZeroExtend)
+                .unwrap();
+            bin(b, wide, 1 << (m % 4), IntBinaryOp::Mul, i64t)
+        }
+        _ => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftLeft, i32t);
+            bin(
+                b,
+                up,
+                k + rng.below(32 - k as usize) as u64,
+                IntBinaryOp::ShiftRight,
+                i32t,
+            )
+        }
+    }
+}
+
+/// `if (extract(w) < n) return [extracts of w]`, with every returned value
+/// inside the interval `range_of` claims at the `Return`: a guard on one bit
+/// extract carries to the others only where it bounds them.
+#[test]
+fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
+    let (mut checks, mut runs, mut nontop) = (0usize, 0usize, 0usize);
+    sweep(0..400, |seed| {
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let vn = reg_vn(0x1000, 4);
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let [entry, then_arm, else_arm] = std::array::from_fn(|_| b.create_region_all().unwrap());
+        b.set_entry_region_all(entry).unwrap();
+        b.set_region(entry);
+        let w = b.read_variable(&vn).unwrap();
+        let tested = random_extract(&mut b, &mut rng, w);
+        let ty = b.value_type_opt(tested).unwrap();
+        let draw =
+            |rng: &mut Rng| u128::from(rng.next_u64()) & mask(ty) >> rng.below(ty.bit_width());
+        let n = (1 + draw(&mut rng)).min(mask(ty));
+        let n = b.build_int_const(n, ty).unwrap();
+        // Half the guards have a low end too: `tested - lo < n`.
+        let tested = if rng.chance(50) {
+            let lo = draw(&mut rng);
+            b.build_const_binop(lo.wrapping_neg(), tested, IntBinaryOp::Add, ty)
+                .unwrap()
+        } else {
+            tested
+        };
+        let cond = b
+            .build_int_cmp_operation(tested, n, IntCmpOp::Less, ty)
+            .unwrap();
+        b.build_if(cond, then_arm, else_arm).unwrap();
+        b.set_region(then_arm);
+        let values: Vec<ValueId> = (0..6)
+            .map(|_| random_extract(&mut b, &mut rng, w))
+            .collect();
+        b.build_return(None, &values).unwrap();
+        b.set_region(else_arm);
+        b.build_return(None, &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut f = b.build().unwrap();
+        run_passes(&mut f, COLLAPSE).unwrap();
+        let ranges = std::cell::RefCell::new(index_range::RangeMap::new(&f));
+        for _ in 0..64 {
+            let word = u128::from(rng.next_u64() as u32) >> rng.below(32);
+            let mut bad: Option<String> = None;
+            interp::run_observed(
+                &f,
+                &reference_env(&|_| UBig::from(word)),
+                &mut |at, v, val| {
+                    if !matches!(f.node_kind(at), NodeKind::Return)
+                        || f.value_type_opt(v).is_none_or(|t| !t.is_integer())
+                    {
+                        return;
+                    }
+                    // `index_range` works in the carrier; every value here is
+                    // `I32` or `I64`.
+                    let val = u128::try_from(val).expect("a value inside the carrier");
+                    let iv = ranges.borrow_mut().range_of(v, at);
+                    checks += 1;
+                    if !iv.is_top(mask(f.value_type_opt(v).unwrap())) {
+                        nontop += 1;
+                    }
+                    if !iv.contains(val) && bad.is_none() {
+                        bad = Some(format!(
+                            "seed {seed}: w={word:#x} {v:?}={val:#x} outside {iv:?}\n{}",
+                            f.to_text(false)
+                        ));
+                    }
+                },
+            )
+            .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
+            runs += 1;
+            if let Some(why) = bad {
+                return Err(why);
+            }
+        }
+        Ok(())
+    });
+    eprintln!("checks {checks} runs {runs} nontop {nontop}");
+    assert!(
+        nontop * 4 >= checks,
+        "only {nontop} of {checks} ranges were narrower than top"
+    );
 }
 
 /// Seeds this test sweeps unless `FUZZ_N` overrides it, and the threshold the
 /// population floors below are asserted at.
 const DEFAULT_FUZZ_SEEDS: u64 = 300;
 
+/// The environment variable `name`, parsed, else `default`.
+fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+/// The seed count, `FUZZ_N` else [`DEFAULT_FUZZ_SEEDS`], and the seeds from
+/// `FUZZ_START`, else 0.
+fn fuzz_seeds() -> (u64, std::ops::Range<u64>) {
+    let n = env_or("FUZZ_N", DEFAULT_FUZZ_SEEDS);
+    let start = env_or("FUZZ_START", 0);
+    (n, start..start + n)
+}
+
+/// Runs `check` on each of `seeds`, stopping at the third failure (a panic
+/// counts), and panics with every failure. Runs before a caller's yield
+/// floors, so a miscompile reports its dumps rather than a low yield.
+fn sweep(seeds: std::ops::Range<u64>, mut check: impl FnMut(u64) -> Result<(), String>) {
+    let mut failures = Vec::new();
+    for seed in seeds {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(seed))) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => failures.push(e),
+            Err(p) => {
+                let why = p
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| p.downcast_ref::<&str>().copied())
+                    .unwrap_or("");
+                failures.push(format!("seed {seed}: PANIC {why}"));
+            }
+        }
+        if failures.len() >= 3 {
+            break;
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n=====\n")
+    );
+}
+
 /// Every `If` compare operand and every returned value of a random CFG lies
 /// inside the interval `RangeMap::range_of` claims for it, stride included.
 #[test]
 fn a_range_contains_every_runtime_value() {
-    let n: u64 = std::env::var("FUZZ_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_FUZZ_SEEDS);
-    let start: u64 = std::env::var("FUZZ_START")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let mut failures: Vec<String> = Vec::new();
+    let (n, seeds) = fuzz_seeds();
     let mut checks = 0usize;
     let mut nontop = 0usize;
-    for seed in start..start + n {
+    let mut wide = 0usize;
+    sweep(seeds, |seed| {
         let Some(mut f) = build_random_cfg(seed) else {
-            continue;
+            return Ok(());
         };
         if crate::default_pipeline()
-            .run(&mut f, &mut crate::OptCtx::at_floor(None))
+            .run(&mut f, &crate::OptCtx::new(None))
             .is_err()
         {
-            continue;
+            return Ok(());
         }
-        let known = crate::opt::known_bits::analyze(&f).unwrap();
-        let doms = strider_ir::control_dominator_tree(&f);
-        let mut ranges = crate::value_range::compute_value_ranges(&f, &doms, &known);
+        let mut ranges = index_range::RangeMap::new(&f);
         let mut rng = Rng(seed | 1);
         for _ in 0..24 {
-            let vec: Vec<u128> = (0..4).map(|_| u128::from(rng.next() % 8)).collect();
+            let vec: Vec<UBig> = (0..4).map(|_| UBig::from(rng.next_u64() % 8)).collect();
             let mut bad: Option<String> = None;
-            run_cfg_checked(&f, &|i, _| vec[i], &mut |at, v, val| {
+            interp::run_observed(&f, &reference_env(&|e| vec[e.index].clone()), &mut |at, v, val| {
                 if f.value_type_opt(v)
                     .is_none_or(|t| !t.is_integer() || t == ValueType::I1)
                 {
@@ -1473,46 +1538,173 @@ fn a_range_contains_every_runtime_value() {
                 }
                 let iv = ranges.range_of(v, at);
                 checks += 1;
-                let m = f.value_type_opt(v).unwrap().bit_mask_u128();
+                // A width past the carrier must answer `top(u128::MAX)`.
+                let Some(m) = f.value_type_opt(v).unwrap().int_mask_u128() else {
+                    wide += 1;
+                    assert!(
+                        iv.is_top(u128::MAX),
+                        "seed {seed}: {v:?} past the carrier, but the range is {iv:?}"
+                    );
+                    return;
+                };
+                let val = u128::try_from(val).expect("a value inside the carrier");
                 if !iv.is_top(m) {
                     nontop += 1;
                 }
-                let ok =
-                    iv.lo <= val && val <= iv.hi && (val - iv.lo).is_multiple_of(iv.stride.max(1));
-                if !ok && bad.is_none() {
+                if !iv.contains(val) && bad.is_none() {
                     bad = Some(format!(
                         "seed {seed}: inputs {vec:?} value {v:?}={val:#x} at {at:?} outside {iv:?}\n{}",
                         f.to_text(false)
                     ));
                 }
-            });
+            })
+            .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
             if let Some(b) = bad {
-                failures.push(b);
-                break;
+                return Err(b);
             }
         }
-        if failures.len() >= 3 {
-            break;
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
-    // Printed so the floor below can be re-baselined without editing this.
-    eprintln!("checks {checks} nontop {nontop}");
-    // `Interval::top` satisfies the soundness check for every value, so a
-    // `range_of` that answered `top` everywhere passed while proving nothing.
-    // Measured at the committed seed count: checks ~3.68M, nontop ~1.85M, so
-    // the ratio floor sits at half the measured margin.
-    //
-    // Population statistics, asserted only over the full seed range: a single
-    // CFG can legitimately check nothing, or have every range come out `top`
-    // (seed 5 does), and a narrowed `FUZZ_N` is how a real failure is
-    // bisected. Failing that run on an unrelated floor would read as a
-    // product defect.
+        Ok(())
+    });
+    eprintln!("checks {checks} nontop {nontop} wide {wide}");
+    // A `range_of` answering `top` everywhere passes the soundness check, so
+    // floors (half the measured margin) hold it to narrower answers. Asserted
+    // over the full seed range only: one CFG can legitimately check nothing.
     if n >= DEFAULT_FUZZ_SEEDS {
         assert!(checks > 0, "the range oracle compared nothing");
         assert!(
             nontop * 4 >= checks,
             "only {nontop} of {checks} ranges were narrower than top"
+        );
+        assert!(
+            wide * 8 >= checks,
+            "only {wide} of {checks} ranges were past 128 bits"
+        );
+    }
+}
+
+/// A random state machine over `s`: each region may set `s` to a constant,
+/// then branches on the argument or on `s` itself to the next region and to
+/// another, forward or back, so its merges and loop headers are phis of
+/// constants and of each other.  The last region returns `s`.
+fn build_random_state_machine(seed: u64) -> Option<strider_ir::Function> {
+    let mut rng = Rng(seed.wrapping_mul(0xD6E8_FEB8_6659_FD93) | 1);
+    let (size, ty) = [(1, ValueType::int(8)), (4, ValueType::int(32))][rng.below(2)];
+    let s_vn = reg_vn(0x1000, size);
+    let x_vn = reg_vn(0x2000, 4);
+    let mut b = RegisterSet::new()
+        .tracked(s_vn)
+        .tracked(x_vn)
+        .arg(x_vn)
+        .build_fn()
+        .ok()?;
+    let nregions = 3 + rng.below(8);
+    let regions: Vec<_> = (0..nregions)
+        .map(|_| b.create_region_all().unwrap())
+        .collect();
+    b.set_entry_region_all(regions[0]).ok()?;
+    for (i, &region) in regions.iter().enumerate() {
+        b.set_region(region);
+        if i + 1 == nregions {
+            let s = b.read_variable(&s_vn).ok()?;
+            b.build_return(None, &[s]).ok()?;
+            continue;
+        }
+        if i == 0 || rng.chance(60) {
+            let k = b.build_int_const(u128::from(rng.next_u64() % 9), ty).ok()?;
+            b.write_variable(&s_vn, k).ok()?;
+        }
+        let (v, vty) = if rng.chance(50) {
+            (b.read_variable(&s_vn).ok()?, ty)
+        } else {
+            (b.read_variable(&x_vn).ok()?, ValueType::int(32))
+        };
+        let c = b
+            .build_int_const(u128::from(rng.next_u64() % 9), vty)
+            .ok()?;
+        let op = [IntCmpOp::Equal, IntCmpOp::Less][rng.below(2)];
+        let cond = b.build_int_cmp_operation(v, c, op, vty).ok()?;
+        let other = regions[rng.below(nregions)];
+        if other == regions[i + 1] {
+            b.build_branch(other).ok()?;
+        } else if rng.chance(50) {
+            b.build_if(cond, regions[i + 1], other).ok()?;
+        } else {
+            b.build_if(cond, other, regions[i + 1]).ok()?;
+        }
+    }
+    b.set_lift_addr(None);
+    let f = b.build().ok()?;
+    Some(f)
+}
+
+/// Every runtime value of a phi of a random state machine lies among the
+/// constants `index_range::phi_constants` names for it and in its range: the
+/// table walk enumerates the constants the range holds.  The range can be the
+/// tighter, since an edge guard bounds the arm it carries.
+#[test]
+fn a_phi_of_constants_holds_only_its_constants() {
+    let (n, seeds) = fuzz_seeds();
+    let (mut checks, mut phis, mut functions, mut ruled) = (0usize, 0usize, 0usize, 0usize);
+    sweep(seeds, |seed| {
+        let Some(mut f) = build_random_state_machine(seed) else {
+            return Ok(());
+        };
+        if crate::default_pipeline()
+            .run(&mut f, &crate::OptCtx::new(None))
+            .is_err()
+        {
+            return Ok(());
+        }
+        let mut ranges = index_range::RangeMap::new(&f);
+        let mut sets: FxHashMap<ValueId, Vec<u128>> = FxHashMap::default();
+        for n in strider_ir::IRWalker::walk(&f) {
+            if !matches!(f.node_kind(n), NodeKind::Phi) {
+                continue;
+            }
+            let v = f.node_outputs(n)[0];
+            if let Some(set) = index_range::phi_constants(&f, v, 64) {
+                sets.insert(v, set);
+            }
+        }
+        if sets.is_empty() {
+            return Ok(());
+        }
+        functions += 1;
+        phis += sets.len();
+        let mut rng = Rng(seed | 1);
+        for _ in 0..8 {
+            let x = u128::from(rng.next_u64() % 10);
+            let mut bad: Option<String> = None;
+            interp::run_observed(&f, &reference_env(&|_| UBig::from(x)), &mut |at, v, val| {
+                let Some(set) = sets.get(&v) else {
+                    return;
+                };
+                let val = u128::try_from(val).expect("a value inside the carrier");
+                checks += 1;
+                let iv = ranges.range_of(v, at);
+                ruled += usize::from((0..16).any(|k| ranges.excludes(v, k, at)));
+                let out = ranges.excludes(v, val, at);
+                if (set.binary_search(&val).is_err() || !iv.contains(val) || out) && bad.is_none() {
+                    bad = Some(format!(
+                        "seed {seed}: x={x} phi {v:?}={val:#x} at {at:?} outside {set:?} or \
+                         {iv:?}, or ruled out ({out})\n{}",
+                        f.to_text(false)
+                    ));
+                }
+            })
+            .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
+            if let Some(b) = bad {
+                return Err(b);
+            }
+        }
+        Ok(())
+    });
+    // A floor over the full seed range only.
+    eprintln!("functions {functions} phis {phis} checks {checks} ruled {ruled}");
+    if n >= DEFAULT_FUZZ_SEEDS {
+        assert!(
+            functions * 6 >= n as usize && phis >= functions && checks > 0 && ruled > 0,
+            "functions {functions} phis {phis} checks {checks} ruled {ruled}"
         );
     }
 }

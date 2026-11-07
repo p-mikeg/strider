@@ -3,7 +3,7 @@
 //! `SleighArch::transient_decode_vars` nor `SleighArch::isa_mode_var` covers,
 //! so a value one function commits does reach a later decode on a reused
 //! engine. It is excluded for exactly one reason: the lift is the same either
-//! way. `SleighArch::commits_flow_context`'s doc cites this file for it.
+//! way. `SleighArch::flow_commit_vars`'s doc cites this file for it.
 //!
 //! Six constructors are guarded on `linkreg=1`, each with a twin that is not.
 //! Whether Sleigh actually SELECTS the twin is observable, because every twin
@@ -66,7 +66,7 @@ const TWINS: [(u32, &str, &str, TwinAt); 6] = [
     (
         0x4e80_0460,
         "bctar",
-        "ppc_isa.sinc:2237 vs :2232",
+        "ppc_isa.sinc:2263 vs :2258",
         TwinAt::Unreachable,
     ),
     (
@@ -92,7 +92,7 @@ fn image(arch: &SleighArch, word: u32) -> Vec<u8> {
 /// the second measurement a `linkreg=0` one.
 fn lift_at(arch: &SleighArch, word: u32, linkreg: u32) -> Option<(String, usize, u32)> {
     let reader = rsleigh::mem_readers::BufMemReader::new(image(arch, word), BASE);
-    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let mut sleigh = arch.sleigh(reader).expect("sleigh");
     sleigh
         .set_context_at(BASE, "linkreg", linkreg)
         .expect("linkreg is a PowerPC context var");

@@ -12,14 +12,14 @@ use super::support::{Tb, assertions as a, reg_vn};
 fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
     let a_ = t.u32(a_v);
     let b_ = t.u32(b_v);
-    t.int_bin_at(a_, b_, strider_ir::IntBinaryOp::Add, ValueType::I32)
+    t.int_bin_at(a_, b_, strider_ir::IntBinaryOp::Add, ValueType::int(32))
 }
 
 #[test]
 fn extend_op_variant_matches_zero_and_sign() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let x = t.zext_to(s, ValueType::I64);
+    let x = t.zext_to(s, ValueType::int(64));
     let function = t.ret_val(x);
     a::matches(
         &function,
@@ -33,7 +33,7 @@ fn extend_op_variant_matches_zero_and_sign() {
 
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let x = t.sext_to(s, ValueType::I64);
+    let x = t.sext_to(s, ValueType::int(64));
     let function = t.ret_val(x);
     a::matches(
         &function,
@@ -49,8 +49,8 @@ fn extend_op_variant_matches_zero_and_sign() {
 fn extend_then_truncate_chain_matches() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let ext = t.zext_to(s, ValueType::I64);
-    let tr = t.trunc_to(ext, ValueType::I8);
+    let ext = t.zext_to(s, ValueType::int(64));
+    let tr = t.trunc_to(ext, ValueType::int(8));
     let function = t.ret_val(tr);
 
     a::matches(&function, int_truncate(anything()).into_pattern(), 1);
@@ -65,8 +65,8 @@ fn extend_then_truncate_chain_matches() {
 fn int_to_float_matches() {
     let mut t = Tb::empty();
     let v = t.u64(42);
-    let f = t.int_to_float(v, ValueType::F64);
-    let as_int = t.float_to_int(f, ValueType::I64);
+    let f = t.int_to_float(v, ValueType::float(64));
+    let as_int = t.float_to_int(f, ValueType::int(64));
     let function = t.ret_val(as_int);
     a::matches(&function, int_to_float(anything()).into_pattern(), 1);
 }
@@ -74,9 +74,9 @@ fn int_to_float_matches() {
 fn float_to_float_matches() {
     let mut t = Tb::empty();
     let v = t.f64(1.0);
-    let f = t.float_to_float(v, ValueType::F32);
-    let ff = t.float_to_float(f, ValueType::F64);
-    let as_int = t.float_to_int(ff, ValueType::I64);
+    let f = t.float_to_float(v, ValueType::float(32));
+    let ff = t.float_to_float(f, ValueType::float(64));
+    let as_int = t.float_to_int(ff, ValueType::int(64));
     let function = t.ret_val(as_int);
     // Two FloatToFloat nodes in the graph.
     a::matches(&function, float_to_float(anything()).into_pattern(), 2);
@@ -85,7 +85,7 @@ fn float_to_float_matches() {
 fn cast_patterns_are_kind_sensitive() {
     let mut t = Tb::empty();
     let v = t.u32(1);
-    let x = t.zext_to(v, ValueType::I64);
+    let x = t.zext_to(v, ValueType::int(64));
     let function = t.ret_val(x);
 
     a::none(&function, int_truncate(anything()).into_pattern());
@@ -99,7 +99,7 @@ fn add_with_zext_reg_operand() -> strider_ir::Function {
     let vn = reg_vn(0x40, 4); // 4-byte register varnode, so I32
     let mut t = Tb::with_vars(&[vn]);
     let x32 = t.read_var(&vn);
-    let zx = t.zext_to(x32, ValueType::I64);
+    let zx = t.zext_to(x32, ValueType::int(64));
     let five = t.u64(5);
     let sum = t.add(five, zx);
     t.ret_val(sum)
@@ -158,8 +158,8 @@ fn deep_alternating_cast_chain_walked_through() {
         let mut v = t.mul(two, three);
         // 16 x (Truncate I64 to I32, ZeroExtend back) = 32 cast nodes.
         for _ in 0..16 {
-            v = t.trunc_to(v, ValueType::I32);
-            v = t.zext_to(v, ValueType::I64);
+            v = t.trunc_to(v, ValueType::int(32));
+            v = t.zext_to(v, ValueType::int(64));
         }
         let four = t.u64(4);
         let total = t.add(v, four);
@@ -185,20 +185,16 @@ fn deep_alternating_cast_chain_walked_through() {
     );
 }
 
-/// A blanket cast mask must not hide a cast the pattern itself names.
-///
-/// `try_operand` used to jump straight to the DEEPEST value of a cast chain, so
-/// for the operand `zext(trunc(s))` under a mask selecting both, the
-/// intermediate `Truncate` was never offered and a pattern naming it silently
-/// found nothing. Every level is tried now, outermost first.
+/// A blanket cast mask must not hide a cast the pattern itself names: under a
+/// mask selecting both, `zext(trunc(s))` offers the intermediate `Truncate` too.
 #[test]
 fn a_masked_chain_still_matches_a_cast_the_pattern_names() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let tr = t.trunc_to(s, ValueType::I8);
-    let ext = t.zext_to(tr, ValueType::I64);
+    let tr = t.trunc_to(s, ValueType::int(8));
+    let ext = t.zext_to(tr, ValueType::int(64));
     let k = t.u64(7);
-    let sum = t.int_bin_at(ext, k, strider_ir::IntBinaryOp::Add, ValueType::I64);
+    let sum = t.int_bin_at(ext, k, strider_ir::IntBinaryOp::Add, ValueType::int(64));
     let function = t.ret_val(sum);
 
     let unmasked = int_add(int_truncate(anything()), anything()).into_pattern();
@@ -220,18 +216,18 @@ fn a_masked_chain_reports_the_outermost_match_only() {
     let with_extra_cast = |extra: bool| {
         let mut t = Tb::empty();
         let base = non_const_u32(&mut t, 1, 2);
-        let z1 = t.zext_to(base, ValueType::I64);
-        let z2 = t.zext_to(z1, ValueType::I64);
+        let z1 = t.zext_to(base, ValueType::int(64));
+        let z2 = t.zext_to(z1, ValueType::int(64));
         let operand = if extra {
-            t.trunc_to(z2, ValueType::I32)
+            t.trunc_to(z2, ValueType::int(32))
         } else {
             z2
         };
         let k = if extra { t.u32(7) } else { t.u64(7) };
         let ty = if extra {
-            ValueType::I32
+            ValueType::int(32)
         } else {
-            ValueType::I64
+            ValueType::int(64)
         };
         let sum = t.int_bin_at(operand, k, strider_ir::IntBinaryOp::Add, ty);
         let function = t.ret_val(sum);
@@ -249,4 +245,154 @@ fn a_masked_chain_reports_the_outermost_match_only() {
         "an unnamed cast on top of the operand must not change how many matches \
          the chain reports"
     );
+}
+
+/// `zext32(zext16(trunc8(s)))` over a non-const `s`.
+fn zero_extend_ladder(t: &mut Tb) -> strider_ir::node::ValueId {
+    let s = non_const_u32(t, 1, 2);
+    let t8 = t.trunc_to(s, ValueType::int(8));
+    let z16 = t.zext_to(t8, ValueType::int(16));
+    t.zext_to(z16, ValueType::int(32))
+}
+
+/// `add(zero_extend(anything().capture(x)), any_int_const())` under every cast
+/// kind, and the kind of what `x` bound in its one match.
+fn ladder_binding(function: &strider_ir::Function) -> strider_ir::node::NodeKind {
+    let x = Capture::new();
+    let pat = int_add(int_zero_extend(anything().capture(x)), any_int_const())
+        .into_pattern()
+        .ignore_casts_mask(CastMask::all());
+    let m = a::unique(function, pat);
+    *function.node_kind(function.producer(m.value(x).expect("x binds")))
+}
+
+/// A direct hit cuts the ladder: the operand is itself a ZeroExtend, so the
+/// one beneath it is not offered for a second binding.
+#[test]
+fn a_direct_hit_cuts_the_cast_ladder() {
+    let mut t = Tb::empty();
+    let z32 = zero_extend_ladder(&mut t);
+    let k = t.u32(7);
+    let sum = t.int_bin_at(z32, k, strider_ir::IntBinaryOp::Add, ValueType::int(32));
+    let function = t.ret_val(sum);
+    assert!(matches!(
+        ladder_binding(&function),
+        strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend)
+    ));
+}
+
+/// The first level that matches wins: below an unnamed SignExtend the outer
+/// ZeroExtend binds, and the inner one is not offered.
+#[test]
+fn the_first_matching_cast_level_wins() {
+    let mut t = Tb::empty();
+    let z32 = zero_extend_ladder(&mut t);
+    let top = t.sext_to(z32, ValueType::int(64));
+    let k = t.u64(7);
+    let sum = t.int_bin_at(top, k, strider_ir::IntBinaryOp::Add, ValueType::int(64));
+    let function = t.ret_val(sum);
+    assert!(matches!(
+        ladder_binding(&function),
+        strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend)
+    ));
+}
+
+/// A ladder that walked through a cast and failed drops the cast from the
+/// footprint, so the `any_input` slot that then matches does not report it.
+#[test]
+fn a_failed_cast_ladder_leaves_no_cast_in_the_footprint() {
+    let mut t = Tb::empty();
+    let s = non_const_u32(&mut t, 1, 2);
+    let z = t.zext_to(s, ValueType::int(64));
+    let five = t.u64(5);
+    let n = t.int_un(five, strider_ir::IntUnaryOp::Neg);
+    t.call_other("op", 1, &[z, n], None, &[], &[]);
+    let function = t.ret_nothing();
+    let pat = call_other()
+        .any_input(int_neg(anything()))
+        .into_pattern()
+        .ignore_casts_mask(CastMask::all());
+    let hits = Matcher::new(&function).find_all(&pat).unwrap();
+    assert!(!hits.is_empty());
+    for m in &hits {
+        assert!(m.matched_nodes().contains(&function.producer(n)));
+        assert!(!m.matched_nodes().contains(&function.producer(z)));
+    }
+}
+
+/// A commutative node's two spellings are one query, so the ladder under one
+/// operand must not answer by which operand is named first. Named second,
+/// `var(x)` runs once per configuration of the union, and the one leaving `x`
+/// unbound must not walk it through the `zext` beside the direct match.
+#[test]
+fn the_cast_ladder_answers_alike_in_both_commutative_spellings() {
+    let vn = reg_vn(0x40, 4);
+    let mut t = Tb::with_vars(&[vn]);
+    let r = t.read_var(&vn);
+    let zx = t.zext_to(r, ValueType::int(64));
+    let sx = t.sext_to(r, ValueType::int(64));
+    let sum = t.add(zx, sx);
+    let f = t.ret_val(sum);
+    let x = Capture::new();
+    let union = || one_of![int_extend(ExtendOp::SignExtend, var(x)), anything()];
+    let rows = |pat: Pattern| {
+        let mut v: Vec<String> = Matcher::new(&f)
+            .find_all(&pat.ignore_casts())
+            .unwrap()
+            .iter()
+            .map(|h| format!("{:?}", f.node_kind(f.producer(h.value(x).unwrap()))))
+            .collect();
+        v.sort();
+        v
+    };
+    let var_first = rows(int_add(var(x), union()).into_pattern());
+    assert_eq!(var_first, ["Extend(SignExtend)", "Extend(ZeroExtend)"]);
+    assert_eq!(rows(int_add(union(), var(x)).into_pattern()), var_first);
+}
+
+/// Two laddered operands a guard couples settle in pattern order, as two
+/// `first_of`s do: the operand written first keeps its outermost level, so
+/// the two spellings of one commutative query answer apart.
+#[test]
+fn two_coupled_cast_ladders_settle_in_pattern_order() {
+    let (va, vb) = (reg_vn(0x40, 4), reg_vn(0x48, 4));
+    let mut t = Tb::with_vars(&[va, vb]);
+    let a_ = t.read_var(&va);
+    let b_ = t.read_var(&vb);
+    let za = t.zext_to(a_, ValueType::int(64));
+    let zb = t.zext_to(b_, ValueType::int(64));
+    let sum = t.add(za, zb);
+    let f = t.ret_val(sum);
+    let (x, y) = (Capture::new(), Capture::new());
+    let is_ext = |v: strider_ir::node::ValueId| {
+        matches!(
+            f.node_kind(f.producer(v)),
+            strider_ir::node::NodeKind::Extend(_)
+        )
+    };
+    let rows = |x_first: bool| {
+        let guard = move |m: &Matcher, _: ValueType, b: &Bindings| {
+            let ext = |c| {
+                let fun = m.function();
+                let p = fun.producer(b.get_value(c).unwrap());
+                matches!(fun.node_kind(p), strider_ir::node::NodeKind::Extend(_))
+            };
+            !(ext(x) && ext(y))
+        };
+        let pat = if x_first {
+            int_add(var(x), var(y)).when_match(guard)
+        } else {
+            int_add(var(y), var(x)).when_match(guard)
+        };
+        let mut v: Vec<(bool, bool)> = Matcher::new(&f)
+            .find_all(&pat.into_pattern().ignore_casts())
+            .unwrap()
+            .iter()
+            .map(|h| (is_ext(h.value(x).unwrap()), is_ext(h.value(y).unwrap())))
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(rows(true), [(true, false), (true, false)]);
+    assert_eq!(rows(false), [(false, true), (false, true)]);
 }

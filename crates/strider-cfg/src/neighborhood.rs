@@ -5,12 +5,8 @@ use std::collections::VecDeque;
 
 use crate::Cfg;
 
-/// Walks BOTH edge directions, so predecessors and successors alike.  BFS
-/// visits in level order, so the `max_nodes` budget keeps the nearest regions.
-///
-/// `center` is in the set before the budget is consulted, so the result holds
-/// at least it however small `max_nodes` is, and at most `max(1, max_nodes)`
-/// regions.
+/// BFS over both edge directions, keeping the nearest `max(1, max_nodes)`
+/// regions, `center` always among them.
 pub(crate) fn neighborhood_regions(
     cfg: &Cfg,
     center: NodeIndex,
@@ -41,19 +37,25 @@ pub(crate) fn neighborhood_regions(
 }
 
 impl Cfg {
-    /// Pretty render around `center`.  Node ids are region indices; `center`
-    /// gets a gold border, and is rendered whatever `max_nodes` is.
-    pub fn neighborhood_dot<R: rsleigh::MemReader>(
+    /// Pretty render of the regions within `depth` edges of `center`, at most
+    /// `max_nodes` but always `center` (gold border). Node ids are region
+    /// indices.
+    ///
+    /// # Errors
+    /// `center` is not a region of this CFG, or the render fails.
+    pub fn neighborhood_dot(
         &self,
-        sleigh: &rsleigh::Sleigh<R>,
+        names: &strider_target::ArchNames,
         center: NodeIndex,
         depth: usize,
         max_nodes: usize,
     ) -> crate::Result<String> {
+        if self.region_graph.node_weight(center).is_none() {
+            anyhow::bail!("invalid region id {}", center.index());
+        }
         let set = neighborhood_regions(self, center, depth, max_nodes);
-        // The full-CFG dumper restricted to `set`: same labels, and the
-        // if-true / if-false edge polarity a second emitter here did not carry.
-        let dumper = self.dot_dumper(sleigh).restricted(&set, center);
+        let view = ::dot::View::new(set, center);
+        let dumper = self.dot_dumper(names).restricted(view);
         ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark_cfg()).as_dot()
     }
 }
@@ -64,7 +66,7 @@ mod tests {
     use rsleigh::mem_readers::BufMemReader;
     use strider_target::SleighArch;
 
-    use crate::{Builder, CfgOptions};
+    use crate::CfgOptions;
 
     // `jne +1`, `nop`, `ret`: an entry block plus two successors.
     fn two_way_cfg() -> crate::Cfg {
@@ -72,11 +74,10 @@ mod tests {
         let start = 0x1000;
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-            .build()
-            .expect("Builder::build on synthetic bytes")
+        crate::DecodeEngine::new(arch, reader)
+            .expect("decode engine")
+            .build_cfg(start.into(), &CfgOptions::default())
+            .expect("build_cfg on synthetic bytes")
     }
 
     #[test]
@@ -99,10 +100,8 @@ mod tests {
         assert_eq!(none_budgeted.len(), 1);
         assert!(none_budgeted.contains(&entry));
 
-        // Exercises the Incoming half: the `ret` block is a confluence of the
-        // jne-taken edge and the nop fall-through, so centering there must pull
-        // in both predecessors.  Dropping `Incoming` would still pass every
-        // entry-centered check above, since `entry` has no predecessors.
+        // The `ret` block joins the jne-taken edge and the nop fall-through:
+        // centred there, `Incoming` pulls in both predecessors.
         let g = cfg.region_graph();
         let confluence = g
             .node_indices()
@@ -126,21 +125,25 @@ mod tests {
         let cfg = two_way_cfg();
         let entry = cfg.entry();
 
-        // A fresh Sleigh: the CFG does not own the one that built it.
-        let bytes = vec![0x75, 0x01, 0x90, 0xc3];
-        let start = 0x1000;
-        let arch = SleighArch::x86_64();
-        let reader = BufMemReader::new(bytes, start);
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-
+        // Names only: the CFG renders without the engine that built it.
         let dot = cfg
-            .neighborhood_dot(&sleigh, entry, 1, 999)
+            .neighborhood_dot(SleighArch::x86_64().names(), entry, 1, 999)
             .expect("neighborhood_dot");
         assert!(
             dot.contains(&format!("\"{}\"", entry.index())),
             "dot:\n{dot}"
         );
         assert!(dot.contains("#ffcc00"), "dot:\n{dot}");
+    }
+
+    /// A center the CFG lacks is an error, not an empty digraph.
+    #[test]
+    fn neighborhood_dot_rejects_a_region_the_cfg_lacks() {
+        let cfg = two_way_cfg();
+        let missing = crate::RegionId::new(cfg.region_graph().node_count());
+        let err = cfg
+            .neighborhood_dot(SleighArch::x86_64().names(), missing, 1, 999)
+            .expect_err("a missing center must not render");
+        assert!(err.to_string().contains("invalid region id"), "{err}");
     }
 }

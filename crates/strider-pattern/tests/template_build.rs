@@ -1,10 +1,11 @@
+use strider_ir::UBig;
 use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
-use strider_ir::{ConstId, EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntConstId};
 use strider_ir_test_utils::make_empty_fn;
 
 use strider_ir::Function;
 use strider_ir::node::{NodeId, ValueId, ValueType};
-use strider_pattern::matcher::{KindSpec, Pattern};
+use strider_pattern::matcher::Pattern;
 use strider_pattern::template::{self, Template, TemplateBuilder, instantiate};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, MatchPat, Matcher, TemplatePat, int_add, int_const,
@@ -19,7 +20,7 @@ fn match_lhs_once(fx: &Function, lhs: &Pattern) -> (NodeId, Bindings, ValueType)
     let hits = m.find_all(lhs).unwrap();
     assert_eq!(hits.len(), 1, "LHS must match exactly once");
     let root_node = hits[0].root();
-    let bindings = hits[0].bindings_clone();
+    let bindings = hits[0].bindings().clone();
     let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
     let root_ty = fx.value_kind(root_value).as_value().unwrap();
     (root_node, bindings, root_ty)
@@ -46,9 +47,9 @@ fn instantiate_add_const_builds_fresh_node() {
     let x = Capture::new();
 
     let mut fx = make_empty_fn(|b| {
-        let a = b.build_int_const(5u64, T::I64)?;
-        let k = b.build_int_const(1u64, T::I64)?;
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
@@ -78,6 +79,32 @@ fn instantiate_add_const_builds_fresh_node() {
     assert!(has_two, "RHS should materialise IntConst(2)");
 }
 
+/// A template builds its operands first to last, so `int_add(3, 4)` mints the
+/// `3` before the `4` and fresh NodeIds follow the written order.
+#[test]
+fn instantiate_builds_operands_in_written_order() {
+    let x = Capture::new();
+    let mut fx = make_empty_fn(|b| {
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap();
+    let lhs = int_add(var(x), int_const(1u128)).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+    let rhs = template::int_add(int_const(3u128), int_const(4u128)).into_template();
+    let sum = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
+    let [l, r] = fx.node_inputs_exact::<2>(fx.producer(sum)).unwrap();
+    assert_eq!(
+        (fx.int_const_u128(l), fx.int_const_u128(r)),
+        (Some(3), Some(4))
+    );
+    assert!(
+        fx.producer(l).as_u32() < fx.producer(r).as_u32(),
+        "the left operand is built first"
+    );
+}
+
 /// `instantiate` must attribute the full proof-node set to every node it
 /// creates, interior nodes included. The multi-node RHS is built with a
 /// two-node proof set carrying distinct addrs; the intermediate IntConst must
@@ -91,11 +118,11 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
     let x = Capture::new();
     let mut fx = make_empty_fn(|b| {
         b.set_lift_addr(Some(PROOF_A));
-        let a = b.build_int_const(5u64, T::I64)?; // proof node A
+        let a = b.build_int_const(5u64, T::int(64))?; // proof node A
         b.set_lift_addr(Some(PROOF_B));
-        let k = b.build_int_const(1u64, T::I64)?; // proof node B
+        let k = b.build_int_const(1u64, T::int(64))?; // proof node B
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
@@ -161,9 +188,9 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     let c = Capture::new();
 
     let mut fx = make_empty_fn(|b| {
-        let five = b.build_int_const(5u64, T::I64)?;
-        let seven = b.build_int_const(7u64, T::I64)?;
-        b.build_int_binary_operation(five, seven, IntBinaryOp::Add, T::I64)
+        let five = b.build_int_const(5u64, T::int(64))?;
+        let seven = b.build_int_const(7u64, T::int(64))?;
+        b.build_int_binary_operation(five, seven, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
@@ -179,6 +206,81 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     assert_eq!(fx.walk().count(), pre_count, "no fresh node created");
 }
 
+/// A capture takes no input, so a raw template may build one after the node
+/// consuming it.
+#[test]
+fn a_capture_built_after_its_consumer_instantiates() {
+    let c = Capture::new();
+    let mut fx = make_empty_fn(|b| {
+        let five = b.build_int_const(5u64, T::int(64))?;
+        let seven = b.build_int_const(7u64, T::int(64))?;
+        b.build_int_binary_operation(five, seven, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap();
+    let lhs = int_add(int_const(5u128), var(c)).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+    let bound = bindings.get_value(c).unwrap();
+
+    let mut b = TemplateBuilder::new();
+    let neg = b.node(NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg));
+    let x = b.capture(c);
+    b.input(neg, 0, x);
+    let _out = b.value_output(neg, 0);
+    let rhs = b.finish();
+
+    let resolved = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
+    let node = fx.producer(resolved);
+    assert!(matches!(fx.node_kind(node), NodeKind::IntUnaryOp(_)));
+    assert_eq!(fx.node_inputs(node)[0], bound);
+}
+
+/// Which type anchors a width group does not depend on whether a capture in it
+/// was built before or after the node consuming it. The group here mixes the
+/// capture's `I64` with a declared `I32`, so the anchor decides the fresh
+/// constant's width.
+#[test]
+fn a_late_built_capture_anchors_its_width_group_as_an_early_one() {
+    let c = Capture::new();
+    let fx = make_empty_fn(|b| {
+        let five = b.build_int_const(5u64, T::int(64))?;
+        let seven = b.build_int_const(7u64, T::int(64))?;
+        b.build_int_binary_operation(five, seven, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap();
+    let lhs = int_add(int_const(5u128), var(c)).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+
+    let build = |capture_first: bool| {
+        let mut b = TemplateBuilder::new();
+        let early = capture_first.then(|| b.capture(c));
+        let k = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+            Ok(UBig::ONE)
+        })));
+        b.set_value_ty(k, T::int(32));
+        let add = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        let x = early.unwrap_or_else(|| b.capture(c));
+        b.input(add, 0, x);
+        b.input(add, 1, k);
+        let sum = b.value_output(add, 0);
+        let ext = b.node(NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend));
+        b.input(ext, 0, sum);
+        b.value_output(ext, 0);
+        b.finish()
+    };
+    let outcome = |rhs: &Template| {
+        let mut fx = fx.clone();
+        let mut ef = EditFunction::new(&mut fx);
+        match instantiate(rhs, &mut ef, &bindings, root_node, &[root_node], root_ty) {
+            Ok(v) => {
+                let sum = fx.node_inputs(fx.producer(v))[0];
+                Ok(fx.value_kind(sum).as_value())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    };
+    assert_eq!(outcome(&build(false)), outcome(&build(true)));
+}
+
 /// A `Template` may wire a multi-output interior node's non-value output into a
 /// later consumer. Here the `Store`'s memory output feeds the `Load`'s memory
 /// input slot while the `Load` root yields the value, exercising
@@ -191,27 +293,22 @@ fn template_wires_multi_output_interior_memory_node() {
     // needs the raw builder.
     let mut b = TemplateBuilder::new();
 
-    let mem0_node = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let mem0_node = b.node(NodeKind::InitialMemory);
     let mem0 = b.memory_output(mem0_node, 0);
 
     // FnIntConst interns real values into the target function at instantiation.
-    // A raw `Exact(IntConst(ConstId::from_u32(..)))` leaf would stamp a dangling
-    // ConstId into the fixture, passing only because this test never validates.
-    let addr = b.leaf(KindSpec::Any);
-    b.set_template_kind(
-        addr,
-        template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))),
-    );
-    b.set_value_ty(addr, T::I64);
-    let data = b.leaf(KindSpec::Any);
-    b.set_template_kind(
-        data,
-        template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))),
-    );
-    b.set_value_ty(data, T::I64);
+    // A raw `IntConst` leaf is refused: its IntConstId is another function's.
+    let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(0x100u32))
+    })));
+    b.set_value_ty(addr, T::int(64));
+    let data = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(42u8))
+    })));
+    b.set_value_ty(data, T::int(64));
 
     // Store inputs are [mem, addr, data]; its lone output is the memory token.
-    let store = b.node(KindSpec::Exact(NodeKind::Store(space)));
+    let store = b.node(NodeKind::Store(space));
     b.input(store, 0, mem0);
     b.input(store, 1, addr);
     b.input(store, 2, data);
@@ -219,7 +316,7 @@ fn template_wires_multi_output_interior_memory_node() {
 
     // Load inputs are [mem, addr]. It consumes the Store's memory output, which
     // is what proves the slot wiring.
-    let load = b.node(KindSpec::Exact(NodeKind::Load(space)));
+    let load = b.node(NodeKind::Load(space));
     b.input(load, 0, store_mem);
     b.input(load, 1, addr);
     let _load_out = b.value_output(load, 0);
@@ -227,13 +324,13 @@ fn template_wires_multi_output_interior_memory_node() {
     let tpl = b.finish();
 
     // The template is pure-`Exact`, so bindings / lhs_root are unused.
-    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
 
     let root_value = {
         let mut ef = EditFunction::new(&mut fx);
-        instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64).unwrap()
+        instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64)).unwrap()
     };
 
     let load_node = fx.producer(root_value);
@@ -276,11 +373,11 @@ fn template_wires_multi_output_interior_memory_node() {
 fn int_const_template_rhs_preserves_the_full_i128_value() {
     // High 64 bits non-zero in both, so a truncation to u64 is visible.
     for value in [1u128 << 100, u128::MAX] {
-        let mut fx = make_empty_fn(|b| b.build_int_const(value, T::I128)).unwrap();
+        let mut fx = make_empty_fn(|b| b.build_int_const(value, T::int(128))).unwrap();
 
         let lhs = int_const(value).into_pattern();
         let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-        assert_eq!(root_ty, T::I128);
+        assert_eq!(root_ty, T::int(128));
 
         let rhs = int_const(value).into_template();
         let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
@@ -303,11 +400,11 @@ fn int_const_any_width_negative_i128_template_rhs() {
     let v: i64 = -50;
     let expected: u128 = i128::from(v) as u128;
 
-    let mut fx = make_empty_fn(|b| b.build_int_const(expected, T::I128)).unwrap();
+    let mut fx = make_empty_fn(|b| b.build_int_const(expected, T::int(128))).unwrap();
 
     let lhs = int_const(expected).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-    assert_eq!(root_ty, T::I128);
+    assert_eq!(root_ty, T::int(128));
 
     let rhs = int_const_any_width(v).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
@@ -326,20 +423,24 @@ fn int_const_any_width_negative_i128_template_rhs() {
 /// the resulting error's message.
 fn instantiate_add_with_rhs_slot_err(r_slot: usize) -> String {
     let mut b = TemplateBuilder::new();
-    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
-    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(7))));
-    let add_node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+    let l = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(5u8))
+    })));
+    let r = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(7u8))
+    })));
+    let add_node = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
     b.input(add_node, 0, l);
     b.input(add_node, r_slot, r);
     let _out = b.value_output(add_node, 0);
     let tpl = b.finish();
 
-    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
 
     let mut ef = EditFunction::new(&mut fx);
-    instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
+    instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64))
         .expect_err("a malformed slot layout must error")
         .to_string()
 }
@@ -351,7 +452,7 @@ fn instantiate_add_with_rhs_slot_err(r_slot: usize) -> String {
 fn instantiate_noncontiguous_raw_template_slots_errors() {
     let msg = instantiate_add_with_rhs_slot_err(2);
     assert!(
-        msg.contains("slot"),
+        msg.contains("non-contiguous input slots [0, 2]"),
         "error should name the slot-contiguity violation; got: {msg}"
     );
 }
@@ -367,12 +468,30 @@ fn instantiate_duplicate_raw_template_slot_errors() {
     );
 }
 
+/// A `IntConstId` indexes one function's interner, so an `IntConst` carried in
+/// from a `NodeKind` names whatever that id is in the rewritten function.
+#[test]
+fn a_raw_int_const_leaf_is_refused() {
+    let mut b = TemplateBuilder::new();
+    let _ = b.leaf(NodeKind::IntConst(IntConstId::from_u32(5)));
+    let tpl = b.finish();
+
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
+    let lhs_root = fx.walk().next().unwrap();
+    let bindings = Bindings::default();
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64))
+        .expect_err("a raw IntConst leaf must be refused")
+        .to_string();
+    assert!(err.contains("IntConstId"), "{err}");
+}
+
 /// A template that references a capture the LHS never bound must fail
 /// `instantiate` with a typed error (not a panic) naming the unbound
 /// capture contract.
 #[test]
 fn instantiate_with_unbound_template_capture_errors() {
-    let mut fx = make_empty_fn(|b| b.build_int_const(5u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|b| b.build_int_const(5u64, T::int(64))).unwrap();
 
     // LHS binds nothing.
     let lhs = int_const(5u128).into_pattern();
@@ -391,6 +510,25 @@ fn instantiate_with_unbound_template_capture_errors() {
     );
 }
 
+/// Captures are reported in written order, so of several unbound the first
+/// written is the one named.
+#[test]
+fn captures_are_reported_in_written_order() {
+    let mut fx = make_empty_fn(|b| b.build_int_const(5u64, T::int(64))).unwrap();
+    let lhs = int_const(5u128).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+
+    let (a, b) = (Capture::new(), Capture::new());
+    let rhs = template::int_add(var(a), var(b)).into_template();
+    assert_eq!(rhs.referenced_captures().collect::<Vec<_>>(), vec![a, b]);
+
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
+        .expect_err("unbound template capture must error")
+        .to_string();
+    assert!(err.contains(&format!("{a:?}")), "{err}");
+}
+
 /// A capture read inside a `*_const_with!` closure has no template vertex, but
 /// the construction-time coverage check runs off `referenced_captures`, so the
 /// closure must declare it or an LHS that never binds it hard-errors mid-run.
@@ -405,95 +543,81 @@ fn const_with_closure_captures_are_reported_as_referenced() {
         "a capture vertex is reported"
     );
 
-    let closure_rhs = strider_pattern::int_const_with!([k: uint] => k + 1).into_template();
+    let closure_rhs = strider_pattern::int_const_with!([k: uint] => k + UBig::ONE).into_template();
     assert_eq!(
         closure_rhs.referenced_captures().collect::<Vec<_>>(),
         vec![k],
         "a capture read only inside the closure is reported too"
     );
 
-    let bool_rhs = strider_pattern::bool_const_with!([k: uint] => k == 0).into_template();
+    let bool_rhs = strider_pattern::bool_const_with!([k: uint] => k == UBig::ZERO).into_template();
     assert_eq!(bool_rhs.referenced_captures().collect::<Vec<_>>(), vec![k]);
 
-    let float_rhs = strider_pattern::float_const_with!([k: uint] => k as u64).into_template();
+    let float_rhs = strider_pattern::float_const_with!([k: uint] => u64::try_from(&k).unwrap_or(0))
+        .into_template();
     assert_eq!(float_rhs.referenced_captures().collect::<Vec<_>>(), vec![k]);
 
     // The graph-derived idents are not captures.
     let derived =
-        strider_pattern::int_const_with!([ty] => u128::from(ty.bit_width() as u64)).into_template();
+        strider_pattern::int_const_with!([ty] => UBig::from(ty.bit_width())).into_template();
     assert_eq!(derived.referenced_captures().count(), 0);
 }
 
 /// A template `FloatConst` carries raw IEEE bits with no width attached; the
-/// width arrives only when the node is materialised. Bits above it must be
-/// dropped there, or the rewrite plants a node the validator rejects and the
-/// dedup table sees as distinct from the same constant built normally.
-#[test]
-fn float_const_template_masks_bits_above_the_resolved_width() {
+/// width arrives only when the node is materialised. Bits above it are a
+/// different constant (an f64's bits at F32 would read as another value), so
+/// the instantiation is refused rather than masked.
+#[track_caller]
+fn instantiate_f32_err(rhs: &Template) -> String {
     let masked = u64::from(f32::to_bits(1.5));
-    let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
-
-    let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::F32))).unwrap();
+    let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::float(32)))).unwrap();
     let lhs = strider_pattern::float_const(masked).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-    assert_eq!(root_ty, T::F32);
+    assert_eq!(root_ty, T::float(32));
+    let mut ef = EditFunction::new(&mut fx);
+    instantiate(rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
+        .expect_err("bits above F32 are refused")
+        .to_string()
+}
 
-    let rhs = strider_pattern::float_const(unmasked).into_template();
-    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
-
-    let kind = *fx.node_kind(fx.producer(new_value));
-    assert_eq!(
-        kind,
-        NodeKind::FloatConst(masked),
-        "an F32 template constant must drop bits 63:32; got {kind:?}"
-    );
-    strider_ir::validate::validate(&fx).expect("the rewritten function must validate");
+#[test]
+fn float_const_template_refuses_bits_above_the_resolved_width() {
+    let rhs = strider_pattern::float_const(f64::to_bits(1.0)).into_template();
+    let err = instantiate_f32_err(&rhs);
+    assert!(err.contains("f32"), "{err}");
 }
 
 /// The same for a constant computed at rewrite time.
 #[test]
-fn float_const_with_fn_masks_bits_above_the_resolved_width() {
-    let masked = u64::from(f32::to_bits(1.5));
-    let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
-
-    let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::F32))).unwrap();
-    let lhs = strider_pattern::float_const(masked).into_pattern();
-    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-
+fn float_const_with_fn_refuses_bits_above_the_resolved_width() {
+    let unmasked = 0xDEAD_BEEF_0000_0000u64 | u64::from(f32::to_bits(1.5));
     let rhs = strider_pattern::float_const_with_fn(move |_| Ok(unmasked)).into_template();
-    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
-
-    let kind = *fx.node_kind(fx.producer(new_value));
-    assert_eq!(
-        kind,
-        NodeKind::FloatConst(masked),
-        "an F32 rewrite-time constant must drop bits 63:32; got {kind:?}"
-    );
-    strider_ir::validate::validate(&fx).expect("the rewritten function must validate");
+    let err = instantiate_f32_err(&rhs);
+    assert!(err.contains("f32"), "{err}");
 }
 
-/// The unmasked constant is not merely a dedup miss. Spliced in where a real
-/// rewrite puts it, it is IR the validator rejects, which no value a user can
-/// write through the public `float_const` may become.
+/// Bits that fit the width are the constant itself, spliced in as valid IR.
 #[test]
-fn float_const_template_result_is_valid_ir_once_spliced_in() {
-    let masked = u64::from(f32::to_bits(1.5));
-    let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
+fn float_const_template_at_its_own_width_is_valid_ir_once_spliced_in() {
+    let one = u64::from(f32::to_bits(1.5));
+    let two = u64::from(f32::to_bits(2.0));
 
     let mut t = strider_ir_test_utils::Tb::empty();
-    let c = t.float_bits(masked, T::F32);
+    let c = t.float_bits(one, T::float(32));
     let mut fx = t.ret_val(c);
 
-    let lhs = strider_pattern::float_const(masked).into_pattern();
+    let lhs = strider_pattern::float_const(one).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
-    let rhs = strider_pattern::float_const(unmasked).into_template();
+    let rhs = strider_pattern::float_const(two).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
+    assert_eq!(
+        *fx.node_kind(fx.producer(new_value)),
+        NodeKind::FloatConst(two)
+    );
 
     let [old_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
-    EditFunction::new(&mut fx)
-        .replace_all_uses(old_value, new_value)
-        .unwrap();
+    EditFunction::new(&mut fx).replace_value(old_value, new_value);
 
     strider_ir::validate::validate(&fx).expect("a rewritten function must be valid IR");
 }
@@ -501,17 +625,16 @@ fn float_const_template_result_is_valid_ir_once_spliced_in() {
 /// A `Store` template that declares a VALUE output where the node signature
 /// requires `[Memory]` is rejected at instantiation.
 ///
-/// `output_kinds_for` takes the author's declaration and defaults a node with
-/// no explicit output vertex to one value output of the root's type, so
-/// without this check the malformed node reaches the graph.
+/// `output_kinds_for` takes the author's declaration as it stands, so without
+/// this check the malformed node reaches the graph.
 #[test]
 fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
     let x = Capture::new();
 
     let mut fx = make_empty_fn(|b| {
-        let a = b.build_int_const(5u64, T::I64)?;
-        let k = b.build_int_const(1u64, T::I64)?;
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
@@ -521,7 +644,7 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
     // A `Store` declaring a value output at slot 0, where its signature
     // admits only the memory token.
     let mut tb = TemplateBuilder::default();
-    let store = tb.node(KindSpec::Exact(NodeKind::Store(rsleigh::VnSpace::RAM)));
+    let store = tb.node(NodeKind::Store(rsleigh::VnSpace::RAM));
     let _ = tb.value_output(store, 0);
     let rhs = tb.finish();
 
@@ -533,6 +656,7 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
         msg.contains("output slot 0") && msg.contains("Memory"),
         "the error must name the slot and the kind the signature expects, got: {msg}"
     );
+    assert!(msg.contains("declares i64 at"), "typed as `i64`: {msg}");
 }
 
 /// A float-typed root has no integer literal to intern, so an `int_const` RHS
@@ -542,12 +666,12 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
 fn int_const_template_rhs_on_a_float_root_skips() {
     let rhs = int_const_any_width(1).into_template();
 
-    let mut fx = make_empty_fn(|b| b.build_int_const(0u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|b| b.build_int_const(0u64, T::int(64))).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
     let mut ef = EditFunction::new(&mut fx);
 
-    for float_ty in [T::F32, T::F64] {
+    for float_ty in [T::float(32), T::float(64)] {
         let err = instantiate(&rhs, &mut ef, &bindings, lhs_root, &[lhs_root], float_ty)
             .expect_err("an integer literal on a float root must not be interned");
         assert!(is_skip(&err), "must decline the rewrite, got: {err}");
@@ -561,28 +685,24 @@ fn int_const_template_rhs_on_a_float_root_skips() {
 #[test]
 fn a_gapped_template_output_slot_is_refused() {
     let mut b = TemplateBuilder::new();
-    let mem = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let mem = b.node(NodeKind::InitialMemory);
     let _slot_1_only = b.memory_output(mem, 1);
     let tpl = b.finish();
 
-    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
     let mut ef = EditFunction::new(&mut fx);
-    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
+    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64))
         .expect_err("a gapped output slot must be refused");
     assert!(
-        err.to_string().contains("non-contiguous output slots"),
+        err.to_string().contains("non-contiguous output slots [1]"),
         "{err}"
     );
 }
 
-/// A build-side capture replaces what it wraps, so only a leaf may carry one.
-/// The composite form is compile-fail:
-///
-///     template::int_add(var(a), var(b)).capture(c).into_template();
-///     // error[E0599]: no method named `into_template` found for struct
-///     //              `Captured<IntBinaryFixed<Var, Var>>`
+/// A build-side capture replaces what it wraps, so only a leaf may carry one;
+/// the composite form fails to compile (the `TemplatePat` doctest).
 #[test]
 fn leaf_capture_is_the_binding_it_names() {
     let (a, c) = (Capture::new(), Capture::new());
@@ -598,9 +718,9 @@ fn leaf_capture_is_the_binding_it_names() {
 fn instantiate_refuses_an_ill_typed_operand() {
     let x = Capture::new();
     let build = |b: &mut strider_ir::FunctionBuilder| {
-        let a = b.build_int_const(5u64, T::I64)?;
-        let k = b.build_int_const(1u64, T::I64)?;
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
     };
     let lhs = int_add(var(x), int_const(1u128)).into_pattern();
 
@@ -613,7 +733,7 @@ fn instantiate_refuses_an_ill_typed_operand() {
         (
             template::float_bits_to_int(var(x)).into_template(),
             "FloatBitsToInt",
-            "input slot 0",
+            "takes i64 at input slot 0",
         ),
     ] {
         let mut fx = make_empty_fn(build).unwrap();
@@ -625,4 +745,182 @@ fn instantiate_refuses_an_ill_typed_operand() {
         assert!(err.contains(kind), "got: {err}");
         assert!(err.contains(detail), "got: {err}");
     }
+}
+
+/// `Load(Store(..))` over a fresh `InitialMemory`, the Store's inputs wired by
+/// `wire` from `[mem, addr]`. No other vertex is built: an unconsumed one is
+/// a second sink, which `instantiate` refuses for its own reason.
+fn store_then_load(
+    wire: impl FnOnce(&mut TemplateBuilder, template::TmplNodeRef, [template::TmplValueRef; 2]),
+) -> Template {
+    let space = rsleigh::VnSpace::RAM;
+    let mut b = TemplateBuilder::new();
+    let mem_node = b.node(NodeKind::InitialMemory);
+    let mem = b.memory_output(mem_node, 0);
+    let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(0x100u32))
+    })));
+    b.set_value_ty(addr, T::int(64));
+    let store = b.node(NodeKind::Store(space));
+    wire(&mut b, store, [mem, addr]);
+    let store_mem = b.memory_output(store, 0);
+    let load = b.node(NodeKind::Load(space));
+    b.input(load, 0, store_mem);
+    b.input(load, 1, addr);
+    let _value = b.value_output(load, 0);
+    b.finish()
+}
+
+/// A `Load` reading the memory token where its address goes.
+fn load_with_memory_as_address() -> Template {
+    let space = rsleigh::VnSpace::RAM;
+    let mut b = TemplateBuilder::new();
+    let mem_node = b.node(NodeKind::InitialMemory);
+    let mem = b.memory_output(mem_node, 0);
+    let load = b.node(NodeKind::Load(space));
+    b.input(load, 0, mem);
+    b.input(load, 1, mem);
+    let _value = b.value_output(load, 0);
+    b.finish()
+}
+
+/// A `Phi` with no inputs, not even its region's phi token.
+fn phi_without_inputs() -> Template {
+    let mut b = TemplateBuilder::new();
+    let phi = b.node(NodeKind::Phi);
+    let value = b.value_output(phi, 0);
+    b.set_value_ty(value, T::int(64));
+    b.finish()
+}
+
+/// A `Call` declaring its memory output at slot 0. No template verb declares
+/// a control output, so no `Call` template gets past its outputs.
+fn call_without_control_output() -> Template {
+    let mut b = TemplateBuilder::new();
+    let call = b.node(NodeKind::Call { cc: None });
+    let _mem = b.memory_output(call, 0);
+    b.finish()
+}
+
+/// A raw node is held to its node signature like every other kind: a memory
+/// token where data or an address goes, a missing operand, or a missing
+/// control output is refused before it reaches the graph.
+#[test]
+fn a_raw_node_off_its_signature_is_refused() {
+    let memory_as_data = store_then_load(|b, store, [mem, addr]| {
+        b.input(store, 0, mem);
+        b.input(store, 1, addr);
+        b.input(store, 2, mem);
+    });
+    let two_inputs = store_then_load(|b, store, [mem, addr]| {
+        b.input(store, 0, mem);
+        b.input(store, 1, addr);
+    });
+    for (label, tpl, kind, detail) in [
+        ("memory as data", memory_as_data, "Store", "input slot 2"),
+        (
+            "two inputs",
+            two_inputs,
+            "Store",
+            "has 2 inputs, where its node signature admits 3",
+        ),
+        (
+            "no inputs",
+            phi_without_inputs(),
+            "Phi",
+            "has 0 inputs, where its node signature admits at least 1",
+        ),
+        (
+            "no control output",
+            call_without_control_output(),
+            "Call",
+            "output slot 0",
+        ),
+        (
+            "memory as address",
+            load_with_memory_as_address(),
+            "Load",
+            "input slot 1",
+        ),
+    ] {
+        let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
+        let lhs_root = fx.walk().next().unwrap();
+        let mut ef = EditFunction::new(&mut fx);
+        let err = instantiate(
+            &tpl,
+            &mut ef,
+            &Bindings::default(),
+            lhs_root,
+            &[lhs_root],
+            T::int(64),
+        )
+        .expect_err(label)
+        .to_string();
+        assert!(err.contains(kind), "{label}: {err}");
+        assert!(err.contains(detail), "{label}: {err}");
+    }
+}
+
+/// A `Fn` closure's `IntConst` is refused as an `Exact` one is: its `IntConstId`
+/// was interned at another width, or by another function.
+#[test]
+fn a_fn_leaf_returning_an_int_const_is_refused() {
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0x1_0000_0001u64, T::int(64))).unwrap();
+    let lhs_root = fx
+        .walk()
+        .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(_)))
+        .unwrap();
+    let mut b = TemplateBuilder::new();
+    let leaf = b.dynamic_leaf(template::TemplateKind::Fn(Box::new(|ctx| {
+        Ok(*ctx.function.node_kind(ctx.root))
+    })));
+    b.set_value_ty(leaf, T::int(32));
+    let tpl = b.finish();
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(
+        &tpl,
+        &mut ef,
+        &Bindings::default(),
+        lhs_root,
+        &[lhs_root],
+        T::int(32),
+    )
+    .expect_err("an IntConst from a Fn leaf");
+    assert!(err.to_string().contains("IntConst"), "{err}");
+}
+
+/// A template rooted on a node with no value output is refused before any
+/// node is built.
+#[test]
+fn a_valueless_root_is_refused_before_building() {
+    let space = rsleigh::VnSpace::RAM;
+    let mut b = TemplateBuilder::new();
+    let mem_node = b.node(NodeKind::InitialMemory);
+    let mem = b.memory_output(mem_node, 0);
+    let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(0x100u32))
+    })));
+    b.set_value_ty(addr, T::int(64));
+    let store = b.node(NodeKind::Store(space));
+    b.input(store, 0, mem);
+    b.input(store, 1, addr);
+    b.input(store, 2, addr);
+    let _mem = b.memory_output(store, 0);
+    let tpl = b.finish();
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
+    let lhs_root = fx.walk().next().unwrap();
+    let before = fx.graph().all_node_ids().count();
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(
+        &tpl,
+        &mut ef,
+        &Bindings::default(),
+        lhs_root,
+        &[lhs_root],
+        T::int(64),
+    )
+    .expect_err("a Store root has no value to stand for the LHS");
+    assert!(err.to_string().contains("no value output"), "{err}");
+    drop(ef);
+    assert_eq!(fx.graph().all_node_ids().count(), before);
 }

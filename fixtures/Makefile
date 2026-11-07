@@ -19,9 +19,7 @@
 # to a skip, for building the one arch you have a toolchain for.
 
 OUTDIR := out
-ARCHES := x86 x86_kernel x64 aarch64 aarch64be arm arm_be arm_be8 arm_thumb \
-          mips32le mips32be mips64le mips64be \
-          ppc32be ppc32le ppc64be ppc64le
+ARCHES := $(sort $(basename $(notdir $(wildcard arch/*.mk))))
 CASES  := $(notdir $(basename $(wildcard cases/*.c) $(wildcard cases/*.S)))
 
 # Common warning-flag set: every fixture must compile clean.
@@ -49,13 +47,20 @@ SELECTED_CASES := $(CASES)
 endif
 
 TARGETS    := $(addprefix $(OUTDIR)/$(ARCH)/,$(addsuffix .elf,$(SELECTED_CASES)))
-# Every C case also gets compiled to an unlinked ET_REL object file at
-# `out/<arch>/<case>.o`.  Used by reader tests that need a .o for the
-# section-walking loader path (ET_REL has no PT_LOAD program headers).
-# Hand-written `.S` cases are excluded because they're already small
-# freestanding things; only `cases/*.c` get the .o twin.
-C_CASES    := $(notdir $(basename $(wildcard cases/*.c)))
-OBJ_CASES  := $(filter $(C_CASES),$(SELECTED_CASES))
+# The committed unlinked ET_REL twins, `out/<arch>/<case>.o`, for the tests
+# of the section-walking loader path (ET_REL has no PT_LOAD program headers).
+# `read_digest` pins every image on disk, so only these are built; a test
+# needing a new twin adds its case here and commits the `.o`.
+OBJ_TWINS  := switch_phi_index
+ifneq ($(filter $(ARCH),aarch64 arm mips64le ppc64le x64 x86),)
+OBJ_TWINS  += elf_relocs globals switch tzcount
+else ifneq ($(ARCH),arm_be8)
+OBJ_TWINS  += switch_masked_loop
+endif
+ifeq ($(ARCH),x64)
+OBJ_TWINS  += memory
+endif
+OBJ_CASES  := $(filter $(OBJ_TWINS),$(SELECTED_CASES))
 OBJ_TARGETS := $(addprefix $(OUTDIR)/$(ARCH)/,$(addsuffix .o,$(OBJ_CASES)))
 
 all: $(TARGETS) $(OBJ_TARGETS)
@@ -70,6 +75,12 @@ $(OUTDIR)/$(ARCH):
 # `-shared` (`-no-pie`, `-fno-pic`).  Used by reader::elf::
 # apply_elf_relocations tests; see cases/elf_relocs.c.
 SHARED_CASES := elf_relocs
+
+# Cases built at -O0 whatever the arch's level, because the shape under test
+# is one only an unoptimised build leaves (a stack-resident index); see each
+# case's header.  The trailing -O0 wins over the arch's own -O.
+O0_CASES := switch_phi_index
+CASE_CFLAGS = $(if $(filter $(basename $(notdir $@)),$(O0_CASES)),-O0)
 
 # CFLAGS_BASE: drop `-no-pie` / `-fno-pic` from the arch's CFLAGS for
 # the SHARED_CASES rule, since `-shared` requires PIC.  Other arch
@@ -111,7 +122,7 @@ $(OUTDIR)/$(ARCH)/%.elf: cases/%.c | $(OUTDIR)/$(ARCH)
 	elif echo "$(SHARED_CASES)" | tr ' ' '\n' | grep -qx "$(basename $(notdir $@))"; then \
 		$(CC) $(CFLAGS_BASE) $(COMMON_CFLAGS) -shared -fPIC -nostdlib $< -o $@ && echo "  Built $@ (shared)"; \
 	else \
-		$(CC) $(CFLAGS) $(COMMON_CFLAGS) $< -o $@ && echo "  Built $@"; \
+		$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(CASE_CFLAGS) $< -o $@ && echo "  Built $@"; \
 	fi
 
 # Unlinked object files (`out/<arch>/<case>.o`) for the same `.c`
@@ -125,7 +136,7 @@ $(OUTDIR)/$(ARCH)/%.o: cases/%.c | $(OUTDIR)/$(ARCH)
 	@if [ "$(CC)" = "false" ]; then \
 		$(NO_CC); \
 	else \
-		$(CC) $(CFLAGS_OBJ) $(COMMON_CFLAGS) -c $< -o $@ && echo "  Built $@ (object)"; \
+		$(CC) $(CFLAGS_OBJ) $(COMMON_CFLAGS) $(CASE_CFLAGS) -c $< -o $@ && echo "  Built $@ (object)"; \
 	fi
 
 # Hand-written assembly cases (`cases/*.S`).  An `.S` source is built
@@ -135,11 +146,14 @@ $(OUTDIR)/$(ARCH)/%.o: cases/%.c | $(OUTDIR)/$(ARCH)
 # specific (instructions only assemble for one ISA); for non-matching
 # arches the assembler errors out, the build fails for that single
 # case, and tests skip cleanly because the fixture won't exist.
+# `-fdebug-prefix-map` is what reaches the assembler's line info, which
+# `-ffile-prefix-map` does not.
 $(OUTDIR)/$(ARCH)/%.elf: cases/%.S | $(OUTDIR)/$(ARCH)
 	@if [ "$(CC)" = "false" ]; then \
 		$(NO_CC); \
 	else \
-		$(CC) $(CFLAGS) -nostdlib -static $< -o $@ && echo "  Built $@ (asm)" \
+		$(CC) $(CFLAGS) -fdebug-prefix-map=$(CURDIR)=/strider/fixtures \
+			-nostdlib -static $< -o $@ && echo "  Built $@ (asm)" \
 			|| echo "  Skipped $@ (asm doesn't build for $(ARCH))"; \
 	fi
 

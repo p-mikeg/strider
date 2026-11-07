@@ -6,11 +6,10 @@
 // recognisable IR shape so post-resolution pattern queries can pin
 // each arm independently.
 //
-// At -O2, gcc lowers this to a real `.rodata` jump table on x86 (and
-// the analogous shape on the other supported arches).  The explicit
-// `kind & 0x7` mask gives `KnownBits` a direct upper-bound proof so
-// the orchestrator's classifier resolves the table on the rodata-load
-// arm without having to walk the predecessor `If`.
+// At -O2 this is a `.rodata` jump table on most arches (aarch64 emits a
+// compare chain). The `kind & 0x7` mask bounds the index through
+// `KnownBits`, with no walk of the guarding `If`. mips64 loads the table
+// base from an unrelocated GOT slot and does not resolve.
 
 struct dispatch_value_arg {
     int a;

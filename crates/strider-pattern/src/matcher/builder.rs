@@ -1,162 +1,66 @@
-//! [`strider_graph::Graph`] creates a node with all its outputs and resolves
-//! its inputs at creation time, while the builder API is incremental: a bare
-//! `node()` comes first, outputs are added later, and inputs are wired once
-//! producers are compiled. So both builders stage into a [`StagedGraph`] and
-//! materialise the whole DAG at [`finish`](MatcherBuilder::finish) in
-//! producer-before-consumer order. Each input's sparse consumer slot is
-//! recorded on the materialised [`PatNode`]'s `input_slots` via [`SealNode`].
-
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
-use crate::staging::{SealNode, StagedGraph};
+use crate::build_graph::BuildGraph;
+use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern, Role, SlotMode};
+use strider_graph::{NodeId, ValueId};
 
-/// Names a staged node's output by position.
-#[derive(Clone, Copy)]
-pub struct PatValueRef {
-    node: usize,
-    output: usize,
-}
-
-/// Names a staged node by position.
-#[derive(Clone, Copy)]
-pub struct PatNodeRef(pub(crate) usize);
-
-// The match side seals into the same `PatNode` type it stages.
-impl SealNode for PatNode {
-    type Sealed = PatNode;
-    fn seal(mut self, input_slots: Vec<usize>) -> PatNode {
-        self.input_slots = input_slots;
-        self
-    }
-}
-
-/// The match root is derived structurally, so the seal takes no root handle.
-/// Returned [`PatValueRef`] / [`PatNodeRef`] handles are scoped to the builder
-/// that produced them.
-pub struct MatcherBuilder {
-    core: StagedGraph<PatNode, PatValue>,
-    /// Spellings the engine cannot honour, surfaced at query time through
-    /// [`Pattern::root`]. A pattern is untrusted input, so refusing one is a
-    /// `Result`, never a panic.
-    refusals: Vec<String>,
-    /// Nesting levels currently being lowered; see [`Self::enter_nesting`].
-    nesting: usize,
-    /// Frame address of the outermost live nesting level, the zero the stack
-    /// consumption in [`Self::enter_nesting`] is measured against.
-    stack_base: usize,
-    /// Nodes of the sealed patterns a binding walk matches inside this one,
-    /// which the matcher recurses through on the same stack.
-    nested_nodes: usize,
-}
-
-/// Stack one lowering may consume before [`MatcherBuilder::enter_nesting`]
-/// bails. A level count alone does not bound stack: a level costs one frame per
-/// builder and decorator it passes through, and an unoptimised frame is several
-/// times an optimised one.
+/// A pattern node's output. Meaningful only in the builder that produced it;
+/// an IR value is not one:
 ///
-/// The fattest shape measured, an unoptimised alternation of a decorated call,
-/// reaches [`MAX_PATTERN_NODES`](crate::matcher::graph::MAX_PATTERN_NODES)
-/// levels inside 0.75 MiB, so the level cap stays the bound a normal pattern
-/// trips on; this catches a fatter one before the 2 MiB a spawned thread gets
-/// by default runs out.
-const MAX_PATTERN_STACK: usize = 1024 * 1024;
+/// ```compile_fail,E0308
+/// use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+/// let mut b = MatcherBuilder::new();
+/// let n = b.node(KindSpec::Any);
+/// b.input(n, 0, strider_ir::node::ValueId::from_u32(0));
+/// ```
+#[derive(Clone, Copy)]
+pub struct PatValueRef(ValueId);
 
-/// Address of a local in the calling frame. The stack grows DOWN on every
-/// target this ships to, so a deeper frame reads lower; `saturating_sub` is
-/// what makes the other direction read as no consumption rather than as a huge
-/// one.
-#[inline(never)]
-fn frame_mark() -> usize {
-    let probe = 0u8;
-    std::hint::black_box(std::ptr::from_ref(&probe)) as usize
-}
+/// A pattern node. Meaningful only in the builder that produced it; an IR
+/// node is not one:
+///
+/// ```compile_fail,E0308
+/// use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+/// let mut b = MatcherBuilder::new();
+/// let x = b.leaf(KindSpec::Any);
+/// b.input(strider_ir::node::NodeId::from_u32(1000), 0, x);
+/// ```
+#[derive(Clone, Copy)]
+pub struct PatNodeRef(NodeId);
 
-impl Default for MatcherBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Low-level pattern-graph builder. The root is derived at [`Self::finish`]; an input must come
+/// from a node built before its consumer, or the wiring is refused.
+#[derive(Default)]
+pub struct MatcherBuilder {
+    pub(crate) core: BuildGraph<PatNode, PatValue>,
 }
 
 impl MatcherBuilder {
     pub fn new() -> Self {
-        Self {
-            core: StagedGraph::new(),
-            refusals: Vec::new(),
-            nesting: 0,
-            stack_base: 0,
-            nested_nodes: 0,
-        }
+        Self::default()
     }
 
-    /// Opens one level of nested lowering, refusing past `MAX_PATTERN_NODES`.
-    /// Lowering recurses once per level before any node exists to count, so the
-    /// cap at seal comes too late to keep the recursion off the stack; a level
-    /// past it is over the node cap anyway. `false` means the caller must not
-    /// descend.
-    pub(crate) fn enter_nesting(&mut self) -> bool {
-        let here = frame_mark();
-        if self.nesting >= crate::matcher::graph::MAX_PATTERN_NODES {
-            self.reject(format!(
-                "pattern nests more than {} levels deep, over what lowering can \
-                 recurse through",
-                crate::matcher::graph::MAX_PATTERN_NODES
-            ));
-            return false;
-        }
-        if self.nesting == 0 {
-            self.stack_base = here;
-        } else {
-            let used = self.stack_base.saturating_sub(here);
-            if used > MAX_PATTERN_STACK {
-                self.reject(format!(
-                    "pattern nests too deep for this thread's stack ({} KiB used of a \
-                     {} KiB lowering budget at {} levels); nest less, or lower it on a \
-                     thread with a larger stack",
-                    used / 1024,
-                    MAX_PATTERN_STACK / 1024,
-                    self.nesting,
-                ));
-                return false;
-            }
-        }
-        self.nesting += 1;
-        true
+    /// Records `why` and lowers a wildcard in place of what was refused.
+    pub(crate) fn refuse(&mut self, why: &str) -> PatValueRef {
+        self.reject(why.to_string());
+        self.leaf(KindSpec::Any)
     }
 
-    /// Counts `nodes` matched by a binding walk against the seal's node cap.
-    pub(crate) fn add_nested_nodes(&mut self, nodes: usize) {
-        self.nested_nodes = self.nested_nodes.saturating_add(nodes);
-    }
-
-    pub(crate) fn leave_nesting(&mut self) {
-        self.nesting -= 1;
-    }
-
-    /// Records a build-time refusal; every query on the sealed pattern then
-    /// fails with `why`.
+    /// Records a build-time refusal; queries on the sealed pattern fail with the first recorded.
     pub fn reject(&mut self, why: String) {
-        self.refusals.push(why);
+        self.core.reject(why);
     }
 
     /// One value output at slot `0`, no inputs.
     pub fn leaf(&mut self, kind: KindSpec) -> PatValueRef {
-        let n = self.stage(PatNode::from_kind(kind));
+        let n = self.add_node(PatNode::from_kind(kind));
         self.value_output(n, 0)
     }
 
-    /// Consumes `inner` at slot `0`, one value output at slot `0`.
-    pub fn unary(&mut self, kind: KindSpec, inner: PatValueRef) -> PatValueRef {
-        let n = self.stage(PatNode::from_kind(kind));
-        self.input(n, 0, inner);
-        self.value_output(n, 0)
-    }
-
-    /// Consumes `l` at slot `0` and `r` at slot `1`, one value output at
-    /// slot `0`.
+    /// Consumes `l` at slot `0` and `r` at slot `1`, one value output at slot `0`.
     pub fn binary(&mut self, op: IntBinaryOp, l: PatValueRef, r: PatValueRef) -> PatValueRef {
-        let n = self.stage(PatNode::exact(NodeKind::IntBinaryOp(op)));
+        let n = self.add_node(PatNode::exact(NodeKind::IntBinaryOp(op)));
         self.input(n, 0, l);
         self.input(n, 1, r);
         self.value_output(n, 0)
@@ -164,37 +68,25 @@ impl MatcherBuilder {
 
     /// No inputs or outputs yet.
     pub fn node(&mut self, kind: KindSpec) -> PatNodeRef {
-        self.stage(PatNode::from_kind(kind))
+        self.add_node(PatNode::from_kind(kind))
     }
 
-    /// Matches if any alternative matches the node. The alternatives wire as
-    /// this node's inputs, but the matcher tries each against the *same* IR
-    /// node rather than as operands, enumerating every arm that matches (a
-    /// union). Empty `alts` matches nothing. `find_all` dedups on the binding
-    /// signature, so arms that match one node identically are one row.
-    ///
-    /// The alternation output is [`OutputKindSpec::Any`], so it nests in a
-    /// value, control, or memory slot alike; the arms discriminate.
-    ///
-    /// Enumeration is multiplicative under
-    /// [`find_all`](crate::Matcher::find_all); see [`crate::OneOf::new`].
+    /// A union: every arm is tried against the same IR node. Empty `alts` matches nothing. The
+    /// output is the wildcard kind, so it fits any slot. See [`crate::OneOf::new`] for cost.
     pub fn one_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
-        self.alternation(alts, false)
+        self.alternation(alts, Role::OneOf)
     }
 
-    /// Like [`Self::one_of`] but cuts to the first arm that yields a match
-    /// instead of enumerating every match: an ordered choice, not a union.
-    /// An arm rejected by a guard above the alternation produces no match, so
-    /// the choice falls through to the next arm.
+    /// Like [`Self::one_of`] but an ordered choice: see [`crate::OneOf::first`]. Each anchored
+    /// root output settles on its own.
     pub fn first_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
-        self.alternation(alts, true)
+        self.alternation(alts, Role::FirstOf)
     }
 
-    fn alternation(&mut self, alts: &[PatValueRef], first_match: bool) -> PatValueRef {
+    fn alternation(&mut self, alts: &[PatValueRef], role: Role) -> PatValueRef {
         let mut alt_node = PatNode::from_kind(KindSpec::Any);
-        alt_node.alternation = true;
-        alt_node.first_match = first_match;
-        let n = self.stage(alt_node);
+        alt_node.role = role;
+        let n = self.add_node(alt_node);
         for (slot, alt) in alts.iter().enumerate() {
             self.input(n, slot, *alt);
         }
@@ -202,15 +94,32 @@ impl MatcherBuilder {
     }
 
     pub fn input(&mut self, node: PatNodeRef, slot: usize, prod: PatValueRef) {
-        self.core.add_input(node.0, slot, prod.node, prod.output);
+        self.wire(node, crate::matcher::InputSlot::At(slot), prod);
     }
 
+    /// Existential: `prod` matches some input of the node, not a fixed one.
+    pub fn input_any(&mut self, node: PatNodeRef, prod: PatValueRef) {
+        self.wire(node, crate::matcher::InputSlot::Any, prod);
+    }
+
+    pub(crate) fn wire(
+        &mut self,
+        node: PatNodeRef,
+        slot: crate::matcher::InputSlot,
+        prod: PatValueRef,
+    ) {
+        if self.core.add_input(node.0, prod.0, false) {
+            self.core.graph.node_kind_mut(node.0).input_slots.push(slot);
+        }
+    }
+
+    /// Wiring is tree-like: each slot consuming `node`, through one output vertex or
+    /// several, may match a different IR node. [`Self::capture_node`] ties them to one.
     pub fn value_output(&mut self, node: PatNodeRef, slot: usize) -> PatValueRef {
         self.add_output(node, PatValue::value(slot))
     }
 
-    /// A slot-0 value output relaxed to [`OutputKindSpec::Any`]: the output an
-    /// alternation node or a value-less kind synthesises.
+    /// A slot-0 output of the wildcard kind.
     pub fn any_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
         let out = self.value_output(node, 0);
         self.set_output_any(out);
@@ -229,228 +138,228 @@ impl MatcherBuilder {
         self.out_of(out).kind = OutputKindSpec::Value(ty);
     }
 
-    /// An alternation's arms are matched against the same edge as the
-    /// alternation itself, so retyping it to `Control` retypes the arms with
-    /// it; a value-anchored arm would otherwise reject the control edge its own
-    /// alternation just bound.
-    ///
-    /// Alone among the output-kind setters in recursing: the value-kind ones
-    /// narrow what an arm's `AnyValue` vertex already accepts, while `Control`
-    /// contradicts it.
-    ///
-    /// The operand is compiled before the slot retypes it, so a `when_match`
-    /// on it passed `set_post_match_typed`'s check while still typed;
-    /// the refusal re-runs here.
     pub fn set_output_control(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Control;
-        if self.core.kind_mut(out.node).typed_post_match {
-            self.reject_typed_guard();
-        }
-        if !self.core.kind_mut(out.node).alternation {
-            return;
-        }
-        for (node, output) in self.core.input_producers(out.node) {
-            self.set_output_control(PatValueRef { node, output });
-        }
     }
 
-    /// Relaxes `out` to [`OutputKindSpec::Any`], so `anything()` / `var()` match
+    /// Relaxes `out` to the wildcard kind, so `anything()` / `var()` match
     /// value-less kinds (`Region`, `MemPhi`, ...) too.
     pub fn set_output_any(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Any;
     }
 
-    /// `any_output()`: an output vertex satisfied by any of the node's outputs.
-    /// Unlike [`Self::any_value_output`], which relaxes the KIND of slot 0, this
-    /// enumerates the slots, so a capture on it binds each in turn.
-    ///
-    /// Sibling `any_output` vertices on one node claim no slot from each other,
-    /// so two of them can bind the same output; the existential `any_input`
-    /// counterpart is injective.
+    /// `any_output()`: an output vertex enumerating the node's outputs, a capture binding each in
+    /// turn. Unlike `any_input`, sibling vertices may bind the same output.
     pub fn any_slot_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
         let out = self.any_value_output(node);
-        self.out_of(out).any_slot = true;
+        self.out_of(out).slot_mode = SlotMode::Enumerated;
         out
     }
 
-    /// See [`PatValue::token_fallback`]. Recurses through an alternation, whose
-    /// arms are matched against the same edge as the alternation itself.
+    /// Widens an `AnyValue` output to also accept a valueless node's memory token.
     pub fn set_token_fallback(&mut self, out: PatValueRef) {
         self.out_of(out).token_fallback = true;
-        if !self.core.kind_mut(out.node).alternation {
-            return;
-        }
-        for (node, output) in self.core.input_producers(out.node) {
-            self.set_token_fallback(PatValueRef { node, output });
-        }
     }
 
     pub fn set_value_width(&mut self, out: PatValueRef, bits: u32) {
         self.out_of(out).width = Some(bits);
     }
 
-    /// See [`PatValue::match_slot`]. Pins the value operand to a specific
-    /// output slot.
-    pub fn set_value_out_slot(&mut self, out: PatValueRef, slot: usize) {
-        self.out_of(out).match_slot = Some(slot);
+    /// Pins `out` to its own slot, replacing an [`Self::any_slot_value_output`] enumeration.
+    pub fn pin_value_out_slot(&mut self, out: PatValueRef) {
+        self.out_of(out).slot_mode = SlotMode::Pinned;
     }
 
-    /// Binds the matched output's value (`Binding::Value`), e.g.
-    /// `int_add(var(x), ..)` captures `x`'s value, not its node. Additive:
-    /// `var(x).capture(y)` binds both.
+    /// Binds the matched output's value (`Binding::Value`). Additive: `var(x).capture(y)` binds
+    /// both.
     pub fn capture_output(&mut self, out: PatValueRef, c: crate::capture::Capture) {
         self.out_of(out).captures.push(c);
     }
 
-    /// Forces every slot consuming `out` to bind the SAME IR value. Wiring one
-    /// vertex into two slots does not: the matcher visits them independently.
+    /// Forces every slot consuming `out` to bind the same IR value, which wiring alone does not.
+    /// Another output vertex of the same node is not tied to it.
     /// See [`PatValue::identity`](crate::matcher::PatValue).
     pub(crate) fn pin_shared_identity(&mut self, out: PatValueRef) {
         self.out_of(out).identity = Some(crate::capture::Capture::internal());
     }
 
-    /// Binds the matched node (`Binding::Node`), for zero-value-output roots
-    /// like `Return` / `If`. Additive, like [`Self::capture_output`].
+    /// [`Self::capture_output`], except that an output-less producer (`Return`,
+    /// `IndirectBranch`, `Unreachable`), also as an alternation arm, binds its node.
+    pub(crate) fn capture(&mut self, out: PatValueRef, c: crate::capture::Capture) {
+        let graph = &self.core.graph;
+        let producer = graph.producer(out.0);
+        let node = graph.node_kind(producer);
+        if matches!(node.role, Role::OneOf | Role::FirstOf) {
+            let arms: Vec<ValueId> = graph.node_inputs(producer).into_iter().collect();
+            if arms.iter().any(|&arm| self.has_output_less_arm(arm)) {
+                for arm in arms {
+                    self.capture(PatValueRef(arm), c);
+                }
+                return;
+            }
+        } else if self.has_output_less_arm(out.0) {
+            return self.capture_node(PatNodeRef(producer), c);
+        }
+        self.capture_output(out, c);
+    }
+
+    /// Whether `out`'s producer has no outputs, or is an alternation with such an arm.
+    fn has_output_less_arm(&self, out: ValueId) -> bool {
+        let graph = &self.core.graph;
+        let producer = graph.producer(out);
+        let node = graph.node_kind(producer);
+        if matches!(node.role, Role::OneOf | Role::FirstOf) {
+            return graph
+                .node_inputs(producer)
+                .into_iter()
+                .any(|arm| self.has_output_less_arm(arm));
+        }
+        node.kind.is_variant_in(&[
+            NodeKind::Return,
+            NodeKind::IndirectBranch,
+            NodeKind::Unreachable,
+        ])
+    }
+
+    /// Binds the matched node (`Binding::Node`). Additive, like [`Self::capture_output`].
     pub fn capture_node(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
-        self.core.kind_mut(node.0).captures.push(c);
+        self.core.graph.node_kind_mut(node.0).captures.push(c);
     }
 
-    /// Composes with any predicate already on `out`'s producer rather than
-    /// replacing it: a builder installs its own core constraint through this
-    /// slot (`stack_only`, `int_const(v)`, `phi_for(vn)`, ...), and a `.filter()`
-    /// layered on top must narrow that, never delete it. Both are node-only, so
-    /// evaluation order is immaterial.
+    /// Adds a node predicate to `out`'s producer, alongside any already there.
     pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::matcher::NodePredicate) {
-        self.set_node_predicate_at(PatNodeRef(out.node), f);
+        let node = PatNodeRef(self.core.graph.producer(out.0));
+        self.set_node_predicate_at(node, f);
     }
 
-    /// Node-keyed form of [`Self::set_node_predicate`], for a node-rooted
-    /// pattern with no anchor output to address it through.
+    /// Node-keyed form of [`Self::set_node_predicate`].
     pub fn set_node_predicate_at(&mut self, node: PatNodeRef, f: crate::matcher::NodePredicate) {
-        let slot = &mut self.core.kind_mut(node.0).node_predicate;
-        *slot = Some(match slot.take() {
-            Some(prev) => Box::new(move |m, n| prev(m, n) && f(m, n)),
-            None => f,
-        });
+        self.core
+            .graph
+            .node_kind_mut(node.0)
+            .node_predicates
+            .push(f);
     }
 
-    /// `captures` declares what `f` binds; the sub-pattern it walks is not part
-    /// of this graph, so the capture metadata has no other way to see it.
-    /// See [`BindingWalkFn`](crate::matcher::BindingWalkFn).
-    pub fn set_binding_walk(
-        &mut self,
-        out: PatValueRef,
-        f: crate::matcher::BindingWalkFn,
-        captures: crate::matcher::WalkCaptures,
-    ) {
-        let nd = self.core.kind_mut(out.node);
-        nd.binding_walk = Some(f);
-        nd.walk_captures = captures;
-    }
-
-    /// [`Self::set_post_match`] for a guard that needs the matched output's
-    /// `ValueType` (`when_match`). A control / memory / phi-token vertex or a
-    /// kind with no value output can never supply one, so the guard would
-    /// reject every match whatever it returns; refuse instead.
+    /// [`Self::set_post_match`] for a guard needing the output's `ValueType` (`when_match`).
+    /// Refused where `out` carries no value.
     pub(crate) fn set_post_match_typed(
         &mut self,
         out: PatValueRef,
         f: crate::matcher::PostMatchFn,
     ) {
-        let untyped_kind = valueless_kind(&self.core.kind_mut(out.node).kind);
-        let untyped_output = matches!(
-            self.out_of(out).kind,
-            OutputKindSpec::Control | OutputKindSpec::Memory | OutputKindSpec::PhiToken
-        );
-        if untyped_kind || untyped_output {
-            self.reject_typed_guard();
+        if self.valueless(out.0) {
+            self.reject(
+                "`when_match` is typed and this output carries no value, so the guard \
+                 could never run; at a root, `Pattern::with_root_post_match` is handed \
+                 the missing type"
+                    .into(),
+            );
         }
-        self.core.kind_mut(out.node).typed_post_match = true;
         self.set_post_match(out, f);
     }
 
-    fn reject_typed_guard(&mut self) {
-        self.reject(
-            "`when_match` is typed and this root produces no value output, so the \
-             guard could never run; use `Pattern::with_root_post_match`, which is \
-             handed the missing type"
-                .into(),
-        );
-    }
-
-    pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
-        let slot = &mut self.core.kind_mut(out.node).post_match;
-        *slot = Some(match slot.take() {
-            Some(prev) => Box::new(move |m, n, ty, b| prev(m, n, ty, b) && f(m, n, ty, b)),
-            None => f,
-        });
-    }
-
-    /// Disables commutative operand reordering on `out`'s producer. Refused on
-    /// an alternation: its inputs are alternatives, not operands, so nothing
-    /// reads the flag.
-    pub fn set_force_ordered(&mut self, out: PatValueRef) {
-        if self.core.kind_mut(out.node).alternation {
-            self.reject(
-                "`ordered` on an alternation does nothing: `one_of` / `first_of` arms are \
-                 alternatives, not operands; put `.ordered()` on the arm whose operands \
-                 must not swap"
-                    .into(),
-            );
-            return;
+    /// Whether `out` never carries a value: a valueless kind or output, or an
+    /// alternation every arm of which is.
+    fn valueless(&self, out: ValueId) -> bool {
+        let graph = &self.core.graph;
+        let producer = graph.producer(out);
+        let node = graph.node_kind(producer);
+        if matches!(node.role, Role::OneOf | Role::FirstOf) {
+            let arms: Vec<ValueId> = graph.node_inputs(producer).into_iter().collect();
+            return !arms.is_empty() && arms.into_iter().all(|arm| self.valueless(arm));
         }
-        self.core.kind_mut(out.node).force_ordered = true;
-    }
-
-    /// Materialises every staged node in producer-before-consumer order.
-    /// Single-rootedness and acyclicity are resolved here and reported at
-    /// match time.
-    pub fn finish(self) -> Pattern {
-        let refusals = self.refusals;
-        let mut pat = match self.core.seal() {
-            Ok(graph) => Pattern::from_graph(graph, self.nested_nodes),
-            Err(cycle) => {
-                let mut empty = Pattern::from_graph(crate::matcher::graph::PatGraph::new(), 0);
-                empty.reject(cycle.to_string());
-                empty
-            }
-        };
-        if let Some(why) = refusals.into_iter().next() {
-            pat.reject(why);
-        }
-        pat
-    }
-
-    fn stage(&mut self, kind: PatNode) -> PatNodeRef {
-        PatNodeRef(self.core.add_node(kind))
-    }
-
-    fn add_output(&mut self, node: PatNodeRef, out: PatValue) -> PatValueRef {
-        let output = self.core.add_output(node.0, out);
-        PatValueRef {
-            node: node.0,
-            output,
-        }
-    }
-
-    fn out_of(&mut self, out: PatValueRef) -> &mut PatValue {
-        self.core.output_mut(out.node, out.output)
-    }
-}
-
-/// The value-less kinds whose anchor output does not already say so. A `Store`
-/// or `Region` is value-less too; its memory or control anchor is what the
-/// caller's output check catches.
-fn valueless_kind(spec: &KindSpec) -> bool {
-    spec.discriminant().is_some_and(|d| {
-        [
+        // Valueless kinds whose anchor output's kind does not already say so.
+        node.kind.is_variant_in(&[
             NodeKind::If,
             NodeKind::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
             NodeKind::Return,
             NodeKind::IndirectBranch,
             NodeKind::Unreachable,
-        ]
-        .iter()
-        .any(|k| std::mem::discriminant(k) == d)
-    })
+        ]) || matches!(
+            graph.value_kind_ref(out).kind,
+            OutputKindSpec::Control | OutputKindSpec::Memory
+        )
+    }
+
+    pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
+        self.kind_of(out).post_matches.push(f);
+    }
+
+    /// Disables commutative operand reordering on `out`'s producer. Refused on an alternation.
+    pub fn set_force_ordered(&mut self, out: PatValueRef) {
+        match &mut self.kind_of(out).role {
+            Role::Operands { ordered } => *ordered = true,
+            Role::OneOf | Role::FirstOf => self.reject(
+                "`ordered` on an alternation does nothing: `one_of` / `first_of` arms are \
+                 alternatives, not operands; put `.ordered()` on the arm whose operands \
+                 must not swap"
+                    .into(),
+            ),
+        }
+    }
+
+    /// Seals the pattern; a refusal or a rootless or multi-sink graph surfaces through
+    /// [`Pattern::root`].
+    pub fn finish(self) -> Pattern {
+        Pattern::from_graph(self.core.graph, self.core.refusal)
+    }
+
+    fn add_node(&mut self, kind: PatNode) -> PatNodeRef {
+        PatNodeRef(self.core.add_node(kind))
+    }
+
+    fn add_output(&mut self, node: PatNodeRef, out: PatValue) -> PatValueRef {
+        PatValueRef(self.core.add_output(node.0, out))
+    }
+
+    fn out_of(&mut self, out: PatValueRef) -> &mut PatValue {
+        self.core.graph.value_kind_mut(out.0)
+    }
+
+    fn kind_of(&mut self, out: PatValueRef) -> &mut PatNode {
+        let node = self.core.graph.producer(out.0);
+        self.core.graph.node_kind_mut(node)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MatcherBuilder;
+
+    /// One lowering level whose frame alone is 16 KiB, so the stack budget
+    /// trips well inside the level cap.
+    #[inline(never)]
+    fn descend(b: &mut MatcherBuilder, levels: &mut usize) {
+        let pad = std::hint::black_box([0u8; 16 * 1024]);
+        if b.core.enter_nesting(true) {
+            *levels += 1;
+            descend(b, levels);
+            b.core.leave_nesting(true);
+        }
+        std::hint::black_box(&pad);
+    }
+
+    #[test]
+    fn a_fat_frame_per_level_trips_the_stack_budget_inside_the_level_cap() {
+        let (levels, refusal) = std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(|| {
+                let mut b = MatcherBuilder::new();
+                let mut levels = 0;
+                descend(&mut b, &mut levels);
+                (levels, b.finish().root().unwrap_err().to_string())
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+        assert!(
+            levels < crate::matcher::graph::MAX_PATTERN_NODES,
+            "{levels} levels"
+        );
+        assert!(
+            refusal.contains("of a 1024 KiB lowering budget"),
+            "{refusal}"
+        );
+    }
 }

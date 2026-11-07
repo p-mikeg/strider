@@ -21,12 +21,7 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 prog = strider.lift.load_elf(str(FIXTURE))
-_cfg, fn, _unresolved = prog.analyze(
-    "array_sum",
-    opts=strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-    ),
-)
+_cfg, fn, _unresolved = prog.analyze("array_sum")
 
 
 def idioms() -> dict[str, PatLike]:
@@ -61,7 +56,6 @@ for name, pat in idioms().items():
 
 print(f"\n{len(found)} of {len(idioms())} idioms present in this function")
 
-# Swap the function and the table reports a different fingerprint.
 top = max(found, key=lambda kv: kv[1]) if found else None
 if top:
     print(f"most common idiom here: {top[0]!r} ({top[1]} sites)")

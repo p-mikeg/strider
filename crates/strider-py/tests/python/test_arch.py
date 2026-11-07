@@ -1,17 +1,29 @@
 import pytest
 import strider
 
+_SA = strider.sleigh.SleighArch
+# Every preset constructor: the public classmethods, bound to the class.
+# `preset` is the by-name lookup, not a preset.
+_PRESETS = sorted(
+    n
+    for n in dir(_SA)
+    if not n.startswith("_")
+    and n != "preset"
+    and getattr(getattr(_SA, n), "__self__", None) is _SA
+)
 
-@pytest.mark.parametrize("name", [
-    "x86_64", "x86",
-    "mipsbe32", "mipsle32", "mipsbe64", "mipsle64",
-    "arm", "arm_be", "arm_thumb",
-    "aarch64", "aarch64be",
-    "ppc32be", "ppc32le", "ppc64be", "ppc64le",
-])
+
+def test_every_rust_preset_is_bound():
+    """`ARCH_PRESETS` is `ArchPreset::ALL`; the classmethods come from a
+    hand-written list in `strider-py`, and this is what compares the two.
+    A preset added in Rust and forgotten here fails loudly."""
+    assert _PRESETS == sorted(strider.sleigh.ARCH_PRESETS)
+
+
+@pytest.mark.parametrize("name", _PRESETS)
 def test_sleigh_arch_presets(name):
-    arch = getattr(strider.sleigh.SleighArch, name)()
-    assert isinstance(arch, strider.sleigh.SleighArch)
+    arch = getattr(_SA, name)()
+    assert isinstance(arch, _SA)
     assert arch.name() == name
 
 
@@ -19,3 +31,13 @@ def test_sleigh_arch_repr():
     a = strider.sleigh.SleighArch.x86_64()
     assert "SleighArch" in repr(a)
     assert "x86_64" in repr(a)
+
+
+@pytest.mark.parametrize("name", _PRESETS)
+def test_sleigh_arch_preset_by_name(name):
+    assert _SA.preset(name) == getattr(_SA, name)()
+
+
+def test_sleigh_arch_preset_unknown_name_raises():
+    with pytest.raises(strider.StriderError, match="x86_64"):
+        _SA.preset("no_such_arch")

@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, anything, int_add, int_const, var
 
 from .conftest import built_function, fixture_path
@@ -39,7 +40,7 @@ def test_function_has_no_id_keyed_readers():
     a = _analyze_add()
     assert not hasattr(a, "node_kind")
     assert not hasattr(a, "asm_fingerprint")
-    assert not hasattr(a, "wide_const_bytes")
+    assert not hasattr(a, "uint")
     assert not hasattr(a, "call_other_name")
 
 
@@ -77,16 +78,16 @@ def test_node_inputs_map_to_real_producers():
 
 
 def test_node_sint_on_int_const():
-    a = _analyze_add()
+    # `add` holds no constant; `shl` masks its count with one.
+    shl = strider.lift.load_elf(str(fixture_path("x64", "arithmetic"))).analyze("shl").function
     c = Capture()
-    const_hits = a.find_all(int_const(c))
-    if const_hits:
-        cnode = const_hits[0].node(c)
-        assert cnode is not None
-        assert cnode.kind() == "IntConst"
-        v = cnode.sint()
-        assert v is None or isinstance(v, int)
+    const_hits = shl.find_all(int_const(c))
+    assert const_hits
+    cnode = const_hits[0].node(c)
+    assert cnode.kind() == "IntConst"
+    assert isinstance(cnode.sint(), int)
 
+    a = _analyze_add()
     add_hits = a.find_all(int_add(anything(), anything()))
     assert add_hits
     add_node = a.node(add_hits[0].root)
@@ -192,11 +193,10 @@ def test_function_node_invalid_id_message_names_the_id():
         a.node(bad)
 
 
-def test_function_node_negative_id_overflows_at_conversion():
-    """A negative id fails the unsigned conversion eagerly: OverflowError,
-    not StriderError."""
+def test_function_node_negative_id_raises_at_conversion():
+    """A negative id fails the unsigned conversion eagerly."""
     a = _analyze_add()
-    with pytest.raises(OverflowError):
+    with pytest.raises(strider.StriderError, match="out of range"):
         a.node(-1)
 
 
@@ -206,7 +206,7 @@ def _stale_and_fresh():
     g = built_function("x86", "memory", "array_sum", optimize=False)
     x, y = Capture(), Capture()
     stale = g.node(g.entry_node())
-    assert g.rewrite(find=int_add(var(x), var(y)), replace=var(x)) > 0
+    assert g.rewrite(find=int_add(var(x), var(y)), replace=tpl.var(x)) > 0
     return stale, g.node(g.entry_node())
 
 
@@ -215,6 +215,13 @@ def test_repr_of_a_stale_node_does_not_raise():
     with pytest.raises(strider.StriderError):
         stale.kind()
     assert "%r" % stale
+
+
+def test_a_node_fetched_after_a_rewrite_reads_that_generation():
+    stale, fresh = _stale_and_fresh()
+    assert fresh.kind() == "Entry"
+    with pytest.raises(strider.StriderError, match="stale"):
+        stale.kind()
 
 
 def test_a_stale_node_is_not_equal_to_a_fresh_one():
@@ -236,3 +243,19 @@ def test_node_op_names_the_extension_direction():
         if fn.node(i).kind().startswith("Extend(")
     }
     assert ops == {"SignExtend", "ZeroExtend"}
+
+
+def test_a_node_defers_to_another_type_and_has_no_order():
+    a = _analyze_add()
+    n = a.node(a.node_ids()[0])
+    assert n.__eq__(n.id) is NotImplemented and n.__ne__(n.id) is NotImplemented
+    assert n != n.id
+    with pytest.raises(TypeError):
+        _ = n < n  # pyright: ignore[reportOperatorIssue]
+
+
+def test_the_same_id_in_another_function_is_another_node():
+    a, b = _analyze_add(), _analyze_add()
+    nid = a.node_ids()[0]
+    assert a.node(nid) != b.node(nid)
+    assert len({a.node(nid), b.node(nid), a.node(nid)}) == 2

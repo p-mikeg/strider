@@ -3,8 +3,10 @@
 //! silently matching nothing.
 
 use strider_ir::IntBinaryOp;
+use strider_ir::node::NodeKind;
 use strider_ir_test_utils::Tb;
 use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+use strider_pattern::template::TemplateBuilder;
 use strider_pattern::{
     CaptureExt, MatchPat, Matcher, Pattern, anything, if_else, int_add, one_of, ret, var,
 };
@@ -15,13 +17,6 @@ fn add_5_3() -> strider_ir::Function {
     let b = t.u64(3);
     let sum = t.add(a, b);
     t.ret_val(sum)
-}
-
-fn multi_sink_pattern() -> Pattern {
-    let mut b = MatcherBuilder::new();
-    let _a = b.leaf(KindSpec::Any);
-    let _b = b.leaf(KindSpec::Any);
-    b.finish()
 }
 
 fn error_of(pat: &Pattern) -> String {
@@ -51,6 +46,19 @@ fn a_typed_guard_on_a_control_rooted_builder_is_refused() {
     assert!(error_of(&pat).contains("with_root_post_match"));
 }
 
+/// An alternation of valueless arms has no value for the guard either.
+#[test]
+fn a_typed_guard_on_an_alternation_of_valueless_arms_is_refused() {
+    let pat = one_of![ret()].when_match(|_m, _ty, _b| true).into_pattern();
+    assert!(error_of(&pat).contains("with_root_post_match"));
+
+    let function = add_5_3();
+    let pat = one_of![ret(), int_add(anything(), anything())]
+        .when_match(|_m, _ty, _b| true)
+        .into_pattern();
+    assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
+}
+
 /// A typed guard on a value root is untouched.
 #[test]
 fn a_typed_guard_on_a_value_root_still_runs() {
@@ -59,17 +67,6 @@ fn a_typed_guard_on_a_value_root_still_runs() {
         .when_match(|_m, _ty, _b| true)
         .into_pattern();
     assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
-}
-
-/// A multi-sink branch pattern is not matchable. Everywhere else that is an
-/// `Err`; `with_true` / `with_false` used to panic on it.
-#[test]
-fn a_multi_sink_branch_pattern_is_refused_not_panicked_on() {
-    let pat = if_else().with_true(multi_sink_pattern()).build();
-    assert!(error_of(&pat).contains("If branch pattern is not matchable"));
-
-    let pat = if_else().with_false(multi_sink_pattern()).build();
-    assert!(error_of(&pat).contains("If branch pattern is not matchable"));
 }
 
 /// `.ordered()` suppresses commutative operand reordering. An alternation's
@@ -83,11 +80,20 @@ fn ordered_on_an_alternation_is_refused() {
     assert!(error_of(&pat).contains("ordered"));
 }
 
-/// A `ctrl()` slot retypes its operand to `Control` only after compiling it,
-/// so the guard's build-time refusal has to re-run there. Without it the
-/// query returns nothing and reports no error.
+/// A guard over a `ctrl()` operand sees it as the control edge it binds,
+/// whatever decoration retyped it below. Without the refusal the query
+/// returns nothing and reports no error.
 #[test]
 fn a_typed_guard_in_a_control_slot_is_refused() {
+    let ty = strider_ir::node::ValueType::int(32);
+    for inner in [
+        anything().value_ty(ty).when_match(|_m, _ty, _b| true),
+        strider_pattern::inputs_of_width(8, anything()).when_match(|_m, _ty, _b| true),
+    ] {
+        let pat = strider_pattern::call().ctrl(inner).build();
+        assert!(error_of(&pat).contains("with_root_post_match"));
+    }
+
     let pat = strider_pattern::call()
         .ctrl(anything().when_match(|_m, _ty, _b| true))
         .build();
@@ -205,104 +211,73 @@ fn a_chain_at_the_nesting_cap_still_builds() {
 }
 
 /// A node wired to its own output is a cycle; `MatcherBuilder` takes untrusted
-/// wiring, so the seal refuses it rather than panicking.
+/// wiring, so the wiring is refused rather than panicking.
 #[test]
 fn a_cyclic_builder_wiring_is_refused_not_panicked() {
     let mut b = MatcherBuilder::new();
     let n = b.node(KindSpec::Any);
     let out = b.value_output(n, 0);
     b.input(n, 0, out);
-    assert!(error_of(&b.finish()).contains("cycle"));
+    assert!(error_of(&b.finish()).contains("built after its consumer"));
 }
 
-/// `n` Ifs, each true edge feeding the next If's control input directly, every
-/// false edge running to one exit.
-fn if_chain(n: usize) -> strider_ir::Function {
-    use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IntCmpOp};
-
-    let mut b = strider_ir_test_utils::RegisterSet::new()
-        .build_fn()
-        .unwrap();
-    let regions: Vec<_> = (0..=n).map(|_| b.create_region_all().unwrap()).collect();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(regions[0]).unwrap();
-    for (i, pair) in regions.windows(2).enumerate() {
-        b.set_region(pair[0]);
-        let c = b.build_int_const(i as u64, ValueType::I8).unwrap();
-        let z = b.build_int_const(0u64, ValueType::I8).unwrap();
-        let cond = b
-            .build_int_cmp_operation(c, z, IntCmpOp::Equal, ValueType::I8)
-            .unwrap();
-        b.build_if(cond, pair[1], exit).unwrap();
-    }
-    b.set_region(regions[n]);
-    b.build_branch(exit).unwrap();
-    b.set_region(exit);
-    b.build_return(None, &[]).unwrap();
-    let mut f = b.build().unwrap();
-
-    let singles: Vec<_> = f
-        .graph()
-        .all_node_ids()
-        .filter(|&r| matches!(f.node_kind(r), NodeKind::Region))
-        .filter(|&r| {
-            let inputs = f.node_inputs(r);
-            inputs.len() == 1 && matches!(f.node_kind(f.producer(inputs[0])), NodeKind::If)
-        })
-        .collect();
-    let mut e = EditFunction::new(&mut f);
-    for r in singles {
-        let token = e.function().node_outputs(r)[1];
-        let phis: Vec<_> = e
-            .function()
-            .graph()
-            .value_uses(token)
-            .map(|(n, _)| n)
-            .collect();
-        for phi in phis {
-            let out = e.function().node_outputs(phi)[0];
-            let only = e.function().node_inputs(phi)[1];
-            e.replace_all_uses(out, only).unwrap();
-        }
-        let pred = e.function().node_inputs(r)[0];
-        let ctrl = e.function().node_outputs(r)[0];
-        e.replace_all_uses(ctrl, pred).unwrap();
-        e.kill_node(r);
-    }
-    e.clean();
-    strider_ir::validate::validate(&f).expect("collapsed chain is valid IR");
-    f
-}
-
-/// `depth` Ifs, each the true branch of the one above.
-fn nested_if_branches(depth: usize) -> Pattern {
-    let mut p = if_else().build();
-    for _ in 0..depth {
-        p = if_else().with_true(p).build();
-    }
-    p
-}
-
-/// Every branch is its own sealed pattern, but the matcher recurses through
-/// all of them on one stack, so the node cap counts the nested ones too.
+/// The template side of the same wiring.
 #[test]
-fn nested_if_branches_over_the_node_cap_are_refused() {
-    assert!(error_of(&nested_if_branches(256)).contains("nodes"));
-    assert!(error_of(&nested_if_branches(3_000)).contains("nodes"));
+fn a_cyclic_template_wiring_is_refused_not_panicked() {
+    let mut b = TemplateBuilder::new();
+    let n = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+    let out = b.value_output(n, 0);
+    b.input(n, 0, out);
+    let err = b.finish().root().unwrap_err().to_string();
+    assert!(err.contains("built after its consumer"), "{err}");
 }
 
-/// 255 nested branches are 256 If nodes, exactly the budget, and match on the
-/// 2 MiB stack a spawned thread gets by default.
+/// A node built before the operand it consumes is refused.
 #[test]
-fn nested_if_branches_at_the_node_cap_match() {
-    std::thread::spawn(|| {
-        let function = if_chain(256);
-        let pat = nested_if_branches(255);
-        assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
-    })
-    .join()
-    .unwrap();
+fn a_producer_built_after_its_consumer_is_refused() {
+    let mut b = MatcherBuilder::new();
+    let n = b.node(KindSpec::Any);
+    let x = b.leaf(KindSpec::Any);
+    b.input(n, 0, x);
+    let _ = b.value_output(n, 0);
+    assert!(error_of(&b.finish()).contains("built after its consumer"));
+}
+
+/// The template side of the same wiring.
+#[test]
+fn a_template_producer_built_after_its_consumer_is_refused() {
+    let mut b = TemplateBuilder::new();
+    let n = b.node(NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg));
+    let x = b.leaf(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+    b.input(n, 0, x);
+    let _ = b.value_output(n, 0);
+    let err = b.finish().root().unwrap_err().to_string();
+    assert!(err.contains("built after its consumer"), "{err}");
+}
+
+/// The first refusal is the one reported, ahead of a later wiring refusal and
+/// a later explicit one. The template side is pinned in `template::builder`.
+#[test]
+fn the_first_refusal_wins_over_later_ones() {
+    let mut b = MatcherBuilder::new();
+    let n = b.node(KindSpec::Any);
+    let out = b.value_output(n, 0);
+    b.reject("first".into());
+    b.input(n, 0, out);
+    b.reject("second".into());
+    assert_eq!(error_of(&b.finish()), "first");
+}
+
+/// A wiring refusal is reported like any other, so one wired first wins over a
+/// later explicit refusal.
+#[test]
+fn a_wiring_refusal_ahead_of_an_explicit_one_wins() {
+    let mut b = MatcherBuilder::new();
+    let n = b.node(KindSpec::Any);
+    let out = b.value_output(n, 0);
+    b.input(n, 0, out);
+    b.reject("later".into());
+    assert!(error_of(&b.finish()).contains("built after its consumer"));
 }
 
 /// `k` adds over ONE shared wildcard leaf, each add feeding both slots of the
@@ -340,25 +315,6 @@ fn a_shared_vertex_pattern_over_the_unfolded_cap_is_refused() {
     }
 }
 
-/// Replacing a branch drops what the discarded pattern declared, the refusal
-/// an unmatchable one carried included.
-#[test]
-fn replacing_a_refused_if_branch_drops_its_refusal() {
-    let replaced = if_else()
-        .with_true(multi_sink_pattern())
-        .with_true(strider_pattern::region().build())
-        .build();
-    assert!(replaced.root().is_ok());
-
-    // The other slot's refusal survives the replacement.
-    let still_refused = if_else()
-        .with_false(multi_sink_pattern())
-        .with_true(multi_sink_pattern())
-        .with_true(strider_pattern::region().build())
-        .build();
-    assert!(error_of(&still_refused).contains("If branch pattern is not matchable"));
-}
-
 /// A chain of `k` adds, each over a fresh leaf, offered as `arms` alternatives
 /// of one alternation. Every arm is the SAME vertex, so the alternation's own
 /// cost is one arm's, not the sum: `2k + 1` nodes tree-unfolded.
@@ -376,9 +332,9 @@ fn shared_alternation(arms: usize, k: usize) -> Pattern {
     b.finish()
 }
 
-/// `try_match_at` runs an alternation's arms one at a time and unwinds between
-/// them, so the arms do not stack: the cap must charge the deepest arm, not
-/// their sum, or it refuses a pattern the engine runs.
+/// `try_alternation` runs an alternation's arms one at a time and unwinds
+/// between them, so the arms do not stack: the cap must charge the deepest arm,
+/// not their sum, or it refuses a pattern the engine runs.
 #[test]
 fn an_alternations_arms_are_charged_at_their_deepest_not_their_sum() {
     // Accepted AND run on a 2 MiB spawned-thread stack, which is what the cap
@@ -397,4 +353,190 @@ fn an_alternations_arms_are_charged_at_their_deepest_not_their_sum() {
     }
     // The deepest arm alone still has to fit.
     assert!(error_of(&shared_alternation(2, 300)).contains("nodes"));
+}
+
+/// `levels` alternations, each the one arm of the next, over a wildcard leaf:
+/// one node per level plus the leaf, and every match recurses through each.
+fn nested_alternations(levels: usize) -> Pattern {
+    let mut b = MatcherBuilder::new();
+    let mut o = b.leaf(KindSpec::Any);
+    b.set_output_any(o);
+    for _ in 0..levels {
+        o = b.one_of(&[o]);
+    }
+    b.finish()
+}
+
+/// 255 nested alternations and their leaf are 256 nodes, exactly the budget,
+/// and match on the 2 MiB stack a spawned thread gets by default, as often as
+/// the leaf alone.
+#[test]
+fn nested_alternations_at_the_node_cap_match() {
+    assert!(error_of(&nested_alternations(256)).contains("nodes"));
+    std::thread::spawn(|| {
+        let function = add_5_3();
+        let matcher = Matcher::new(&function);
+        let bare = matcher.find_all(&nested_alternations(0)).unwrap().len();
+        assert!(bare > 0);
+        let pat = nested_alternations(255);
+        assert_eq!(matcher.find_all(&pat).unwrap().len(), bare);
+    })
+    .join()
+    .unwrap();
+}
+
+/// An operand slot takes what its operand nests through. A memory token, a
+/// control edge or a node with no output in a value slot, and a memory token
+/// or a node with no output in a control slot, can never match there.
+#[test]
+fn an_operand_with_nothing_to_nest_through_is_refused() {
+    use strider_pattern::{call, entry, load, mem_phi, store, unreachable};
+    let x = strider_pattern::Capture::new();
+    for (pat, why) in [
+        (int_add(store(), var(x)).into_pattern(), "memory token"),
+        (
+            int_add(var(x), mem_phi().capture(x)).into_pattern(),
+            "memory token",
+        ),
+        (int_add(entry(), var(x)).into_pattern(), "control edge"),
+        (int_add(ret(), var(x)).into_pattern(), "no output"),
+        (load().addr(if_else()).build(), "no output"),
+        (
+            int_add(store().when_match(|_m, _t, _b| true), var(x)).into_pattern(),
+            "memory token",
+        ),
+        (ret().ctrl(ret()).build(), "no output"),
+        (call().ctrl(store()).build(), "memory token"),
+        (ret().ctrl(unreachable()).build(), "no output"),
+        (
+            strider_pattern::float_le(store(), var(x)).into_pattern(),
+            "memory token",
+        ),
+        (
+            strider_pattern::float_is_nan(mem_phi()).into_pattern(),
+            "memory token",
+        ),
+    ] {
+        let err = error_of(&pat);
+        assert!(err.contains(why), "{err}");
+    }
+}
+
+/// The slots that take any edge, the alternation arms, and the control
+/// slot's control producers stay admitted.
+#[test]
+fn an_operand_that_can_nest_is_admitted() {
+    use strider_pattern::{call, entry, load, region, store};
+    let function = add_5_3();
+    let matcher = Matcher::new(&function);
+    for pat in [
+        load().input(0, store()).build(),
+        call().any_input(store()).build(),
+        region().input(0, entry()).build(),
+        ret().ctrl(if_else()).build(),
+        ret().ctrl(region()).build(),
+        ret().ctrl(call()).build(),
+        int_add(one_of![store(), anything()], anything()).into_pattern(),
+        one_of![ret(), if_else()].into_pattern(),
+        strider_pattern::phi().phi_token(region()).build(),
+        strider_pattern::mem_phi().phi_token(region()).build(),
+        strider_pattern::call_other().arg(0, entry()).build(),
+        strider_pattern::call_other().arg(1, store()).build(),
+    ] {
+        assert!(matcher.find_all(&pat).is_ok());
+    }
+}
+
+/// The hidden `IntoExpr` reaches every pattern, so a part used on a side it
+/// is not valid on is refused through the root, never by panicking.
+#[test]
+fn a_part_on_the_wrong_side_is_refused() {
+    use strider_pattern::{IntoExpr, capture_typed, float_le, int_const_with_fn, load, template};
+    let a = strider_pattern::Capture::new();
+    let match_only = || {
+        [
+            anything().into_expr(),
+            strider_pattern::call().into_expr(),
+            load().addr(var(a)).into_expr(),
+            one_of![var(a), anything()].into_expr(),
+            float_le(var(a), anything()).into_expr(),
+            var(a).when_match(|_, _, _| true).into_expr(),
+            int_add(anything(), var(a)).into_expr(),
+        ]
+    };
+    for e in match_only() {
+        assert!(e.into_template().root().is_err());
+    }
+    for e in match_only() {
+        let nested = template::int_add(e, var(a));
+        assert!(nested.into_expr().into_template().root().is_err());
+    }
+    let built = int_const_with_fn(|_| Ok(1u8.into())).into_expr();
+    assert!(error_of(&int_add(built, anything()).into_pattern()).contains("build-only"));
+    let typed = capture_typed(a, var(a)).into_expr();
+    assert!(error_of(&int_add(typed, anything()).into_pattern()).contains("build-only"));
+}
+
+/// Implements `IntoExpr` by hand, which the match side takes.
+struct Wrapped(strider_pattern::Capture);
+
+impl strider_pattern::IntoExpr for Wrapped {
+    fn into_expr(self) -> strider_pattern::Expr {
+        var(self.0).into_expr()
+    }
+}
+
+impl MatchPat for Wrapped {}
+
+#[test]
+fn a_hand_written_pattern_lowers_on_the_match_side() {
+    use strider_pattern::template;
+    let c = strider_pattern::Capture::new();
+    for p in [
+        int_add(Wrapped(c), Wrapped(c)).into_pattern(),
+        template::int_add(Wrapped(c), Wrapped(c)).into_pattern(),
+    ] {
+        assert!(p.root().is_ok());
+    }
+}
+
+/// On the build side only a `var()`'s capture names the binding it reuses: a
+/// captured constant, predicate or kind would vanish into a binding reuse.
+#[test]
+fn a_captured_non_var_leaf_is_refused_on_the_build_side() {
+    use strider_pattern::{Capture, IntoExpr, any_int_const, float_const, initial_var, template};
+    let (a, c) = (Capture::new(), Capture::new());
+    let built = |leaf: strider_pattern::Expr| {
+        template::int_add(leaf, var(a))
+            .into_expr()
+            .into_template()
+            .root()
+    };
+    assert!(built(any_int_const().capture(c).into_expr()).is_err());
+    assert!(built(float_const(5u64).capture(c).into_expr()).is_err());
+    assert!(built(initial_var().capture(c).into_expr()).is_err());
+    assert!(built(var(c).into_expr()).is_ok());
+    assert!(built(anything().capture(c).into_expr()).is_ok());
+}
+
+/// Through the hidden `IntoExpr`, a memory slot can be handed a part with no
+/// memory token, which can never match there.
+#[test]
+fn a_part_with_no_memory_token_in_a_memory_slot_is_refused() {
+    use strider_pattern::{IntoExpr, entry, load};
+    for part in [
+        entry().into_expr(),
+        int_add(anything(), anything()).into_expr(),
+        load().into_expr(),
+    ] {
+        let pat = load().mem(part).build();
+        assert!(error_of(&pat).contains("memory slot"));
+    }
+    assert!(
+        load()
+            .mem(strider_pattern::store().into_expr())
+            .build()
+            .root()
+            .is_ok()
+    );
 }

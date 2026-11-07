@@ -1,10 +1,5 @@
-//! Neighborhood selection for the interactive explorer.  Only the node SET is
-//! computed here; the render is the ordinary pretty dumper restricted to it.
-
 use std::collections::VecDeque;
-use std::io;
 
-use rsleigh::MemReader;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::FunctionDotDumper;
@@ -12,8 +7,9 @@ use crate::function::Function;
 use crate::node::NodeId;
 use crate::{IRViewer, IRWalker};
 
-/// Forward edges, which the IR doesn't index directly.
-pub(super) fn build_consumers(f: &Function) -> FxHashMap<NodeId, Vec<NodeId>> {
+/// Consumers per producer among the nodes `f.walk()` reaches, in walk order;
+/// `value_uses` would also yield dead consumers on an uncompacted graph.
+fn build_consumers(f: &Function) -> FxHashMap<NodeId, Vec<NodeId>> {
     let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
     for node in f.walk() {
         for value in f.node_inputs(node) {
@@ -31,12 +27,9 @@ fn producers(f: &Function, node: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-/// BFS around `center` over **both** input and output edges, capped at
-/// `max_nodes`.  A node is a hub when its consumer fan-out (plus its producers
-/// when `count_producers`) exceeds `hub_cap`: it is included and its producers
-/// (inputs) are still followed, but its consumer fan-out is not, so a
-/// widely-used value doesn't drag in most of the function. `center` always
-/// expands both directions.
+/// BFS around `center` over input and output edges, capped at `max_nodes`. A
+/// hub (consumer fan-out, plus producers when `count_producers`, over `hub_cap`)
+/// is included but its consumers are not followed, except at `center`.
 pub(super) fn neighborhood_nodes(
     f: &Function,
     center: NodeId,
@@ -44,8 +37,8 @@ pub(super) fn neighborhood_nodes(
     hub_cap: usize,
     max_nodes: usize,
     count_producers: bool,
-    consumers: &FxHashMap<NodeId, Vec<NodeId>>,
 ) -> FxHashSet<NodeId> {
+    let consumers = build_consumers(f);
     let mut seen = FxHashSet::default();
     seen.insert(center);
     let mut queue = VecDeque::from([(center, 0usize)]);
@@ -72,21 +65,20 @@ pub(super) fn neighborhood_nodes(
     seen
 }
 
-impl<R: MemReader> FunctionDotDumper<'_, R> {
-    /// Standalone DOT for the depth-`depth` neighborhood around `center`, with
-    /// `center` highlighted.
+impl FunctionDotDumper<'_> {
+    /// Standalone DOT for the nodes within `depth` edges of `center`, `center`
+    /// highlighted.
     ///
     /// # Errors
-    /// Propagates a `pretty_label` IO error.
+    /// Propagates a DOT-emit error from the renderer.
     pub fn neighborhood_dot(
-        &self,
+        self,
         center: NodeId,
         depth: usize,
         hub_cap: usize,
         max_nodes: usize,
         count_producers: bool,
-    ) -> io::Result<String> {
-        let consumers = build_consumers(self.function);
+    ) -> crate::Result<String> {
         let set = neighborhood_nodes(
             self.function,
             center,
@@ -94,19 +86,11 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
             hub_cap,
             max_nodes,
             count_producers,
-            &consumers,
         );
         let restricted = FunctionDotDumper {
-            entry: self.entry,
-            function: self.function,
-            sleigh: self.sleigh,
-            regs: std::borrow::Cow::Borrowed(&self.regs),
-            node_to_arg_indices: self.node_to_arg_indices.clone(),
-            nodes: Some(set),
-            center: Some(center),
+            view: Some(::dot::View::new(set, center)),
+            ..self
         };
-        ::dot::GraphDot::new(restricted, ::dot::DotStyle::dark())
-            .as_dot()
-            .map_err(|e| io::Error::other(e.to_string()))
+        ::dot::GraphDot::new(restricted, ::dot::DotStyle::dark()).as_dot()
     }
 }

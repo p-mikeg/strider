@@ -8,6 +8,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import pytest
+
 import strider
 
 from .conftest import fixture_path
@@ -25,14 +27,13 @@ def _analyzed():
 
 def test_background_serves_and_leaves_the_calling_thread_free():
     """The point of the mode: browse and query at the same time. Rendering runs
-    on the server thread through a decoder of its own, so the caller's handle
-    is never borrowed out from under it."""
+    on the server thread and reads the arch's name table, so the caller's
+    handle is never borrowed out from under it."""
     fn = _analyzed().function
     port = strider.explore.visualize(fn, background=True)
     try:
         entry = _get(port, "/entry").strip()
-        # pretty rendering resolves register names, which is the path that
-        # needs a decoder at all
+        # pretty rendering resolves register names
         dot = _get(port, f"/dot?center={entry}&pretty=1")
         assert dot.startswith("digraph")
         # ...while this thread keeps using the original handle
@@ -266,3 +267,28 @@ def test_a_body_write_with_no_progress_gives_up_when_the_server_is_stopping():
     p.handler._send(b"x" * 4096, "text/plain")
     assert p.sent == b""
     assert p.handler.close_connection, "a cut write must close its connection"
+
+
+@pytest.mark.parametrize("depth", [True, 2.5])
+def test_a_depth_that_is_not_an_integer_raises_before_serving(depth):
+    lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
+    fn = lift.analyze(lift.entry_point()).function
+    try:
+        port = strider.explore.visualize(fn, port=0, depth=depth, background=True)
+    except TypeError as e:
+        assert "depth" in str(e)
+    else:
+        strider.explore.shutdown(port)
+        pytest.fail(f"depth={depth!r} was served")
+
+
+def test_explore_visualize_is_the_one_entry():
+    """No `Lifter.visualize`; `explore.visualize` checks its own arguments
+    before binding anything."""
+    lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
+    fn = lift.analyze(lift.entry_point()).function
+    assert not hasattr(lift, "visualize")
+    with pytest.raises(ValueError, match="depth"):
+        strider.explore.visualize(fn, depth=-1)
+    with pytest.raises(TypeError):
+        strider.explore.visualize(fn, "127.0.0.1")  # type: ignore[misc]

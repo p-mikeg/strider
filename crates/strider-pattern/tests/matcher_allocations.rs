@@ -40,8 +40,7 @@ static ALLOCATOR: Counting = Counting;
 const LEAVES: usize = 8;
 const CHAIN: usize = 400;
 
-/// Runs `f` once to warm the kind index, then counts what a second run
-/// allocates.
+/// Runs `f` once to warm up, then counts what a second run allocates.
 fn allocations_of<T>(f: impl Fn() -> T) -> (T, usize) {
     drop(f());
     let before = ALLOCS.load(Ordering::Relaxed);
@@ -150,4 +149,25 @@ fn matching_allocates_per_configuration_not_per_node_visited() {
         allocations <= 16,
         "{allocations} allocations while scanning {CHAIN} adds"
     );
+
+    // Accepting. A capture-free pattern stops at its first configuration per
+    // root, so a hit costs its `Match` and the list holding it, and no dedup.
+    // Measured as the slope between two chain lengths, so what the query sets
+    // up once, and the result list's amortised growth, cancel out.
+    let pattern = strider_pattern::int_add(
+        strider_pattern::anything(),
+        strider_pattern::any_int_const(),
+    )
+    .into_pattern();
+    let hits_and_allocations = |n: usize| {
+        let function = add_chain(n);
+        let matcher = Matcher::new(&function);
+        let (hits, allocations) = allocations_of(|| matcher.find_all(&pattern).unwrap());
+        assert_eq!(hits.len(), n);
+        (n, allocations)
+    };
+    let (short_hits, short) = hits_and_allocations(CHAIN);
+    let (long_hits, long) = hits_and_allocations(4 * CHAIN);
+    let per_hit = (long - short) as f64 / (long_hits - short_hits) as f64;
+    assert!(per_hit <= 2.1, "{per_hit:.2} allocations per hit");
 }

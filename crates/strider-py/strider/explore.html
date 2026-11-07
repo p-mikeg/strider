@@ -97,17 +97,25 @@ $("legend").innerHTML=ROLES.map(([n,c])=>`<div><i style="background:${c}"></i>${
 
 const title=g=>g.querySelector("title")?.textContent||"";
 const isReal=id=>/^\d+$/.test(id);
-const findNode=id=>[...curSvg.querySelectorAll("g.node")].find(g=>title(g)===id);
+const findNode=id=>curSvg&&[...curSvg.querySelectorAll("g.node")].find(g=>title(g)===id);
 
 function applyScale(){ if(!curSvg)return; curSvg.style.width=(baseW*scale)+"px"; curSvg.style.height=(baseH*scale)+"px"; }
 
-let dotCtrl=null;
+let dotCtrl=null, dotErr=false;
 async function render(anchor){
   if(dotCtrl) dotCtrl.abort();               // cancel any in-flight render (single-threaded server)
   dotCtrl=new AbortController();
   let dot;
   const qs=ctrls.map(c=>`&${c.name}=${c.kind==="bool"?(vals[c.name]?1:0):vals[c.name]}`).join("");
-  try{ dot=await (await fetch(`/dot?center=${center}${qs}`,{signal:dotCtrl.signal})).text(); }
+  try{
+    const r=await fetch(`/dot?center=${center}${qs}`,{signal:dotCtrl.signal});
+    if(!r.ok){
+      msg.className="err"; msg.textContent=await r.text(); dotErr=true;
+      curSvg=null; graph.replaceChildren(); return;
+    }
+    dot=await r.text();
+    if(dotErr){ msg.className=""; msg.textContent=""; dotErr=false; }
+  }
   catch(e){ if(e.name==="AbortError") return; throw e; }
   curSvg=viz.renderSVGElement(dot);
   curSvg.removeAttribute("width"); curSvg.removeAttribute("height");

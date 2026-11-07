@@ -7,37 +7,32 @@
 //! dispatch the memory map comes out empty.
 
 use object::Object;
-use strider_cfg::{Builder, CfgOptions};
+use strider_cfg::{CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 #[test]
 fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/out/x64/tzcount.o");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    // The only ET_REL lift coverage in strider-cfg.
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
 
-    let obj = strider_reader::load_elf(&path).expect("load tzcount.o");
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
+    let elf = strider_reader::load_elf(&path).expect("load tzcount.o");
+    let obj = elf.checked_file().expect("the mapped file is unchanged");
     assert_eq!(
         obj.kind(),
         object::ObjectKind::Relocatable,
         "fixture must be ET_REL"
     );
 
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj)
-        .expect("ElfFileMemReader::from_object on .o");
+    let mem =
+        strider_reader::ElfFileMemReader::new(&elf, strider_reader::elf::RelocationMode::Unapplied)
+            .expect("ElfFileMemReader::new on .o");
     let arch = SleighArch::x86_64();
-    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
-        .expect("create Sleigh for ET_REL fixture");
 
     // Through the layout, not raw `st_value`: an ET_REL symbol's `st_value` is
     // an offset into its section, and the reader seats those sections apart at
@@ -48,9 +43,10 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
             .expect("tzcount symbol present in .o"),
     );
 
-    let cfg = Builder::for_arch(&arch, &mut sleigh, tz_addr, &CfgOptions::default())
-        .build()
-        .expect("Builder::build on tzcount lifted from .o");
+    let cfg = DecodeEngine::new(arch, mem)
+        .expect("decode engine")
+        .build_cfg(tz_addr.into(), &CfgOptions::default())
+        .expect("build_cfg on tzcount lifted from .o");
 
     // Exact region counts move with GCC optimisation and inlining, so only
     // the control-flow shape is pinned; without the section-walker dispatch

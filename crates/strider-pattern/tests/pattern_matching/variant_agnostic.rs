@@ -1,10 +1,17 @@
-use strider_ir::node::ValueType;
+use strider_ir::UBig;
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};
+
+/// The kind of the node `c` bound.
+fn bound_kind(m: &Match, c: Capture, function: &strider_ir::Function) -> Option<NodeKind> {
+    let node = m.bindings().get_node(c, function.graph())?;
+    Some(*function.node_kind(node))
+}
 
 #[test]
 fn any_int_binary_captures_each_variant() {
@@ -28,8 +35,8 @@ fn any_int_binary_captures_each_variant() {
                 .into_pattern(),
         );
         assert_eq!(
-            m.bindings().get_int_binary_op(ov, function.graph()),
-            Some(op)
+            bound_kind(&m, ov, &function),
+            Some(NodeKind::IntBinaryOp(op))
         );
     }
 }
@@ -81,8 +88,8 @@ fn any_int_unary_captures_variant() {
         any_int_unary(int_const(42u128)).capture(ov).into_pattern(),
     );
     assert_eq!(
-        m.bindings().get_int_unary_op(ov, function.graph()),
-        Some(op)
+        bound_kind(&m, ov, &function),
+        Some(NodeKind::IntUnaryOp(op))
     );
 }
 
@@ -98,7 +105,7 @@ fn any_int_cmp_captures_variant() {
         let l = t.u64(5);
         let r = t.u64(3);
         let c = t.int_cmp(l, r, op);
-        let cast = t.as_int(c, ValueType::I64);
+        let cast = t.as_int(c, ValueType::int(64));
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -108,7 +115,7 @@ fn any_int_cmp_captures_variant() {
                 .capture(ov)
                 .into_pattern(),
         );
-        assert_eq!(m.bindings().get_int_cmp_op(ov, function.graph()), Some(op));
+        assert_eq!(bound_kind(&m, ov, &function), Some(NodeKind::IntCmpOp(op)));
     }
 }
 
@@ -119,7 +126,7 @@ fn any_int_cmp_retries_swap_only_for_commutative_cmp() {
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, IntCmpOp::Equal);
-    let cast = t.as_int(c, ValueType::I64);
+    let cast = t.as_int(c, ValueType::int(64));
     let function = t.ret_val(cast);
     let ov = Capture::new();
     a::matches(
@@ -135,7 +142,7 @@ fn any_int_cmp_retries_swap_only_for_commutative_cmp() {
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, IntCmpOp::Less);
-    let cast = t.as_int(c, ValueType::I64);
+    let cast = t.as_int(c, ValueType::int(64));
     let function = t.ret_val(cast);
     let ov = Capture::new();
     a::none(
@@ -153,7 +160,7 @@ fn any_float_cmp_retries_swap_only_for_commutative_cmp() {
     let l = t.f64(1.0);
     let r = t.f64(2.0);
     let c = t.fcmp(l, r, FloatCmpOp::Equal);
-    let cast = t.as_int(c, ValueType::I64);
+    let cast = t.as_int(c, ValueType::int(64));
     let function = t.ret_val(cast);
 
     let ov = Capture::new();
@@ -170,7 +177,7 @@ fn any_float_cmp_retries_swap_only_for_commutative_cmp() {
     let l2 = t2.f64(1.0);
     let r2 = t2.f64(2.0);
     let c2 = t2.fcmp(l2, r2, FloatCmpOp::Less);
-    let cast2 = t2.as_int(c2, ValueType::I64);
+    let cast2 = t2.as_int(c2, ValueType::int(64));
     let g2 = t2.ret_val(cast2);
     let ov2 = Capture::new();
     a::none(
@@ -189,7 +196,7 @@ fn any_bool_binary_captures_variant() {
         let a_ = t.boolean(true);
         let b_ = t.boolean(false);
         let c = t.bool_bin(a_, b_, op);
-        let cast = t.as_int(c, ValueType::I64);
+        let cast = t.as_int(c, ValueType::int(64));
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -200,9 +207,10 @@ fn any_bool_binary_captures_variant() {
                 .into_pattern(),
         );
         assert_eq!(
-            m.bindings().get_bool_binary_op(ov, function.graph()),
-            Some(op)
+            bound_kind(&m, ov, &function),
+            Some(NodeKind::IntBinaryOp(op))
         );
+        assert_eq!(m.bindings().get_type(ov, &function), Some(ValueType::I1));
     }
 }
 
@@ -215,7 +223,7 @@ fn any_bool_binary_rejects_wide_int_op() {
     let bt = t.boolean(true);
     let bf = t.boolean(false);
     let bool_and = t.bool_bin(bt, bf, IntBinaryOp::And);
-    let bool_as_int = t.as_int(bool_and, ValueType::I64);
+    let bool_as_int = t.as_int(bool_and, ValueType::int(64));
     // Same NodeKind discriminant and payload, but 64-bit.
     let w0 = t.u64(0xF0);
     let w1 = t.u64(0x0F);
@@ -248,8 +256,8 @@ fn any_float_binary_captures_variant() {
         let mut t = Tb::empty();
         let l = t.f64(1.0);
         let r = t.f64(2.0);
-        let v = t.fbin(l, r, op, ValueType::F64);
-        let cast = t.float_to_int(v, ValueType::I64);
+        let v = t.fbin(l, r, op, ValueType::float(64));
+        let cast = t.float_to_int(v, ValueType::int(64));
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -276,8 +284,8 @@ fn any_float_unary_captures_variant() {
     ] {
         let mut t = Tb::empty();
         let v = t.f64(9.0);
-        let v = t.fun(v, op, ValueType::F64);
-        let cast = t.float_to_int(v, ValueType::I64);
+        let v = t.fun(v, op, ValueType::float(64));
+        let cast = t.float_to_int(v, ValueType::int(64));
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -296,12 +304,12 @@ fn any_float_unary_captures_variant() {
 
 #[test]
 fn any_float_cmp_captures_variant() {
-    for op in [FloatCmpOp::Equal, FloatCmpOp::Less] {
+    for op in FloatCmpOp::ALL {
         let mut t = Tb::empty();
         let l = t.f64(1.0);
         let r = t.f64(2.0);
         let c = t.fcmp(l, r, op);
-        let cast = t.as_int(c, ValueType::I64);
+        let cast = t.as_int(c, ValueType::int(64));
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -341,15 +349,27 @@ fn variant_any_composes_with_value_capture() {
 
     for m in &hits {
         assert_eq!(
-            m.bindings().get_int_binary_op(ov, function.graph()),
-            Some(IntBinaryOp::Mul),
+            bound_kind(m, ov, &function),
+            Some(NodeKind::IntBinaryOp(IntBinaryOp::Mul)),
             "the op-variant capture composes with the value captures either way",
         );
     }
-    assert_eq!(hits[0].bindings().get_uint(lv, &function), Some(100));
-    assert_eq!(hits[0].bindings().get_uint(rv, &function), Some(50));
-    assert_eq!(hits[1].bindings().get_uint(lv, &function), Some(50));
-    assert_eq!(hits[1].bindings().get_uint(rv, &function), Some(100));
+    assert_eq!(
+        hits[0].bindings().get_uint(lv, &function),
+        Some(UBig::from(100u8))
+    );
+    assert_eq!(
+        hits[0].bindings().get_uint(rv, &function),
+        Some(UBig::from(50u8))
+    );
+    assert_eq!(
+        hits[1].bindings().get_uint(lv, &function),
+        Some(UBig::from(50u8))
+    );
+    assert_eq!(
+        hits[1].bindings().get_uint(rv, &function),
+        Some(UBig::from(100u8))
+    );
 }
 
 #[test]
@@ -361,5 +381,5 @@ fn unbound_op_capture_returns_none() {
     };
     let m = a::first(&function, int_const(7u128).into_pattern());
     let ov = Capture::new();
-    assert_eq!(m.bindings().get_int_binary_op(ov, function.graph()), None);
+    assert_eq!(m.bindings().get_float_binary_op(ov, function.graph()), None);
 }

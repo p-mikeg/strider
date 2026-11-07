@@ -3,7 +3,25 @@ use core::slice;
 
 use crate::cache::NodeCacheable;
 use crate::graph::Graph;
-use crate::ids::{NodeId, UseId, ValueId};
+use crate::ids::{UseId, ValueId};
+
+#[cfg(feature = "edge-read-count")]
+std::thread_local! {
+    static EDGE_READS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// `Inputs` / `InputIter` reads, `Graph::nth_input` calls and
+/// `Graph::value_uses` steps on this thread so far.
+#[cfg(feature = "edge-read-count")]
+pub fn edge_reads() -> u64 {
+    EDGE_READS.with(core::cell::Cell::get)
+}
+
+#[inline]
+pub(crate) fn count_edge_read() {
+    #[cfg(feature = "edge-read-count")]
+    EDGE_READS.with(|n| n.set(n.get() + 1));
+}
 
 pub struct Inputs<'a, N, V, C: NodeCacheable<N, V>> {
     pub(crate) graph: &'a Graph<N, V, C>,
@@ -28,15 +46,18 @@ impl<'a, N, V, C: NodeCacheable<N, V>> Inputs<'a, N, V, C> {
     }
 
     pub fn get(&self, index: usize) -> Option<&ValueId> {
-        Some(&self.graph.store.inputs[*self.use_list.get(index)?].value_id)
+        let id = *self.use_list.get(index)?;
+        count_edge_read();
+        Some(&self.graph.store.inputs[id].value_id)
     }
 
     /// Same yield as `into_iter()`, borrowing instead of consuming.
     pub fn iter(&self) -> impl Iterator<Item = ValueId> + Clone + 'a {
         let graph = self.graph;
-        self.use_list
-            .iter()
-            .map(move |id| graph.store.inputs[*id].value_id)
+        self.use_list.iter().map(move |id| {
+            count_edge_read();
+            graph.store.inputs[*id].value_id
+        })
     }
 }
 
@@ -57,8 +78,9 @@ impl<N, V, C: NodeCacheable<N, V>> Index<usize> for Inputs<'_, N, V, C> {
 
     /// # Panics
     ///
-    /// On out-of-bounds. Prefer the fallible `get(idx)` for opaque-arity nodes.
+    /// On out-of-bounds.
     fn index(&self, index: usize) -> &Self::Output {
+        count_edge_read();
         &self.graph.store.inputs[self.use_list[index]].value_id
     }
 }
@@ -81,7 +103,9 @@ impl<N, V, C: NodeCacheable<N, V>> Iterator for InputIter<'_, N, V, C> {
     type Item = ValueId;
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.graph.store.inputs[*self.iter.next()?].value_id)
+        let id = *self.iter.next()?;
+        count_edge_read();
+        Some(self.graph.store.inputs[id].value_id)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -90,38 +114,8 @@ impl<N, V, C: NodeCacheable<N, V>> Iterator for InputIter<'_, N, V, C> {
 
     /// The default walks `n` edges one at a time; the use-list is a slice.
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        Some(self.graph.store.inputs[*self.iter.nth(n)?].value_id)
-    }
-}
-
-/// Walks one value's use-list, able to mutate the edge it points at in place.
-pub struct InputCursor<'a, N, V, C: NodeCacheable<N, V>> {
-    pub(crate) graph: &'a mut Graph<N, V, C>,
-    pub(crate) current: Option<UseId>,
-}
-
-impl<N, V, C: NodeCacheable<N, V>> InputCursor<'_, N, V, C> {
-    /// `None` once the use-list is exhausted.
-    pub fn current(&self) -> Option<(NodeId, u32)> {
-        let current = &self.graph.store.inputs[self.current?];
-        Some((current.node_id, current.input_index))
-    }
-
-    fn move_next(&mut self) {
-        let Some(current) = self.current else {
-            return;
-        };
-        self.current = self.graph.store.inputs[current].next.expand();
-    }
-
-    /// Redirects the current input edge to `new_value` and advances. `false`
-    /// if the cursor was already past the end.
-    pub fn replace_current_with(&mut self, new_value: ValueId) -> bool {
-        let Some(current) = self.current else {
-            return false;
-        };
-        self.move_next();
-        self.graph.update_input(current, new_value);
-        true
+        let id = *self.iter.nth(n)?;
+        count_edge_read();
+        Some(self.graph.store.inputs[id].value_id)
     }
 }

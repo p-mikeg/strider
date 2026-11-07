@@ -1,35 +1,25 @@
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
-use strider_target::call_other_abi::{CallOtherAbi, CallOtherClass, CallOtherOverride};
+use strider_target::call_other_abi::{CallOtherClass, CallOtherOverride};
 
-/// `Class` carries the static register names of a table row, resolved against
-/// a Sleigh at lift time.  `Built` is resolved eagerly instead, so a name typo
-/// surfaces at construction.
+/// `Built` resolves at construction, so a name typo raises there.
 #[derive(Clone)]
 pub(crate) enum AbiImpl {
     Class(CallOtherClass),
     Built(Box<strider_target::BuiltCallOtherAbi>),
 }
 
-/// How one Sleigh user-op is lifted: the implicit register footprint, the
-/// memory effect and whether control returns, none of which Sleigh's pcode
-/// encodes.
-///
-/// Construct via `CallOtherAbi.pure()` / `.noop()` / `.mem_clobber()` /
-/// `.no_return()` for the footprint-free classes, or `CallOtherAbi.custom(...)`
-/// to name registers.  Pass one to
-/// `CfgOptions(call_other_abis={name: abi})`.
+/// How one Sleigh user-op is lifted: implicit registers, memory effect and
+/// whether control returns. Pass to `CfgOptions(call_other_abis={name: abi})`.
 #[pyclass(name = "CallOtherAbi", module = "strider.sleigh", frozen)]
 #[derive(Clone)]
 pub struct PyCallOtherAbi {
     pub(crate) inner: AbiImpl,
-    /// The register names as the caller (or the built-in table) spells them.
     reads: Vec<String>,
     writes: Vec<String>,
-    /// The arch a `custom(...)` ABI resolved its register names against;
-    /// `None` for a preset class, which carries no varnodes.
-    pub(crate) source_arch: Option<crate::strider_cls::SourceArch>,
+    /// `None` for a class.
+    pub(crate) source_arch: Option<strider_target::SleighArch>,
 }
 
 impl PyCallOtherAbi {
@@ -47,8 +37,6 @@ impl PyCallOtherAbi {
         }
     }
 
-    /// The classification `preset` gives `name`, or `None` for a name no
-    /// built-in table answers for.
     pub(crate) fn builtin(preset: strider_target::ArchPreset, name: &str) -> Option<Self> {
         strider_target::call_other_abi::classify(preset, name).map(Self::from_class)
     }
@@ -60,24 +48,20 @@ impl PyCallOtherAbi {
         }
     }
 
-    fn abi(&self) -> Option<&CallOtherAbi> {
-        match &self.inner {
-            AbiImpl::Class(CallOtherClass::Call(abi)) => Some(abi),
-            _ => None,
-        }
+    fn source_preset(&self) -> Option<strider_target::ArchPreset> {
+        self.source_arch.map(|a| a.preset())
     }
 }
 
 #[pymethods]
 impl PyCallOtherAbi {
-    /// The op is dropped: no IR node, control and memory unchanged, and any
-    /// pcode result ignored.
+    /// The op is dropped: no IR node, any p-code result ignored.
     #[classmethod]
     fn noop(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::NoOp)
     }
 
-    /// Pure compute: a pcode result, no implicit registers, no memory effect.
+    /// Pure compute: a p-code result, no implicit registers, no memory effect.
     #[classmethod]
     fn pure(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::PURE)
@@ -89,31 +73,15 @@ impl PyCallOtherAbi {
         Self::from_class(CallOtherClass::MEM_CLOBBER)
     }
 
-    /// Control does not pass the op, which ends its region.  Empty footprint;
-    /// `custom(..., no_return=True)` carries one.
+    /// Control does not return; no implicit registers. For a no-return op
+    /// that has some, use `custom(..., no_return=True)`.
     #[classmethod]
     fn no_return(_cls: &Bound<'_, PyType>) -> Self {
         Self::from_class(CallOtherClass::NO_RETURN)
     }
 
-    /// Build an ABI naming implicit registers, for an op strider reads
-    /// wrongly or an OS convention it cannot know.  The names are resolved
-    /// here, so a bad one raises `StriderError` at construction rather than at
-    /// first use.
-    ///
-    /// Args:
-    ///     sleigh: The `Sleigh` instance to resolve register names against.
-    ///     implicit_reads: Registers read beyond the pcode-explicit operands.
-    ///         They lead the lifted call's argument list.
-    ///     implicit_writes: Registers written or clobbered beyond the
-    ///         pcode-explicit result.
-    ///     clobbers_memory: `True` for anything touching memory (atomics,
-    ///         barriers, port I/O, syscalls); `False` for pure compute.
-    ///     no_return: `True` when control does not pass the op.
-    ///
-    /// The frozen varnodes belong to `sleigh`'s architecture, so the result is
-    /// usable only with a `Lifter` for that same arch; any other raises
-    /// `StriderError`.
+    /// An ABI naming implicit registers resolved against `sleigh`; an unknown
+    /// name raises `StriderError`.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,
@@ -124,32 +92,22 @@ impl PyCallOtherAbi {
     ))]
     fn custom(
         _cls: &Bound<'_, PyType>,
-        py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
+        sleigh: crate::arch::PySleighArch,
         implicit_reads: Vec<String>,
         implicit_writes: Vec<String>,
         clobbers_memory: bool,
         no_return: bool,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        let source_arch = sleigh_borrow.source_arch;
-        drop(sleigh_borrow);
-        let resolve = |names: &[String]| -> PyResult<Vec<rsleigh::Vn>> {
-            names
-                .iter()
-                .map(|name| {
-                    regs.name_to_vn(name).ok_or_else(|| {
-                        crate::errors::into_strider_err(anyhow::anyhow!(
-                            "CallOtherAbi.custom: unknown register name {name:?}"
-                        ))
-                    })
-                })
-                .collect()
+        let source_arch = sleigh.inner;
+        let regs = source_arch.names().regs();
+        let resolve = |field: &str, names: &[String]| {
+            strider_target::calling_convention::regs_to_vns(regs, names).map_err(|e| {
+                crate::errors::into_strider_err(e.context(format!("CallOtherAbi.custom: {field}")))
+            })
         };
         let built = strider_target::BuiltCallOtherAbi {
-            implicit_reads: resolve(&implicit_reads)?,
-            implicit_writes: resolve(&implicit_writes)?,
+            implicit_reads: resolve("implicit_reads", &implicit_reads)?,
+            implicit_writes: resolve("implicit_writes", &implicit_writes)?,
             clobbers_memory,
             no_return,
         };
@@ -161,13 +119,13 @@ impl PyCallOtherAbi {
         })
     }
 
-    /// Register names read beyond the pcode-explicit operands.
+    /// Register names read beyond the p-code-explicit operands.
     #[getter]
     fn implicit_reads(&self) -> Vec<String> {
         self.reads.clone()
     }
 
-    /// Register names written beyond the pcode-explicit result.
+    /// Register names written beyond the p-code-explicit result.
     #[getter]
     fn implicit_writes(&self) -> Vec<String> {
         self.writes.clone()
@@ -177,7 +135,8 @@ impl PyCallOtherAbi {
     #[getter]
     fn clobbers_memory(&self) -> bool {
         match &self.inner {
-            AbiImpl::Class(_) => self.abi().is_some_and(|a| a.clobbers_memory),
+            AbiImpl::Class(CallOtherClass::Call(abi)) => abi.clobbers_memory,
+            AbiImpl::Class(CallOtherClass::NoOp) => false,
             AbiImpl::Built(abi) => abi.clobbers_memory,
         }
     }
@@ -191,21 +150,17 @@ impl PyCallOtherAbi {
         }
     }
 
-    /// Whether the op lifts to nothing at all (the `noop()` class).
+    /// Whether this is `noop()`.
     #[getter]
     fn is_noop(&self) -> bool {
         matches!(self.inner, AbiImpl::Class(CallOtherClass::NoOp))
     }
 
-    /// The constructor call that produces this ABI, less the `sleigh` a
-    /// footprint was resolved against.
     fn __repr__(&self) -> String {
         if self.is_noop() {
             return "CallOtherAbi.noop()".to_owned();
         }
-        // `source_arch` is what separates a `custom` from a preset under
-        // `__eq__`, so a `custom` keeps the `custom(...)` form however empty
-        // its footprint is.
+        // A `custom` keeps its form however empty, as `__eq__` separates it.
         if self.source_arch.is_none() && self.reads.is_empty() && self.writes.is_empty() {
             if self.is_no_return() {
                 return "CallOtherAbi.no_return()".to_owned();
@@ -215,22 +170,27 @@ impl PyCallOtherAbi {
             }
             return "CallOtherAbi.pure()".to_owned();
         }
-        format!(
-            "CallOtherAbi.custom(implicit_reads={:?}, implicit_writes={:?}, \
-             clobbers_memory={}, no_return={})",
+        let fields = format!(
+            "implicit_reads={:?}, implicit_writes={:?}, clobbers_memory={}, no_return={}",
             self.reads,
             self.writes,
             crate::options::py_bool(self.clobbers_memory()),
             crate::options::py_bool(self.is_no_return()),
-        )
+        );
+        match self.source_arch {
+            Some(arch) => format!(
+                "CallOtherAbi.custom(sleigh=SleighArch.{}(), {fields})",
+                arch.preset().name()
+            ),
+            // A built-in class with implicit registers has no constructor.
+            None => format!("<CallOtherAbi {fields}>"),
+        }
     }
 
-    /// Equality on the footprint, memory effect, no-return flag and the arch a
-    /// `custom` froze its varnodes against.  A `custom` never equals a preset,
-    /// and two `custom`s frozen on different arches never equal each other,
-    /// since neither is usable where the other is.
+    /// Equal footprint, memory effect, no-return flag and `custom` arch
+    /// preset; a `custom` never equals a class.
     fn __eq__(&self, other: &Self) -> bool {
-        self.source_arch == other.source_arch
+        self.source_preset() == other.source_preset()
             && self.is_noop() == other.is_noop()
             && self.reads == other.reads
             && self.writes == other.writes
@@ -238,11 +198,10 @@ impl PyCallOtherAbi {
             && self.is_no_return() == other.is_no_return()
     }
 
-    /// Hash consistent with `__eq__`.
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
-        self.source_arch.hash(&mut h);
+        self.source_preset().hash(&mut h);
         self.is_noop().hash(&mut h);
         self.reads.hash(&mut h);
         self.writes.hash(&mut h);

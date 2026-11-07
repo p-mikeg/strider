@@ -9,6 +9,11 @@ rust-version.workspace = true
 publish.workspace = true
 readme = "README.md"
 
+[features]
+# `OwnedElf::regions`, `elf::LoadFilter` and `MemRegion::patch_count`, for
+# this crate's tests and bench.
+test-util = []
+
 [dependencies]
 object.workspace = true
 memmap2.workspace = true
@@ -20,5 +25,14 @@ anyhow.workspace = true
 workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 object = { workspace = true, features = ["write"] }
+proptest.workspace = true
 tempfile = "3.10"
+# Self dev-dependency: turns `test-util` on for the `tests/` and `benches/`
+# targets only.
+strider-reader = { workspace = true, features = ["test-util"] }
+
+[[bench]]
+name = "read"
+harness = false

@@ -8,92 +8,47 @@ fn make_region(start: u64, len: usize) -> MemRegion {
 }
 
 #[test]
-fn mem_region_end_addr() {
+fn mem_region_end_and_contains() {
     let r = make_region(0x1000, 16);
+    let empty = MemRegion::new(0x2000, vec![]).expect("valid region");
     assert_eq!(r.end_addr(), 0x1010);
+    assert_eq!(empty.end_addr(), 0x2000);
+    for (addr, want) in [
+        (0x0fff, false),
+        (0x1000, true),
+        (0x100f, true),
+        (0x1010, false),
+    ] {
+        assert_eq!(r.contains(addr), want, "{addr:#x}");
+    }
+    assert!(!empty.contains(0x2000));
 }
 
+/// `(addr, buf len, Some(bytes read and their values) | None)` over a region
+/// at 0x1000 holding `[0, 1, 2, 3]`.
 #[test]
-fn mem_region_end_addr_empty() {
-    let r = MemRegion::new(0x2000, vec![]).expect("valid region");
-    assert_eq!(r.end_addr(), 0x2000);
-}
-
-#[test]
-fn mem_region_contains_start() {
-    let r = make_region(0x1000, 16);
-    assert!(r.contains(0x1000));
-}
-
-#[test]
-fn mem_region_contains_last_byte() {
-    let r = make_region(0x1000, 16);
-    assert!(r.contains(0x100f));
-}
-
-#[test]
-fn mem_region_does_not_contain_end_addr() {
-    let r = make_region(0x1000, 16);
-    assert!(!r.contains(0x1010));
-}
-
-#[test]
-fn mem_region_does_not_contain_before_start() {
-    let r = make_region(0x1000, 16);
-    assert!(!r.contains(0x0fff));
-}
-
-#[test]
-fn mem_region_empty_contains_nothing() {
-    let r = MemRegion::new(0x1000, vec![]).expect("valid region");
-    assert!(!r.contains(0x1000));
-}
-
-#[test]
-fn mem_region_read_full_at_start() {
+fn mem_region_read() {
     let r = make_region(0x1000, 4);
-    let mut buf = [0u8; 4];
-    assert_eq!(r.read(0x1000, &mut buf), Some(4));
-    assert_eq!(buf, [0, 1, 2, 3]);
-}
-
-#[test]
-fn mem_region_read_mid_region() {
-    let r = make_region(0x1000, 8);
-    let mut buf = [0u8; 3];
-    assert_eq!(r.read(0x1002, &mut buf), Some(3));
-    assert_eq!(buf, [2, 3, 4]);
-}
-
-#[test]
-fn mem_region_read_partial_past_end() {
-    let r = make_region(0x1000, 4);
-    let mut buf = [0xffu8; 8];
-    assert_eq!(r.read(0x1002, &mut buf), Some(2));
-    assert_eq!(buf[0], 2);
-    assert_eq!(buf[1], 3);
-    assert_eq!(buf[2], 0xff);
-}
-
-#[test]
-fn mem_region_read_zero_length_buf() {
-    let r = make_region(0x1000, 4);
-    let mut buf: [u8; 0] = [];
-    assert_eq!(r.read(0x1000, &mut buf), Some(0));
-}
-
-#[test]
-fn mem_region_read_outside_returns_none() {
-    let r = make_region(0x1000, 4);
-    let mut buf = [0u8; 4];
-    assert_eq!(r.read(0x2000, &mut buf), None);
-}
-
-#[test]
-fn mem_region_read_at_end_addr_returns_none() {
-    let r = make_region(0x1000, 4);
-    let mut buf = [0u8; 1];
-    assert_eq!(r.read(0x1004, &mut buf), None);
+    let cases: &[(u64, usize, Option<&[u8]>)] = &[
+        (0x1000, 4, Some(&[0, 1, 2, 3])),
+        (0x1002, 1, Some(&[2])),
+        (0x1002, 8, Some(&[2, 3])),
+        (0x1000, 0, Some(&[])),
+        (0x2000, 4, None),
+        (0x1004, 1, None),
+    ];
+    for &(addr, len, want) in cases {
+        let mut buf = vec![0xffu8; len];
+        let got = r.read(addr, &mut buf);
+        assert_eq!(got, want.map(<[u8]>::len), "{addr:#x}+{len}");
+        if let Some(want) = want {
+            assert_eq!(&buf[..want.len()], want, "{addr:#x}+{len}");
+            assert!(
+                buf[want.len()..].iter().all(|&b| b == 0xff),
+                "{addr:#x}+{len}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -490,24 +445,4 @@ fn region_index_covering_reports_every_covering_region_highest_start_first() {
         index.covering(0x1040, 0).next().is_none(),
         "the end address is not mapped"
     );
-}
-
-#[test]
-fn region_index_overlapping_reports_the_regions_a_range_touches() {
-    let regions = [
-        make_region(0x1000, 0x40),
-        make_region(0x1010, 0x10),
-        make_region(0x2000, 8),
-    ];
-    let index = RegionIndex::new(&regions);
-    assert_eq!(
-        index.overlapping(0x1018, 0x1019).collect::<Vec<_>>(),
-        vec![1, 0]
-    );
-    assert_eq!(
-        index.overlapping(0x1030, 0x2001).collect::<Vec<_>>(),
-        vec![2, 0]
-    );
-    assert!(index.overlapping(0x1500, 0x1600).next().is_none());
-    assert!(index.overlapping(0x1000, 0x1000).next().is_none());
 }

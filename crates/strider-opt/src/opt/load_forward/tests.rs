@@ -1,68 +1,98 @@
 use super::*;
-use crate::error::Result;
-use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
+use crate::AssumptionOptions;
+use crate::PhiCollapse;
+use crate::Result;
+use crate::test_support::{COLLAPSE, STANDARD, at, run_pass, run_passes};
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
-    SENTINEL_LIFT_ADDR, sp_frame, stack_args_at, stack_vn_aarch64 as sp64_vn,
+    SENTINEL_LIFT_ADDR, make_sp_fn, sp_frame, stack_args_at, stack_vn_aarch64 as sp64_vn,
     stack_vn_x86 as sp32_vn,
 };
 use strider_target::Endianness;
 
-/// Counts anonymous `Phi` nodes; the Vn-tagged phis the lifter emits for
-/// register-aliased reads are not among them.
-fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
-    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        function.walk().collect();
-    function
-        .graph()
-        .all_node_ids()
-        .filter(|n| {
-            reachable.contains(*n)
-                && matches!(function.node_kind(*n), NodeKind::Phi)
-                && function
-                    .get_vn_for_value(function.node_outputs(*n)[0])
-                    .is_none()
-        })
-        .count()
+type Body = fn(&mut FunctionBuilder, ValueId) -> Result<ValueId>;
+
+/// `body` over a single-region frame of `sp`, returning the value it loads,
+/// run through [`STANDARD`] under `claims`.
+fn forwarded(
+    sp: rsleigh::Vn,
+    claims: AssumptionOptions,
+    body: impl FnOnce(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
+) -> Result<Function> {
+    let mut fg = make_sp_fn(sp, |b, sp_val| {
+        let loaded = body(b, sp_val)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+    fg.assume(&claims);
+    run_passes(&mut fg, STANDARD)?;
+    Ok(fg)
+}
+
+fn loads(fg: &Function) -> usize {
+    fg.count_kind(|k| matches!(k, NodeKind::Load(_)))
+}
+
+/// The constant `fg` returns, or `None` while it still returns a `Load`.
+fn outcome(fg: &Function) -> Option<u128> {
+    let ret = fg.returned();
+    if matches!(fg.node_kind(fg.producer(ret)), NodeKind::Load(_)) {
+        return None;
+    }
+    Some(
+        fg.int_const_u128(ret)
+            .expect("a forward folds to a constant"),
+    )
+}
+
+/// The producer of the surviving load's memory edge.
+fn narrowed_onto(fg: &Function) -> NodeKind {
+    let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
+    *fg.node_kind(fg.producer(fg.node_inputs(load)[0]))
+}
+
+fn claiming(stack_global_disjoint: bool, escape_analysis: bool) -> AssumptionOptions {
+    AssumptionOptions {
+        stack_global_disjoint,
+        escape_analysis,
+        ..AssumptionOptions::none()
+    }
+}
+
+fn i32_slot(b: &mut FunctionBuilder, sp: ValueId, off: i64) -> Result<ValueId> {
+    at(b, sp, off, ValueType::int(32))
+}
+
+fn store32(b: &mut FunctionBuilder, addr: ValueId, v: u64) -> Result<()> {
+    let data = b.build_int_const(v, ValueType::int(32))?;
+    b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+    Ok(())
+}
+
+fn load32(b: &mut FunctionBuilder, addr: ValueId) -> Result<ValueId> {
+    b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
 }
 
 /// Pins the memory-SSA walk as iterative: a recursive walk would overflow
 /// the default 8 MB stack at this chain depth.
 #[test]
 fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
-    const CHAIN_LEN: usize = 10_000;
-
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
-        let target_addr =
-            b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
-        let target_val = b.build_int_const(0x99u64, ValueType::I32)?;
-        b.build_store(target_addr, target_val, rsleigh::VnSpace::RAM)?;
-
+    const CHAIN_LEN: i64 = 10_000;
+    let fg = forwarded(sp32_vn(), AssumptionOptions::none(), |b, sp| {
+        store32(b, sp, 0x99)?;
         // Disjoint stores the walk must step past to reach the target.
         for i in 1..=CHAIN_LEN {
-            let off = b.build_int_const(((i * 4) as u64) + 8, ValueType::I32)?;
-            let addr =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I32)?;
-            let val = b.build_int_const(i as u64, ValueType::I32)?;
-            b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
+            let addr = i32_slot(b, sp, i * 4 + 8)?;
+            store32(b, addr, i as u64)?;
         }
-
-        let loaded = b.build_load(target_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
+        load32(b, sp)
     })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
-        reachable_loads, 0,
+        outcome(&fg),
+        Some(0x99),
         "Load at sp+0 must forward past all {CHAIN_LEN} disjoint stack stores"
     );
     Ok(())
@@ -72,711 +102,424 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
 /// the proven-disjoint stores onto `InitialMemory`.
 #[test]
 fn non_forwardable_load_is_narrowed_to_initial_memory() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        for off in [8u64, 16u64] {
-            let o = b.build_int_const(off, ValueType::I32)?;
-            let addr = b.build_int_binary_operation(sp_val, o, IntBinaryOp::Add, ValueType::I32)?;
-            let v = b.build_int_const(0xA0u64 + off, ValueType::I32)?;
-            b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+    let fg = forwarded(sp32_vn(), AssumptionOptions::none(), |b, sp| {
+        for off in [8, 16] {
+            let addr = i32_slot(b, sp, off)?;
+            store32(b, addr, 0xA0 + off as u64)?;
         }
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
-        let load_addr =
-            b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
-        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
+        load32(b, sp)
     })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let load = fg
-        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
-        .next()
-        .expect("the sp+0 load is not forwardable and must survive");
-    let mem = fg.node_inputs(load)[0];
-    assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::InitialMemory),
-        "non-forwardable load narrowed onto InitialMemory, got {:?}",
-        fg.node_kind(fg.producer(mem)),
-    );
-    Ok(())
-}
-
-/// A store through an opaque (`Anchor`) pointer sits between a stack spill and
-/// its reload.  Over a private frame with the knob on, the pointer cannot name
-/// the frame, so the reload forwards past it; without the knob, or when a frame
-/// address escapes, it is a may-alias barrier.
-fn spill_over_opaque_store(knob: bool, escape: bool) -> Result<strider_ir::Function> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // spill: [sp-8] = 0x99, a local of this frame
-        let zero = b.build_int_const((-8i64) as u64, ValueType::I32)?;
-        let slot = b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
-        let secret = b.build_int_const(0x99u64, ValueType::I32)?;
-        b.build_store(slot, secret, rsleigh::VnSpace::RAM)?;
-        let pconst = b.build_int_const(0x9000u64, ValueType::I32)?;
-        let ptr = b.build_load(pconst, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        // When `escape`, the stored value is a frame address (`sp+8`), which
-        // makes the frame non-private.
-        let data = if escape {
-            let eight = b.build_int_const(8u64, ValueType::I32)?;
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?
-        } else {
-            b.build_int_const(0x11u64, ValueType::I32)?
-        };
-        b.build_store(ptr, data, rsleigh::VnSpace::RAM)?;
-        let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(reload), &[])?;
-        Ok(())
-    })?;
-
-    let mut ctx = crate::OptCtx::at_floor(None);
-    ctx.options.assumptions.escape_analysis = knob;
-    crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
-    Ok(fg)
-}
-
-#[test]
-fn opaque_store_does_not_block_stack_reload_over_private_frame() -> Result<()> {
-    let fg = spill_over_opaque_store(true, false)?;
-    let ret = crate::test_support::return_value(fg.graph())?;
-    assert_eq!(
-        fg.int_const_u128(ret),
-        Some(0x99),
-        "over a private frame with the knob on, the reload forwards past the opaque store"
-    );
-    Ok(())
-}
-
-#[test]
-fn opaque_store_blocks_stack_reload_without_knob() -> Result<()> {
-    let fg = spill_over_opaque_store(false, false)?;
-    let ret = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        matches!(fg.node_kind(fg.producer(ret)), NodeKind::Load(_)),
-        "without the knob an opaque store is a may-alias barrier"
-    );
-    Ok(())
-}
-
-/// Soundness: once a frame address escapes, the opaque store might name the
-/// slot, so even with the knob the reload must not forward.
-#[test]
-fn opaque_store_blocks_stack_reload_when_frame_escapes() -> Result<()> {
-    let fg = spill_over_opaque_store(true, true)?;
-    let ret = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        matches!(fg.node_kind(fg.producer(ret)), NodeKind::Load(_)),
-        "an escaped frame address defeats the relaxation: the reload must not forward"
-    );
+    assert_eq!(narrowed_onto(&fg), NodeKind::InitialMemory);
     Ok(())
 }
 
 /// Same address, different `VnSpace`: distinct spaces never alias, so the RAM
-/// load must not take the REGISTER store's value.
+/// load must not take the REGISTER store's value, and narrows past it.
 #[test]
 fn forward_does_not_cross_address_spaces() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let v = b.build_int_const(0x11u64, ValueType::I32)?;
+    let fg = forwarded(sp32_vn(), AssumptionOptions::none(), |b, sp| {
+        let addr = i32_slot(b, sp, 8)?;
+        let v = b.build_int_const(0x11u64, ValueType::int(32))?;
         b.build_store(addr, v, rsleigh::VnSpace::REGISTER)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
+        load32(b, addr)
     })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let load = fg
-        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
-        .next()
-        .expect("RAM load must survive: a REGISTER store cannot forward into it");
-    let mem = fg.node_inputs(load)[0];
-    assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::InitialMemory),
-        "RAM load must narrow onto InitialMemory, not the REGISTER store; got {:?}",
-        fg.node_kind(fg.producer(mem)),
-    );
+    assert_eq!(narrowed_onto(&fg), NodeKind::InitialMemory);
     Ok(())
 }
 
-/// Two stores at the same offset: the forwarder must take the live (nearest)
-/// one, not the shadowed earlier one.
+/// One store / load shape over one frame per row, under `stack_global_disjoint`
+/// when the row claims it: `Some(v)` forwards `v`, `None` keeps the load.
 #[test]
-fn forward_takes_nearest_of_two_same_offset_stores() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let v = b.build_int_const(0x11u64, ValueType::I32)?;
-        let w = b.build_int_const(0x22u64, ValueType::I32)?;
-        b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_store(addr, w, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "Load[sp+8] must forward the nearest store"
-    );
-    let ret_val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        fg.int_const_u128(ret_val) == Some(0x22),
-        "forwarded value must be the NEAREST store's 0x22, got {:?}",
-        fg.int_const_u128(ret_val),
-    );
+fn straight_line_forwarding() -> Result<()> {
+    let rows: &[(&str, rsleigh::Vn, bool, Body, Option<u128>)] = &[
+        (
+            "a matching store forwards",
+            sp32_vn(),
+            false,
+            |b, sp| {
+                let addr = i32_slot(b, sp, 4)?;
+                store32(b, addr, 0x11)?;
+                load32(b, addr)
+            },
+            Some(0x11),
+        ),
+        (
+            "the nearest of two same-offset stores forwards",
+            sp32_vn(),
+            false,
+            |b, sp| {
+                let addr = i32_slot(b, sp, 8)?;
+                store32(b, addr, 0x11)?;
+                store32(b, addr, 0x22)?;
+                load32(b, addr)
+            },
+            Some(0x22),
+        ),
+        (
+            "a non-aliasing store is stepped past",
+            sp32_vn(),
+            false,
+            |b, sp| {
+                let (addr4, addr12) = (i32_slot(b, sp, 4)?, i32_slot(b, sp, 12)?);
+                store32(b, addr4, 0xBB)?;
+                store32(b, addr12, 0xAA)?;
+                load32(b, addr4)
+            },
+            Some(0xBB),
+        ),
+        (
+            // The aligned base differs from the initial SP by `sp mod 16`,
+            // which is caller-dependent, so these are different memory.
+            "sp + 8 does not back (sp & -16) + 8",
+            sp32_vn(),
+            false,
+            |b, sp| {
+                let addr = i32_slot(b, sp, 8)?;
+                store32(b, addr, 0x11)?;
+                let aligned =
+                    b.build_const_binop(0xFFFF_FFF0u64, sp, IntBinaryOp::And, ValueType::int(32))?;
+                let load_addr = i32_slot(b, aligned, 8)?;
+                load32(b, load_addr)
+            },
+            None,
+        ),
+        (
+            "a store over [0, 8) does not back a load of [4, 8)",
+            sp64_vn(),
+            false,
+            |b, sp| {
+                let addr4 = at(b, sp, 4, ValueType::int(64))?;
+                let wide = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::int(64))?;
+                b.build_store(sp, wide, rsleigh::VnSpace::RAM)?;
+                load32(b, addr4)
+            },
+            None,
+        ),
+        (
+            "a store of [2, 6) does not back a load of [0, 8)",
+            sp64_vn(),
+            false,
+            |b, sp| {
+                let addr2 = at(b, sp, 2, ValueType::int(64))?;
+                store32(b, addr2, 0x1122_3344)?;
+                b.build_load(sp, rsleigh::VnSpace::RAM, ValueType::int(64))
+            },
+            None,
+        ),
+        (
+            "a narrower same-address store between a wide store and load blocks both",
+            sp64_vn(),
+            false,
+            |b, sp| {
+                let wide = b.build_int_const(0xAAAA_BBBB_CCCC_DDDDu64, ValueType::int(64))?;
+                b.build_store(sp, wide, rsleigh::VnSpace::RAM)?;
+                store32(b, sp, 0x1234)?;
+                b.build_load(sp, rsleigh::VnSpace::RAM, ValueType::int(64))
+            },
+            None,
+        ),
+        (
+            "a narrower store at the load's offset does not back it",
+            sp64_vn(),
+            false,
+            |b, sp| {
+                store32(b, sp, 0x11)?;
+                b.build_load(sp, rsleigh::VnSpace::RAM, ValueType::int(64))
+            },
+            None,
+        ),
+        (
+            // Its constant address could equal `sp + K`, or be an escaped
+            // SP-derived pointer.
+            "at the floor a const-address store may alias a stack slot",
+            sp32_vn(),
+            false,
+            const_store_between,
+            None,
+        ),
+        (
+            "under stack_global_disjoint a const-address store is stepped past",
+            sp32_vn(),
+            true,
+            const_store_between,
+            Some(0xAA),
+        ),
+        (
+            // Proven disjoint on the ring, not by `stack_global_disjoint`.
+            "a const-address load forwards past a disjoint const-address store",
+            sp32_vn(),
+            false,
+            |b, _| {
+                let (addr1, addr2) = (
+                    b.build_int_const(0x1000u64, ValueType::int(32))?,
+                    b.build_int_const(0x2000u64, ValueType::int(32))?,
+                );
+                store32(b, addr1, 0xAA)?;
+                store32(b, addr2, 0xBB)?;
+                load32(b, addr1)
+            },
+            Some(0xAA),
+        ),
+        (
+            // Matched by `ValueId` equality on the address slot.
+            "an Anchor load forwards from the store through the same value",
+            sp32_vn(),
+            false,
+            |b, _| {
+                let table_base = b.build_int_const(0x100u64, ValueType::int(32))?;
+                let p = load32(b, table_base)?;
+                store32(b, p, 0xCC)?;
+                load32(b, p)
+            },
+            Some(0xCC),
+        ),
+        (
+            // `q != p` is unprovable at runtime.
+            "a store through a different Anchor blocks",
+            sp32_vn(),
+            false,
+            |b, _| {
+                let base1 = b.build_int_const(0x100u64, ValueType::int(32))?;
+                let base2 = b.build_int_const(0x200u64, ValueType::int(32))?;
+                let (p, q) = (load32(b, base1)?, load32(b, base2)?);
+                store32(b, p, 0xCC)?;
+                store32(b, q, 0xDD)?;
+                load32(b, p)
+            },
+            None,
+        ),
+        (
+            "a Call between blocks",
+            sp64_vn(),
+            false,
+            |b, sp| {
+                let addr4 = at(b, sp, 4, ValueType::int(64))?;
+                store32(b, addr4, 0x11)?;
+                let target = b.build_int_const(0x1000u64, ValueType::int(64))?;
+                b.build_call_cc(target, None)?;
+                load32(b, addr4)
+            },
+            None,
+        ),
+        (
+            // Both encodings normalise to offset -4 once `ConstantFold` has
+            // folded `Add(_, Neg(K))`; LoadForward does not peel the `Neg`.
+            "Sub(sp, 4) and Add(sp, 0xFFFFFFFC) name one slot",
+            sp32_vn(),
+            false,
+            |b, sp| {
+                let four = b.build_int_const(4u64, ValueType::int(32))?;
+                let store_addr = b.build_sub_as_add_neg(sp, four, ValueType::int(32))?;
+                store32(b, store_addr, 0x4242)?;
+                let load_addr = i32_slot(b, sp, -4)?;
+                load32(b, load_addr)
+            },
+            Some(0x4242),
+        ),
+        (
+            // The `-O0 -m32` spill read back one byte: forwarded through a
+            // `Truncate`, so the I8 result is the low byte.
+            "a narrower load takes the low byte of a wider store",
+            sp32_vn(),
+            false,
+            |b, sp| {
+                let eight = b.build_int_const(8u64, ValueType::int(32))?;
+                let addr = b.build_sub_as_add_neg(sp, eight, ValueType::int(32))?;
+                store32(b, addr, 0xDEAD_BEEF)?;
+                b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(8))
+            },
+            Some(0xEF),
+        ),
+    ];
+    for &(why, sp, stack_global_disjoint, body, want) in rows {
+        let fg = forwarded(sp, claiming(stack_global_disjoint, false), body)?;
+        assert_eq!(outcome(&fg), want, "{why}");
+    }
     Ok(())
 }
 
+/// `[sp+4] = 0xAA; [0x1000] = 0xBB; return [sp+4]`.
+fn const_store_between(b: &mut FunctionBuilder, sp: ValueId) -> Result<ValueId> {
+    let addr4 = i32_slot(b, sp, 4)?;
+    store32(b, addr4, 0xAA)?;
+    let global = b.build_int_const(0x1000u64, ValueType::int(32))?;
+    store32(b, global, 0xBB)?;
+    load32(b, addr4)
+}
+
+/// A store through an opaque (`Anchor`) pointer sits between a stack spill and
+/// its reload.  Over a private frame with the knob on, the pointer cannot name
+/// the frame, so the reload forwards past it; without the knob, when a frame
+/// address escapes, or without `stack_global_disjoint`, it is a may-alias
+/// barrier.
 #[test]
-fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-        let data = b.build_int_const(0x11u64, ValueType::I32)?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
+fn an_opaque_store_blocks_a_stack_reload_unless_the_frame_is_private() -> Result<()> {
+    for (disjoint, knob, escape, want) in [
+        (true, true, false, Some(0x99)),
+        (true, false, false, None),
+        (true, true, true, None),
+        // The pointer may name a global the stack overlaps.
+        (false, true, false, None),
+    ] {
+        let fg = forwarded(sp32_vn(), claiming(disjoint, knob), |b, sp| {
+            // spill: [sp-8] = 0x99, a local of this frame
+            let slot = i32_slot(b, sp, -8)?;
+            store32(b, slot, 0x99)?;
+            let pconst = b.build_int_const(0x9000u64, ValueType::int(32))?;
+            let ptr = load32(b, pconst)?;
+            // When `escape`, the stored value is a frame address (`sp+8`).
+            let data = if escape {
+                i32_slot(b, sp, 8)?
+            } else {
+                b.build_int_const(0x11u64, ValueType::int(32))?
+            };
+            b.build_store(ptr, data, rsleigh::VnSpace::RAM)?;
+            load32(b, slot)
+        })?;
+        assert_eq!(
+            outcome(&fg),
+            want,
+            "disjoint {disjoint}, knob {knob}, escape {escape}"
+        );
+    }
     Ok(())
 }
 
-/// A store at `InitialVar(sp) + 8` and a load at `(sp & -16) + 8` share the
-/// offset but not the base: the aligned base differs from initial SP by
-/// `sp mod 16`, which is caller-dependent, so these are different memory.
-#[test]
-fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let store_addr =
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let data = b.build_int_const(0x11u64, ValueType::I32)?;
-        b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-        // `and esp, -16`, then + 8.
-        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
-        let aligned =
-            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
-        let load_addr =
-            b.build_int_binary_operation(aligned, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+/// `(offset, value)` stores off SP.
+type Stores<'a> = &'a [(i64, u64)];
 
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "load at (sp & -16) + 8 must NOT be forwarded from a store at sp + 8: \
-         different SP bases are different memory",
-    );
-    Ok(())
-}
-
-#[test]
-fn forward_skips_non_aliasing_store() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let twelve = b.build_int_const(12u64, ValueType::I32)?;
-        let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-        let addr12 =
-            b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, ValueType::I32)?;
-        let a = b.build_int_const(0xAAu64, ValueType::I32)?;
-        let b_val = b.build_int_const(0xBBu64, ValueType::I32)?;
-        // Chain from the load: store12 -> store4 -> InitialMemory.
-        b.build_store(addr4, b_val, rsleigh::VnSpace::RAM)?;
-        b.build_store(addr12, a, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "Load[sp+4] should forward past the non-aliasing Store(sp+12)"
-    );
-    Ok(())
-}
-
-/// The store covers `[0, 8)`, intersecting but not matching the load's
-/// `[4, 8)`, so forwarding must bail.
-#[test]
-fn bail_on_overlapping_store() -> Result<()> {
-    let sp = sp64_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, ValueType::I64)?;
-        let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I64)?;
-        let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::I64)?;
-        b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "overlapping store must prevent forwarding"
-    );
-    Ok(())
-}
-
-/// Store strictly inside the load: `[2, 6)` within `[0, 8)`.  The stored
-/// bytes don't fully back the load, so forwarding must bail.
-#[test]
-fn bail_on_narrower_store_inside_wider_load_range() -> Result<()> {
-    let sp = sp64_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let two = b.build_int_const(2u64, ValueType::I64)?;
-        let addr2 = b.build_int_binary_operation(sp_val, two, IntBinaryOp::Add, ValueType::I64)?;
-        let narrow = b.build_int_const(0x1122_3344u64, ValueType::I32)?;
-        b.build_store(addr2, narrow, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "a 4-byte store at sp+2 cannot back an 8-byte load at sp+0, so no forward",
-    );
-    Ok(())
-}
-
-/// A narrower same-address store between a wide store and a wide load is the
-/// nearest memory def yet only partially backs the load, so neither value
-/// forwards.
-#[test]
-fn bail_on_narrower_same_address_store_between_wide_store_and_load() -> Result<()> {
-    let sp = sp64_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let wide = b.build_int_const(0xAAAA_BBBB_CCCC_DDDDu64, ValueType::I64)?;
-        b.build_store(sp_val, wide, rsleigh::VnSpace::RAM)?;
-        let narrow = b.build_int_const(0x1234u64, ValueType::I32)?;
-        b.build_store(sp_val, narrow, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "the intervening narrower same-address store must block forwarding \
-         of both stores' values",
-    );
-    Ok(())
-}
-
-/// Offsets agree but widths differ, so the stored bytes don't fully back the
-/// load.
-#[test]
-fn bail_on_type_mismatch() -> Result<()> {
-    let sp = sp64_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let narrow = b.build_int_const(0x11u64, ValueType::I32)?;
-        b.build_store(sp_val, narrow, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
-    Ok(())
-}
-
-/// Soundness floor: a non-SP-rooted store cannot be proven disjoint from an
-/// SP-rooted load (its constant address could equal `sp + K`, or it could be
-/// an escaped SP-derived pointer).  With `stack_global_disjoint` cleared the
-/// walker must bail.
-#[test]
-fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-        let a = b.build_int_const(0xAAu64, ValueType::I32)?;
-        b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
-        // Cross-class against the SP-rooted load; not provably disjoint
-        // without `stack_global_disjoint`.
-        let heap_addr = b.build_int_const(0x1000u64, ValueType::I32)?;
-        let other = b.build_int_const(0xBBu64, ValueType::I32)?;
-        b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    // `stack_global_disjoint` is cleared explicitly: on by default, it assumes
-    // the const-addressed store disjoint and forwards instead.
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "Strict mode: the cross-class intervening Store must block forwarding; \
-         the Load[sp+4] must remain in the graph"
-    );
-    Ok(())
-}
-
-/// Under `stack_global_disjoint` the const-addressed store is assumed to live
-/// outside the stack region, so the walker steps through it.
-#[test]
-fn permissive_forwards_across_const_intervening_store() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-        let a = b.build_int_const(0xAAu64, ValueType::I32)?;
-        b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
-        let heap_addr = b.build_int_const(0x1000u64, ValueType::I32)?;
-        let other = b.build_int_const(0xBBu64, ValueType::I32)?;
-        b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(
-        &mut fg,
-        &mut crate::test_support::octx_stack_global_disjoint(),
-    )?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "Permissive mode: the IntConst-addressed Store cannot alias \
-         sp+4, so the Load[sp+4] must forward to 0xAA"
-    );
-    let ret_val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        fg.int_const_u128(ret_val) == Some(0xAA),
-        "forwarded value must be IntConst(0xAA), got {:?}",
-        fg.int_const_u128(ret_val)
-    );
-    Ok(())
-}
-
-/// Under `stack_global_disjoint` alone, an Anchor address (neither SP-rooted
-/// nor an `IntConst`) still bails; stepping through one takes `escape_analysis`
-/// over a private frame.
-#[test]
-fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-        let a = b.build_int_const(0xAAu64, ValueType::I32)?;
-        b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
-        // Anchor address: a loaded global used as the store address.
-        let global_addr = b.build_int_const(0x2000u64, ValueType::I32)?;
-        let p = b.build_load(global_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        let other = b.build_int_const(0xBBu64, ValueType::I32)?;
-        b.build_store(p, other, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(
-        &mut fg,
-        &mut crate::test_support::octx_stack_global_disjoint(),
-    )?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert!(
-        reachable_loads >= 1,
-        "Permissive mode: an Anchor (non-IntConst non-SP) intervening \
-         Store must still block forwarding; expected >=1 Load remaining, \
-         got {reachable_loads}"
-    );
-    Ok(())
-}
-
-/// Const-address load: matched by `IntConst` equality, with the intervening
-/// const-address store proven disjoint via `ranges_disjoint`, so the forward
-/// does not rest on `stack_global_disjoint`.
-#[test]
-fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let addr1 = b.build_int_const(0x1000u64, ValueType::I32)?;
-        let addr2 = b.build_int_const(0x2000u64, ValueType::I32)?;
-        let data_a = b.build_int_const(0xAAu64, ValueType::I32)?;
-        let data_b = b.build_int_const(0xBBu64, ValueType::I32)?;
-        b.build_store(addr1, data_a, rsleigh::VnSpace::RAM)?;
-        b.build_store(addr2, data_b, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr1, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "Constant-address Load must forward across a disjoint constant-address \
-         intervening Store; the matching store provides 0xAA"
-    );
-    let ret_val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        fg.int_const_u128(ret_val) == Some(0xAA),
-        "forwarded value must be IntConst(0xAA), got {:?}",
-        fg.int_const_u128(ret_val)
-    );
-    Ok(())
-}
-
-/// Load and store match by `ValueId` equality on the address slot, so the
-/// forward does not rest on `stack_global_disjoint`.
-#[test]
-fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let table_base = b.build_int_const(0x100u64, ValueType::I32)?;
-        let p = b.build_load(table_base, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        let data = b.build_int_const(0xCCu64, ValueType::I32)?;
-        b.build_store(p, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    // Only the `p = Load(IntConst(0x100))` address-producer may remain.
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "Anchor-address Load with same-ValueId Store and no interferer \
-         must forward; only the address-producer Load(IntConst(0x100)) survives"
-    );
-    let ret_val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        fg.int_const_u128(ret_val) == Some(0xCC),
-        "forwarded value must be IntConst(0xCC), got {:?}",
-        fg.int_const_u128(ret_val)
-    );
-    Ok(())
-}
-
-/// The matching `Store(p, ...)` exists upstream, but the intervening
-/// `Store(q, ...)` has a different `ValueId` and `q != p` is unprovable at
-/// runtime, so forwarding must bail.
-#[test]
-fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let base1 = b.build_int_const(0x100u64, ValueType::I32)?;
-        let base2 = b.build_int_const(0x200u64, ValueType::I32)?;
-        let p = b.build_load(base1, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        let q = b.build_load(base2, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        let data_c = b.build_int_const(0xCCu64, ValueType::I32)?;
-        let data_d = b.build_int_const(0xDDu64, ValueType::I32)?;
-        b.build_store(p, data_c, rsleigh::VnSpace::RAM)?;
-        b.build_store(q, data_d, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert!(
-        reachable_loads >= 3,
-        "Anchor-address Load with different-ValueId Anchor interferer \
-         must NOT forward; expected >=3 Load nodes (2 address-producers + \
-         the unforwarded Load(p)), got {reachable_loads}"
-    );
-    Ok(())
-}
-
-/// A call clobbers memory, so forwarding across it is unsafe.  Uses a
-/// link-register-style convention (ret_stack_pop=0) so SP stays stable and
-/// the load's address remains decomposable.
-#[test]
-fn bail_on_call_between() -> Result<()> {
-    let sp = sp64_vn();
-    let mut b = sp_frame(sp).build_fn_single_region()?;
-
-    let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I64)?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I64)?;
-    let data = b.build_int_const(0x11u64, ValueType::I32)?;
-    b.build_store(addr4, data, rsleigh::VnSpace::RAM)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call_cc(target, None)?;
-    // SP did not shift, so sp+4 is still the same slot.
-    let sp_val2 = b.read_variable(&sp)?;
-    let addr4b = b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, ValueType::I64)?;
-    let loaded = b.build_load(addr4b, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "Call on memory chain must prevent forwarding"
-    );
-    Ok(())
-}
-
-/// An opaque `CallOther` may write the stack without ever receiving a frame
-/// address, so the private-frame relaxation never covers it.
-#[test]
-fn call_other_blocks_forwarding_even_over_private_frame() -> Result<()> {
-    let sp = sp64_vn();
-    let mut b = sp_frame(sp).build_fn_single_region()?;
-
-    let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I64)?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I64)?;
-    let data = b.build_int_const(0x11u64, ValueType::I32)?;
-    b.build_store(addr4, data, rsleigh::VnSpace::RAM)?;
-    // An opaque memory-advancing CallOther, no frame-address argument: the
-    // frame is private, yet the CallOther is never relaxed.
-    b.build_call_other(0, &[], &[], true, false)?;
-    let sp_val2 = b.read_variable(&sp)?;
-    let addr4b = b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, ValueType::I64)?;
-    let loaded = b.build_load(addr4b, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut ctx = crate::OptCtx::at_floor(None);
-    ctx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "a CallOther on the memory chain must block forwarding even over a \
-         private frame with the knob on"
-    );
-    Ok(())
-}
-
-/// Each arm stores a distinct constant at `sp+4`, leaving a non-trivial
-/// `MemPhi` at the merge.  No single stored value backs the load across it.
-#[test]
-fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Result<()> {
-    let sp = sp32_vn();
+/// An `If(true)` diamond over `sp` (which `STANDARD` leaves standing, its
+/// `MemPhi` with it): the `entry` stores, each arm's, then a load of `ty` at
+/// `sp + load`.  Every store is at the address width.
+fn sp_diamond(
+    sp: rsleigh::Vn,
+    entry: Stores,
+    arms: [Stores; 2],
+    load: i64,
+    ty: ValueType,
+) -> Result<Function> {
+    let width = ValueType::int(u16::try_from(sp.size * 8)?);
     let mut b = sp_frame(sp).build_fn()?;
-    let entry = b.create_region_all()?;
-    let then_r = b.create_region_all()?;
-    let else_r = b.create_region_all()?;
-    let merge = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
+    let [entry_r, then_r, else_r, merge] = [
+        b.create_region_all()?,
+        b.create_region_all()?,
+        b.create_region_all()?,
+        b.create_region_all()?,
+    ];
+    b.set_entry_region_all(entry_r)?;
+    let store_all = |b: &mut FunctionBuilder, stores: Stores| -> Result<()> {
+        for &(off, v) in stores {
+            let sp_val = b.read_variable(&sp)?;
+            let addr = at(b, sp_val, off, width)?;
+            let data = b.build_int_const(v, width)?;
+            b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        }
+        Ok(())
+    };
 
-    // if const(true) { *(sp+4) = 0xAA } else { *(sp+4) = 0xBB }; return *(sp+4)
-    b.set_region(entry);
+    b.set_region(entry_r);
+    store_all(&mut b, entry)?;
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
-
-    b.set_region(then_r);
-    let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_t = b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, ValueType::I32)?;
-    let a = b.build_int_const(0xAAu64, ValueType::I32)?;
-    b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    b.set_region(else_r);
-    let sp_e = b.read_variable(&sp)?;
-    let four_e = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_e = b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, ValueType::I32)?;
-    let bval = b.build_int_const(0xBBu64, ValueType::I32)?;
-    b.build_store(addr_e, bval, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
+    for (region, stores) in [then_r, else_r].into_iter().zip(arms) {
+        b.set_region(region);
+        store_all(&mut b, stores)?;
+        b.build_branch(merge)?;
+    }
     b.set_region(merge);
-    let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_m = b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let sp_val = b.read_variable(&sp)?;
+    let addr = at(&mut b, sp_val, load, width)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ty)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
+    run_passes(&mut fg, STANDARD)?;
+    Ok(fg)
+}
 
-    let phis_before = reachable_anonymous_phi_count(&fg);
-
-    // `standard_test` leaves the `If(const true)` diamond and its MemPhi
-    // standing; DeadBranchElimination would collapse them.
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "per-branch stores leave a surviving MemPhi boundary; the load must NOT forward",
+/// A `MemPhi` is transparent only where its arms agree: each `(entry, arms)`
+/// row stores, then the merge loads `sp+load`.
+#[test]
+fn a_memphi_forwards_only_what_its_arms_agree_on() -> Result<()> {
+    type Row<'a> = (
+        &'a str,
+        rsleigh::Vn,
+        Stores<'a>,
+        [Stores<'a>; 2],
+        i64,
+        ValueType,
+        Option<u128>,
     );
-    let phis_after = reachable_anonymous_phi_count(&fg);
-    assert_eq!(
-        phis_after, phis_before,
-        "no value-Phi may be synthesized across the MemPhi boundary",
-    );
-    assert_eq!(phis_after, 0, "load_forward is phi-free");
+    let (i32_ty, none): (_, Stores) = (ValueType::int(32), &[]);
+    let rows: &[Row] = &[
+        (
+            "each arm stores its own value",
+            sp32_vn(),
+            none,
+            [&[(4, 0xAA)], &[(4, 0xBB)]],
+            4,
+            i32_ty,
+            None,
+        ),
+        (
+            "one arm stores nothing",
+            sp32_vn(),
+            none,
+            [&[(4, 0xAA)], none],
+            4,
+            i32_ty,
+            None,
+        ),
+        (
+            "one arm stores a wider value",
+            sp64_vn(),
+            none,
+            [&[(0, 0xDEAD_BEEF_CAFE_BABE)], none],
+            0,
+            i32_ty,
+            None,
+        ),
+        // Both arms carry one memory token, so `PhiCollapse` removes the
+        // trivial `MemPhi` and the walk reaches the dominating store.
+        (
+            "a dominating store over empty arms",
+            sp32_vn(),
+            &[(4, 0xAB)],
+            [none, none],
+            4,
+            i32_ty,
+            Some(0xAB),
+        ),
+        // Distinct per-arm inputs keep the `MemPhi`, yet both arms bottom out
+        // on the entry store.
+        (
+            "arms storing elsewhere reach one store",
+            sp32_vn(),
+            &[(4, 0xAA)],
+            [&[(8, 0xBB)], &[(12, 0xCC)]],
+            4,
+            i32_ty,
+            Some(0xAA),
+        ),
+    ];
+    for &(why, sp, entry, arms, load, ty, want) in rows {
+        let fg = sp_diamond(sp, entry, arms, load, ty)?;
+        assert_eq!(outcome(&fg), want, "{why}");
+        // The module's contract, that no merge of two stored values forwards
+        // through a synthesized value-`Phi`; no guard backs it, since the pass
+        // has no code that builds one.
+        assert!(
+            !fg.has_kind(|k| matches!(k, NodeKind::Phi)),
+            "{why}: phi-free"
+        );
+    }
     Ok(())
 }
 
 /// Same contract as the 2-way diamond, but a nested `If` gives the merge
 /// three predecessors: the 3-input `MemPhi` is still an opaque boundary.
 #[test]
-fn three_predecessor_memphi_blocks_forwarding_no_phi() -> Result<()> {
+fn three_predecessor_memphi_blocks_forwarding() -> Result<()> {
     let sp = sp32_vn();
     let mut b = sp_frame(sp).build_fn()?;
     let entry = b.create_region_all()?;
@@ -798,303 +541,26 @@ fn three_predecessor_memphi_blocks_forwarding_no_phi() -> Result<()> {
     for (region, val) in [(arm_a, 0xAAu64), (arm_b, 0xBB), (arm_c, 0xCC)] {
         b.set_region(region);
         let sp_v = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_v, four, IntBinaryOp::Add, ValueType::I32)?;
-        let c = b.build_int_const(val, ValueType::I32)?;
+        let addr = b.build_const_binop(4u64, sp_v, IntBinaryOp::Add, ValueType::int(32))?;
+        let c = b.build_int_const(val, ValueType::int(32))?;
         b.build_store(addr, c, rsleigh::VnSpace::RAM)?;
         b.build_branch(merge)?;
     }
 
     b.set_region(merge);
     let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_m = b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let addr_m = b.build_const_binop(4u64, sp_m, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let phis_before = reachable_anonymous_phi_count(&fg);
+    run_passes(&mut fg, STANDARD)?;
 
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
-        reachable_loads, 1,
+        loads(&fg),
+        1,
         "a 3-predecessor MemPhi is an opaque boundary; the load must NOT forward",
-    );
-    let phis_after = reachable_anonymous_phi_count(&fg);
-    assert_eq!(
-        phis_after, phis_before,
-        "no value-Phi may be synthesized across the 3-way MemPhi boundary",
-    );
-    Ok(())
-}
-
-/// A store dominating an `If` with empty branches, loaded after the join.
-/// Both arms carry the identical memory token, so `PhiCollapse` removes the
-/// trivial `MemPhi`, the chain becomes linear, and the walk reaches the
-/// dominating store without synthesizing a value-`Phi`.
-#[test]
-fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()> {
-    let sp = sp32_vn();
-    let mut b = sp_frame(sp).build_fn()?;
-    let entry = b.create_region_all()?;
-    let then_r = b.create_region_all()?;
-    let else_r = b.create_region_all()?;
-    let merge = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    let sp_en = b.read_variable(&sp)?;
-    let four_en = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_en = b.build_int_binary_operation(sp_en, four_en, IntBinaryOp::Add, ValueType::I32)?;
-    let dominating = b.build_int_const(0xABu64, ValueType::I32)?;
-    b.build_store(addr_en, dominating, rsleigh::VnSpace::RAM)?;
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, then_r, else_r)?;
-
-    b.set_region(then_r);
-    b.build_branch(merge)?;
-    b.set_region(else_r);
-    b.build_branch(merge)?;
-
-    b.set_region(merge);
-    let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_m = b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let phis_before = reachable_anonymous_phi_count(&fg);
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "dominating store across a collapsible merge must still forward",
-    );
-    let ret_val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        fg.int_const_u128(ret_val) == Some(0xAB),
-        "forwarded value must be the dominating store's 0xAB, got {:?}",
-        fg.int_const_u128(ret_val),
-    );
-    let phis_after = reachable_anonymous_phi_count(&fg);
-    assert_eq!(
-        phis_after, phis_before,
-        "dominating-store forwarding must not synthesize a value-Phi",
-    );
-    assert_eq!(phis_after, 0, "load_forward is phi-free");
-    Ok(())
-}
-
-/// Only the then-arm stores at `sp+4`; the else-arm reaches the merge with
-/// stale memory, so the whole forward must bail.
-#[test]
-fn phi_missing_store_on_one_branch_bails() -> Result<()> {
-    let sp = sp32_vn();
-    let mut b = sp_frame(sp).build_fn()?;
-    let entry = b.create_region_all()?;
-    let then_r = b.create_region_all()?;
-    let else_r = b.create_region_all()?;
-    let merge = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, then_r, else_r)?;
-
-    b.set_region(then_r);
-    let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_t = b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, ValueType::I32)?;
-    let a = b.build_int_const(0xAAu64, ValueType::I32)?;
-    b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    b.set_region(else_r);
-    b.build_branch(merge)?;
-
-    b.set_region(merge);
-    let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_m = b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 1,
-        "missing-store branch must prevent forwarding"
-    );
-    let reachable_value_phis = reachable_anonymous_phi_count(&fg);
-    assert_eq!(
-        reachable_value_phis, 0,
-        "no ValuePhi should be synthesized when a branch bails"
-    );
-    Ok(())
-}
-
-/// Both arms store at different non-aliasing offsets above a shared
-/// `Store(sp+4)` in the entry block, so the merge `MemPhi` has distinct
-/// per-predecessor inputs (uncollapsible) yet both walks bottom out on the
-/// same store.  The load forwards from it directly, with no value-`Phi`.
-#[test]
-fn phi_identical_values_no_new_phi() -> Result<()> {
-    let sp = sp32_vn();
-    let mut b = sp_frame(sp).build_fn()?;
-    let entry = b.create_region_all()?;
-    let then_r = b.create_region_all()?;
-    let else_r = b.create_region_all()?;
-    let merge = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let sp_e = b.read_variable(&sp)?;
-    let four_e = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_e = b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, ValueType::I32)?;
-    let shared = b.build_int_const(0xAAu64, ValueType::I32)?;
-    b.build_store(addr_e, shared, rsleigh::VnSpace::RAM)?;
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, then_r, else_r)?;
-
-    b.set_region(then_r);
-    let sp_t = b.read_variable(&sp)?;
-    let eight_t = b.build_int_const(8u64, ValueType::I32)?;
-    let addr_t = b.build_int_binary_operation(sp_t, eight_t, IntBinaryOp::Add, ValueType::I32)?;
-    let bt = b.build_int_const(0xBBu64, ValueType::I32)?;
-    b.build_store(addr_t, bt, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    b.set_region(else_r);
-    let sp_l = b.read_variable(&sp)?;
-    let twelve_l = b.build_int_const(12u64, ValueType::I32)?;
-    let addr_l = b.build_int_binary_operation(sp_l, twelve_l, IntBinaryOp::Add, ValueType::I32)?;
-    let cc = b.build_int_const(0xCCu64, ValueType::I32)?;
-    b.build_store(addr_l, cc, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    b.set_region(merge);
-    let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_m = b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(reachable_loads, 0, "Load must be forwarded");
-    let reachable_value_phis = reachable_anonymous_phi_count(&fg);
-    assert_eq!(
-        reachable_value_phis, 0,
-        "identical branch values must skip the ValuePhi synthesis"
-    );
-    Ok(())
-}
-
-/// Stores via `Sub(sp, 4)` but loads back via `Add(sp, 0xFFFFFFFC)`: both
-/// encodings must normalise to offset -4.
-#[test]
-fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let store_addr = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
-        let data = b.build_int_const(0x4242u64, ValueType::I32)?;
-        b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-
-        let neg_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
-        let load_addr =
-            b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, ValueType::I32)?;
-        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    // `ConstantFold` must run first: LoadForward does not peel the `Neg`
-    // itself, it needs both sides already at `Add(sp, IntConst(-4))`.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::default());
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "Load[Add(sp, 0xFFFFFFFC)] must be forwarded from Store[Sub(sp, 4)]",
-    );
-    let ret = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .expect("return node exists");
-    let ret_inputs = fg.node_inputs(ret);
-    // Return inputs: [ctrl, mem, val_0, ...].
-    let ret_val = ret_inputs[2];
-    assert!(
-        fg.int_const_u128(ret_val) == Some(0x4242),
-        "forwarded value must be the stored constant 0x4242; got {:?}",
-        fg.int_const_u128(ret_val),
-    );
-    Ok(())
-}
-
-/// Real-world `-O0 -m32` shape: the prologue spills 4 bytes to a stack slot
-/// and the body reads one byte back from the same offset.  The load is
-/// narrower but fully covered, so forwarding emits a `Truncate`.
-#[test]
-fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, eight, ValueType::I32)?;
-        let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
-        b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I8)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(
-        reachable_loads, 0,
-        "Load u8 at matching offset must be forwarded as the low byte of the u32 store",
-    );
-    let ret = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .expect("return node exists");
-    let ret_inputs = fg.node_inputs(ret);
-    // `int_const_u128` masks to the output type, so an I8 output reads back as
-    // the low byte even if the backing node holds the full u32 pattern.
-    let val_ty = fg.value_type_opt(ret_inputs[2]);
-    assert_eq!(val_ty, Some(ValueType::I8));
-    assert_eq!(
-        fg.int_const_u128(ret_inputs[2]),
-        Some(0xEF),
-        "forwarded narrow load must fold to the low byte 0xEF",
     );
     Ok(())
 }
@@ -1109,40 +575,36 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
 fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let sp = sp32_vn();
     let mut b = sp_frame(sp)
-        .endianness(Endianness::Big)
+        .byte_order(Endianness::Big)
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, ValueType::I32)?;
-    let addr = b.build_sub_as_add_neg(sp_val, eight, ValueType::I32)?;
-    let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
+    let eight = b.build_int_const(8u64, ValueType::int(32))?;
+    let addr = b.build_sub_as_add_neg(sp_val, eight, ValueType::int(32))?;
+    let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
     b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I8)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(8))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::default());
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    run_passes(
+        &mut fg,
+        &[
+            &crate::PhiCollapse,
+            &crate::RegionCollapse,
+            &crate::LoadForward,
+        ],
+    )?;
 
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
-        reachable_loads, 0,
+        loads(&fg),
+        0,
         "Load u8 at matching offset must be forwarded as the high byte of the u32 store on BE",
     );
 
-    let ret = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .expect("return node exists");
-    let ret_inputs = fg.node_inputs(ret);
-    // Return inputs: [ctrl, mem, val_0, ...].
-    let val_value = ret_inputs[2];
+    let val_value = fg.returned();
     let val_ty = fg.value_type_opt(val_value);
-    assert_eq!(val_ty, Some(ValueType::I8));
+    assert_eq!(val_ty, Some(ValueType::int(8)));
 
     let outer = fg.producer(val_value);
     assert!(
@@ -1175,198 +637,111 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     Ok(())
 }
 
-/// One arm stores a wider value at the load offset, the other stores
-/// nothing, so the `MemPhi` is a boundary and the forward bails.  Reshape
-/// nodes are only built after the exact-match decision is final, so the bail
-/// must leave no orphan `Truncate` or value-`Phi` behind.
-#[test]
-fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
-    let sp = sp64_vn();
-    let mut b = sp_frame(sp).build_fn()?;
-    let entry = b.create_region_all()?;
-    let then_r = b.create_region_all()?;
-    let else_r = b.create_region_all()?;
-    let merge = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, then_r, else_r)?;
-
-    b.set_region(then_r);
-    let sp_t = b.read_variable(&sp)?;
-    let wide = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::I64)?;
-    b.build_store(sp_t, wide, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    b.set_region(else_r);
-    b.build_branch(merge)?;
-
-    b.set_region(merge);
-    let sp_m = b.read_variable(&sp)?;
-    let loaded = b.build_load(sp_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    // Normalize before measuring the baseline so prep-introduced nodes are
-    // not mistaken for a leak.
-    let mut prep = OptimizerPipeline::new();
-    prep.add(ConstantFold::new());
-    prep.add(PhiCollapse);
-    prep.add(RegionCollapse);
-    prep.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let total_truncate_before = fg
-        .graph()
-        .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
-        .count();
-    let total_value_phi_before = fg
-        .graph()
-        .all_node_ids()
-        .filter(|&n| {
-            matches!(fg.node_kind(n), NodeKind::Phi)
-                && fg.get_vn_for_value(fg.node_outputs(n)[0]).is_none()
-        })
-        .count();
-
-    // In isolation, so any leaked node is attributable to LoadForward.
-    crate::pipeline::run_one(
-        &LoadForward::default(),
-        &mut fg,
-        &mut crate::OptCtx::at_floor(None),
-    )?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(reachable_loads, 1, "load must remain: the forward bails");
-
-    let total_truncate_after = fg
-        .graph()
-        .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
-        .count();
-    let total_value_phi_after = fg
-        .graph()
-        .all_node_ids()
-        .filter(|&n| {
-            matches!(fg.node_kind(n), NodeKind::Phi)
-                && fg.get_vn_for_value(fg.node_outputs(n)[0]).is_none()
-        })
-        .count();
-    assert_eq!(
-        total_truncate_after, total_truncate_before,
-        "abort path leaked an orphan Truncate node",
-    );
-    assert_eq!(
-        total_value_phi_after, total_value_phi_before,
-        "abort path leaked an orphan ValuePhi node",
-    );
-    Ok(())
-}
-
-/// `load_forward` may only decrease the graph's `Phi` count.  Exercised on the
-/// surviving-MemPhi diamond.
-#[test]
-fn load_forward_never_increases_phi_count() -> Result<()> {
+/// A spill to `sp-8`, a local of this frame, then `barrier` with SP lowered by
+/// 64 so the slot sits above any call's SP, then the reload, run under
+/// `claims`.
+fn spill_across(
+    claims: AssumptionOptions,
+    barrier: impl FnOnce(&mut FunctionBuilder, ValueId) -> Result<()>,
+) -> Result<Function> {
     let sp = sp32_vn();
-    let mut b = sp_frame(sp).build_fn()?;
-    let entry = b.create_region_all()?;
-    let then_r = b.create_region_all()?;
-    let else_r = b.create_region_all()?;
-    let merge = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, then_r, else_r)?;
-
-    b.set_region(then_r);
-    let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_t = b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, ValueType::I32)?;
-    let a = b.build_int_const(0xAAu64, ValueType::I32)?;
-    b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    b.set_region(else_r);
-    let sp_e = b.read_variable(&sp)?;
-    let four_e = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_e = b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, ValueType::I32)?;
-    let bval = b.build_int_const(0xBBu64, ValueType::I32)?;
-    b.build_store(addr_e, bval, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    b.set_region(merge);
-    let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_m = b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    // Collapse trivial phis first so the baseline is the graph LoadForward
-    // actually sees.
-    crate::test_support::cf_rp_pipeline().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-
-    let total_phis_before = fg
-        .graph()
-        .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
-        .count();
-
-    crate::pipeline::run_one(
-        &LoadForward::default(),
-        &mut fg,
-        &mut crate::OptCtx::at_floor(None),
-    )?;
-
-    let total_phis_after = fg
-        .graph()
-        .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
-        .count();
-    assert!(
-        total_phis_after <= total_phis_before,
-        "load_forward must never INCREASE the Phi count (before={total_phis_before}, \
-         after={total_phis_after})",
-    );
-    Ok(())
-}
-
-/// A spill straddling a `Call` forwards when the frame is provably private and
-/// the opt-in knob is set.  The slot is a local, below the entry SP and above
-/// the call's own SP, which is what the private-frame proof covers.
-#[test]
-fn forwards_spill_across_call_when_frame_private() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let val = b.build_int_const(0x42u64, ValueType::I32)?;
-        b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
-        let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
-        let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+    forwarded(sp, claims, |b, sp_val| {
+        let slot = i32_slot(b, sp_val, -8)?;
+        store32(b, slot, 0x42)?;
+        let call_sp = i32_slot(b, sp_val, -64)?;
         b.write_variable(&sp, call_sp)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target, &[], &[], 0)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+        barrier(b, sp_val)?;
+        load32(b, slot)
+    })
+}
 
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+fn call(b: &mut FunctionBuilder) -> Result<()> {
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
+    b.build_call(target, &[], &[], 0)?;
+    Ok(())
+}
 
-    let val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        matches!(fg.node_kind(fg.producer(val)), NodeKind::IntConst(_))
-            && fg.int_const_u128(val) == Some(0x42),
-        "the reload must forward to the spilled 0x42 across the call"
-    );
+/// A spill straddling a barrier forwards only under the relaxation that
+/// covers it.  A `Call` steps through when the frame is provably private and
+/// the opt-in knob is set; an escaping frame address, or an opaque
+/// `CallOther` (which may write the stack without ever receiving a frame
+/// address) keeps blocking.  An `Anchor` store needs `escape_analysis` too:
+/// `stack_global_disjoint` alone does not buy it.
+#[test]
+fn a_spill_forwards_across_a_barrier_only_under_its_relaxation() -> Result<()> {
+    type Barrier = fn(&mut FunctionBuilder, ValueId) -> Result<()>;
+    let rows: &[(&str, bool, bool, Barrier, Option<u128>)] = &[
+        (
+            "a Call over a private frame",
+            false,
+            true,
+            |b, _| call(b),
+            Some(0x42),
+        ),
+        (
+            "a Call with the knob off",
+            false,
+            false,
+            |b, _| call(b),
+            None,
+        ),
+        (
+            // `stack_global_disjoint` steps the reload past the leaking store
+            // itself.
+            "a Call once a frame address escapes",
+            true,
+            true,
+            |b, sp| {
+                let leaked = i32_slot(b, sp, 16)?;
+                let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
+                b.build_store(global, leaked, rsleigh::VnSpace::RAM)?;
+                call(b)
+            },
+            None,
+        ),
+        (
+            // The reload forwards and places the call's window, but the spill
+            // of a frame address escapes the frame before it can matter.
+            "a Call whose SP is a reloaded frame address",
+            true,
+            true,
+            |b, sp| {
+                let spilled = i32_slot(b, sp, -16)?;
+                let call_sp = i32_slot(b, sp, -64)?;
+                b.build_store(spilled, call_sp, rsleigh::VnSpace::RAM)?;
+                let reloaded = load32(b, spilled)?;
+                b.write_variable(&sp32_vn(), reloaded)?;
+                call(b)
+            },
+            None,
+        ),
+        (
+            // advance_memory = true puts the CallOther on the memory chain.
+            "a CallOther over a private frame",
+            false,
+            true,
+            |b, _| {
+                b.build_call_other(0, &[], &[], true, false)?;
+                Ok(())
+            },
+            None,
+        ),
+        (
+            "an Anchor store under stack_global_disjoint alone",
+            true,
+            false,
+            |b, _| {
+                let global_addr = b.build_int_const(0x2000u64, ValueType::int(32))?;
+                let p = load32(b, global_addr)?;
+                store32(b, p, 0xBB)
+            },
+            None,
+        ),
+    ];
+    for &(why, stack_global_disjoint, escape_analysis, barrier, want) in rows {
+        let fg = spill_across(claiming(stack_global_disjoint, escape_analysis), barrier)?;
+        assert_eq!(outcome(&fg), want, "{why}");
+    }
     Ok(())
 }
 
@@ -1383,30 +758,31 @@ fn spill_across_call_with_register(held_is_frame_address: bool) -> Result<stride
         .tracked(eax)
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let minus_eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
-    let slot =
-        b.build_int_binary_operation(sp_val, minus_eight, IntBinaryOp::Add, ValueType::I32)?;
-    let eleven = b.build_int_const(11u64, ValueType::I32)?;
+    let slot = b.build_const_binop((-8i64) as u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+    let eleven = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(slot, eleven, rsleigh::VnSpace::RAM)?;
     let held = if held_is_frame_address {
         slot
     } else {
-        b.build_int_const(0x1234u64, ValueType::I32)?
+        b.build_int_const(0x1234u64, ValueType::int(32))?
     };
     b.write_variable(&eax, held)?;
-    let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
-    let call_sp = b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+    let call_sp = b.build_const_binop(
+        (-64i64) as u64,
+        sp_val,
+        IntBinaryOp::Add,
+        ValueType::int(32),
+    )?;
     b.write_variable(&sp, call_sp)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     let (_, clobbers) = b.build_call(target, &[], &[eax], 0)?;
     b.write_variable(&eax, clobbers[0])?;
-    let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+    fg.assume(&claiming(false, true));
+    run_passes(&mut fg, STANDARD)?;
     Ok(fg)
 }
 
@@ -1424,7 +800,7 @@ fn spill_not_forwarded_across_call_when_a_clobbered_register_holds_its_address()
 #[test]
 fn spill_forwarded_across_call_when_the_clobbered_register_holds_no_address() -> Result<()> {
     let fg = spill_across_call_with_register(false)?;
-    let val = crate::test_support::return_value(fg.graph())?;
+    let val = fg.returned();
     assert_eq!(
         fg.int_const_u128(val),
         Some(11),
@@ -1433,304 +809,72 @@ fn spill_forwarded_across_call_when_the_clobbered_register_holds_no_address() ->
     Ok(())
 }
 
-#[test]
-fn spill_not_forwarded_across_call_by_default() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let val = b.build_int_const(0x42u64, ValueType::I32)?;
-        b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target, &[], &[], 0)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-    crate::test_support::standard_test().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-    assert_eq!(
-        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
-        1,
-        "with the knob off, a Call blocks cross-call forwarding"
-    );
-    Ok(())
-}
-
-#[test]
-fn spill_not_forwarded_across_call_when_frame_escapes() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let val = b.build_int_const(0x42u64, ValueType::I32)?;
-        b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
-        // Leak a frame address to a global: *0x4000 = &(sp+16).
-        let sixteen = b.build_int_const(16u64, ValueType::I32)?;
-        let leaked =
-            b.build_int_binary_operation(sp_val, sixteen, IntBinaryOp::Add, ValueType::I32)?;
-        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
-        b.build_store(global, leaked, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target, &[], &[], 0)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
-    assert_eq!(
-        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
-        1,
-        "an escaping frame blocks cross-call forwarding even with the knob on"
-    );
-    Ok(())
-}
-
 /// The knob relaxes only SP-rooted probes; a global load still blocks.
 #[test]
 fn global_load_not_forwarded_across_call() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
-        let val = b.build_int_const(0x42u64, ValueType::I32)?;
-        b.build_store(global, val, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target, &[], &[], 0)?;
-        let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
+    let fg = forwarded(sp32_vn(), claiming(false, true), |b, _| {
+        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
+        store32(b, global, 0x42)?;
+        call(b)?;
+        load32(b, global)
     })?;
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
     assert_eq!(
-        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
-        1,
-        "a non-stack probe is never relaxed; the call still blocks it"
+        outcome(&fg),
+        None,
+        "the call still blocks a non-stack probe"
     );
     Ok(())
 }
 
-/// The relax is `Call`-only; an opaque `CallOther` keeps blocking even with a
-/// private frame and the knob on.
+/// A private frame does NOT make the callee's area private.  The callee owns
+/// everything below `call_sp + base_offset`: its own frame below the call's
+/// SP, plus the ABI-reserved area between the call's SP and the first
+/// stack-argument slot (x86's return-address slot, PPC64's linkage area, MIPS
+/// o32's 16 bytes, Windows x64's home space).  It is also handed the
+/// outgoing-argument slots, which the caller writes and it may overwrite.  A
+/// spill anywhere there must not forward across the call, whose SP here is
+/// the entry SP.
 #[test]
-fn spill_not_forwarded_across_call_other() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let val = b.build_int_const(0x42u64, ValueType::I32)?;
-        b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
-        // advance_memory = true puts the CallOther on the memory chain.
-        b.build_call_other(0, &[], &[], true, false)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
-    assert_eq!(
-        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
-        1,
-        "an opaque CallOther is not relaxed even when the frame is private"
-    );
-    Ok(())
-}
-
-/// A private frame does NOT make the outgoing-argument area private: the caller
-/// writes an argument there and the callee, which is handed those slots by the
-/// ABI, may overwrite them. Only slots the callee cannot name are forwardable.
-///
-/// `[sp + base_offset]` at the call is stack-arg slot 0.
-#[test]
-fn spill_in_the_outgoing_arg_area_does_not_forward_across_a_call() -> Result<()> {
-    let sp = sp32_vn();
-    let stack_args = strider_target::StackArgs {
-        base_offset: 0,
-        increment: 4,
-    };
-    let mut b = sp_frame(sp)
-        .stack_args(Some(stack_args))
-        .build_fn_single_region()?;
-
-    let sp_val = b.read_variable(&sp)?;
-    // Stack-arg slot 0 lives at call-time SP + base_offset, and the call's SP
-    // anchor here IS the entry SP, so that is `[sp + 0]`.
-    let zero = b.build_int_const(0u64, ValueType::I32)?;
-    let slot0 = b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
-    let arg = b.build_int_const(0x42u64, ValueType::I32)?;
-    b.build_store(slot0, arg, rsleigh::VnSpace::RAM)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-    b.build_call(target, &[], &[], 0)?;
-    let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(reload), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
-
-    let val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        matches!(fg.node_kind(fg.producer(val)), NodeKind::Load(_)),
-        "an outgoing-argument slot must stay a Load across the call, not forward \
-         to the stored 0x42"
-    );
-    Ok(())
-}
-
-/// The argument-window bound must not swallow the whole frame. A spill ABOVE
-/// the outgoing arguments, separated from them by an unwritten slot, is not
-/// reachable by the callee and still forwards across the call.
-#[test]
-fn spill_above_the_outgoing_arg_area_still_forwards_across_a_call() -> Result<()> {
-    let sp = sp32_vn();
-    let stack_args = strider_target::StackArgs {
-        base_offset: 0,
-        increment: 4,
-    };
-    let mut b = sp_frame(sp)
-        .stack_args(Some(stack_args))
-        .build_fn_single_region()?;
-
-    let sp_val = b.read_variable(&sp)?;
-    let slot = |b: &mut strider_ir::FunctionBuilder, off: i64| -> Result<_> {
-        let k = b.build_int_const(off as u64, ValueType::I32)?;
-        b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)
-    };
-    // The call's SP is 16 below the entry SP: arg slots 0 and 1, then slot 2
-    // left unwritten, so the prefix ends there.
-    for off in [-16i64, -12] {
-        let a = slot(&mut b, off)?;
-        let v = b.build_int_const(0x11u64, ValueType::I32)?;
-        b.build_store(a, v, rsleigh::VnSpace::RAM)?;
+fn a_spill_in_the_callees_area_does_not_forward_across_a_call() -> Result<()> {
+    for (why, base_offset, slot) in [
+        ("stack-arg slot 0", 0, 0),
+        ("below the call's SP", 8, -4),
+        ("the ABI-reserved area", 8, 4),
+    ] {
+        let mut b = sp_frame(sp32_vn())
+            .stack_args(stack_args_at(base_offset, 4))
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp32_vn())?;
+        let addr = i32_slot(&mut b, sp_val, slot)?;
+        store32(&mut b, addr, 0x42)?;
+        call(&mut b)?;
+        let reload = load32(&mut b, addr)?;
+        b.build_return(Some(reload), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        fg.assume(&claiming(false, true));
+        run_passes(&mut fg, STANDARD)?;
+        assert_eq!(outcome(&fg), None, "{why} is the callee's");
     }
-    let spill = slot(&mut b, -4)?;
-    let val = b.build_int_const(0x42u64, ValueType::I32)?;
-    b.build_store(spill, val, rsleigh::VnSpace::RAM)?;
-    let call_sp = slot(&mut b, -16)?;
-    b.write_variable(&sp, call_sp)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-    b.build_call(target, &[], &[], 0)?;
-    let reload = b.build_load(spill, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(reload), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
-
-    let out = crate::test_support::return_value(fg.graph())?;
-    assert_eq!(
-        fg.int_const_u128(out),
-        Some(0x42),
-        "a spill separated from the argument prefix by an unwritten slot must \
-         still forward across the call"
-    );
     Ok(())
 }
 
-/// The callee owns everything below `call_sp + base_offset`: its own frame
-/// below the call's SP, plus the ABI-reserved area between the call's SP and
-/// the first stack-argument slot (x86's return-address slot, PPC64's linkage
-/// area, MIPS o32's 16 bytes, Windows x64's home space).  A spill anywhere in
-/// that region must not forward across the call.
-fn spill_below_the_arg_window(offset: i64) -> Result<strider_ir::Function> {
-    let sp = sp32_vn();
-    let stack_args = strider_target::StackArgs {
-        base_offset: 8,
-        increment: 4,
-    };
-    let mut b = sp_frame(sp)
-        .stack_args(Some(stack_args))
-        .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
-    let k = b.build_int_const(offset as u64, ValueType::I32)?;
-    let slot = b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)?;
-    let val = b.build_int_const(0x42u64, ValueType::I32)?;
-    b.build_store(slot, val, rsleigh::VnSpace::RAM)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-    b.build_call(target, &[], &[], 0)?;
-    let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(reload), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
-    Ok(fg)
-}
-
-#[test]
-fn spill_under_the_call_sp_does_not_forward_across_a_call() -> Result<()> {
-    let fg = spill_below_the_arg_window(-4)?;
-    let val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        matches!(fg.node_kind(fg.producer(val)), NodeKind::Load(_)),
-        "a slot below the call's SP is the callee's own frame; it must stay a Load"
-    );
-    Ok(())
-}
-
-#[test]
-fn spill_in_the_abi_reserved_area_does_not_forward_across_a_call() -> Result<()> {
-    let fg = spill_below_the_arg_window(4)?;
-    let val = crate::test_support::return_value(fg.graph())?;
-    assert!(
-        matches!(fg.node_kind(fg.producer(val)), NodeKind::Load(_)),
-        "the reserved area between the call's SP and the first argument slot is \
-         the callee's; it must stay a Load"
-    );
-    Ok(())
-}
-
-/// A register value spilled to the stack TOP, exactly where outgoing slot 0
-/// sits, then reloaded after the call and stored.  The spill is
-/// indistinguishable from an argument push, so the reload is pinned unless
-/// `callee_preserves_stack_args` empties the argument window.
-///
-/// ```text
-/// sp' = sp - 64        ; this function's frame
-/// store 0x42 -> sp'+0  ; scratch spill, or f's arg0
-/// call f
-/// store [sp'+0] -> 0x9000
-/// ```
+/// [`crate::test_support::memory_shapes::stack_top_spill`] with the reload
+/// stored: the `Load`s left after the standard pipeline.
 fn stack_top_spill_across_call(preserves_stack_args: bool) -> Result<u128> {
-    let sp = sp32_vn();
-    let stack_args = strider_target::StackArgs {
-        base_offset: 0,
-        increment: 4,
-    };
-    let mut b = sp_frame(sp)
-        .stack_args(Some(stack_args))
-        .build_fn_single_region()?;
-    let entry_sp = b.read_variable(&sp)?;
-    let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
-    let call_sp =
-        b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
-    b.write_variable(&sp, call_sp)?;
-
-    let zero = b.build_int_const(0u64, ValueType::I32)?;
-    let slot0 = b.build_int_binary_operation(call_sp, zero, IntBinaryOp::Add, ValueType::I32)?;
-    let spilled = b.build_int_const(0x42u64, ValueType::I32)?;
-    b.build_store(slot0, spilled, rsleigh::VnSpace::RAM)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-    b.build_call(target, &[], &[], 0)?;
-    let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    let field = b.build_int_const(0x9000u64, ValueType::I32)?;
+    let (mut b, reload) = crate::test_support::memory_shapes::stack_top_spill()?;
+    let field = b.build_int_const(0x9000u64, ValueType::int(32))?;
     b.build_store(field, reload, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    octx.options.assumptions.callee_preserves_stack_args = preserves_stack_args;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+    fg.assume(&crate::AssumptionOptions {
+        escape_analysis: true,
+        callee_preserves_stack_args: preserves_stack_args,
+        ..crate::AssumptionOptions::none()
+    });
+    run_passes(&mut fg, STANDARD)?;
 
     Ok(fg.count_kind(|k| matches!(k, NodeKind::Load(_))) as u128)
 }
@@ -1773,34 +917,37 @@ fn one_window_answers_reloads_on_either_side_of_it() -> Result<()> {
     let sp_val = b.read_variable(&sp)?;
     let mut addrs = Vec::new();
     for (off, data) in [(-16i64, 0x11u64), (-12, 0x22), (-4, 0x55)] {
-        let k = b.build_int_const(off as u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)?;
-        let value = b.build_int_const(data, ValueType::I32)?;
+        let addr = b.build_const_binop(off as u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+        let value = b.build_int_const(data, ValueType::int(32))?;
         b.build_store(addr, value, rsleigh::VnSpace::RAM)?;
         addrs.push(addr);
     }
-    let frame = b.build_int_const((-16i64) as u64, ValueType::I32)?;
-    let call_sp = b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+    let call_sp = b.build_const_binop(
+        (-16i64) as u64,
+        sp_val,
+        IntBinaryOp::Add,
+        ValueType::int(32),
+    )?;
     b.write_variable(&sp, call_sp)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call(target, &[], &[], 0)?;
-    let pinned = b.build_load(addrs[1], rsleigh::VnSpace::RAM, ValueType::I32)?;
-    let forwarded = b.build_load(addrs[2], rsleigh::VnSpace::RAM, ValueType::I32)?;
-    let sum = b.build_int_binary_operation(pinned, forwarded, IntBinaryOp::Add, ValueType::I32)?;
+    let pinned = b.build_load(addrs[1], rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let forwarded = b.build_load(addrs[2], rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let sum =
+        b.build_int_binary_operation(pinned, forwarded, IntBinaryOp::Add, ValueType::int(32))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut octx = crate::OptCtx::at_floor(None);
-    octx.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+    fg.assume(&claiming(false, true));
+    run_passes(&mut fg, STANDARD)?;
 
     assert_eq!(
         fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
         1,
         "sp-4 forwards to the spill, sp-12 is the callee's argument slot"
     );
-    let ret = crate::test_support::return_value(fg.graph())?;
+    let ret = fg.returned();
     let operands = fg.node_inputs(fg.producer(ret));
     assert!(
         operands.iter().any(|v| fg.int_const_u128(v) == Some(0x55)),
@@ -1836,12 +983,12 @@ fn nested_loop_exit_merge_graph() -> Result<(
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     b.set_region(entry);
-    let addr = b.build_int_const(0x10u64, ValueType::I64)?;
+    let addr = b.build_int_const(0x10u64, ValueType::int(64))?;
     let cond = b.build_boolean_const(true);
     b.build_if(cond, store_r, outer_header)?;
 
     b.set_region(store_r);
-    let data = b.build_int_const(0x42u64, ValueType::I64)?;
+    let data = b.build_int_const(0x42u64, ValueType::int(64))?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_branch(exit_merge)?;
 
@@ -1865,7 +1012,7 @@ fn nested_loop_exit_merge_graph() -> Result<(
     b.build_branch(merge)?;
 
     b.set_region(merge);
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let fg = b.build()?;
@@ -1881,16 +1028,9 @@ fn nested_loop_exit_merge_graph() -> Result<(
 fn load_below_nested_loops_is_not_narrowed_past_the_exit_merge() -> Result<()> {
     let (mut fg, merge, _loaded) = nested_loop_exit_merge_graph()?;
 
-    crate::pipeline::run_one(
-        &crate::LoadForward::default(),
-        &mut fg,
-        &mut crate::OptCtx::at_floor(None),
-    )?;
+    run_pass(&crate::LoadForward, &mut fg)?;
 
-    let load = fg
-        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
-        .next()
-        .expect("node kind must exist");
+    let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
     let mem = fg.node_inputs(load)[0];
     assert_eq!(
         mem,
@@ -1907,10 +1047,9 @@ fn load_below_nested_loops_is_not_narrowed_past_the_exit_merge() -> Result<()> {
 fn nested_loop_exit_merge_never_forwards_the_store_after_phi_collapse() -> Result<()> {
     let (mut fg, _merge, loaded) = nested_loop_exit_merge_graph()?;
 
-    let mut ctx = crate::OptCtx::at_floor(None);
     for _ in 0..3 {
-        crate::pipeline::run_one(&crate::LoadForward::default(), &mut fg, &mut ctx)?;
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut ctx)?;
+        run_pass(&crate::LoadForward, &mut fg)?;
+        run_pass(&PhiCollapse, &mut fg)?;
     }
 
     assert!(
@@ -1921,95 +1060,47 @@ fn nested_loop_exit_merge_never_forwards_the_store_after_phi_collapse() -> Resul
     Ok(())
 }
 
-/// A rewire outlives the run that made it, so it may only name a clobber that
-/// holds with the assumption knobs off: re-optimising under
-/// `AssumptionOptions::none()` must not inherit an edge past the `Call`.
+/// The narrowed edge is read afterwards by walks that honour no call
+/// relaxation, so it may only name a clobber that holds without one: under
+/// `escape_analysis` the edge still stops at the `Call`.  Under
+/// `stack_global_disjoint`, a claim every reader of the narrowed edge honours,
+/// it steps past a global store.
+///
+/// Mutation: narrow with `stack_global_disjoint` off.
 #[test]
-fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
+fn narrowing_honours_only_the_claims_every_reader_does() -> Result<()> {
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let frame = b.build_int_const((-32i64) as u64, ValueType::I32)?;
-        let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+    let across_call = forwarded(sp, claiming(false, true), |b, sp_val| {
+        let call_sp = i32_slot(b, sp_val, -32)?;
         b.write_variable(&sp, call_sp)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target, &[], &[], 0)?;
-        // Nothing is stored, so the load can only narrow.
-        let eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let mut relaxed = crate::OptCtx::at_floor(None);
-    relaxed.options.assumptions.escape_analysis = true;
-    crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
-
-    let mut sound = crate::OptCtx::at_floor(None);
-    sound.options.assumptions = crate::AssumptionOptions::none();
-    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
-
-    let load = fg
-        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
-        .next()
-        .expect("nothing stores to the slot, so the load survives");
-    let mem = fg.node_inputs(load)[0];
-    assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Call { .. }),
-        "the Call must stay on the load's memory chain, got {:?}",
-        fg.node_kind(fg.producer(mem)),
-    );
-    Ok(())
-}
-
-/// `stack_global_disjoint` is a claim about the program, so an edge narrowed
-/// under it may not survive into a run without it: re-optimising under
-/// `AssumptionOptions::none()` must not inherit an edge past the global store.
-#[test]
-fn narrowing_past_a_global_store_never_outlives_stack_global_disjoint() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
-        let value = b.build_int_const(0x22u64, ValueType::I32)?;
-        b.build_store(global, value, rsleigh::VnSpace::RAM)?;
+        call(b)?;
         // Nothing is stored to the slot, so the load can only narrow.
-        let eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
+        let addr = i32_slot(b, sp_val, -8)?;
+        load32(b, addr)
     })?;
-
-    // Granted, so the alias analyzer calls the global store disjoint and
-    // narrowing is possible at all. At the floor both analyzers agree and
-    // there is nothing for the rewire to outlive.
-    let mut relaxed = crate::OptCtx::at_floor(None);
-    relaxed.options.assumptions.stack_global_disjoint = true;
-    crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
-
-    let mut sound = crate::OptCtx::at_floor(None);
-    sound.options.assumptions = crate::AssumptionOptions::none();
-    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
-
-    let load = fg
-        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
-        .next()
-        .expect("nothing stores to the slot, so the load survives");
-    let mem = fg.node_inputs(load)[0];
     assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Store(_)),
-        "the global Store must stay on the load's memory chain, got {:?}",
-        fg.node_kind(fg.producer(mem)),
+        matches!(narrowed_onto(&across_call), NodeKind::Call { .. }),
+        "the Call must stay on the load's memory chain"
     );
+    let past_global = forwarded(sp, claiming(true, false), |b, sp_val| {
+        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
+        store32(b, global, 0x22)?;
+        let addr = i32_slot(b, sp_val, -8)?;
+        load32(b, addr)
+    })?;
+    assert_eq!(narrowed_onto(&past_global), NodeKind::InitialMemory);
     Ok(())
 }
 
-/// `noalias_allocators` is a claim too: a listed callee steps a stack load past
-/// itself only while the claim holds, so the narrowed edge may not carry it
-/// into a run under `AssumptionOptions::none()`.
+/// `noalias_allocators` gives the narrowing heap identity, so a stack load's
+/// edge steps past a store through the allocation; but a listed callee steps
+/// it past itself only for forwarding, and the narrowed edge, which the
+/// jump-table walk reads with no call relaxation, stops at the call.
+///
+/// Mutations: `classify_addr` names no heap class; narrow under
+/// `Policy::forward`.
 #[test]
-fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<()> {
+fn narrowing_past_a_heap_store_stops_at_its_allocator() -> Result<()> {
     const ALLOCATOR: u64 = 0x1000;
     let sp = sp32_vn();
     // A return register, without which the call has no fresh heap base and
@@ -2027,39 +1118,37 @@ fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<(
         .stack_vn(sp)
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let frame = b.build_int_const((-32i64) as u64, ValueType::I32)?;
-    let call_sp = b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+    let call_sp = b.build_const_binop(
+        (-32i64) as u64,
+        sp_val,
+        IntBinaryOp::Add,
+        ValueType::int(32),
+    )?;
     b.write_variable(&sp, call_sp)?;
-    let target = b.build_int_const(ALLOCATOR, ValueType::I32)?;
+    let target = b.build_int_const(ALLOCATOR, ValueType::int(32))?;
     let (_, rets) = b.build_call(target, &[], &[ret_reg], 0)?;
-    // Nothing is stored, so the load can only narrow.
-    let eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
-    let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let value = b.build_int_const(0x22u64, ValueType::int(32))?;
+    b.build_store(rets[0], value, rsleigh::VnSpace::RAM)?;
+    // Nothing is stored to the slot, so the load can only narrow.
+    let addr = b.build_const_binop((-8i64) as u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     // Keeps the allocator's pointer live, so the call keeps the return output
     // `is_allocator_return` reads.
-    let sum = b.build_int_binary_operation(loaded, rets[0], IntBinaryOp::Add, ValueType::I32)?;
+    let sum =
+        b.build_int_binary_operation(loaded, rets[0], IntBinaryOp::Add, ValueType::int(32))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut relaxed = crate::OptCtx::at_floor(None);
-    relaxed.options.assumptions.noalias_allocators = [ALLOCATOR].into_iter().collect();
-    crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
+    fg.assume(&crate::AssumptionOptions {
+        noalias_allocators: [ALLOCATOR].into_iter().collect(),
+        ..crate::AssumptionOptions::none()
+    });
+    run_passes(&mut fg, STANDARD)?;
 
-    let mut sound = crate::OptCtx::at_floor(None);
-    sound.options.assumptions = crate::AssumptionOptions::none();
-    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
-
-    let load = fg
-        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
-        .next()
-        .expect("nothing stores to the slot, so the load survives");
-    let mem = fg.node_inputs(load)[0];
     assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Call { .. }),
-        "the Call must stay on the load's memory chain, got {:?}",
-        fg.node_kind(fg.producer(mem)),
+        matches!(narrowed_onto(&fg), NodeKind::Call { .. }),
+        "the Call must stay on the load's memory chain"
     );
     Ok(())
 }
@@ -2083,21 +1172,22 @@ fn narrowing_that_makes_twin_loads_reruns_the_fixed_point() -> Result<()> {
     b.set_region(entry);
     let sp_val = b.read_variable(&sp)?;
     let slot = |b: &mut strider_ir::FunctionBuilder, off: i64| -> Result<_> {
-        let k = b.build_int_const(off as u64, ValueType::I32)?;
-        b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)
+        let k = b.build_int_const(off as u64, ValueType::int(32))?;
+        b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::int(32))
     };
     let reloaded = slot(&mut b, -12)?;
     let arg = b.read_variable(&var)?;
-    let zero = b.build_int_const(0u64, ValueType::I32)?;
-    let cond = b.build_int_cmp_operation(arg, zero, strider_ir::IntCmpOp::Equal, ValueType::I32)?;
+    let zero = b.build_int_const(0u64, ValueType::int(32))?;
+    let cond =
+        b.build_int_cmp_operation(arg, zero, strider_ir::IntCmpOp::Equal, ValueType::int(32))?;
     b.build_if(cond, then_r, else_r)?;
 
     for (region, off) in [(then_r, -4), (else_r, -8)] {
         b.set_region(region);
         let spill = slot(&mut b, off)?;
-        let data = b.build_int_const(7u64, ValueType::I32)?;
+        let data = b.build_int_const(7u64, ValueType::int(32))?;
         b.build_store(spill, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(reloaded, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(reloaded, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.write_variable(&var, loaded)?;
         b.build_branch(merge)?;
     }
@@ -2108,12 +1198,9 @@ fn narrowing_that_makes_twin_loads_reruns_the_fixed_point() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut p = OptimizerPipeline::new();
-    p.add(PhiCollapse);
-    p.add(LoadForward::default());
-    p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    run_passes(&mut fg, &[&crate::PhiCollapse, &crate::LoadForward])?;
 
-    let ret = crate::test_support::return_value(fg.graph())?;
+    let ret = fg.returned();
     assert!(
         matches!(fg.node_kind(fg.producer(ret)), NodeKind::Load(_)),
         "the merged twins make the phi trivial, got {:?}",
@@ -2123,20 +1210,19 @@ fn narrowing_that_makes_twin_loads_reruns_the_fixed_point() -> Result<()> {
 }
 
 mod scaling {
+    use crate::mem_analysis::WALK_STEPS;
+    use crate::mem_ssa::CLIMB_STEPS;
     use crate::test_support::memory_shapes as shapes;
+    use crate::test_support::{run_pass, steps};
+    use strider_ir::node::NodeKind;
+    use strider_ir_test_utils::IrWalkerEx;
 
     /// The analysis work one `LoadForward` run takes over `fg`: every def
     /// verdict asked plus every step of the climb.
     fn work(mut fg: strider_ir::Function) -> crate::Result<u64> {
-        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        crate::mem_ssa::CLIMB_STEPS.with(|c| c.set(0));
-        crate::pipeline::run_one(
-            &crate::LoadForward::default(),
-            &mut fg,
-            &mut crate::OptCtx::at_floor(None),
-        )?;
-        Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
-            + crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get))
+        steps(&[&WALK_STEPS, &CLIMB_STEPS], || {
+            run_pass(&crate::LoadForward, &mut fg).map(drop)
+        })
     }
 
     /// Doubling the shape may only double the work, give or take a logarithm.
@@ -2144,13 +1230,7 @@ mod scaling {
         name: &str,
         build: fn(usize) -> crate::Result<strider_ir::Function>,
     ) -> crate::Result<()> {
-        let small = work(build(100)?)?;
-        let big = work(build(200)?)?;
-        assert!(
-            big * 100 <= small * 260,
-            "{name}: doubling the shape took {small} steps to {big}"
-        );
-        Ok(())
+        crate::test_support::assert_near_linear(name, 100, |n| work(build(n)?), 260)
     }
 
     #[test]
@@ -2168,6 +1248,13 @@ mod scaling {
         assert_near_linear("call diamonds", shapes::call_diamonds)
     }
 
+    /// Each reload's climb decides every merge by its call arm, not by
+    /// descending the skipping arm through the merges below.
+    #[test]
+    fn a_call_ladder_costs_near_linear_work() -> crate::Result<()> {
+        assert_near_linear("call ladder", shapes::call_ladder)
+    }
+
     #[test]
     fn an_accumulator_loop_costs_near_linear_work() -> crate::Result<()> {
         assert_near_linear("accumulator loop", shapes::accumulator_loop)
@@ -2183,15 +1270,103 @@ mod scaling {
         assert_near_linear("nested loops", shapes::nested_loops)
     }
 
-    /// The path walk, not the climb: an irreducible memory graph has no layout,
-    /// so this is the fallback's own scaling.
+    /// Each reload steps past every call above it, so a call one reload's
+    /// climb rejected must not be asked again by the next.
+    #[test]
+    fn a_spill_call_chain_costs_near_linear_work() -> crate::Result<()> {
+        let mut fg = shapes::spill_call_chain(4)?;
+        run_pass(&crate::LoadForward, &mut fg)?;
+        assert!(
+            !fg.has_kind(|k| matches!(k, NodeKind::Load(_))),
+            "every reload must forward past the calls, or nothing is measured"
+        );
+        assert_near_linear("spill call chain", shapes::spill_call_chain)
+    }
+
+    /// Four slots behind a two-entry loop.
     #[test]
     fn an_irreducible_store_chain_costs_near_linear_work() -> crate::Result<()> {
+        let fg = shapes::irreducible_store_chain(8)?;
         assert!(
-            crate::mem_ssa::MemLayout::build(&shapes::irreducible_store_chain(8)?).is_none(),
-            "the shape must stay irreducible, or it measures the climb"
+            !crate::mem_ssa::MemLayout::build(&fg).is_reducible(),
+            "the shape must stay irreducible"
         );
         assert_near_linear("irreducible store chain", shapes::irreducible_store_chain)
+    }
+
+    /// Each reload climbs to the loop's merge and walks its region.
+    /// Mutation: ask each def of a run alone in `region_dirty_walked`.
+    #[test]
+    fn an_irreducible_loop_body_costs_near_linear_work() -> crate::Result<()> {
+        let fg = shapes::irreducible_body(8)?;
+        assert!(
+            !crate::mem_ssa::MemLayout::build(&fg).is_reducible(),
+            "the shape must stay irreducible"
+        );
+        assert_near_linear("irreducible loop body", shapes::irreducible_body)
+    }
+
+    /// A two-entry loop, then `n` stores to distinct slots and `n` reloads of
+    /// distinct slots never written, so no reload's memo serves another.
+    fn irreducible_then_distinct_slots(n: usize) -> crate::Result<strider_ir::Function> {
+        use strider_ir::IRBuilderExt;
+        use strider_ir::node::ValueType;
+        let ty = ValueType::int(64);
+        let store = |b: &mut strider_ir::FunctionBuilder, slot: u64| -> crate::Result<()> {
+            let addr = b.build_int_const(0x10_0000 + 8 * slot, ty)?;
+            let v = b.build_int_const(slot, ty)?;
+            b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+            Ok(())
+        };
+        let mut b =
+            strider_ir_test_utils::sp_frame(strider_ir_test_utils::stack_vn_x86_64()).build_fn()?;
+        let entry = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
+        b.set_region(entry);
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let (top, mid, exit) = (
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+        );
+        let enter_mid = b.build_boolean_const(true);
+        b.build_if(enter_mid, mid, top)?;
+        b.set_region(top);
+        store(&mut b, 0)?;
+        b.build_branch(mid)?;
+        b.set_region(mid);
+        store(&mut b, 1)?;
+        let again = b.build_boolean_const(true);
+        b.build_if(again, top, exit)?;
+        b.set_region(exit);
+        let n = n as u64;
+        for i in 0..n {
+            store(&mut b, 10 + i)?;
+        }
+        let sink = b.build_int_const(0x20_0000u64, ty)?;
+        for i in 0..n {
+            let addr = b.build_int_const(0x10_0000 + 8 * (10 + n + i), ty)?;
+            let v = b.build_load(addr, rsleigh::VnSpace::RAM, ty)?;
+            b.build_store(sink, v, rsleigh::VnSpace::RAM)?;
+        }
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        b.build()
+    }
+
+    /// An irreducible loop above the stores leaves the reloads below it on the
+    /// indexed climb.
+    #[test]
+    fn reloads_below_an_irreducible_loop_cost_near_linear_work() -> crate::Result<()> {
+        let fg = irreducible_then_distinct_slots(8)?;
+        assert!(
+            !crate::mem_ssa::MemLayout::build(&fg).is_reducible(),
+            "the shape must stay irreducible"
+        );
+        assert_near_linear(
+            "reloads below an irreducible loop",
+            irreducible_then_distinct_slots,
+        )
     }
 }
 
@@ -2200,61 +1375,423 @@ mod scaling {
 #[test]
 fn no_assumption_lifts_the_ram_premise() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_empty_fn(|b| {
-        let register = b.build_int_const(0x4000_1000u64, ValueType::I32)?;
-        let one = b.build_int_const(1u64, ValueType::I32)?;
+        let register = b.build_int_const(0x4000_1000u64, ValueType::int(32))?;
+        let one = b.build_int_const(1u64, ValueType::int(32))?;
         b.build_store(register, one, rsleigh::VnSpace::RAM)?;
-        b.build_load(register, rsleigh::VnSpace::RAM, ValueType::I32)
+        b.build_load(register, rsleigh::VnSpace::RAM, ValueType::int(32))
     })?;
-    let mut ctx = crate::OptCtx::at_floor(None);
-    ctx.options.assumptions = crate::AssumptionOptions::none();
-    crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
+    run_passes(&mut fg, STANDARD)?;
     crate::test_support::assert_returns_const(&fg, 1);
     Ok(())
 }
 
-/// `narrow` reshapes by the function's byte order, which is the DATA order.
-/// The REGISTER space has its own, and the two differ on ARM BE8, where the
-/// sla's register block is little-endian under big-endian data. Reshaping a
-/// mirrored register slot by the data order would take the wrong half, so a
-/// register-space load is not narrowed at all. The RAM twin of this graph
-/// forwards, which is what makes the space the discriminator.
+/// `slice_to_load` reshapes in the load's space's byte order. The REGISTER space has
+/// its own, which differs from the data order on ARM BE8, where the sla's
+/// register block is little-endian under big-endian data: there a byte load
+/// of a register slot is the low byte, and of RAM the high one.
 #[test]
-fn a_register_space_load_is_not_narrowed_from_a_wider_store() -> Result<()> {
+fn a_narrowed_load_takes_its_spaces_byte_order() -> Result<()> {
     let build = |space: rsleigh::VnSpace| -> Result<strider_ir::Function> {
         let sp = sp32_vn();
         let mut b = sp_frame(sp)
-            .endianness(Endianness::Big)
+            .byte_order(strider_target::ByteOrder {
+                data: Endianness::Big,
+                register: Endianness::Little,
+            })
             .build_fn_single_region()?;
-        let addr = b.build_int_const(0x40u64, ValueType::I32)?;
-        let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
+        let addr = b.build_int_const(0x40u64, ValueType::int(32))?;
+        let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
         b.build_store(addr, wide, space)?;
-        let loaded = b.build_load(addr, space, ValueType::I8)?;
+        let loaded = b.build_load(addr, space, ValueType::int(8))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         b.build()
     };
-    let run = |fg: &mut strider_ir::Function| -> Result<usize> {
-        let mut pipeline = OptimizerPipeline::new();
-        pipeline.add(PhiCollapse);
-        pipeline.add(RegionCollapse);
-        pipeline.add(LoadForward::default());
-        pipeline.run(fg, &mut crate::OptCtx::at_floor(None))?;
-        Ok(fg.count_kind(|k| matches!(k, NodeKind::Load(_))))
+    let run = |fg: &mut strider_ir::Function| -> Result<()> {
+        run_passes(
+            fg,
+            &[
+                &crate::PhiCollapse,
+                &crate::RegionCollapse,
+                &crate::LoadForward,
+                &crate::ConstantFold,
+            ],
+        )?;
+        Ok(())
     };
 
     let mut ram = build(rsleigh::VnSpace::RAM)?;
-    assert_eq!(
-        run(&mut ram)?,
-        0,
-        "the RAM twin narrows: the data order is the function's"
-    );
+    run(&mut ram)?;
+    crate::test_support::assert_returns_const(&ram, 0xDE);
 
     let mut reg = build(rsleigh::VnSpace::REGISTER)?;
-    assert_eq!(
-        run(&mut reg)?,
-        1,
-        "the register space keeps its Load: its byte order is not the \
-         function's on BE8"
+    run(&mut reg)?;
+    crate::test_support::assert_returns_const(&reg, 0xEF);
+    Ok(())
+}
+
+/// A forward whose value becomes a store's address re-classes that store,
+/// so the answers memoised before it are stale.  `S` stores through `L1`,
+/// an `Anchor` that may alias the global `[0x5000]`; forwarding `L1` makes
+/// `S`'s address the constant it spilled, disjoint from that global, and the
+/// spill's slot is disjoint from it under `stack_global_disjoint`.
+///
+/// Mutation: keep the answers across the forward.
+#[test]
+fn a_forward_into_a_store_address_drops_the_memoised_answers() -> Result<()> {
+    let sp = sp32_vn();
+    let mut a_value = None;
+    let mut l1_value = None;
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let i32_ty = ValueType::int(32);
+        let global = b.build_int_const(0x5000u64, i32_ty)?;
+        store32(b, global, 0x77)?;
+        let s8 = i32_slot(b, sp_val, -8)?;
+        store32(b, s8, 0x9000)?;
+        let l1 = load32(b, s8)?;
+        store32(b, l1, 0x11)?;
+        // A read wider than the store: its verdict is an exact match, but it
+        // is not forwarded, so it stays to be asked again.
+        let a = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        b.build_return(Some(a), &[])?;
+        (a_value, l1_value) = (Some(a), Some(l1));
+        Ok(())
+    })?;
+    run_passes(&mut fg, COLLAPSE)?;
+    fg.assume(&claiming(true, false));
+    let (a, l1) = (
+        fg.producer(a_value.expect("built")),
+        fg.producer(l1_value.expect("built")),
     );
+
+    let mut sweep = Sweep::default();
+    let mut edit = crate::EditFunction::new(&mut fg);
+    try_forward_load(&mut edit, a, &mut sweep)?;
+    let before = edit.generation();
+    try_forward_load(&mut edit, l1, &mut sweep)?;
+    assert_ne!(edit.generation(), before, "the address load forwards");
+    let f = edit.function();
+    let policy = Policy::forward(f);
+    let fresh = MemQuery::default().reaching(f, a, policy).node();
+    assert!(
+        matches!(f.node_kind(fresh), NodeKind::Store(_))
+            && f.int_const_u128(f.store_addr(fresh)) == Some(0x5000),
+        "the store through the forwarded address no longer aliases the global"
+    );
+    assert_eq!(
+        sweep.query.reaching(f, a, policy).node(),
+        fresh,
+        "the query answers what a fresh one does"
+    );
+    Ok(())
+}
+
+/// A store wider than 16 bytes forwards to a narrower load like any other:
+/// the reshape's shift constant is built at the store's width, which
+/// `build_int_const` takes past 128 bits.
+///
+/// Mutation: refuse a reshape of a store wider than 16 bytes.
+fn forward_from_a_wide_store(order: Endianness) -> Result<strider_ir::Function> {
+    let sp = sp32_vn();
+    let mut b = sp_frame(sp).byte_order(order).build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let addr = b.build_const_binop(
+        (-32i64) as u64,
+        sp_val,
+        IntBinaryOp::Add,
+        ValueType::int(32),
+    )?;
+    let wide = (strider_ir::UBig::from(0x1122_3344u32) << 224usize)
+        | strider_ir::UBig::from(0x5566_7788u32);
+    let wide = b.build_int_const(wide, ValueType::int(256))?;
+    b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_passes(&mut fg, STANDARD)?;
+    Ok(fg)
+}
+
+#[test]
+fn a_store_wider_than_16_bytes_forwards_its_low_bytes_on_little_endian() -> Result<()> {
+    let fg = forward_from_a_wide_store(Endianness::Little)?;
+    crate::test_support::assert_returns_const(&fg, 0x5566_7788);
+    Ok(())
+}
+
+#[test]
+fn a_store_wider_than_16_bytes_forwards_its_high_bytes_on_big_endian() -> Result<()> {
+    let fg = forward_from_a_wide_store(Endianness::Big)?;
+    crate::test_support::assert_returns_const(&fg, 0x1122_3344);
+    Ok(())
+}
+
+/// The store and the load's address are the forward's proof, so the value
+/// that replaces the load inherits the store's and the address producer's
+/// fingerprints; without them that asm goes with the culled load.
+///
+/// Mutation: absorb only the load's own fingerprint.
+#[test]
+fn a_forward_absorbs_the_store_and_the_address() -> Result<()> {
+    const STORE_ASM: u64 = 0xC0DE_0001;
+    const ADDR_ASM: u64 = 0xC0DE_0002;
+    let sp = sp32_vn();
+    let mut b = sp_frame(sp).build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let slot = b.build_const_binop((-8i64) as u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+    let data = b.build_int_const(0x42u64, ValueType::int(32))?;
+    b.set_lift_addr(Some(STORE_ASM));
+    b.build_store(slot, data, rsleigh::VnSpace::RAM)?;
+    b.set_lift_addr(Some(ADDR_ASM));
+    let four = b.build_int_const((-4i64) as u64, ValueType::int(32))?;
+    let half = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let reread = b.build_int_binary_operation(half, four, IntBinaryOp::Add, ValueType::int(32))?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let loaded = b.build_load(reread, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    run_passes(&mut fg, &[&crate::PhiCollapse, &crate::LoadForward])?;
+
+    crate::test_support::assert_returns_const(&fg, 0x42);
+    let forwarded = fg.producer(fg.returned());
+    let fingerprint = fg.side_tables().asm_fingerprint(forwarded);
+    assert!(
+        fingerprint.contains(&STORE_ASM) && fingerprint.contains(&ADDR_ASM),
+        "the forwarded value must carry the store's and the address's asm; \
+         got {fingerprint:?}"
+    );
+    Ok(())
+}
+
+/// `p = alloc(); [sp-24] = 0x6000; L2 = [sp-24]; [sp-16] = 0x77; [p] = 0x9000;
+/// [j] = 0x55; L1 = [p]; [L1] = 0x11; return [sp-16]`, `j` being `L2 + 0x10`
+/// or, when `spelled`, the constant it forwards to.
+fn opaque_stores_that_forward_to_globals(spelled: bool) -> Result<Function> {
+    const ALLOCATOR: u64 = 0x1000;
+    let sp = sp32_vn();
+    let ret_reg = rsleigh::Vn {
+        addr_off: 0x00,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let mut b = strider_ir_test_utils::RegisterSet::new()
+        .tracked(sp)
+        .tracked(ret_reg)
+        .callee_saved(sp)
+        .ret(ret_reg)
+        .stack_vn(sp)
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let call_sp = i32_slot(&mut b, sp_val, -32)?;
+    b.write_variable(&sp, call_sp)?;
+    let target = b.build_int_const(ALLOCATOR, ValueType::int(32))?;
+    let (_, rets) = b.build_call(target, &[], &[ret_reg], 0)?;
+    let p = rets[0];
+    let s24 = i32_slot(&mut b, sp_val, -24)?;
+    store32(&mut b, s24, 0x6000)?;
+    let l2 = load32(&mut b, s24)?;
+    let s16 = i32_slot(&mut b, sp_val, -16)?;
+    store32(&mut b, s16, 0x77)?;
+    store32(&mut b, p, 0x9000)?;
+    let j = if spelled {
+        b.build_int_const(0x6010u64, ValueType::int(32))?
+    } else {
+        b.build_const_binop(0x10u64, l2, IntBinaryOp::Add, ValueType::int(32))?
+    };
+    store32(&mut b, j, 0x55)?;
+    let l1 = load32(&mut b, p)?;
+    store32(&mut b, l1, 0x11)?;
+    let ret = load32(&mut b, s16)?;
+    b.build_return(Some(ret), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    fg.assume(&AssumptionOptions {
+        escape_analysis: true,
+        noalias_allocators: [ALLOCATOR].into_iter().collect(),
+        ..AssumptionOptions::none()
+    });
+    run_passes(&mut fg, STANDARD)?;
+    Ok(fg)
+}
+
+/// A forward that turns an opaque store's address into a constant cannot
+/// take back a reload already forwarded past that store, so without
+/// `stack_global_disjoint` the opaque store blocks the reload from the start,
+/// as the constant it becomes does.
+///
+/// Mutation: skip an opaque store over a private frame whatever
+/// `stack_global_disjoint` says.
+#[test]
+fn an_opaque_store_blocks_as_the_global_it_forwards_to() -> Result<()> {
+    let spelled = opaque_stores_that_forward_to_globals(true)?;
+    assert_eq!(outcome(&spelled), None, "a global store may alias the slot");
+    assert_eq!(
+        outcome(&opaque_stores_that_forward_to_globals(false)?),
+        outcome(&spelled),
+        "the pass order decides nothing"
+    );
+    Ok(())
+}
+
+/// A store on a region joining a constant `If`'s untaken arm with a live
+/// predecessor stays on the merge's path. Mutation: let `never_taken` walk
+/// a multi-predecessor region through its first input.
+#[test]
+fn an_untaken_arm_joining_a_live_path_keeps_its_store() -> Result<()> {
+    let sp = sp32_vn();
+    let ty = ValueType::int(32);
+    let mut b = sp_frame(sp).build_fn()?;
+    let [entry, guard, taken, untaken, live, join, merge] = [(); 7].map(|()| b.create_region_all());
+    let [entry, guard, taken, untaken, live, join, merge] =
+        [entry?, guard?, taken?, untaken?, live?, join?, merge?];
+    b.set_entry_region_all(entry)?;
+
+    b.set_region(entry);
+    let sp_v = b.read_variable(&sp)?;
+    let slot = i32_slot(&mut b, sp_v, 4)?;
+    store32(&mut b, slot, 1)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let unknown = b.build_int_cmp_operation(sp_v, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    b.build_if(unknown, guard, live)?;
+    b.set_region(guard);
+    let yes = b.build_boolean_const(true);
+    b.build_if(yes, taken, untaken)?;
+    b.set_region(taken);
+    b.build_branch(merge)?;
+    // `join`'s first predecessor is the untaken arm.
+    for region in [untaken, live] {
+        b.set_region(region);
+        b.build_branch(join)?;
+    }
+    b.set_region(join);
+    let sp_v = b.read_variable(&sp)?;
+    let slot = i32_slot(&mut b, sp_v, 4)?;
+    store32(&mut b, slot, 2)?;
+    b.build_branch(merge)?;
+
+    b.set_region(merge);
+    let sp_v = b.read_variable(&sp)?;
+    let slot = i32_slot(&mut b, sp_v, 4)?;
+    let loaded = load32(&mut b, slot)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    run_passes(
+        &mut fg,
+        &[&PhiCollapse, &crate::RegionCollapse, &LoadForward],
+    )?;
+    assert_eq!(outcome(&fg), None);
+    Ok(())
+}
+
+/// A merge arm fed only by a loop no path enters is never taken, so the
+/// merge reads the entry store; the loop's own reload, whose memory edge
+/// stands on the store it feeds, stays put.
+#[test]
+fn a_merge_arm_from_a_loop_nothing_enters_is_never_taken() -> Result<()> {
+    let sp = sp32_vn();
+    let ty = ValueType::int(32);
+    let mut b = sp_frame(sp).build_fn()?;
+    let [entry, orphan, merge] = [(); 3].map(|()| b.create_region_all());
+    let [entry, orphan, merge] = [entry?, orphan?, merge?];
+    b.set_entry_region_all(entry)?;
+    let global = |b: &mut FunctionBuilder| b.build_int_const(0x1000u64, ty);
+
+    b.set_region(entry);
+    let slot = global(&mut b)?;
+    store32(&mut b, slot, 1)?;
+    b.build_branch(merge)?;
+    b.set_region(orphan);
+    let slot = global(&mut b)?;
+    let reload = load32(&mut b, slot)?;
+    let one = b.build_int_const(1u64, ty)?;
+    let next = b.build_int_binary_operation(reload, one, IntBinaryOp::Xor, ty)?;
+    b.build_store(slot, next, rsleigh::VnSpace::RAM)?;
+    let sp_v = b.read_variable(&sp)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let again = b.build_int_cmp_operation(sp_v, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    b.build_if(again, orphan, merge)?;
+
+    b.set_region(merge);
+    let slot = global(&mut b)?;
+    let loaded = load32(&mut b, slot)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    strider_ir::validate::validate(&fg)?;
+
+    run_passes(
+        &mut fg,
+        &[&PhiCollapse, &crate::RegionCollapse, &LoadForward],
+    )?;
+    assert_eq!(outcome(&fg), Some(1));
+    Ok(())
+}
+
+/// `X = 1; Y = 1; guard; mid = 2; guard; return X | Y << 8`, `mid` being `Y`
+/// or `X`, each guard a constant `If` whose untaken arm stores to both. The
+/// two reloads settle through the same memory phis but stop at different
+/// stores, so where one leaves its load says nothing about the other. Each
+/// `mid` misleads the reload swept second when the first is the other slot.
+///
+/// Mutation: key the settle memo by the memory value alone.
+fn reloads_of_two_slots_through_one_guard_chain(mid_on_y: bool) -> Result<Function> {
+    let sp = sp32_vn();
+    let ty = ValueType::int(32);
+    let mut b = sp_frame(sp).build_fn()?;
+    let [entry, taken1, untaken1, mid, taken2, untaken2, exit] =
+        [(); 7].map(|()| b.create_region_all());
+    let [entry, taken1, untaken1, mid, taken2, untaken2, exit] =
+        [entry?, taken1?, untaken1?, mid?, taken2?, untaken2?, exit?];
+    b.set_entry_region_all(entry)?;
+    let x = |b: &mut FunctionBuilder| b.build_int_const(0x1000u64, ty);
+    let y = |b: &mut FunctionBuilder| b.build_int_const(0x1010u64, ty);
+
+    b.set_region(entry);
+    for (slot, v) in [(x(&mut b)?, 1), (y(&mut b)?, 1)] {
+        store32(&mut b, slot, v)?;
+    }
+    let yes = b.build_boolean_const(true);
+    b.build_if(yes, taken1, untaken1)?;
+    for (taken, untaken, join) in [(taken1, untaken1, mid), (taken2, untaken2, exit)] {
+        b.set_region(taken);
+        b.build_branch(join)?;
+        b.set_region(untaken);
+        for slot in [x(&mut b)?, y(&mut b)?] {
+            store32(&mut b, slot, 99)?;
+        }
+        b.build_branch(join)?;
+        if join == mid {
+            b.set_region(mid);
+            let slot = if mid_on_y { y(&mut b)? } else { x(&mut b)? };
+            store32(&mut b, slot, 2)?;
+            let yes = b.build_boolean_const(true);
+            b.build_if(yes, taken2, untaken2)?;
+        }
+    }
+
+    b.set_region(exit);
+    let (xa, ya) = (x(&mut b)?, y(&mut b)?);
+    let lx = load32(&mut b, xa)?;
+    let ly = load32(&mut b, ya)?;
+    let ly = b.build_const_binop(8u64, ly, IntBinaryOp::ShiftLeft, ty)?;
+    let ret = b.build_int_binary_operation(lx, ly, IntBinaryOp::Or, ty)?;
+    b.build_return(Some(ret), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_passes(&mut fg, &[&PhiCollapse, &LoadForward, &crate::ConstantFold])?;
+    Ok(fg)
+}
+
+#[test]
+fn reloads_of_two_slots_settle_through_one_guard_chain_apart() -> Result<()> {
+    let fg = reloads_of_two_slots_through_one_guard_chain(true)?;
+    crate::test_support::assert_returns_const(&fg, 0x0201);
+    let fg = reloads_of_two_slots_through_one_guard_chain(false)?;
+    crate::test_support::assert_returns_const(&fg, 0x0102);
     Ok(())
 }

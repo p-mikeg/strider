@@ -132,14 +132,11 @@ def test_analyze_bounds_a_named_target_by_the_recorded_size():
 
 def test_an_explicit_bound_wins_over_the_recorded_size():
     lift = _switch()
-    with pytest.raises(strider.StriderError) as exc:
-        lift.analyze(
-            "dispatch_value",
-            opts=strider.lift.LifterOptions(
-                cfg=strider.cfg.CfgOptions(function_max_size=4)
-            ),
-        )
-    assert "function-boundary error" in str(exc.value)
+    cfg, _function, _unresolved = lift.analyze(
+        "dispatch_value",
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4)),
+    )
+    assert "past_function_end" in [r for _, r in cfg.incomplete]
 
 
 def test_symbol_at_sees_past_a_sizeless_symbol_inside_a_function():
@@ -179,3 +176,17 @@ def test_iter_symbols_does_not_repeat_a_symbol_in_both_tables():
     lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
     seen = [(s.name, s.address) for s in lift.iter_symbols()]
     assert len(seen) == len(set(seen))
+
+
+@pytest.mark.parametrize("arch", ["arm", "arm_thumb", "aarch64"])
+def test_mapping_symbols_are_not_symbols(arch):
+    """`$a` / `$t` / `$d` / `$x` (and `$d.N`) mark code and data spans; like
+    `nm`, the table leaves them out, and `symbol_at` never answers one."""
+    lift = strider.lift.load_elf(str(fixture_path(arch, "switch")))
+    names = list(lift.symbols())
+    assert names, arch
+    mapping = [n for n in names if n[:1] == "$" and n[1:2] in "adtx" and n[2:3] in ("", ".")]
+    assert mapping == []
+    for sym in lift.iter_symbols():
+        hit = lift.symbol_at(sym.address & ~1)
+        assert hit is None or not hit.name.startswith("$")

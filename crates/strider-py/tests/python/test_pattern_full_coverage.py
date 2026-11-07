@@ -47,7 +47,7 @@ from strider.pattern import (
     int_zero_extend,
 )
 
-from .conftest import built_lifter_and_function
+from .conftest import built_lifter_and_function, lift_bytes
 
 
 @pytest.mark.parametrize("ctor", [float_add, float_sub, float_mul, float_div])
@@ -97,8 +97,8 @@ def test_zero_and_sign_extend_return_pat():
 
 
 def test_extend_with_op_string():
-    assert isinstance(int_extend("zero", var(Capture())), Pat)
-    assert isinstance(int_extend("sign", var(Capture())), Pat)
+    assert isinstance(int_extend("ZeroExtend", var(Capture())), Pat)
+    assert isinstance(int_extend("SignExtend", var(Capture())), Pat)
 
 
 def test_extend_with_invalid_op_raises():
@@ -261,8 +261,7 @@ def test_int_ne_builder_compiles():
 
 
 def test_int_ne_finds_lowered_shape():
-    # int_ne is the lifter-canonical `Xor(IntEqual(a,b),1):I1` shape; this
-    # only asserts it compiles and queries against a real graph.
-    _lift, fn = built_lifter_and_function("x86", "memory", "array_sum")
-    hits = fn.find_all(int_ne(anything(), anything()))
-    assert isinstance(hits, list)
+    # `cmp edi, esi; setne al; movzx eax, al; ret`: int_ne is the
+    # lifter-canonical `Xor(IntEqual(a,b),1):I1` shape.
+    fn = lift_bytes(bytes.fromhex("39f7" "0f95c0" "0fb6c0" "c3"))
+    assert len(fn.find_all(int_ne(anything(), anything()))) == 1

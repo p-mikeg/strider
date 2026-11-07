@@ -1,14 +1,11 @@
-//! Relocation types whose value `object` does not describe: instruction
-//! immediates, GOT and TOC references, and the few plain fields it leaves
-//! `Unknown`. Each is classified into the value it computes and the field that
-//! value is encoded into.
-//!
-//! Formulas are the psABI ones: `S` the symbol, `A` the addend, `P` the site,
-//! `G` the symbol's GOT slot, `GOT` the GOT's start and `TOC` the PowerPC64
-//! TOC pointer.
+//! What each relocation type computes and the field it is encoded into.
+//! Formulas are the psABI ones: `S` symbol, `A` addend, `P` site, `B` image
+//! base, `G` GOT slot, `GOT` the GOT's start, `TOC` the PowerPC64 TOC pointer.
 
 use object::Architecture as A;
 use object::elf;
+
+use super::relocations::RelocInfo;
 
 /// Types `object` does not name.
 const R_AARCH64_PLT32: u32 = 314;
@@ -26,12 +23,18 @@ pub(crate) enum Value {
     PagePcrel,
     /// `G + A - P`
     GotPcrel,
+    /// AArch64's `G(GDAT(S + A)) - P`, the slot holding `S + A`: `G - P`
+    /// when `A` is 0, and no slot otherwise.
+    GotSlotPcrel,
     /// `Page(G) - Page(P)`
     GotPagePcrel,
     /// `G`
     Got,
     /// `G - GOT + A`
     GotOffset,
+    /// i386 `GOT32` / `GOT32X`: `G + A` from a bare disp32 (ModRM
+    /// `mod = 0, rm = 5`), else `G - GOT + A`; see `i386_got_absolute`.
+    I386Got,
     /// `S + A - GOT`
     GotRelative,
     /// `GOT + A - P`
@@ -40,6 +43,37 @@ pub(crate) enum Value {
     TocRelative,
     /// `TOC + A`
     Toc,
+    /// `B + A`, the image base `B` modelled 0: `R_*_RELATIVE` and an
+    /// STN_UNDEF `R_MIPS_REL32`.
+    ImageRelative,
+    /// `indirect(B + A)`, the IFUNC resolver's result: `R_*_IRELATIVE`.
+    Indirect,
+    /// A TLS module id, offset, TP offset or descriptor, which only the
+    /// loader computes.
+    Tls,
+    /// `S` plus the RELA addend: a GOT slot. An `SHT_REL` slot's field is no
+    /// addend.
+    Slot,
+    /// A `JUMP_SLOT`, as `Slot` but with no value against an undefined
+    /// symbol: the loader's PLT lookup skips an executable's canonical PLT
+    /// entry. An `SHT_REL` one's field holds the PLT push address.
+    PltSlot,
+    /// PowerPC `PLTREL24`, `S - P`: a `-fPIC` addend locates the caller's GOT
+    /// pointer, not the target.
+    PltCall,
+    /// PowerPC64 `REL24`, `S + A - P`, entering a local function past its TOC
+    /// setup and following an ELFv1 descriptor.
+    Ppc64Call { notoc: bool },
+}
+
+impl Value {
+    /// Whether the value needs the symbol, which only a symbol target has.
+    pub(crate) fn reads_symbol(self) -> bool {
+        !matches!(
+            self,
+            Value::ImageRelative | Value::Indirect | Value::Tls | Value::GotBasePcrel | Value::Toc
+        )
+    }
 }
 
 /// Which bits of a 16-bit PowerPC or MIPS immediate a value lands in.
@@ -99,9 +133,8 @@ pub(crate) enum Field {
     PpcBranch14,
     /// A PowerPC 16-bit field addressed directly by `r_offset`.
     PpcHalf16(Half),
-    /// A PowerPC `half16ds` field: the DS form's 14 bits at bit 2, leaving the
-    /// instruction's own extended opcode in bits 1:0 (`ld` / `std` 0, `ldu` 1,
-    /// `lwa` 2).  Patching those turns one instruction into another.
+    /// A PowerPC `half16ds` field: 14 bits at bit 2; bits 1:0 are the
+    /// instruction's extended opcode (`ld` 0, `ldu` 1, `lwa` 2), kept.
     PpcHalf16Ds(Half),
     /// MIPS `J` / `JAL` `instr_index`.
     Mips26,
@@ -112,17 +145,34 @@ pub(crate) enum Field {
 }
 
 impl Field {
-    /// Bytes at `r_offset` the field reads and patches.
+    /// Bytes at `r_offset` the field reads and patches. Exhaustive, so a new
+    /// variant states its width.
     pub(crate) fn width(self) -> usize {
         match self {
             Field::Data { bytes, .. } => usize::from(bytes),
             Field::PpcHalf16(_) | Field::PpcHalf16Ds(_) => 2,
-            _ => 4,
+            Field::A64Branch26
+            | Field::A64Imm19
+            | Field::A64Imm14
+            | Field::A64Adr { .. }
+            | Field::A64Lo12 { .. }
+            | Field::A64Movw { .. }
+            | Field::ArmBranch24 { .. }
+            | Field::ArmPrel31
+            | Field::ArmMovw { .. }
+            | Field::ThumbBranch { .. }
+            | Field::ThumbMovw { .. }
+            | Field::PpcBranch24
+            | Field::PpcBranch14
+            | Field::Mips26
+            | Field::MipsHalf16(_)
+            | Field::MipsPc16 => 4,
         }
     }
 
-    /// A branch displacement, which carries no address the program can compare
-    /// against null. `A64Imm19` is not one: it is also a literal load's.
+    /// A branch displacement, carrying no address the program can compare
+    /// against null (`A64Imm19` is also a literal load's). Not exhaustive:
+    /// "not a branch" is the conservative answer.
     pub(crate) fn is_branch(self) -> bool {
         matches!(
             self,
@@ -144,28 +194,30 @@ pub(crate) enum Kind {
     /// Leaves the field as assembled: `R_*_NONE` and pure markers.
     Marker,
     Compute(Value, Field),
-    /// PowerPC64 `REL24`, which enters a local function past its TOC setup
-    /// and follows an ELFv1 descriptor.
-    Ppc64Call {
-        notoc: bool,
-    },
-    /// PowerPC `PLTREL24`, `S - P`: a `-fPIC` addend locates the caller's GOT
-    /// pointer, not the target.
-    PpcPltCall,
+    /// `R_*_COPY`: the loader copies the symbol's object, `st_size` bytes,
+    /// from the library defining it to `P`.
+    Copy,
 }
 
-/// Classifies `r_type` for `arch`, `None` when it is not one of these.
+/// Classifies a relocation for `arch`, `None` when no row here names it.
 ///
-/// MIPS takes the relocation's first type with the other two `R_MIPS_NONE`;
-/// the caller rejects a real composite.
-pub(crate) fn classify(arch: A, r_type: u32) -> Option<Kind> {
+/// MIPS dispatches on the first type. A GOT/PLT slot and `R_MIPS_REL32` take
+/// any composite, `REL32` reading its width off the second type; every other
+/// MIPS row is a single type.
+pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
     use Field as F;
     use Kind::{Compute as C, Marker};
     use Value as V;
     let data = |bytes: u8, signed: bool| F::Data { bytes, signed };
+    let r_type = r.r_type;
     Some(match arch {
         A::X86_64 => match r_type {
             elf::R_X86_64_NONE | elf::R_X86_64_TLSDESC_CALL => Marker,
+            elf::R_X86_64_COPY => Kind::Copy,
+            elf::R_X86_64_RELATIVE => C(V::ImageRelative, data(8, false)),
+            elf::R_X86_64_IRELATIVE => C(V::Indirect, data(8, false)),
+            elf::R_X86_64_GLOB_DAT => C(V::Slot, data(8, false)),
+            elf::R_X86_64_JUMP_SLOT => C(V::PltSlot, data(8, false)),
             elf::R_X86_64_GOTPCREL | elf::R_X86_64_GOTPCRELX | elf::R_X86_64_REX_GOTPCRELX => {
                 C(V::GotPcrel, data(4, true))
             }
@@ -173,24 +225,38 @@ pub(crate) fn classify(arch: A, r_type: u32) -> Option<Kind> {
             elf::R_X86_64_GOTPC32 => C(V::GotBasePcrel, data(4, true)),
             elf::R_X86_64_GOTPC64 => C(V::GotBasePcrel, data(8, false)),
             elf::R_X86_64_GOT64 => C(V::GotOffset, data(8, false)),
-            // `PLTOFF64` is `L - GOT + A`, L collapsing to S with no PLT
-            // materialised.
+            // `PLTOFF64` is `L - GOT + A`, L = S with no PLT.
             elf::R_X86_64_GOTOFF64 | elf::R_X86_64_PLTOFF64 => C(V::GotRelative, data(8, false)),
             elf::R_X86_64_PC64 => C(V::Pcrel, data(8, false)),
+            elf::R_X86_64_DTPMOD64 | elf::R_X86_64_DTPOFF64 | elf::R_X86_64_TPOFF64 => {
+                C(V::Tls, data(8, false))
+            }
+            elf::R_X86_64_TLSDESC => C(V::Tls, data(16, false)),
             _ => return None,
         },
         A::I386 => match r_type {
             elf::R_386_NONE | elf::R_386_TLS_DESC_CALL => Marker,
-            elf::R_386_GOT32 | elf::R_386_GOT32X => C(V::GotOffset, data(4, false)),
+            elf::R_386_COPY => Kind::Copy,
+            elf::R_386_RELATIVE => C(V::ImageRelative, data(4, false)),
+            elf::R_386_IRELATIVE => C(V::Indirect, data(4, false)),
+            elf::R_386_GLOB_DAT => C(V::Slot, data(4, false)),
+            elf::R_386_JMP_SLOT => C(V::PltSlot, data(4, false)),
+            elf::R_386_GOT32 | elf::R_386_GOT32X => C(V::I386Got, data(4, false)),
             elf::R_386_GOTOFF => C(V::GotRelative, data(4, false)),
             elf::R_386_GOTPC => C(V::GotBasePcrel, data(4, false)),
+            elf::R_386_TLS_DESC => C(V::Tls, data(8, false)),
             _ => return None,
         },
         A::Aarch64 => match r_type {
             elf::R_AARCH64_NONE | 256 | elf::R_AARCH64_TLSDESC_CALL => Marker,
+            elf::R_AARCH64_COPY => Kind::Copy,
+            elf::R_AARCH64_RELATIVE => C(V::ImageRelative, data(8, false)),
+            elf::R_AARCH64_IRELATIVE => C(V::Indirect, data(8, false)),
+            elf::R_AARCH64_GLOB_DAT => C(V::Slot, data(8, false)),
+            elf::R_AARCH64_JUMP_SLOT => C(V::PltSlot, data(8, false)),
             elf::R_AARCH64_CALL26 | elf::R_AARCH64_JUMP26 => C(V::Pcrel, F::A64Branch26),
             elf::R_AARCH64_CONDBR19 | elf::R_AARCH64_LD_PREL_LO19 => C(V::Pcrel, F::A64Imm19),
-            elf::R_AARCH64_GOT_LD_PREL19 => C(V::GotPcrel, F::A64Imm19),
+            elf::R_AARCH64_GOT_LD_PREL19 => C(V::GotSlotPcrel, F::A64Imm19),
             elf::R_AARCH64_TSTBR14 => C(V::Pcrel, F::A64Imm14),
             elf::R_AARCH64_ADR_PREL_LO21 => C(
                 V::Pcrel,
@@ -236,10 +302,20 @@ pub(crate) fn classify(arch: A, r_type: u32) -> Option<Kind> {
             elf::R_AARCH64_MOVW_UABS_G2_NC => C(V::Abs, movw(2, false)),
             elf::R_AARCH64_MOVW_UABS_G3 => C(V::Abs, movw(3, false)),
             R_AARCH64_PLT32 => C(V::Pcrel, data(4, true)),
+            elf::R_AARCH64_TLS_DTPMOD | elf::R_AARCH64_TLS_DTPREL | elf::R_AARCH64_TLS_TPREL => {
+                C(V::Tls, data(8, false))
+            }
+            elf::R_AARCH64_TLSDESC => C(V::Tls, data(16, false)),
             _ => return None,
         },
         A::Arm => match r_type {
             elf::R_ARM_NONE | elf::R_ARM_V4BX => Marker,
+            elf::R_ARM_COPY => Kind::Copy,
+            elf::R_ARM_RELATIVE => C(V::ImageRelative, data(4, false)),
+            elf::R_ARM_IRELATIVE => C(V::Indirect, data(4, false)),
+            elf::R_ARM_GLOB_DAT => C(V::Slot, data(4, false)),
+            elf::R_ARM_JUMP_SLOT => C(V::PltSlot, data(4, false)),
+            elf::R_ARM_REL32 => C(V::Pcrel, data(4, true)),
             elf::R_ARM_CALL => C(V::Pcrel, F::ArmBranch24 { call: true }),
             elf::R_ARM_PC24 | elf::R_ARM_JUMP24 | elf::R_ARM_PLT32 => {
                 C(V::Pcrel, F::ArmBranch24 { call: false })
@@ -261,17 +337,33 @@ pub(crate) fn classify(arch: A, r_type: u32) -> Option<Kind> {
             elf::R_ARM_GOT_PREL => C(V::GotPcrel, data(4, false)),
             elf::R_ARM_GOTOFF => C(V::GotRelative, data(4, false)),
             elf::R_ARM_GOTPC => C(V::GotBasePcrel, data(4, false)),
+            elf::R_ARM_TLS_DESC => C(V::Tls, data(8, false)),
             _ => return None,
         },
         A::PowerPc | A::PowerPc64 => {
             let ppc64 = arch == A::PowerPc64;
+            let word = if ppc64 { 8 } else { 4 };
             match r_type {
-                elf::R_PPC_NONE => Marker,
-                elf::R_PPC64_TLS | elf::R_PPC64_TOCSAVE | R_PPC64_ENTRY if ppc64 => Marker,
-                elf::R_PPC64_REL24 if ppc64 => Kind::Ppc64Call { notoc: false },
-                R_PPC64_REL24_NOTOC if ppc64 => Kind::Ppc64Call { notoc: true },
+                // `R_PPC_TLS` is `R_PPC64_TLS`.
+                elf::R_PPC_NONE | elf::R_PPC_TLS => Marker,
+                elf::R_PPC_COPY => Kind::Copy,
+                elf::R_PPC64_TLSGD | elf::R_PPC64_TLSLD | elf::R_PPC64_TOCSAVE | R_PPC64_ENTRY
+                    if ppc64 =>
+                {
+                    Marker
+                }
+                elf::R_PPC_TLSGD | elf::R_PPC_TLSLD if !ppc64 => Marker,
+                // `R_PPC64_*` shares these numbers with `R_PPC_*`.
+                elf::R_PPC_RELATIVE => C(V::ImageRelative, data(word, false)),
+                elf::R_PPC_IRELATIVE => C(V::Indirect, data(word, false)),
+                elf::R_PPC_GLOB_DAT => C(V::Slot, data(word, false)),
+                elf::R_PPC_JMP_SLOT => C(V::PltSlot, data(word, false)),
+                elf::R_PPC_REL32 => C(V::Pcrel, data(4, true)),
+                elf::R_PPC64_REL64 if ppc64 => C(V::Pcrel, data(8, true)),
+                elf::R_PPC64_REL24 if ppc64 => C(V::Ppc64Call { notoc: false }, F::PpcBranch24),
+                R_PPC64_REL24_NOTOC if ppc64 => C(V::Ppc64Call { notoc: true }, F::PpcBranch24),
                 elf::R_PPC_REL24 | elf::R_PPC_LOCAL24PC => C(V::Pcrel, F::PpcBranch24),
-                elf::R_PPC_PLTREL24 if !ppc64 => Kind::PpcPltCall,
+                elf::R_PPC_PLTREL24 if !ppc64 => C(V::PltCall, F::PpcBranch24),
                 elf::R_PPC_REL14 | elf::R_PPC_REL14_BRTAKEN | elf::R_PPC_REL14_BRNTAKEN => {
                     C(V::Pcrel, F::PpcBranch14)
                 }
@@ -298,19 +390,45 @@ pub(crate) fn classify(arch: A, r_type: u32) -> Option<Kind> {
                 elf::R_PPC64_TOC16_HI if ppc64 => C(V::TocRelative, F::PpcHalf16(Half::Hi)),
                 elf::R_PPC64_TOC16_HA if ppc64 => C(V::TocRelative, F::PpcHalf16(Half::Ha)),
                 elf::R_PPC64_TOC if ppc64 => C(V::Toc, data(8, false)),
+                elf::R_PPC64_DTPMOD64 | elf::R_PPC64_TPREL64 | elf::R_PPC64_DTPREL64 if ppc64 => {
+                    C(V::Tls, data(8, false))
+                }
                 _ => return None,
             }
         }
-        A::Mips | A::Mips64 => match r_type {
-            elf::R_MIPS_NONE | elf::R_MIPS_JALR => Marker,
-            elf::R_MIPS_26 => C(V::Abs, F::Mips26),
-            elf::R_MIPS_HI16 => C(V::Abs, F::MipsHalf16(Half::Ha)),
-            elf::R_MIPS_LO16 => C(V::Abs, F::MipsHalf16(Half::Lo)),
-            elf::R_MIPS_HIGHER => C(V::Abs, F::MipsHalf16(Half::MipsHigher)),
-            elf::R_MIPS_HIGHEST => C(V::Abs, F::MipsHalf16(Half::MipsHighest)),
-            elf::R_MIPS_PC16 => C(V::Pcrel, F::MipsPc16),
-            _ => return None,
-        },
+        A::Mips | A::Mips64 => {
+            let word = if arch == A::Mips64 { 8 } else { 4 };
+            match r_type {
+                elf::R_MIPS_GLOB_DAT => C(V::Slot, data(word, false)),
+                elf::R_MIPS_JUMP_SLOT => C(V::PltSlot, data(word, false)),
+                // MIPS64 composes it with `R_MIPS_64` into one 64-bit word.
+                elf::R_MIPS_REL32 => C(
+                    if r.sym.is_none() {
+                        V::ImageRelative
+                    } else {
+                        V::Abs
+                    },
+                    data(if r.r_type2 == elf::R_MIPS_64 { 8 } else { 4 }, false),
+                ),
+                _ if r.r_type2 != elf::R_MIPS_NONE || r.r_type3 != elf::R_MIPS_NONE => {
+                    return None;
+                }
+                elf::R_MIPS_NONE | elf::R_MIPS_JALR => Marker,
+                elf::R_MIPS_COPY => Kind::Copy,
+                elf::R_MIPS_26 => C(V::Abs, F::Mips26),
+                elf::R_MIPS_HI16 => C(V::Abs, F::MipsHalf16(Half::Ha)),
+                elf::R_MIPS_LO16 => C(V::Abs, F::MipsHalf16(Half::Lo)),
+                elf::R_MIPS_HIGHER => C(V::Abs, F::MipsHalf16(Half::MipsHigher)),
+                elf::R_MIPS_HIGHEST => C(V::Abs, F::MipsHalf16(Half::MipsHighest)),
+                elf::R_MIPS_PC16 => C(V::Pcrel, F::MipsPc16),
+                elf::R_MIPS_TLS_DTPMOD64 | elf::R_MIPS_TLS_DTPREL64 | elf::R_MIPS_TLS_TPREL64
+                    if arch == A::Mips64 =>
+                {
+                    C(V::Tls, data(8, false))
+                }
+                _ => return None,
+            }
+        }
         _ => return None,
     })
 }
@@ -372,6 +490,8 @@ pub(crate) fn implicit_addend(field: Field, raw: u64) -> Option<i64> {
         Field::MipsPc16 => sext((raw & 0xffff) << 2, 18),
         // `R_MIPS_26`'s addend depends on the symbol's binding; see `encode`.
         Field::Mips26 => ((raw & 0x03ff_ffff) << 2) as i64,
+        // Not exhaustive on purpose: a field no arm names is on a RELA-only
+        // arch, which carries its addend in the entry.
         _ => return None,
     })
 }
@@ -461,7 +581,7 @@ pub(crate) fn encode(field: Field, raw: u64, value: u64, target: Isa, p: u64) ->
             let (hw1, hw2) = halfwords(raw);
             // `BLX` lands on a word boundary of the Thumb PC.
             let (v, blx) = match (target, call) {
-                (Isa::Arm, true) => (((value + 2) & !3) as i64, true),
+                (Isa::Arm, true) => ((value.wrapping_add(2) & !3) as i64, true),
                 (Isa::Arm, false) => return None,
                 _ => (v, false),
             };
@@ -531,13 +651,22 @@ fn half16(half: Half, value: u64) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{A, Field, Half, Isa, Kind, classify, encode};
+    use super::{A, Field, Half, Isa, Kind, RelocInfo, classify, encode};
 
-    /// `lwa r3,0x5040(r9)` assembles to `e8 69 50 42`: the halfword at
-    /// `r_offset` is `0x5042`, whose low two bits are the DS form's extended
-    /// opcode (`ld`/`std` 0, `ldu` 1, `lwa` 2) and not part of the field.
-    /// Overwriting them turns `lwa` into `ld`, a 32-bit sign-extending load
-    /// read as a 64-bit one.
+    /// A single-type relocation against symbol 1.
+    fn info(r_type: u32) -> RelocInfo {
+        RelocInfo {
+            r_type,
+            r_type2: object::elf::R_MIPS_NONE,
+            r_type3: object::elf::R_MIPS_NONE,
+            sym: Some(object::SymbolIndex(1)),
+            rela_addend: Some(0),
+            generic: None,
+        }
+    }
+
+    /// `lwa r3,0x5040(r9)` is `e8 69 50 42`: the halfword's low two bits
+    /// are the DS extended opcode, and overwriting them turns `lwa` into `ld`.
     #[test]
     fn a_ds_field_keeps_the_instructions_extended_opcode() {
         let lwa = 0x5042;
@@ -573,8 +702,26 @@ mod tests {
         }
     }
 
-    /// Every `half16ds` type, and only those, classifies to the DS field.  The
-    /// `_DS` types used to share an arm with their non-DS siblings.
+    /// A Thumb `BL` to ARM whose relocated value is -1 or -2 becomes `BLX`
+    /// with offset 0: `Align(PC, 4)` absorbs the difference.
+    #[test]
+    fn a_blx_offset_just_below_zero_rounds_to_zero() {
+        for value in [u64::MAX, u64::MAX - 1] {
+            assert_eq!(
+                encode(
+                    Field::ThumbBranch { call: true },
+                    0xf000_f800,
+                    value,
+                    Isa::Arm,
+                    0
+                ),
+                Some(0xf000_e800),
+                "value {value:#x}"
+            );
+        }
+    }
+
+    /// Every `half16ds` type, and only those, classifies to the DS field.
     #[test]
     fn only_the_ds_relocations_take_the_ds_field() {
         let ds = [
@@ -584,7 +731,7 @@ mod tests {
             object::elf::R_PPC64_TOC16_LO_DS,
         ];
         for r_type in ds {
-            let kind = classify(A::PowerPc64, r_type).expect("classified");
+            let kind = classify(A::PowerPc64, &info(r_type)).expect("classified");
             assert!(
                 matches!(kind, Kind::Compute(_, Field::PpcHalf16Ds(_))),
                 "r_type {r_type} is a half16ds, got {kind:?}"
@@ -596,7 +743,7 @@ mod tests {
             object::elf::R_PPC64_TOC16_LO,
             object::elf::R_PPC64_TOC16_HA,
         ] {
-            let kind = classify(A::PowerPc64, r_type).expect("classified");
+            let kind = classify(A::PowerPc64, &info(r_type)).expect("classified");
             assert!(
                 matches!(kind, Kind::Compute(_, Field::PpcHalf16(_))),
                 "r_type {r_type} is a plain half16, got {kind:?}"

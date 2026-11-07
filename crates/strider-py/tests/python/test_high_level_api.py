@@ -4,7 +4,7 @@ import pytest
 
 import strider
 
-from .conftest import FIXTURES_DIR, fixture_path
+from .conftest import fixture_path
 
 
 
@@ -23,8 +23,6 @@ def test_load_elf_accepts_os_pathlike():
     """Every loader takes any `os.PathLike`, not just `str`, including a
     custom `__fspath__` object."""
     elf = fixture_path("x64", "arithmetic")
-    if not elf.exists():
-        pytest.skip("fixture not built")
 
     class Wrapper:
         def __fspath__(self) -> str:
@@ -42,6 +40,14 @@ def test_load_elf_rejects_non_path():
     with pytest.raises(TypeError):
         # Deliberate: an int is not a path.
         strider.lift.load_elf(1234)  # type: ignore[arg-type]
+
+
+def test_load_elf_raises_strider_error_for_a_malformed_elf(tmp_path):
+    """A valid header over a truncated file is malformed, not unsupported."""
+    path = tmp_path / "truncated.elf"
+    path.write_bytes(fixture_path("x64", "arithmetic").read_bytes()[:200])
+    with pytest.raises(strider.StriderError):
+        strider.lift.load_elf(str(path))
 
 
 def test_load_x86_32bit():
@@ -280,24 +286,21 @@ def test_analyze_many_reuse():
     for sym in list(s.functions()):
         if sym.name == "add":
             continue
-        try:
-            _cfg, other_function, _unresolved = s.analyze(sym.name)
-        except strider.StriderError:
-            # Data symbols / non-code names may not lift.
-            continue
-        assert other_function.node_count() >= 0
+        _cfg, other_function, _unresolved = s.analyze(sym.name)
+        assert other_function.node_count() > 0, sym.name
 
 
 def test_analyze_function_max_size_clips_mid_function():
-    """A bound that cuts mid-function must be a function-boundary error, not
-    silently reinterpreted as a tail call."""
+    """A bound that cuts mid-function is a tail call there, and reported."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
-    _cfg, function, _unresolved = s.analyze("add")
+    cfg, function, _unresolved = s.analyze("add")
     assert function.node_count() > 0
-    with pytest.raises(strider.StriderError) as exc:
-        s.analyze("add", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4)))
-    assert "function-boundary error" in str(exc.value)
+    assert "past_function_end" not in [r for _, r in cfg.incomplete]
+    cfg, _function, _unresolved = s.analyze(
+        "add", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4))
+    )
+    assert "past_function_end" in [r for _, r in cfg.incomplete]
 
 
 def test_analyze_explicit_none_lifts_whole_function():
@@ -307,13 +310,15 @@ def test_analyze_explicit_none_lifts_whole_function():
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     addr = s.symbol("add").address
-    with pytest.raises(strider.StriderError) as exc:
-        s.analyze(addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4)))
-    assert "function-boundary error" in str(exc.value)
-    _cfg, full_function, _unresolved = s.analyze(
+    cfg, _function, _unresolved = s.analyze(
+        addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4))
+    )
+    assert "past_function_end" in [r for _, r in cfg.incomplete]
+    cfg, full_function, _unresolved = s.analyze(
         addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=None))
     )
     assert full_function.node_count() > 0
+    assert "past_function_end" not in [r for _, r in cfg.incomplete]
 
 
 def test_analyze_allow_code_before_start_addr():
@@ -355,21 +360,19 @@ def test_standalone_strider_rejects_name_targets():
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded._elf.reader()
     s = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    with pytest.raises(strider.StriderError, match="ElfLifter"):
+    with pytest.raises(TypeError, match="ElfLifter"):
         # Deliberate: a plain Lifter takes an address, not a name.
         s.analyze("add", strider.sleigh.CallingConvention.x86_64_systemv())  # type: ignore[arg-type]
 
 
 def test_standalone_strider_requires_an_explicit_cc():
-    """The binding gives `cc` a default only so it can raise for it; the stub
-    types it required, so the call below is a type error as well as a runtime
-    one. Only `ElfLifter`, which derives a default from the ELF header, may
-    omit it."""
+    """Only `ElfLifter`, which derives a default from the ELF header, may
+    omit `cc`."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded._elf.reader()
     s = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    with pytest.raises(strider.StriderError, match="cc"):
+    with pytest.raises(TypeError, match="cc"):
         s.analyze(loaded.symbol("add").address)  # type: ignore[call-arg]
 
 
@@ -381,9 +384,7 @@ def test_load_x64_object_file_lifts_tzcount():
     The regions have to carry the object's bytes: an empty memory map
     lifts an empty CFG instead of failing.
     """
-    obj = FIXTURES_DIR / "x64" / "tzcount.o"
-    if not obj.exists():
-        pytest.skip(f"fixture missing: {obj} (run `make CASE=tzcount` in fixtures/)")
+    obj = fixture_path("x64", "tzcount", ".o")
     # Relocations off: applying them stitches `tzcount` to its callees, which
     # extends the lifted body past its recorded `st_size`. Only the section
     # walk is under test here.

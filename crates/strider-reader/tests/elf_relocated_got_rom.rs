@@ -7,8 +7,6 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use std::path::PathBuf;
-
 use common::elf_fixture::SectionSpec;
 use object::{Object, ObjectSection};
 use strider_reader::elf::{self, LoadFilter};
@@ -31,29 +29,6 @@ fn read_u64_le(regions: &[MemRegion], addr: u64) -> Option<u64> {
         .read_exact(addr, &mut buf)
         .ok()
         .map(|()| u64::from_le_bytes(buf))
-}
-
-/// `ranges` sorted, with everything overlapping or touching merged.
-fn merge(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
-    ranges.sort_unstable();
-    let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
-    for (lo, hi) in ranges {
-        match out.last_mut() {
-            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
-            _ => out.push((lo, hi)),
-        }
-    }
-    out
-}
-
-/// Every region's extent, ascending and merged.
-fn spans(regions: &[MemRegion]) -> Vec<(u64, u64)> {
-    merge(
-        regions
-            .iter()
-            .map(|r| (r.start_addr(), r.end_addr()))
-            .collect(),
-    )
 }
 
 /// `a` minus `b`, both merged and ascending.
@@ -134,6 +109,42 @@ fn the_opt_in_serves_a_relocated_glob_dat_slot_at_its_full_width() {
         Some(fx.sym_addr),
         "the opt-in must serve the slot at its RELOCATED value"
     );
+}
+
+/// `fixtures/loader/out/ppc32be_got2.elf`: a PPC32 `-fPIC` library loads its
+/// jump-table bases out of `.got2`, the per-object GOT, each slot under one
+/// `R_PPC_RELATIVE`.
+#[test]
+fn the_opt_in_serves_a_ppc32_got2_slot_at_its_relocated_value() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/loader/out/ppc32be_got2.elf");
+    let owned = strider_reader::load_elf(&path)
+        .unwrap_or_else(|e| panic!("{}: {e:#} (run `make -C fixtures/loader`)", path.display()));
+    let obj = owned.checked_file().unwrap();
+    let got2 = obj.section_by_name(".got2").unwrap();
+    let got2 = got2.address()..got2.address() + got2.size();
+    let slots: Vec<(u64, i64)> = obj
+        .dynamic_relocations()
+        .unwrap()
+        .filter(|(site, _)| got2.contains(site))
+        .map(|(site, r)| (site, r.addend()))
+        .collect();
+    assert_eq!(slots.len(), 2, "one R_PPC_RELATIVE per table base");
+
+    let regions = |filter| {
+        owned
+            .regions(elf::RegionSource::Auto, filter, true)
+            .unwrap()
+    };
+    let (default, opted_in) = (regions(DEFAULT), regions(OPT_IN));
+    for (site, addend) in slots {
+        assert!(!serves(&default, site, 4), "the default refuses {site:#x}");
+        assert_eq!(
+            read_u32_be(&opted_in, site),
+            Some(u32::try_from(addend).unwrap()),
+            "the opt-in serves {site:#x} at its relocated value"
+        );
+    }
 }
 
 /// The opt-in claims the loader has relocated those slots, and withholding
@@ -255,8 +266,7 @@ fn the_opt_in_is_the_default_view_when_no_got_section_is_named() {
 /// opt-in must lift exactly `.got` out of it.
 #[test]
 fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out/mips64le/indirect_branch.elf");
+    let path = common::fixtures_out().join("mips64le/indirect_branch.elf");
     // The only linked PIC image here, so a skip would leave the case untested.
     assert!(
         path.exists(),
@@ -281,7 +291,25 @@ fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
 
     let (got_addr, got_len) = extent(".got");
     assert!(!serves(&default, got_addr, got_len), "default .got");
-    assert!(serves(&opted_in, got_addr, got_len), "opt-in .got");
+    // `readelf -A`: two reserved words, then the local entries up to
+    // `DT_MIPS_LOCAL_GOTNO` 14, then four global entries for imported
+    // symbols. The loader writes the reserved and the global ones.
+    let local = (got_addr + 2 * 8, got_addr + 14 * 8);
+    assert_eq!(got_len, 18 * 8);
+    assert!(
+        serves(&opted_in, local.0, (local.1 - local.0) as usize),
+        "opt-in .got local entries"
+    );
+    let holes = MemRegionsLookupTable::new(opted_in.clone());
+    for word in [0, 1, 14, 15, 16, 17] {
+        let addr = got_addr + word * 8;
+        assert!(!serves(&opted_in, addr, 8), "opt-in .got word {word}");
+        assert_eq!(
+            holes.unmodelled_relocation_at(addr),
+            Some(object::elf::R_MIPS_GLOB_DAT),
+            ".got word {word}"
+        );
+    }
 
     for name in [".ctors", ".dtors", ".data", ".rld_map", ".sdata", ".bss"] {
         let (addr, len) = extent(name);
@@ -308,74 +336,62 @@ fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
 }
 
 /// Every built fixture, relocated: the opt-in may only ADD addresses to the
-/// default view, and every address it adds must be inside a `.got` or
+/// default view, and every address it adds must be inside a `.got`, `.got2` or
 /// `.data.rel.ro*` extent. One assertion over the whole fixture tree, so a
 /// section name creeping into the served set is caught wherever it appears.
 #[test]
 fn across_every_fixture_the_opt_in_only_adds_got_and_data_rel_ro_addresses() {
-    let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/out");
     let mut seen = 0usize;
-    let mut arches: Vec<PathBuf> = match std::fs::read_dir(&out) {
-        Ok(dirs) => dirs.flatten().map(|e| e.path()).collect(),
-        Err(_) => Vec::new(),
-    };
-    arches.sort();
-    for arch in arches {
-        let mut images: Vec<PathBuf> = std::fs::read_dir(&arch)
-            .expect("an arch directory")
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "elf" || e == "o"))
-            .collect();
-        images.sort();
-        for path in images {
-            let owned = strider_reader::load_elf(&path).expect("load_elf");
-            let obj = owned.checked_file().expect("the mapped file is unchanged");
-            let layout = elf::ElfSectionLayout::new(&obj);
-            let allowed: Vec<(u64, u64)> = merge(
-                obj.sections()
-                    .filter(|s| {
-                        s.name().is_ok_and(|n| {
-                            n == ".got" || n == ".data.rel.ro" || n.starts_with(".data.rel.ro.")
-                        })
+    for path in common::fixture_images() {
+        let owned = strider_reader::load_elf(&path).expect("load_elf");
+        let obj = owned.checked_file().expect("the mapped file is unchanged");
+        let layout = elf::ElfSectionLayout::new(&obj);
+        let allowed: Vec<(u64, u64)> = common::merge_ranges(
+            obj.sections()
+                .filter(|s| {
+                    s.name().is_ok_and(|n| {
+                        n == ".got"
+                            || n == ".got2"
+                            || n == ".data.rel.ro"
+                            || n.starts_with(".data.rel.ro.")
                     })
-                    .map(|s| {
-                        let base = layout.section_base(&s);
-                        (base, base.saturating_add(s.size()))
-                    })
-                    .collect(),
-            );
+                })
+                .map(|s| {
+                    let base = layout.section_base(&s);
+                    (base, base.saturating_add(s.size()))
+                })
+                .collect(),
+        );
 
-            for source in [elf::RegionSource::Auto, elf::RegionSource::Sections] {
-                let default = owned.regions(source, DEFAULT, true).expect("regions");
-                let opted_in = owned.regions(source, OPT_IN, true).expect("regions");
-                let before = MemRegionsLookupTable::new(default.clone());
-                let after = MemRegionsLookupTable::new(opted_in.clone());
-                let name = path.display();
+        for source in [elf::RegionSource::Auto, elf::RegionSource::Sections] {
+            let default = owned.regions(source, DEFAULT, true).expect("regions");
+            let opted_in = owned.regions(source, OPT_IN, true).expect("regions");
+            let before = MemRegionsLookupTable::new(default.clone());
+            let after = MemRegionsLookupTable::new(opted_in.clone());
+            let name = path.display();
 
-                for region in &default {
-                    let len = (region.end_addr() - region.start_addr()) as usize;
-                    let (mut a, mut b) = (vec![0u8; len], vec![0u8; len]);
-                    let got_a = before.read(region.start_addr(), &mut a);
-                    let got_b = after.read(region.start_addr(), &mut b);
-                    assert_eq!(
-                        (got_a, a),
-                        (got_b, b),
-                        "{name}: bytes at {:#x} moved",
-                        region.start_addr()
-                    );
-                }
-
-                for (lo, hi) in subtract(&spans(&opted_in), &spans(&default)) {
-                    assert!(
-                        allowed.iter().any(|&(s, e)| s <= lo && hi <= e),
-                        "{name}: the opt-in added [{lo:#x}, {hi:#x}), \
-                         in no .got / .data.rel.ro: {allowed:#x?}"
-                    );
-                }
+            for region in &default {
+                let len = (region.end_addr() - region.start_addr()) as usize;
+                let (mut a, mut b) = (vec![0u8; len], vec![0u8; len]);
+                let got_a = before.read(region.start_addr(), &mut a);
+                let got_b = after.read(region.start_addr(), &mut b);
+                assert_eq!(
+                    (got_a, a),
+                    (got_b, b),
+                    "{name}: bytes at {:#x} moved",
+                    region.start_addr()
+                );
             }
-            seen += 1;
+
+            for (lo, hi) in subtract(&common::spans(&opted_in), &common::spans(&default)) {
+                assert!(
+                    allowed.iter().any(|&(s, e)| s <= lo && hi <= e),
+                    "{name}: the opt-in added [{lo:#x}, {hi:#x}), \
+                     in no .got / .got2 / .data.rel.ro: {allowed:#x?}"
+                );
+            }
         }
+        seen += 1;
     }
     assert!(seen > 0, "no fixture is built; run `make -C fixtures`");
 }

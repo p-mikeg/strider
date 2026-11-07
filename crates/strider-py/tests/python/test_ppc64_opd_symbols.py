@@ -1,13 +1,16 @@
 """ppc64 ELFv1 function descriptors.
 
 On that ABI an `STT_FUNC` `st_value` addresses an 8-byte-aligned
-{entry, TOC, env} triple in `.opd`, not code, and `st_size` measures that
-triple. Following it is what lets `analyze(<symbol name>)` work at all: without
-it every ELFv1 function lifts the descriptor bytes, while `_arch_and_cc_for_elf`
-was already selecting `powerpc64_elf_v1` off `e_flags` for exactly these images.
+{entry, TOC, env} triple in `.opd`, not code. Its `st_size` is the code's in
+GCC and Clang output, and the triple's where a dot symbol names the code, as
+in a kernel. Following it is what lets `analyze(<symbol name>)` work at all:
+without it every ELFv1 function lifts the descriptor bytes, while
+`_arch_and_cc_for_elf` was already selecting `powerpc64_elf_v1` off `e_flags`
+for exactly these images.
 
 The shipped ppc64 fixtures are ELFv2 and carry no `.opd`, so the image is
-synthesised here around real ppc64be `add` code lifted out of one of them.
+synthesised here around real ppc64be `add` code lifted out of one of them,
+beside `fixtures/loader/out/ppc64be_elfv1.elf`, a GCC ELFv1 link.
 """
 
 from __future__ import annotations
@@ -27,31 +30,42 @@ _BASE = 0x10000000
 _EM_PPC64 = 21
 
 
-def _ppc64_elfv1(path, e_flags):
-    """A linked big-endian ppc64 executable whose one function symbol names an
-    `.opd` descriptor pointing at `ADD_CODE`.
+def _ppc64_elfv1(path, e_flags, code=ADD_CODE, toc=0, tocs=None, symbols=True, opd_nobits=False):
+    """A linked big-endian ppc64 executable whose function symbols name `.opd`
+    descriptors pointing at `code`: `add` with TOC word `toc`, then one `addN`
+    per further entry of `tocs` (which, when given, replaces `(toc,)`).
+    `symbols=False` leaves `.symtab` with only its null entry, as `strip`
+    does; `opd_nobits` makes `.opd` `SHT_NOBITS`, as a debug file's is.
 
     One PT_LOAD maps the whole file at `_BASE`, so every virtual address is its
     file offset plus the base.
     """
+    tocs = (toc,) if tocs is None else tocs
+    names = [b"add"] + [b"add%d" % i for i in range(2, len(tocs) + 1)]
     text_off, opd_off = 0x100, 0x200
     sym_off, str_off, shstr_off, sh_off = 0x300, 0x400, 0x440, 0x500
     text_addr, opd_addr = _BASE + text_off, _BASE + opd_off
+    opd_size = 24 * len(tocs)
 
     buf = bytearray(0x700)
-    buf[text_off : text_off + len(ADD_CODE)] = ADD_CODE
+    buf[text_off : text_off + len(code)] = code
     # {entry, TOC, env}; only the first doubleword is a code address.
-    buf[opd_off : opd_off + 24] = struct.pack(">QQQ", text_addr, 0, 0)
+    for i, t in enumerate(tocs):
+        buf[opd_off + 24 * i : opd_off + 24 * (i + 1)] = struct.pack(">QQQ", text_addr, t, 0)
 
-    strtab = b"\0add\0"
+    strtab = b"\0" + b"".join(n + b"\0" for n in names)
     shstrtab = b"\0.text\0.opd\0.symtab\0.strtab\0.shstrtab\0"
     buf[str_off : str_off + len(strtab)] = strtab
     buf[shstr_off : shstr_off + len(shstrtab)] = shstrtab
     # Elf64_Sym: st_name, st_info, st_other, st_shndx, st_value, st_size.
     # STB_GLOBAL | STT_FUNC in section 2 (`.opd`), sized as the descriptor.
-    buf[sym_off : sym_off + 48] = bytes(24) + struct.pack(
-        ">IBBHQQ", strtab.index(b"add"), 0x12, 0, 2, opd_addr, 24
-    )
+    syms = bytes(24)
+    if symbols:
+        for i, n in enumerate(names):
+            syms += struct.pack(
+                ">IBBHQQ", strtab.index(n + b"\0"), 0x12, 0, 2, opd_addr + 24 * i, 24
+            )
+    buf[sym_off : sym_off + len(syms)] = syms
 
     def shdr(name, sh_type, flags, addr, off, size, link=0, info=0, align=1, ent=0):
         return struct.pack(
@@ -71,9 +85,9 @@ def _ppc64_elfv1(path, e_flags):
     shdrs = b"".join(
         [
             shdr(b"", 0, 0, 0, 0, 0),
-            shdr(b".text\0", 1, 0x6, text_addr, text_off, len(ADD_CODE), align=4),
-            shdr(b".opd\0", 1, 0x3, opd_addr, opd_off, 24, align=8),
-            shdr(b".symtab\0", 2, 0, 0, sym_off, 48, link=4, info=1, align=8, ent=24),
+            shdr(b".text\0", 1, 0x6, text_addr, text_off, len(code), align=4),
+            shdr(b".opd\0", 8 if opd_nobits else 1, 0x3, opd_addr, opd_off, opd_size, align=8),
+            shdr(b".symtab\0", 2, 0, 0, sym_off, len(syms), link=4, info=1, align=8, ent=24),
             shdr(b".strtab\0", 3, 0, 0, str_off, len(strtab)),
             shdr(b".shstrtab\0", 3, 0, 0, shstr_off, len(shstrtab)),
         ]
@@ -150,6 +164,71 @@ def test_the_elf_entry_point_is_a_descriptor_too(elfv1):
     assert strider.lift.load_elf(path).entry_point() == text_addr
 
 
+#: `addi r3,r2,-32768; blr`: the address 0x8000 below the TOC pointer.
+TOC_CODE = bytes.fromhex("386280004e800020")
+TOC = 0x10008000
+
+
+def _returns_toc_base(result):
+    return any(n.uint() == TOC - 0x8000 for n in result.function.data_walk())
+
+
+def test_analyze_binds_r2_to_the_descriptors_toc(tmp_path):
+    """The caller loads `r2` from the descriptor it calls through, so the TOC
+    word is `r2` on entry, by symbol name or by code address."""
+    path, text_addr, _opd = _ppc64_elfv1(
+        tmp_path / "toc.elf", e_flags=1, code=TOC_CODE, toc=TOC
+    )
+    lift = strider.lift.load_elf(path)
+    assert _returns_toc_base(lift.analyze("add"))
+    assert _returns_toc_base(lift.analyze(text_addr))
+
+
+def test_two_descriptors_with_different_tocs_leave_r2_unbound(tmp_path):
+    """`add` and `add2` name one code address through descriptors with
+    different TOC words, so neither is `r2` on entry there."""
+    path, text_addr, _opd = _ppc64_elfv1(
+        tmp_path / "two.elf", e_flags=1, code=TOC_CODE, tocs=(TOC, TOC + 0x100)
+    )
+    lift = strider.lift.load_elf(path)
+    assert lift.symbol("add2").address == text_addr
+    assert not _returns_toc_base(lift.analyze("add"))
+    assert not _returns_toc_base(lift.analyze(text_addr))
+    # The same pair with one TOC binds it.
+    path, text_addr, _opd = _ppc64_elfv1(
+        tmp_path / "same.elf", e_flags=1, code=TOC_CODE, tocs=(TOC, TOC)
+    )
+    assert _returns_toc_base(strider.lift.load_elf(path).analyze(text_addr))
+
+
+def test_a_debug_files_symbols_resolve_through_the_loaded_opd(tmp_path):
+    """A stripped image with its symbols in a debug file, whose `.opd` is
+    `SHT_NOBITS`: the descriptor `add` names is read from the loaded image,
+    for symbol following and for `r2` on entry."""
+    stripped, text_addr, _opd = _ppc64_elfv1(
+        tmp_path / "stripped.elf", e_flags=1, code=TOC_CODE, toc=TOC, symbols=False
+    )
+    debug, _text, _opd = _ppc64_elfv1(
+        tmp_path / "debug.elf", e_flags=1, code=TOC_CODE, toc=TOC, opd_nobits=True
+    )
+    lift = strider.lift.load_elf(stripped)
+    assert not _returns_toc_base(lift.analyze(text_addr))
+    lift.add_symbol_file(debug)
+    sym = lift.symbol("add")
+    assert (sym.address, sym.size) == (text_addr, None)
+    assert _returns_toc_base(lift.analyze("add"))
+    assert _returns_toc_base(lift.analyze(text_addr))
+
+
+def test_a_plain_lifter_leaves_r2_unbound():
+    """Only an `ElfLifter` knows the descriptor."""
+    plain = strider.lift.lifter(
+        strider.sleigh.SleighArch.ppc64be(), strider.reader.BufferReader(_BASE, TOC_CODE)
+    )
+    cc = strider.sleigh.CallingConvention.powerpc64_elf_v1()
+    assert not _returns_toc_base(plain.analyze(_BASE, cc))
+
+
 def test_elfv2_leaves_addresses_alone(tmp_path):
     """`OpdTable` is `None` on ELFv2, so nothing is followed even though the
     synthesised image still carries a section named `.opd`."""
@@ -158,3 +237,19 @@ def test_elfv2_leaves_addresses_alone(tmp_path):
     sym = lift.symbol("add")
     assert (sym.address, sym.size) == (opd_addr, 24)
     assert lift.entry_point() == opd_addr
+
+
+def test_a_descriptor_symbol_keeps_the_code_size_gcc_gives_it():
+    """GCC's ELFv1 output names no dot symbol: `sw`'s `st_size` is its code's,
+    so following the descriptor keeps it. `wide` has a dot twin, as a
+    kernel's functions do, so its `st_size` measures `.opd`, two descriptors
+    here, and is dropped, while `.wide` keeps the code's."""
+    from .test_loader_written_got_slots import _image
+
+    lift = strider.lift.load_elf(_image("ppc64be_elfv1.elf"))
+    sw = lift.symbol("sw")
+    assert sw.size == 60
+    assert lift.analyze("sw").cfg.region_at(sw.address) is not None
+    wide, dot_wide = lift.symbol("wide"), lift.symbol(".wide")
+    assert wide.address == dot_wide.address
+    assert (wide.size, dot_wide.size) == (None, 8)

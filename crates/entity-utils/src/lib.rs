@@ -1,9 +1,7 @@
-extern crate alloc;
-
-pub mod interner;
-pub mod set;
-pub mod union_dag;
-pub mod worklist;
+pub(crate) mod interner;
+pub(crate) mod set;
+pub(crate) mod union_dag;
+pub(crate) mod worklist;
 
 pub use interner::EntityInterner;
 pub use set::DenseEntitySet;

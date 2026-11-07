@@ -51,6 +51,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
+name = "ar_archive_writer"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
+dependencies = [
+ "object 0.39.1",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -103,6 +112,16 @@ name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
+
+[[package]]
+name = "cc"
+version = "1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
+dependencies = [
+ "find-msvc-tools",
+ "shlex",
+]
 
 [[package]]
 name = "cfg-if"
@@ -173,15 +192,15 @@ dependencies = [
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.112.3"
+version = "0.128.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38da1eb6f7d8cdfa92f05acfae63c9a1d7a337e49ce7a2d0769c7fa03a2613a5"
+checksum = "18391da761cf362a06def7a7cf11474d79e55801dd34c2e9ba105b33dc0aef88"
 
 [[package]]
 name = "cranelift-entity"
-version = "0.112.3"
+version = "0.128.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70b85ed43567e13782cd1b25baf42a8167ee57169a60dfd3d7307c6ca3839da0"
+checksum = "8334c99a7e86060c24028732efd23bac84585770dcb752329c69f135d64f2fc1"
 dependencies = [
  "cranelift-bitset",
 ]
@@ -258,6 +277,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
+name = "dashu-base"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "993b95dc1b248e3f5747dcb017a41d6e75853a2e5ee4504f7d537c5b8dffdae4"
+
+[[package]]
+name = "dashu-int"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49c05a0d5cb0b39fcc87c46432fdac24b90dce239857c7f6b798be4ffc3c42c6"
+dependencies = [
+ "cfg-if",
+ "dashu-base",
+ "num-modular",
+ "num-order",
+ "rustversion",
+ "static_assertions",
+]
+
+[[package]]
 name = "defer-rs"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -323,7 +362,7 @@ checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
 
 [[package]]
 name = "dot"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
 ]
@@ -348,9 +387,8 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "entity-utils"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
- "cranelift-bitset",
  "cranelift-entity",
  "rustc-hash 2.1.2",
 ]
@@ -386,6 +424,12 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
+
+[[package]]
+name = "find-msvc-tools"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "fixedbitset"
@@ -460,12 +504,15 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "graph-algorithms"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cranelift-entity",
  "entity-utils",
  "expect-test",
+ "graph-algorithms",
  "itertools 0.13.0",
+ "petgraph",
+ "proptest",
  "rustc-hash 2.1.2",
 ]
 
@@ -652,6 +699,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae5794a00611c89e072a2d8bd5164c410a96181f1f7f40676c94293d44af1401"
 
 [[package]]
+name = "num-modular"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd8e500409e6cd603b03e477c26a6caecdc27ac58979a53e881c75eafc079f44"
+
+[[package]]
+name = "num-order"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "537b596b97c40fcf8056d153049eb22f481c17ebce72a513ec9286e4986d1bb6"
+dependencies = [
+ "num-modular",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -681,6 +743,15 @@ dependencies = [
  "indexmap",
  "memchr",
  "ruzstd",
+]
+
+[[package]]
+name = "object"
+version = "0.39.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -800,12 +871,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "psm"
+version = "0.1.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
+dependencies = [
+ "ar_archive_writer",
+ "cc",
+]
+
+[[package]]
 name = "pyo3"
 version = "0.22.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f402062616ab18202ae8319da13fa4279883a2b8a9d9f83f20dbade813ce1884"
 dependencies = [
- "anyhow",
  "cfg-if",
  "indoc",
  "inventory",
@@ -961,7 +1041,7 @@ dependencies = [
 
 [[package]]
 name = "read-only-memory"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
 ]
@@ -1021,11 +1101,9 @@ dependencies = [
  "duct",
  "glob",
  "itertools 0.14.0",
- "lazy_static",
  "nameof",
  "rawenum",
  "rayon",
- "regex",
  "roxmltree",
  "smallvec",
  "thiserror",
@@ -1174,6 +1252,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "shlex"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
 name = "sigchld"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1217,8 +1301,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
+name = "stacker"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "psm",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
 name = "strider-cfg"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "dot",
@@ -1232,25 +1335,25 @@ dependencies = [
 
 [[package]]
 name = "strider-graph"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
+ "graph-algorithms",
  "hashbrown 0.16.1",
- "petgraph",
  "proptest",
- "rustc-hash 2.1.2",
  "smallvec",
  "strider-graph",
 ]
 
 [[package]]
 name = "strider-ir"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bitflags",
  "cranelift-entity",
+ "dashu-int",
  "dot",
  "entity-utils",
  "expect-test",
@@ -1270,10 +1373,11 @@ dependencies = [
 
 [[package]]
 name = "strider-ir-test-utils"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
+ "graph-algorithms",
  "proptest",
  "rsleigh",
  "strider-ir",
@@ -1282,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "strider-lift"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "graph-algorithms",
@@ -1298,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "strider-opt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
@@ -1319,13 +1423,13 @@ dependencies = [
 
 [[package]]
 name = "strider-orchestrator"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "criterion",
  "dhat",
  "dot",
- "entity-utils",
+ "expect-test",
  "object 0.38.1",
  "paste",
  "proptest",
@@ -1336,6 +1440,7 @@ dependencies = [
  "strider-ir-test-utils",
  "strider-lift",
  "strider-opt",
+ "strider-orchestrator",
  "strider-pattern",
  "strider-reader",
  "strider-target",
@@ -1343,25 +1448,25 @@ dependencies = [
 
 [[package]]
 name = "strider-pattern"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "criterion",
- "itertools 0.13.0",
+ "either",
  "petgraph",
  "rsleigh",
  "rustc-hash 2.1.2",
  "strider-graph",
  "strider-ir",
  "strider-ir-test-utils",
- "strider-pattern",
  "strider-target",
+ "thiserror",
  "vn-container",
 ]
 
 [[package]]
 name = "strider-py"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "dot",
@@ -1369,6 +1474,7 @@ dependencies = [
  "pyo3",
  "rsleigh",
  "rustc-hash 2.1.2",
+ "stacker",
  "strider-cfg",
  "strider-ir",
  "strider-opt",
@@ -1380,24 +1486,30 @@ dependencies = [
 
 [[package]]
 name = "strider-reader"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "memmap2",
  "object 0.38.1",
+ "proptest",
  "read-only-memory",
  "rsleigh",
+ "strider-reader",
  "tempfile",
 ]
 
 [[package]]
 name = "strider-target"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
+ "expect-test",
+ "roxmltree",
  "rsleigh",
  "rustc-hash 2.1.2",
  "strider-target",
+ "vn-container",
 ]
 
 [[package]]
@@ -1504,7 +1616,7 @@ checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "vn-container"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rsleigh",
  "rustc-hash 2.1.2",

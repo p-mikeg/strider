@@ -1,10 +1,11 @@
 use super::*;
+use crate::test_support::{run_pass, run_passes};
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, make_if_fn, reg_vn};
 
-use crate::{CfgDetach, ConstantFold, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
+use crate::{ConstantFold, OptCtx, PhiCollapse, RegionCollapse};
 
 fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
     fg.all_node_ids()
@@ -19,15 +20,6 @@ fn reachable_regions(fg: &strider_ir::Function) -> Vec<NodeId> {
     fg.walk()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .collect()
-}
-
-/// DBE then CfgDetach, in the order the destructive pipeline uses.  A dead
-/// branch with no downstream join is never visited by CfgDetach and stays in
-/// the arena as an unreachable orphan.
-fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
-    crate::pipeline::run_one_unvalidated(&DeadBranchElimination, fg, &mut OptCtx::at_floor(None))?;
-    crate::pipeline::run_one(&CfgDetach, fg, &mut OptCtx::at_floor(None))?;
-    Ok(())
 }
 
 /// The condition is the proof for taking the arm, so the surviving control
@@ -51,19 +43,15 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
     b.build_if(cond, true_region, false_region)?;
 
     b.set_region(true_region);
-    let tv = b.build_int_const(1u64, ValueType::I64)?;
+    let tv = b.build_int_const(1u64, ValueType::int(64))?;
     b.build_return(Some(tv), &[])?;
     b.set_region(false_region);
-    let fv = b.build_int_const(2u64, ValueType::I64)?;
+    let fv = b.build_int_const(2u64, ValueType::int(64))?;
     b.build_return(Some(fv), &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // Capture the survivor before the fold; DBE kills the If itself.
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("if");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let survivor = fg.producer(fg.node_inputs(if_node)[0]);
     assert!(
         !fg.side_tables()
@@ -72,7 +60,7 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
         "precondition: the control source must not already carry the condition's addr"
     );
 
-    crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
+    run_pass(&DeadBranchElimination, &mut fg)?;
 
     assert!(
         fg.side_tables()
@@ -88,11 +76,7 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
 /// The unique Region consuming the If's dead control output.  Output index 0
 /// is the true edge, 1 the false edge.
 fn dead_branch_region(fg: &strider_ir::Function, dead_output_index: usize) -> NodeId {
-    let if_node = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .expect("If node must exist");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let dead_ctrl = fg.node_outputs(if_node)[dead_output_index];
     fg.graph()
         .value_uses(dead_ctrl)
@@ -101,63 +85,21 @@ fn dead_branch_region(fg: &strider_ir::Function, dead_output_index: usize) -> No
         .expect("dead branch Region must consume the If's dead control output")
 }
 
+/// A constant `If` leaves its dead arm's Region unreachable (stale inputs
+/// stay in the arena) and the entry and live Region reachable.
 #[test]
-fn dead_branch_false() -> Result<()> {
-    let mut fg = make_if_fn(false)?;
-
-    // entry, true-branch, false-branch.
-    assert_eq!(count_regions_with_n_inputs(fg.graph(), 1), 3);
-
-    // cond = false, so the true branch (output 0) is dead.
-    let dead_region = dead_branch_region(&fg, 0);
-
-    let result =
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
-    assert!(result.changed());
-    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
-
-    // Unreachability is the outcome that matters; the dead Region keeps its
-    // stale inputs in the arena.
-    assert!(
-        !reachable_regions(&fg).contains(&dead_region),
-        "dead branch Region must be unreachable from entry after teardown"
-    );
-    assert_eq!(
-        reachable_regions(&fg).len(),
-        2,
-        "entry and live branch Region must remain reachable"
-    );
-    // Orphans are tolerated.
-    strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
-    Ok(())
-}
-
-#[test]
-fn dead_branch_true() -> Result<()> {
-    let mut fg = make_if_fn(true)?;
-
-    assert_eq!(count_regions_with_n_inputs(fg.graph(), 1), 3);
-
-    // cond = true, so the false branch (output 1) is dead.
-    let dead_region = dead_branch_region(&fg, 1);
-
-    let result =
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
-    assert!(result.changed());
-    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
-
-    assert!(
-        !reachable_regions(&fg).contains(&dead_region),
-        "dead (false) branch Region must be unreachable from entry after teardown"
-    );
-    assert_eq!(
-        reachable_regions(&fg).len(),
-        2,
-        "entry and live (true) branch Region must remain reachable"
-    );
-    strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
+fn dead_branch_folds_either_constant() -> Result<()> {
+    for cond in [false, true] {
+        let mut fg = make_if_fn(cond)?;
+        // entry, true-branch, false-branch.
+        assert_eq!(count_regions_with_n_inputs(fg.graph(), 1), 3);
+        // Output 0 is the true edge, the dead one when `cond` is false.
+        let dead_region = dead_branch_region(&fg, usize::from(cond));
+        assert!(run_pass(&DeadBranchElimination, &mut fg)?, "{cond}");
+        let reachable = reachable_regions(&fg);
+        assert!(!reachable.contains(&dead_region), "{cond}");
+        assert_eq!(reachable.len(), 2, "{cond}: entry and the live Region");
+    }
     Ok(())
 }
 
@@ -170,7 +112,6 @@ fn dead_branch_non_const_no_change() -> Result<()> {
         let false_r = b.create_region_all()?;
         b.set_entry_region_all(entry)?;
         b.set_region(entry);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // `true & false` stays a node until ConstantFold runs; this test runs
         // DeadBranchElimination alone, so the cond reaches it as a node.
         let t = b.build_boolean_const(true);
@@ -186,14 +127,10 @@ fn dead_branch_non_const_no_change() -> Result<()> {
         b.build_return(None, &[])?;
         b.set_region(false_r);
         b.build_return(None, &[])?;
-        b.set_lift_addr(None);
         b.build()?
     };
 
-    assert!(
-        !crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?
-            .changed()
-    );
+    assert!(!run_pass(&DeadBranchElimination, &mut fg)?);
     Ok(())
 }
 
@@ -210,7 +147,6 @@ fn nested_if_true_eliminated() -> Result<()> {
     b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let outer_cond = b.build_boolean_const(true);
     b.build_if(outer_cond, outer_t, outer_f)?;
 
@@ -221,21 +157,22 @@ fn nested_if_true_eliminated() -> Result<()> {
     b.set_region(outer_f);
     b.build_return(None, &[])?;
     b.set_region(inner_t);
-    let v = b.build_int_const(1u64, strider_ir::ValueType::I64)?;
+    let v = b.build_int_const(1u64, strider_ir::ValueType::int(64))?;
     b.build_return(Some(v), &[])?;
     b.set_region(inner_f);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(DeadBranchElimination);
-    pipeline.add(CfgDetach);
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.run(&mut fg, &mut OptCtx::at_floor(None))?;
+    run_passes(
+        &mut fg,
+        &[
+            &ConstantFold,
+            &DeadBranchElimination,
+            &PhiCollapse,
+            &RegionCollapse,
+        ],
+    )?;
 
     let if_count = fg.count_kind(|k| matches!(k, NodeKind::If));
     assert_eq!(if_count, 0, "both If nodes must be eliminated");
@@ -243,22 +180,18 @@ fn nested_if_true_eliminated() -> Result<()> {
 }
 
 /// The dead control output wired into the same `Region` at two slots.  The
-/// branch has no downstream join, so CfgDetach never visits it; the orphaned
+/// branch has no downstream join, so the strip never visits it; the orphaned
 /// multi-slot Region is harmless residue as long as it leaves the reachable
 /// graph and validation still passes.
 ///
 /// Multi-dead-slot removal on a *reachable* join is pinned separately by
-/// `cfg_detach::tests::cfg_detach_removes_two_dead_predecessors_then_validates`.
+/// `strip_tests::strip_removes_two_dead_predecessors_then_validates`.
 #[test]
 fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     let mut fg = make_if_fn(true)?;
 
     // ctrl_false is the dead output when cond = true.
-    let if_node = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .expect("expected an If node");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let if_outputs: Vec<_> = fg.node_outputs(if_node).to_vec();
     assert_eq!(if_outputs.len(), 2, "If must have 2 control outputs");
     let ctrl_false = if_outputs[1];
@@ -284,20 +217,17 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
         "slot 1 must be ctrl_false (added duplicate)"
     );
 
-    destructive_teardown(&mut fg)?;
+    run_pass(&DeadBranchElimination, &mut fg)?;
 
     assert!(
         !reachable_regions(&fg).contains(&false_region),
         "dead false-branch Region must be unreachable from entry after teardown"
     );
-    strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
 
 /// The dead branch's `CallOther` advances memory into the join's `MemPhi`.  DBE
-/// detaches unconditionally, so only the CfgDetach + PhiCollapse follow-up
-/// restores a valid graph.
+/// detaches unconditionally.
 #[test]
 fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     let mut fg = {
@@ -309,7 +239,6 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.set_entry_region_all(entry)?;
 
         b.set_region(entry);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let cond = b.build_boolean_const(false);
         b.build_if(cond, true_r, false_r)?;
 
@@ -333,20 +262,12 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
 
         b.set_region(join);
         b.build_return(None, &[])?;
-        b.set_lift_addr(None);
         b.build()?
     };
 
-    crate::pipeline::run_one_unvalidated(
-        &DeadBranchElimination,
-        &mut fg,
-        &mut OptCtx::at_floor(None),
-    )?;
-    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
-    crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut OptCtx::at_floor(None))?;
-
-    strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
+    // `run_pass` panics on invalid output, so reaching here is the assertion.
+    run_pass(&DeadBranchElimination, &mut fg)?;
+    run_pass(&PhiCollapse, &mut fg)?;
     Ok(())
 }
 
@@ -366,31 +287,23 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, ValueType::I64)?;
+    let v_t = b.build_int_const(1u64, ValueType::int(64))?;
     b.write_variable(&var, v_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, ValueType::I64)?;
+    let v_f = b.build_int_const(2u64, ValueType::int(64))?;
     b.write_variable(&var, v_f)?;
     b.build_branch(join)?;
 
     b.set_region(join);
     let merged = b.read_variable(&var)?;
     b.build_return(Some(merged), &[])?;
-    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
     // Reached via the Return: the builder also emits per-block single-pred
     // VarPhis, and this test wants the 2-input join phi.
-    let join_phi = fg.producer(
-        fg.node_inputs(
-            fg.graph()
-                .all_node_ids()
-                .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-                .expect("Return present"),
-        )[2],
-    );
+    let join_phi = fg.producer(fg.node_inputs(fg.first_kind(|k| matches!(k, NodeKind::Return)))[2]);
     assert!(
         matches!(fg.node_kind(join_phi), NodeKind::Phi),
         "Return must read a VarPhi"
@@ -401,7 +314,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
         "token + 2 values pre-teardown"
     );
 
-    destructive_teardown(&mut fg)?;
+    run_pass(&DeadBranchElimination, &mut fg)?;
 
     // 1 token + 1 live value.
     let phi_inputs = fg.node_inputs(join_phi);
@@ -421,14 +334,12 @@ fn dead_switch_const_address_keeps_matching_arm() -> Result<()> {
     let a1 = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1020u64, strider_ir::ValueType::I64)?; // == arm 1's case
+    let addr = b.build_int_const(0x1020u64, strider_ir::ValueType::int(64))?; // == arm 1's case
     b.build_switch(addr, &[(a0, 0x1000), (a1, 0x1020)])?;
     b.set_region(a0);
     b.build_return(None, &[])?;
     b.set_region(a1);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
     let n_switch_before = fg
         .graph()
@@ -436,9 +347,8 @@ fn dead_switch_const_address_keeps_matching_arm() -> Result<()> {
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch(_)))
         .count();
     assert_eq!(n_switch_before, 1);
-    let result =
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
-    assert!(result.changed(), "const-address switch must fold");
+    let result = run_pass(&DeadBranchElimination, &mut fg)?;
+    assert!(result, "const-address switch must fold");
     // `kill_node` leaves the folded Switch in the arena, so assert
     // unreachability via `walk()` rather than an arena-wide count.
     let n_switch_after = fg
@@ -458,25 +368,101 @@ fn dead_switch_non_const_address_no_change() -> Result<()> {
     let a1 = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr = b.read_variable(&var)?;
     b.build_switch(addr, &[(a0, 0x1000), (a1, 0x1020)])?;
     b.set_region(a0);
     b.build_return(None, &[])?;
     b.set_region(a1);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let result =
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
-    assert!(!result.changed(), "non-const-address switch must not fold");
+    let result = run_pass(&DeadBranchElimination, &mut fg)?;
+    assert!(!result, "non-const-address switch must not fold");
     let n_switch_after = fg
         .graph()
         .all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch(_)))
         .count();
     assert_eq!(n_switch_after, 1, "switch must survive");
+    Ok(())
+}
+
+/// A `Switch` whose constant no arm lists keeps every arm: the fold declines,
+/// and the escape set counts none of its outputs dead, so the constant `If`
+/// above it folds.
+#[test]
+fn a_switch_constant_no_arm_lists_has_no_dead_arm() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let a0 = b.create_region_all()?;
+    let a1 = b.create_region_all()?;
+    let skipped = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, dispatch, skipped)?;
+    b.set_region(dispatch);
+    let addr = b.build_int_const(0x5000u64, ValueType::int(64))?;
+    b.build_switch(addr, &[(a0, 0x1000), (a1, 0x1020)])?;
+    for region in [a0, a1, skipped] {
+        b.set_region(region);
+        b.build_return(None, &[])?;
+    }
+    let mut fg = b.build()?;
+
+    let result = run_pass(&DeadBranchElimination, &mut fg)?;
+    assert!(result, "the constant If must fold");
+    assert_eq!(fg.walk_kind(|k| matches!(k, NodeKind::If)).count(), 0);
+    assert_eq!(
+        fg.walk_kind(|k| matches!(k, NodeKind::Switch(_))).count(),
+        1,
+        "no arm lists 0x5000, so the Switch stays"
+    );
+    Ok(())
+}
+
+/// Two arms listing the constant: the first is taken, as the reference
+/// interpreter's `switch_arm` takes it, and the later one is dead.
+#[test]
+fn a_switch_constant_two_arms_list_takes_the_first() -> Result<()> {
+    use strider_ir_test_utils::interp;
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let arms = [
+        (b.create_region_all()?, 0x1000),
+        (b.create_region_all()?, 0x1020),
+        (b.create_region_all()?, 0x1000),
+    ];
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
+    b.build_switch(addr, &arms)?;
+    for (i, &(region, _)) in arms.iter().enumerate() {
+        b.set_region(region);
+        let v = b.build_int_const(i as u64, ValueType::int(32))?;
+        b.build_return(Some(v), &[])?;
+    }
+    let mut fg = b.build()?;
+    let env = interp::Env {
+        entry: &|_| strider_ir::UBig::ZERO,
+        rom: None,
+        seed: 0,
+        step_budget: 16,
+        private: None,
+        keeps: None,
+    };
+    let Ok(interp::Outcome::Return { values, .. }) = interp::run(&fg, &env) else {
+        panic!("the reference run returns");
+    };
+    assert_eq!(values, [interp::Slot::Known(strider_ir::UBig::ZERO)]);
+
+    assert!(run_pass(&DeadBranchElimination, &mut fg)?);
+    assert_eq!(
+        fg.walk_kind(|k| matches!(k, NodeKind::Switch(_))).count(),
+        0
+    );
+    assert_eq!(fg.int_const_u128(fg.returned()), Some(0));
     Ok(())
 }
 
@@ -492,7 +478,6 @@ fn dead_arm_carrying_the_only_loop_exit_keeps_the_branch() -> Result<()> {
     let mid = b.create_region_all()?;
     let exit = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     b.set_region(entry);
     b.build_branch(header)?;
@@ -510,16 +495,10 @@ fn dead_arm_carrying_the_only_loop_exit_keeps_the_branch() -> Result<()> {
 
     b.set_region(exit);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let result =
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
-    strider_ir::validate::validate(&fg)?;
-    assert!(
-        !result.changed(),
-        "folding away a loop's only exit must not happen"
-    );
+    let result = run_pass(&DeadBranchElimination, &mut fg)?;
+    assert!(!result, "folding away a loop's only exit must not happen");
     assert!(
         fg.walk().any(|n| matches!(fg.node_kind(n), NodeKind::If)),
         "the If must survive"
@@ -527,17 +506,13 @@ fn dead_arm_carrying_the_only_loop_exit_keeps_the_branch() -> Result<()> {
     Ok(())
 }
 
-/// A dead arm feeding an `Unreachable` is a liveness anchor, so the branch
-/// must not fold.
+/// A dead arm feeding an `Unreachable` folds like any other: the live arm
+/// still reaches its `Return`.
 #[test]
-fn dead_arm_feeding_an_unreachable_sink_keeps_the_branch() -> Result<()> {
+fn dead_arm_feeding_an_unreachable_sink_folds() -> Result<()> {
     let mut fg = make_if_fn(true)?;
 
-    let if_node = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .expect("make_if_fn builds an If");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     // cond = true, so output 1 (the false arm) is dead.
     let dead_ctrl = fg.node_outputs(if_node)[1];
 
@@ -553,23 +528,39 @@ fn dead_arm_feeding_an_unreachable_sink_keeps_the_branch() -> Result<()> {
     fg.side_tables_mut()
         .extend_asm_fingerprint(sink, &[SENTINEL_LIFT_ADDR]);
 
-    let result =
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
+    assert!(run_pass(&DeadBranchElimination, &mut fg)?);
+    assert!(
+        !fg.walk()
+            .any(|n| matches!(fg.node_kind(n), NodeKind::If | NodeKind::Unreachable))
+    );
+    Ok(())
+}
 
-    assert!(
-        !result.changed(),
-        "a branch whose dead arm anchors an Unreachable must not fold"
-    );
-    assert!(
-        fg.graph().all_node_ids().any(|n| n == if_node),
-        "the If must survive"
-    );
-    assert!(
-        fg.graph()
-            .all_node_ids()
-            .any(|n| matches!(fg.node_kind(n), NodeKind::Unreachable)),
-        "the Unreachable sink must survive"
-    );
+/// `header: If(true) -> body / dead`, `body -> header`, the dead arm the
+/// loop's only exit, into an `Unreachable`: folding would leave an exit-free
+/// cycle, so the branch stays.
+#[test]
+fn dead_arm_into_an_unreachable_carrying_the_only_loop_exit_keeps_the_branch() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let header = b.create_region_all()?;
+    let body = b.create_region_all()?;
+    let dead = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    b.build_branch(header)?;
+    b.set_region(header);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, body, dead)?;
+    b.set_region(body);
+    b.build_branch(header)?;
+    b.set_region(dead);
+    b.build_unreachable()?;
+    let mut fg = b.build()?;
+
+    let result = run_pass(&DeadBranchElimination, &mut fg)?;
+    assert!(!result);
+    assert!(fg.walk().any(|n| matches!(fg.node_kind(n), NodeKind::If)));
     Ok(())
 }
 
@@ -583,7 +574,6 @@ fn make_const_header_loop(back_edge: bool) -> Result<strider_ir::Function> {
     let mid = b.create_region_all()?;
     let exit = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     b.set_region(entry);
     b.build_branch(header)?;
@@ -600,7 +590,6 @@ fn make_const_header_loop(back_edge: bool) -> Result<strider_ir::Function> {
 
     b.set_region(exit);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     b.build()
 }
 
@@ -611,37 +600,20 @@ fn make_const_header_loop(back_edge: bool) -> Result<strider_ir::Function> {
 fn escape_memo_does_not_survive_into_the_next_sweep() -> Result<()> {
     let mut acyclic = make_const_header_loop(false)?;
     assert!(
-        crate::pipeline::run_one_unvalidated(
-            &DeadBranchElimination,
-            &mut acyclic,
-            &mut OptCtx::at_floor(None)
-        )?
-        .changed(),
+        run_pass(&DeadBranchElimination, &mut acyclic)?,
         "the acyclic twin must fold, filling the memo"
     );
 
     let mut looping = make_const_header_loop(true)?;
-    let result = crate::pipeline::run_one(
-        &DeadBranchElimination,
-        &mut looping,
-        &mut OptCtx::at_floor(None),
-    )?;
-    strider_ir::validate::validate(&looping)?;
-    assert!(
-        !result.changed(),
-        "folding away a loop's only exit must not happen"
-    );
+    let result = run_pass(&DeadBranchElimination, &mut looping)?;
+    assert!(!result, "folding away a loop's only exit must not happen");
     Ok(())
 }
 
 /// Every constant `If` funnels its LIVE arm into one shared exit-free spin,
 /// and reaches a `Return` only through the DEAD arms chained gate to gate.
-/// `escaping_nodes` never crosses a dead arm, so no gate is in the escape set
-/// and each root falls through to the exact walk; the walk from any gate's
-/// live arm covers the spin plus every earlier gate. Without a shared verdict
-/// that is one whole-CFG traversal per gate.
 #[test]
-fn a_chain_of_gates_over_one_spin_walks_the_cfg_once() -> Result<()> {
+fn a_chain_of_gates_over_one_spin_folds_nothing() -> Result<()> {
     const N: usize = 64;
     let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region_all()?;
@@ -652,7 +624,6 @@ fn a_chain_of_gates_over_one_spin_walks_the_cfg_once() -> Result<()> {
     let spin_tail = b.create_region_all()?;
     let exit = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
     b.set_region(entry);
     b.build_branch(gates[0])?;
@@ -671,29 +642,20 @@ fn a_chain_of_gates_over_one_spin_walks_the_cfg_once() -> Result<()> {
 
     b.set_region(exit);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    super::FULL_WALKS.with(|c| c.set(0));
-    let result =
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
+    let result = run_pass(&DeadBranchElimination, &mut fg)?;
     assert!(
-        !result.changed(),
+        !result,
         "every gate's live arm spins forever, so none may fold"
-    );
-    let walks = super::FULL_WALKS.with(std::cell::Cell::get);
-    assert!(
-        walks <= 1,
-        "{N} gates over one spin must share a single walk, ran {walks}"
     );
     Ok(())
 }
 
 /// A chain of 64 constant-condition diamonds sharing one `Return`: every
-/// branch is answered from the per-sweep escape set, so the whole-CFG walk
-/// that used to run per branch never runs at all.
+/// branch folds off one escape set for the sweep.
 #[test]
-fn constant_diamond_chain_never_walks_the_whole_cfg() -> Result<()> {
+fn a_constant_diamond_chain_builds_one_escape_set() -> Result<()> {
     const N: usize = 64;
     let mut b = strider_ir_test_utils::empty_builder()?;
     let merges: Vec<_> = (0..=N)
@@ -703,7 +665,6 @@ fn constant_diamond_chain_never_walks_the_whole_cfg() -> Result<()> {
         .map(|_| Ok((b.create_region_all()?, b.create_region_all()?)))
         .collect::<Result<Vec<_>>>()?;
     b.set_entry_region_all(merges[0])?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     for (i, &(t, f)) in arms.iter().enumerate() {
         b.set_region(merges[i]);
         let cond = b.build_boolean_const(true);
@@ -714,27 +675,17 @@ fn constant_diamond_chain_never_walks_the_whole_cfg() -> Result<()> {
         b.build_branch(merges[i + 1])?;
     }
     b.set_region(merges[N]);
-    let v = b.build_int_const(7u64, ValueType::I64)?;
+    let v = b.build_int_const(7u64, ValueType::int(64))?;
     b.build_return(Some(v), &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    super::FULL_WALKS.with(|c| c.set(0));
+    super::ESCAPE_SETS.with(|c| c.set(0));
     assert!(
-        crate::pipeline::run_one_unvalidated(
-            &DeadBranchElimination,
-            &mut fg,
-            &mut OptCtx::at_floor(None)
-        )?
-        .changed(),
+        run_pass(&DeadBranchElimination, &mut fg)?,
         "every constant branch must fold"
     );
-    assert_eq!(
-        super::FULL_WALKS.with(std::cell::Cell::get),
-        0,
-        "the escape set must answer every branch"
-    );
-    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
+    assert_eq!(fg.walk_kind(|k| matches!(k, NodeKind::If)).count(), 0);
+    assert_eq!(super::ESCAPE_SETS.with(std::cell::Cell::get), 1);
     Ok(())
 }
 
@@ -755,7 +706,6 @@ fn make_constant_exit_ring(
         .map(|_| (0..exit_len).map(|_| b.create_region_all()).collect())
         .collect::<Result<Vec<_>>>()?;
     b.set_entry_region_all(entry)?;
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.set_region(entry);
     b.build_branch(heads[0])?;
     for i in 0..n {
@@ -774,31 +724,255 @@ fn make_constant_exit_ring(
         b.set_region(*exits[i].last().expect("non-empty exit"));
         b.build_return(None, &[])?;
     }
+    b.build()
+}
+
+/// A ring whose only exits are dead arms never leaves it, so no branch on it
+/// folds, whichever arm stays on the ring.
+#[test]
+fn a_ring_whose_exits_are_all_dead_arms_folds_nothing() -> Result<()> {
+    for live_on_true in [false, true] {
+        let mut fg = make_constant_exit_ring(8, 2, live_on_true)?;
+        assert!(!run_pass(&DeadBranchElimination, &mut fg)?);
+        assert_eq!(fg.walk_kind(|k| matches!(k, NodeKind::If)).count(), 8);
+    }
+    Ok(())
+}
+
+/// `h1: If(true) -> h2 / exit`, `h2: If(true) -> h1 / exit`: each live arm
+/// escapes only through the other's dead arm, so the loop never exits. Neither
+/// folds; folding the first a walk reaches, as a per-root escape walk would,
+/// leaves the same infinite loop with one branch fewer.
+#[test]
+fn branches_inside_a_loop_only_their_dead_arms_leave_stay() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let h1 = b.create_region_all()?;
+    let h2 = b.create_region_all()?;
+    let x1 = b.create_region_all()?;
+    let x2 = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    b.build_branch(h1)?;
+    b.set_region(h1);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, h2, x1)?;
+    b.set_region(h2);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, h1, x2)?;
+    for x in [x1, x2] {
+        b.set_region(x);
+        b.build_return(None, &[])?;
+    }
+    let mut fg = b.build()?;
+
+    assert!(!run_pass(&DeadBranchElimination, &mut fg)?);
+    assert_eq!(fg.walk_kind(|k| matches!(k, NodeKind::If)).count(), 2);
+    Ok(())
+}
+
+/// `r0: If(true) -> h / x0`, `h: If(true) -> h / x1`: the branch before the
+/// loop takes it on its live arm, and the loop leaves only through its own
+/// branch's dead arm, so neither branch folds, the one outside the loop
+/// included.
+/// Mutation: let a live arm escape through another branch's dead arm.
+#[test]
+fn a_branch_into_a_loop_only_a_dead_arm_leaves_stays() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let r0 = b.create_region_all()?;
+    let h = b.create_region_all()?;
+    let x0 = b.create_region_all()?;
+    let x1 = b.create_region_all()?;
+    b.set_entry_region_all(r0)?;
+    b.set_region(r0);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, h, x0)?;
+    b.set_region(h);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, h, x1)?;
+    for x in [x0, x1] {
+        b.set_region(x);
+        b.build_return(None, &[])?;
+    }
+    let mut fg = b.build()?;
+
+    assert!(!run_pass(&DeadBranchElimination, &mut fg)?);
+    assert_eq!(fg.walk_kind(|k| matches!(k, NodeKind::If)).count(), 2);
+    Ok(())
+}
+
+#[test]
+fn dead_branch_alone_leaves_a_joined_diamond_valid() -> Result<()> {
+    let mut fg = strider_ir_test_utils::mem_phi_with_two_stores();
+    run_passes(&mut fg, &[&DeadBranchElimination])?;
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::If)),
+        0,
+        "the constant If folds"
+    );
+    Ok(())
+}
+
+/// Half-wired mid-pipeline: `r1: If(true) -> a / x`, `a -> h`,
+/// `h: If(true) -> b / dangling`, `b -> h`.  The inner branch's dead arm has no
+/// consumer, so the loop's only way out is an arm the inner fold removes.
+/// Both walks treat that dangling dead arm alike, so neither branch folds.
+#[test]
+fn a_dangling_dead_arm_is_no_escape() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let r1 = b.create_region_all()?;
+    let a = b.create_region_all()?;
+    let x = b.create_region_all()?;
+    let h = b.create_region_all()?;
+    let body = b.create_region_all()?;
+    let mid = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    b.build_branch(r1)?;
+    b.set_region(r1);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, a, x)?;
+    b.set_region(a);
+    b.build_branch(h)?;
+    b.set_region(x);
+    b.build_branch(exit)?;
+    b.set_region(h);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, body, mid)?;
+    b.set_region(body);
+    b.build_branch(h)?;
+    b.set_region(mid);
+    b.build_branch(exit)?;
+    b.set_region(exit);
+    b.build_return(None, &[])?;
+    let mut fg = b.build()?;
+
+    // Built second, so the later id.
+    let inner = fg
+        .graph()
+        .all_node_ids()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .last()
+        .expect("h ends in an If");
+    // cond = true, so output 1 (the false arm) is dead.
+    let dead_ctrl = fg.node_outputs(inner)[1];
+    let (dead_region, slot) = fg
+        .graph()
+        .value_uses(dead_ctrl)
+        .next()
+        .expect("the dead arm feeds mid");
+    fg.graph_mut().remove_node_input(dead_region, slot);
+
+    // The strip still drops `exit`'s slot from the orphaned `mid`.
+    crate::pipeline::run_one_unvalidated(&DeadBranchElimination, &mut fg, &OptCtx::new(None))?;
+    assert_eq!(fg.walk_kind(|k| matches!(k, NodeKind::If)).count(), 2);
+    Ok(())
+}
+
+thread_local! {
+    /// Cached-live nodes a fresh entry walk no longer reaches, as the
+    /// post-passes see them.
+    static STALE_LIVE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+struct RecordStaleLive;
+
+impl crate::Optimizer for RecordStaleLive {
+    fn apply(&self, edit: &mut crate::EditFunction<'_>, _ctx: &OptCtx<'_>) -> Result<()> {
+        let reached: entity_utils::DenseEntitySet<NodeId> = edit.walk().collect();
+        let stale = edit
+            .live_snapshot()
+            .iter()
+            .filter(|&n| !reached.contains(n))
+            .count();
+        STALE_LIVE.with(|s| s.set(Some(stale)));
+        Ok(())
+    }
+}
+
+/// `If(true)` whose dead arm loads and returns: once the fold detaches that
+/// arm, a post-pass must not see its `Load` or `Return` as live.
+#[test]
+fn a_folded_arm_is_not_live_for_the_post_passes() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let t = b.create_region_all()?;
+    let f = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, t, f)?;
+    b.set_region(t);
+    b.build_return(None, &[])?;
+    b.set_region(f);
+    let addr = b.build_int_const(0x40u64, ValueType::int(64))?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    let mut p = crate::default_pipeline();
+    p.add_post_pass(&RecordStaleLive);
+    STALE_LIVE.with(|s| s.set(None));
+    p.run(&mut fg, &OptCtx::new(None))?;
+    assert_eq!(fg.count_kind(|k| matches!(k, NodeKind::Load(_))), 0);
+    assert_eq!(STALE_LIVE.with(std::cell::Cell::get), Some(0));
+    Ok(())
+}
+
+/// `R0: if (x<3) RA else RJ; RA: if (x==0) RS else RM; RS: [0x100]=x -> RM;
+/// RM: if (x==1) return else RJ; RJ: if (true) unreachable else return`.
+/// The fold leaves the `Unreachable` as RJ's only exit; it still takes the
+/// merged memory, so RJ keeps its `MemPhi`.
+fn store_merged_into_a_folded_trap() -> Result<strider_ir::Function> {
+    use strider_ir::IntCmpOp;
+    let vn = reg_vn(0x1000, 4);
+    let i32t = ValueType::int(32);
+    let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn()?;
+    let mut regions = Vec::new();
+    for _ in 0..8 {
+        regions.push(b.create_region_all()?);
+    }
+    let [r0, ra, rs, rm, r5, rj, r3, r4] = regions[..] else {
+        unreachable!()
+    };
+    b.set_entry_region_all(r0)?;
+    b.set_region(r0);
+    let x = b.read_variable(&vn)?;
+    let three = b.build_int_const(3u64, i32t)?;
+    let c = b.build_int_cmp_operation(x, three, IntCmpOp::Less, i32t)?;
+    b.build_if(c, ra, rj)?;
+    b.set_region(ra);
+    let zero = b.build_int_const(0u64, i32t)?;
+    let c = b.build_int_cmp_operation(x, zero, IntCmpOp::Equal, i32t)?;
+    b.build_if(c, rs, rm)?;
+    b.set_region(rs);
+    let addr = b.build_int_const(0x100u64, ValueType::int(64))?;
+    b.build_store(addr, x, rsleigh::VnSpace::RAM)?;
+    b.build_branch(rm)?;
+    b.set_region(rm);
+    let one = b.build_int_const(1u64, i32t)?;
+    let c = b.build_int_cmp_operation(x, one, IntCmpOp::Equal, i32t)?;
+    b.build_if(c, r5, rj)?;
+    b.set_region(r5);
+    b.build_return(None, &[])?;
+    b.set_region(rj);
+    let t = b.build_boolean_const(true);
+    b.build_if(t, r3, r4)?;
+    b.set_region(r3);
+    b.build_unreachable()?;
+    b.set_region(r4);
+    b.build_return(None, &[])?;
     b.set_lift_addr(None);
     b.build()
 }
 
-/// Every fold but the last leaves another exit on the ring, so each root's
-/// walk succeeds; the walks must not each go round the whole ring.
 #[test]
-fn a_ring_whose_exits_are_all_dead_arms_walks_linearly() -> Result<()> {
-    fn walked(n: usize, exit_len: usize, live_on_true: bool) -> Result<u64> {
-        let mut fg = make_constant_exit_ring(n, exit_len, live_on_true)?;
-        super::WALKED_NODES.with(|c| c.set(0));
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
-        let ifs = fg.walk_kind(|k| matches!(k, NodeKind::If)).count();
-        assert_eq!(ifs, 1, "the last exit on the ring must stay");
-        Ok(super::WALKED_NODES.with(std::cell::Cell::get))
-    }
-    for live_on_true in [false, true] {
-        let small = walked(100, 4, live_on_true)?;
-        let large = walked(800, 4, live_on_true)?;
-        // Linear would be 8x; quadratic 64x.
-        assert!(
-            large < small * 16,
-            "8x the ring walked {:.1}x the nodes ({small} -> {large})",
-            large as f64 / small as f64,
-        );
-    }
+fn a_folded_branch_into_a_trap_keeps_the_merged_memory() -> Result<()> {
+    let mut fg = store_merged_into_a_folded_trap()?;
+    crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &OptCtx::new(None))?;
+    let mut fg = store_merged_into_a_folded_trap()?;
+    crate::default_pipeline().run(&mut fg, &OptCtx::new(None))?;
     Ok(())
 }

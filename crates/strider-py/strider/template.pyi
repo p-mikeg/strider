@@ -1,42 +1,45 @@
-"""Type stubs for strider.template: the build side of a rewrite.
+"""The build side of a rewrite.
 
-`strider.pattern.Pat` is the match side (the `find`); `Template` is the build
-side (the `replace`): the node, op and constant constructors plus
-`var(capture)`. `Function.rewrite(find, replace)` and `rewrite_all` take a
-`TemplateLike`: a `Template`, a `Pat`, a `Capture`, or a capture's name as a
-`str`.
+`Function.rewrite(find, replace)` and `rewrite_all` take as `replace` a
+`Template`, a `Capture` or a capture's name; a `Pat` is refused, nested or
+not.
 """
 
 from __future__ import annotations
 
 from typing import Union
 
-from .pattern import Capture, ExtendOpName, IntCmpOpName, Pat
+from .pattern import Capture, ExtendOpName, IntCmpOpName
 
 __all__: list[str]
 
 class Template:
-    """A type-checked expression describing what a rewrite builds.
-
-    Construct one with the free functions below and pass it as `replace` to
-    `Function.rewrite(find, replace)` or `Function.rewrite_all(pairs)`.
-    """
+    """A type-checked expression describing what a rewrite builds, passed as
+    `replace` to `Function.rewrite` / `rewrite_all`."""
     ...
 
-#: A build-side operand accepts a `Template`, a build-valid `Pat`, a raw `int`
-#: (an `int_const`), or a bare `Capture` (sugar for `var(c)`).
-TemplateLike = Union[Template, Pat, Capture, int]
+#: A build-side operand: a `Template`, a raw `int` (an `int_const`), or a
+#: `Capture` (`var(c)`).
+TemplateLike = Union[Template, Capture, int]
 
 def var(c: Capture) -> Template:
-    """Substitute the node bound to `c` on the matched left-hand side. The
-    only build-side wildcard."""
+    """Substitute the node bound to `c` on the matched left-hand side."""
+def capture_typed(c: Capture, inner: Union[Template, int]) -> Template:
+    """Build `inner` with its output at the width of the value bound to `c`,
+    for an operand nothing else gives a width:
+    `int_popcount(capture_typed(a, int_const(0xff)))`. A `Capture` or `var()`
+    as `inner` raises `StriderError`."""
 def int_const(value: int) -> Template:
-    """Build an integer constant whose stored value, masked to the output
-    width, is `value`. Negatives take the sign-extended form."""
+    """Build an integer constant whose stored value, wrapped into the width it
+    is evaluated at, is `value` (a shift count too wide saturates). A value
+    wider than 512 bits raises. Where nothing gives a width, as at a
+    `Popcount` operand, the rewrite is refused; use `capture_typed`."""
 def bool_const(value: bool) -> Template:
     """Build a 1-bit boolean constant equal to `value`."""
 def float_const(bits: int) -> Template:
-    """Build a float constant with raw bit pattern `bits`."""
+    """Build a float constant with the IEEE 754 bit pattern `bits`, at the
+    width it is evaluated at; a set bit above that width refuses the
+    rewrite."""
 
 def int_add(l: TemplateLike, r: TemplateLike) -> Template:
     """Build integer addition."""
@@ -74,6 +77,13 @@ def int_lt(l: TemplateLike, r: TemplateLike) -> Template:
     """Build an unsigned less-than test."""
 def int_slt(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a signed less-than test."""
+def int_ne(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build an integer inequality test, the lifter's `Xor(Equal(l, r), 1)`."""
+def int_le(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build an unsigned less-or-equal test, the lifter's
+    `Xor(Less(r, l), 1)`."""
+def int_sle(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build a signed less-or-equal test, the lifter's `Xor(Sless(r, l), 1)`."""
 def int_carry(l: TemplateLike, r: TemplateLike) -> Template:
     """Build an unsigned-addition carry test."""
 def int_scarry(l: TemplateLike, r: TemplateLike) -> Template:
@@ -123,6 +133,9 @@ def float_eq(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a float equality test."""
 def float_lt(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a float less-than test."""
+def float_ne(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build a float inequality test, the lifter's
+    `Xor(FloatEqual(l, r), 1)`."""
 
 def int_to_float(operand: TemplateLike) -> Template:
     """Build a signed-integer conversion to the nearest representable float."""
@@ -142,4 +155,5 @@ def int_zero_extend(operand: TemplateLike) -> Template:
 def int_sign_extend(operand: TemplateLike) -> Template:
     """Build a widening that replicates the sign bit."""
 def int_extend(op: ExtendOpName, operand: TemplateLike) -> Template:
-    """Build a widening of the kind named by `op`."""
+    """Build a widening of the kind named by `op`: `"ZeroExtend"` or
+    `"SignExtend"`."""

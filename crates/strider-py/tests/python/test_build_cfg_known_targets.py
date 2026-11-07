@@ -22,24 +22,25 @@ def test_build_cfg_seats_known_targets():
     """`build_cfg` read three of `CfgOptions`' four fields and filled the rest
     from `default()`, so a seeded arm was silently never decoded."""
     opts = strider.cfg.CfgOptions(known_targets={0x1000: [0x1002]})
-    assert _decoded(_lifter().build_cfg(BASE, opts)) == [0x1000, 0x1002, 0x1009]
+    cfg = _lifter().build_cfg(BASE, opts)
+    assert _decoded(cfg) == [0x1000, 0x1002, 0x1009]
 
 
 def test_build_cfg_without_a_seed_leaves_the_arm_undecoded():
-    assert _decoded(_lifter().build_cfg(BASE)) == [0x1000]
+    cfg = _lifter().build_cfg(BASE)
+    assert _decoded(cfg) == [0x1000]
 
 
 def test_a_seeded_build_cfg_does_not_claim_to_be_complete():
     """No classifier runs here, so nothing checked the caller's answer."""
     opts = strider.cfg.CfgOptions(known_targets={0x1000: [0x1002]})
     cfg = _lifter().build_cfg(BASE, opts)
-    assert cfg.unverified_seeded_sites() == [0x1000]
-    assert not cfg.is_complete()
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [0x1000]
 
 
 def test_an_unseeded_build_cfg_reports_nothing_unverified():
     cfg = _lifter().build_cfg(BASE)
-    assert cfg.unverified_seeded_sites() == []
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == []
 
 
 def test_out_of_range_int_entry_reports_the_real_cause():

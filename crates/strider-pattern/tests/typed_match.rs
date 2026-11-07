@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::ValueType as T;
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IntBinaryOp,
@@ -13,11 +14,11 @@ use strider_pattern::{
     float_abs, float_add, float_binary, float_ceil, float_cmp, float_const, float_div, float_eq,
     float_floor, float_is_nan, float_le, float_lt, float_mul, float_ne, float_neg, float_round,
     float_sqrt, float_sub, float_to_int, initial_var, initial_var_for, inputs_of_width, int_add,
-    int_and, int_binary, int_carry, int_cmp, int_const, int_const_any_width, int_div, int_eq,
-    int_extend, int_le, int_lt, int_lzcount, int_mul, int_ne, int_neg, int_not, int_or,
-    int_popcount, int_rem, int_sborrow, int_scarry, int_sdiv, int_shl, int_shr, int_sign_extend,
-    int_sle, int_slt, int_srem, int_sshr, int_sub, int_truncate, int_xor, int_zero_extend,
-    predicate, value_of_width, var,
+    int_and, int_binary, int_carry, int_cmp, int_const, int_const_all_ones, int_const_any_width,
+    int_div, int_eq, int_extend, int_le, int_lt, int_lzcount, int_mul, int_ne, int_neg, int_not,
+    int_or, int_popcount, int_rem, int_sborrow, int_scarry, int_sdiv, int_shl, int_shr,
+    int_sign_extend, int_sle, int_slt, int_srem, int_sshr, int_sub, int_truncate, int_xor,
+    int_zero_extend, predicate, value_of_width, var,
 };
 
 fn count(
@@ -31,9 +32,9 @@ fn count(
 #[test]
 fn typed_add_matches_and_captures() {
     let fx = make_empty_fn(|b| {
-        let x = b.build_int_const(5u64, T::I64)?;
-        let k = b.build_int_const(1u64, T::I64)?;
-        b.build_int_binary_operation(x, k, IntBinaryOp::Add, T::I64)
+        let x = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(x, k, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
     let c = Capture::new();
@@ -50,8 +51,8 @@ fn int_binary_family() {
     macro_rules! bin {
         ($build:ident, $pat:expr) => {{
             let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-                let k = b.build_int_const(3u64, T::I64)?;
-                b.build_int_binary_operation(base, k, IntBinaryOp::$build, T::I64)
+                let k = b.build_int_const(3u64, T::int(64))?;
+                b.build_int_binary_operation(base, k, IntBinaryOp::$build, T::int(64))
             })
             .unwrap()
             .0;
@@ -117,8 +118,8 @@ fn int_binary_family() {
 fn sub_lowers_to_add_neg() {
     let v = reg_vn(0, 8);
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let k = b.build_int_const(7u64, T::I64)?;
-        b.build_sub_as_add_neg(base, k, T::I64)
+        let k = b.build_int_const(7u64, T::int(64))?;
+        b.build_sub_as_add_neg(base, k, T::int(64))
     })
     .unwrap()
     .0;
@@ -131,11 +132,72 @@ fn sub_lowers_to_add_neg() {
     );
 }
 
+/// `x - 7` after `ConstantFold`: `Add(x, -7)`.
+#[test]
+fn sub_of_a_constant_matches_the_folded_add() {
+    let v = reg_vn(0, 8);
+    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
+        let k = b.build_int_const(-7i64 as u64, T::int(64))?;
+        b.build_int_binary_operation(base, k, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap()
+    .0;
+    let sub = |k: u128| int_sub(var(Capture::new()), int_const(k)).into_pattern();
+    assert_eq!(count(|| sub(7), &fx), 1);
+    assert_eq!(count(|| sub(6), &fx), 0);
+}
+
+/// `Add(x, k):I32`.
+fn add_const_i32(k: u32) -> strider_ir::Function {
+    strider_ir_test_utils::make_fn_with_var(reg_vn(0, 4), |b, base| {
+        let k = b.build_int_const(u64::from(k), T::int(32))?;
+        b.build_int_binary_operation(base, k, IntBinaryOp::Add, T::int(32))
+    })
+    .unwrap()
+    .0
+}
+
+/// Every concrete constant form folds: a width, a set, any width.
+#[test]
+fn sub_of_each_constant_form_matches_the_folded_add() {
+    let x = || var(Capture::new());
+    let minus_16 = add_const_i32(-16i32 as u32);
+    let at_width = |w| int_sub(x(), int_const(16u128).of_width(w)).into_pattern();
+    assert_eq!(count(|| at_width(32), &minus_16), 1);
+    assert_eq!(count(|| at_width(64), &minus_16), 0);
+    let set = |vs: Vec<i64>| int_sub(x(), int_const(vs)).into_pattern();
+    assert_eq!(count(|| set(vec![15, 16]), &minus_16), 1);
+    assert_eq!(count(|| set(vec![15, 17]), &minus_16), 0);
+    let any = |v: i64| int_sub(x(), int_const_any_width(v)).into_pattern();
+    assert_eq!(count(|| any(16), &minus_16), 1);
+    assert_eq!(count(|| any(17), &minus_16), 0);
+    // `-16` at `I8` zero-extended is no negation of a 16 at any width.
+    assert_eq!(count(|| any(16), &add_const_i32(0xF0)), 0);
+    // `-128` sign-extended from `I8` is `-(128)` at `I32`.
+    assert_eq!(count(|| any(128), &add_const_i32(-128i32 as u32)), 1);
+    let any_set = |vs: Vec<i64>| int_sub(x(), int_const_any_width(vs)).into_pattern();
+    assert_eq!(count(|| any_set(vec![15, 16]), &minus_16), 1);
+    assert_eq!(count(|| any_set(vec![15, 17]), &minus_16), 0);
+}
+
+/// A captured constant would bind `-K`, so it matches only the unfolded `Neg` shape.
+#[test]
+fn sub_of_a_captured_constant_keeps_the_neg_shape() {
+    let minus_16 = add_const_i32(-16i32 as u32);
+    let pat = || {
+        int_sub(
+            var(Capture::new()),
+            int_const(16u128).capture(Capture::new()),
+        )
+    };
+    assert_eq!(count(|| pat().into_pattern(), &minus_16), 0);
+}
+
 #[test]
 fn int_unary_family() {
     let v = reg_vn(0, 8);
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        b.build_int_unary_operation(base, strider_ir::IntUnaryOp::Neg, T::I64)
+        b.build_int_unary_operation(base, strider_ir::IntUnaryOp::Neg, T::int(64))
     })
     .unwrap()
     .0;
@@ -148,17 +210,19 @@ fn int_unary_family() {
         1
     );
 
-    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| b.build_popcount(base, T::I64))
-        .unwrap()
-        .0;
+    let fx =
+        strider_ir_test_utils::make_fn_with_var(v, |b, base| b.build_popcount(base, T::int(64)))
+            .unwrap()
+            .0;
     assert_eq!(
         count(|| int_popcount(var(Capture::new())).into_pattern(), &fx),
         1
     );
 
-    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| b.build_lzcount(base, T::I64))
-        .unwrap()
-        .0;
+    let fx =
+        strider_ir_test_utils::make_fn_with_var(v, |b, base| b.build_lzcount(base, T::int(64)))
+            .unwrap()
+            .0;
     assert_eq!(
         count(|| int_lzcount(var(Capture::new())).into_pattern(), &fx),
         1
@@ -166,8 +230,8 @@ fn int_unary_family() {
 
     // int_not is int_xor(x, all_ones).
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let ones = b.build_int_const(u128::MAX, T::I64)?;
-        b.build_int_binary_operation(base, ones, IntBinaryOp::Xor, T::I64)
+        let ones = b.build_int_const(u128::MAX, T::int(64))?;
+        b.build_int_binary_operation(base, ones, IntBinaryOp::Xor, T::int(64))
     })
     .unwrap()
     .0;
@@ -181,8 +245,8 @@ fn int_unary_family() {
 fn cast_family() {
     let v = reg_vn(0, 8);
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let t = b.truncate_if_needed(base, T::I32)?;
-        b.extend_if_needed(t, T::I64, ExtendOp::ZeroExtend)
+        let t = b.truncate_if_needed(base, T::int(32))?;
+        b.extend_if_needed(t, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -203,8 +267,8 @@ fn cast_family() {
     );
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let t = b.truncate_if_needed(base, T::I32)?;
-        b.extend_if_needed(t, T::I64, ExtendOp::SignExtend)
+        let t = b.truncate_if_needed(base, T::int(32))?;
+        b.extend_if_needed(t, T::int(64), ExtendOp::SignExtend)
     })
     .unwrap()
     .0;
@@ -214,16 +278,16 @@ fn cast_family() {
     );
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
-        b.build_float_to_int(f, T::I64)
+        let f = b.build_int_to_float(base, T::float(64))?;
+        b.build_float_to_int(f, T::int(64))
     })
     .unwrap()
     .0;
     assert_eq!(count(|| float_to_int(anything()).into_pattern(), &fx), 1);
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_bits_to_float(base, T::F64)?;
-        b.build_float_bits_to_int(f, T::I64)
+        let f = b.build_int_bits_to_float(base, T::float(64))?;
+        b.build_float_bits_to_int(f, T::int(64))
     })
     .unwrap()
     .0;
@@ -243,8 +307,8 @@ fn cast_family() {
     );
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
-        b.build_float_to_float(f, T::F32)
+        let f = b.build_int_to_float(base, T::float(64))?;
+        b.build_float_to_float(f, T::float(32))
     })
     .unwrap()
     .0;
@@ -263,9 +327,9 @@ fn int_cmp_family() {
     macro_rules! cmp {
         ($op:ident, $pat:expr) => {{
             let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-                let k = b.build_int_const(9u64, T::I64)?;
-                let cmp = b.build_int_cmp_operation(base, k, IntCmpOp::$op, T::I64)?;
-                b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+                let k = b.build_int_const(9u64, T::int(64))?;
+                let cmp = b.build_int_cmp_operation(base, k, IntCmpOp::$op, T::int(64))?;
+                b.extend_if_needed(cmp, T::int(64), ExtendOp::ZeroExtend)
             })
             .unwrap()
             .0;
@@ -311,11 +375,11 @@ fn int_cmp_lowered_shapes() {
     let v = reg_vn(0, 8);
     // int_ne(a, 9) lifts to int_xor(eq(a, 9), 1):I1.
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let k = b.build_int_const(9u64, T::I64)?;
-        let eq = b.build_int_cmp_operation(base, k, IntCmpOp::Equal, T::I64)?;
+        let k = b.build_int_const(9u64, T::int(64))?;
+        let eq = b.build_int_cmp_operation(base, k, IntCmpOp::Equal, T::int(64))?;
         let one = b.build_int_const(1u64, T::I1)?;
         let ne = b.build_int_binary_operation(eq, one, IntBinaryOp::Xor, T::I1)?;
-        b.extend_if_needed(ne, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(ne, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -329,11 +393,11 @@ fn int_cmp_lowered_shapes() {
 
     // int_le(a, 9) lifts to int_xor(lt(9, a), 1):I1.
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let k = b.build_int_const(9u64, T::I64)?;
-        let lt = b.build_int_cmp_operation(k, base, IntCmpOp::Less, T::I64)?;
+        let k = b.build_int_const(9u64, T::int(64))?;
+        let lt = b.build_int_cmp_operation(k, base, IntCmpOp::Less, T::int(64))?;
         let one = b.build_int_const(1u64, T::I1)?;
         let le = b.build_int_binary_operation(lt, one, IntBinaryOp::Xor, T::I1)?;
-        b.extend_if_needed(le, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(le, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -347,11 +411,11 @@ fn int_cmp_lowered_shapes() {
 
     // int_sle(a, 9) lifts to int_xor(slt(9, a), 1):I1: operand swap plus NOT.
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let k = b.build_int_const(9u64, T::I64)?;
-        let slt = b.build_int_cmp_operation(k, base, IntCmpOp::Sless, T::I64)?;
+        let k = b.build_int_const(9u64, T::int(64))?;
+        let slt = b.build_int_cmp_operation(k, base, IntCmpOp::Sless, T::int(64))?;
         let one = b.build_int_const(1u64, T::I1)?;
         let sle = b.build_int_binary_operation(slt, one, IntBinaryOp::Xor, T::I1)?;
-        b.extend_if_needed(sle, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(sle, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -371,13 +435,13 @@ fn float_family() {
         b: &mut strider_ir::FunctionBuilder,
         base: strider_ir::node::ValueId,
     ) -> anyhow::Result<strider_ir::node::ValueId> {
-        b.build_int_to_float(base, T::F64)
+        b.build_int_to_float(base, T::float(64))
     }
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = fbase(b, base)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
-        let r = b.build_float_binary_op(f, c, FloatBinaryOp::Add, T::F64)?;
-        b.build_float_to_int(r, T::I64)
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
+        let r = b.build_float_binary_op(f, c, FloatBinaryOp::Add, T::float(64))?;
+        b.build_float_to_int(r, T::int(64))
     })
     .unwrap()
     .0;
@@ -405,9 +469,9 @@ fn float_family() {
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = fbase(b, base)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
-        let r = b.build_float_binary_op(f, c, FloatBinaryOp::Mul, T::F64)?;
-        b.build_float_to_int(r, T::I64)
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
+        let r = b.build_float_binary_op(f, c, FloatBinaryOp::Mul, T::float(64))?;
+        b.build_float_to_int(r, T::int(64))
     })
     .unwrap()
     .0;
@@ -418,9 +482,9 @@ fn float_family() {
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = fbase(b, base)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
-        let r = b.build_float_binary_op(f, c, FloatBinaryOp::Div, T::F64)?;
-        b.build_float_to_int(r, T::I64)
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
+        let r = b.build_float_binary_op(f, c, FloatBinaryOp::Div, T::float(64))?;
+        b.build_float_to_int(r, T::int(64))
     })
     .unwrap()
     .0;
@@ -431,8 +495,8 @@ fn float_family() {
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = fbase(b, base)?;
-        let r = b.build_float_unary_op(f, FloatUnaryOp::Neg, T::F64)?;
-        b.build_float_to_int(r, T::I64)
+        let r = b.build_float_unary_op(f, FloatUnaryOp::Neg, T::float(64))?;
+        b.build_float_to_int(r, T::int(64))
     })
     .unwrap()
     .0;
@@ -440,8 +504,8 @@ fn float_family() {
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = fbase(b, base)?;
-        let r = b.build_float_unary_op(f, FloatUnaryOp::Abs, T::F64)?;
-        b.build_float_to_int(r, T::I64)
+        let r = b.build_float_unary_op(f, FloatUnaryOp::Abs, T::float(64))?;
+        b.build_float_to_int(r, T::int(64))
     })
     .unwrap()
     .0;
@@ -458,8 +522,8 @@ fn float_family() {
         ($variant:ident, $pat:expr) => {{
             let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
                 let f = fbase(b, base)?;
-                let r = b.build_float_unary_op(f, FloatUnaryOp::$variant, T::F64)?;
-                b.build_float_to_int(r, T::I64)
+                let r = b.build_float_unary_op(f, FloatUnaryOp::$variant, T::float(64))?;
+                b.build_float_to_int(r, T::int(64))
             })
             .unwrap()
             .0;
@@ -474,10 +538,10 @@ fn float_family() {
     // float_sub lifts to float_add(a, float_neg(b)).
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = fbase(b, base)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
-        let neg = b.build_float_unary_op(c, FloatUnaryOp::Neg, T::F64)?;
-        let r = b.build_float_binary_op(f, neg, FloatBinaryOp::Add, T::F64)?;
-        b.build_float_to_int(r, T::I64)
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
+        let neg = b.build_float_unary_op(c, FloatUnaryOp::Neg, T::float(64))?;
+        let r = b.build_float_binary_op(f, neg, FloatBinaryOp::Add, T::float(64))?;
+        b.build_float_to_int(r, T::int(64))
     })
     .unwrap()
     .0;
@@ -494,10 +558,10 @@ fn float_family() {
 fn float_cmp_family() {
     let v = reg_vn(0, 8);
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
+        let f = b.build_int_to_float(base, T::float(64))?;
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
         let cmp = b.build_float_cmp_op(f, c, FloatCmpOp::Equal)?;
-        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(cmp, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -518,10 +582,10 @@ fn float_cmp_family() {
     );
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
+        let f = b.build_int_to_float(base, T::float(64))?;
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
         let cmp = b.build_float_cmp_op(f, c, FloatCmpOp::Less)?;
-        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(cmp, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -536,12 +600,12 @@ fn float_lowered_shapes() {
     let v = reg_vn(0, 8);
     // float_ne(a, b) lifts to int_xor(float_eq(a, b), 1):I1.
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
+        let f = b.build_int_to_float(base, T::float(64))?;
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
         let eq = b.build_float_cmp_op(f, c, FloatCmpOp::Equal)?;
         let one = b.build_int_const(1u64, T::I1)?;
         let ne = b.build_int_binary_operation(eq, one, IntBinaryOp::Xor, T::I1)?;
-        b.extend_if_needed(ne, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(ne, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -552,11 +616,11 @@ fn float_lowered_shapes() {
 
     // float_is_nan(x) lifts to int_xor(float_eq(x, x), 1):I1.
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
+        let f = b.build_int_to_float(base, T::float(64))?;
         let eq = b.build_float_cmp_op(f, f, FloatCmpOp::Equal)?;
         let one = b.build_int_const(1u64, T::I1)?;
         let nan = b.build_int_binary_operation(eq, one, IntBinaryOp::Xor, T::I1)?;
-        b.extend_if_needed(nan, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(nan, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -564,12 +628,12 @@ fn float_lowered_shapes() {
 
     // float_le(a, b) lifts to bool_or(float_lt(a, b), float_eq(a, b)):I1.
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
+        let f = b.build_int_to_float(base, T::float(64))?;
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
         let lt = b.build_float_cmp_op(f, c, FloatCmpOp::Less)?;
         let eq = b.build_float_cmp_op(f, c, FloatCmpOp::Equal)?;
         let le = b.build_int_binary_operation(lt, eq, IntBinaryOp::Or, T::I1)?;
-        b.extend_if_needed(le, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(le, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -587,12 +651,12 @@ fn float_shared_operand_must_be_the_same_value() {
     let v = reg_vn(0, 8);
     // int_xor(float_eq(f, c), 1):I1, a float_ne, NOT a NaN test.
     let ne = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
-        let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
+        let f = b.build_int_to_float(base, T::float(64))?;
+        let c = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
         let eq = b.build_float_cmp_op(f, c, FloatCmpOp::Equal)?;
         let one = b.build_int_const(1u64, T::I1)?;
         let x = b.build_int_binary_operation(eq, one, IntBinaryOp::Xor, T::I1)?;
-        b.extend_if_needed(x, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(x, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -601,13 +665,13 @@ fn float_shared_operand_must_be_the_same_value() {
     // bool_or(float_lt(f, c1), float_eq(f, c2)):I1 with c1 != c2: the two
     // comparisons disagree on the right operand, so it is no float_le.
     let mixed = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
-        let c1 = b.build_float_const(0x4000_0000_0000_0000, T::F64);
-        let c2 = b.build_float_const(0x4010_0000_0000_0000, T::F64);
+        let f = b.build_int_to_float(base, T::float(64))?;
+        let c1 = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
+        let c2 = b.build_float_const(0x4010_0000_0000_0000, T::float(64));
         let lt = b.build_float_cmp_op(f, c1, FloatCmpOp::Less)?;
         let eq = b.build_float_cmp_op(f, c2, FloatCmpOp::Equal)?;
         let or = b.build_int_binary_operation(lt, eq, IntBinaryOp::Or, T::I1)?;
-        b.extend_if_needed(or, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(or, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -623,11 +687,11 @@ fn float_shared_operand_must_be_the_same_value() {
 fn float_identity_pin_stays_out_of_the_match() {
     let v = reg_vn(0, 8);
     let (fx, _) = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let f = b.build_int_to_float(base, T::F64)?;
+        let f = b.build_int_to_float(base, T::float(64))?;
         let eq = b.build_float_cmp_op(f, f, FloatCmpOp::Equal)?;
         let one = b.build_int_const(1u64, T::I1)?;
         let nan = b.build_int_binary_operation(eq, one, IntBinaryOp::Xor, T::I1)?;
-        b.extend_if_needed(nan, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(nan, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap();
     let c = Capture::new();
@@ -645,9 +709,9 @@ fn bool_family() {
         base: strider_ir::node::ValueId,
     ) -> anyhow::Result<(strider_ir::node::ValueId, strider_ir::node::ValueId)> {
         // Two I1 values: (base == 0) and (base < 0).
-        let z = b.build_int_const(0u64, T::I64)?;
-        let p = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
-        let q = b.build_int_cmp_operation(base, z, IntCmpOp::Less, T::I64)?;
+        let z = b.build_int_const(0u64, T::int(64))?;
+        let p = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::int(64))?;
+        let q = b.build_int_cmp_operation(base, z, IntCmpOp::Less, T::int(64))?;
         Ok((p, q))
     }
     macro_rules! boolbin {
@@ -655,7 +719,7 @@ fn bool_family() {
             let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
                 let (p, q) = bbase(b, base)?;
                 let r = b.build_int_binary_operation(p, q, IntBinaryOp::$op, T::I1)?;
-                b.extend_if_needed(r, T::I64, ExtendOp::ZeroExtend)
+                b.extend_if_needed(r, T::int(64), ExtendOp::ZeroExtend)
             })
             .unwrap()
             .0;
@@ -679,7 +743,7 @@ fn bool_family() {
         let (p, _q) = bbase(b, base)?;
         let one = b.build_int_const(1u64, T::I1)?;
         let r = b.build_int_binary_operation(p, one, IntBinaryOp::Xor, T::I1)?;
-        b.extend_if_needed(r, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(r, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -688,22 +752,46 @@ fn bool_family() {
 #[test]
 fn const_family() {
     // int_const_any_width recognises the zero-extended narrow form.
-    let fx = make_empty_fn(|b| b.build_int_const(0xFFFF_FFCEu64, T::I64)).unwrap();
+    let fx = make_empty_fn(|b| b.build_int_const(0xFFFF_FFCEu64, T::int(64))).unwrap();
     assert_eq!(count(|| int_const_any_width(-50).into_pattern(), &fx), 1);
     assert_eq!(count(|| any_int_const().into_pattern(), &fx), 1);
     assert_eq!(count(|| int_const([0xFFFF_FFCEu64]).into_pattern(), &fx), 1);
 
-    // The VariantWith value-set predicate must survive to match time, so 7
-    // does not match [1,2,3].
-    let fx7 = make_empty_fn(|b| b.build_int_const(7u64, T::I64)).unwrap();
+    // The value-set predicate must survive to match time, so 7 does not
+    // match [1,2,3].
+    let fx7 = make_empty_fn(|b| b.build_int_const(7u64, T::int(64))).unwrap();
     assert_eq!(count(|| int_const([1u64, 2, 3]).into_pattern(), &fx7), 0);
     assert_eq!(count(|| int_const([1u64, 7, 3]).into_pattern(), &fx7), 1);
 
     // int_const matching is width-masked, so u128::MAX matches all-ones at any
     // width.
-    let fx = make_empty_fn(|b| b.build_int_const(u128::MAX, T::I64)).unwrap();
+    let fx = make_empty_fn(|b| b.build_int_const(u128::MAX, T::int(64))).unwrap();
     assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 1);
-    let fx = make_empty_fn(|b| b.build_int_const(5u64, T::I64)).unwrap();
+    let fx = make_empty_fn(|b| b.build_int_const(5u64, T::int(64))).unwrap();
+    assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 0);
+
+    // A query value past the `u128` carrier names an I256/I512 constant.
+    let wide = (UBig::ONE << 200usize) | UBig::from(3u8);
+    let fx = make_empty_fn(|b| b.build_int_const(wide.clone(), T::int(256))).unwrap();
+    assert_eq!(count(|| int_const(wide.clone()).into_pattern(), &fx), 1);
+    assert_eq!(
+        count(
+            || int_const(vec![UBig::ONE, wide.clone()]).into_pattern(),
+            &fx
+        ),
+        1
+    );
+    assert_eq!(
+        count(|| int_const(UBig::ONE << 200usize).into_pattern(), &fx),
+        0
+    );
+    assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 0);
+
+    // A negative query wraps into the matched width, so -1 is the all-ones
+    // constant at I256, which no `u128` literal names.
+    let fx = make_empty_fn(|b| b.build_all_ones(T::int(256))).unwrap();
+    assert_eq!(count(|| int_const(-1i32).into_pattern(), &fx), 1);
+    assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 1);
     assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 0);
 
     let fx = make_empty_fn(|b| b.build_int_const(1u64, T::I1)).unwrap();
@@ -711,8 +799,8 @@ fn const_family() {
     assert_eq!(count(|| any_bool_const().into_pattern(), &fx), 1);
 
     let fx = make_empty_fn(|b| {
-        let f = b.build_float_const(0x4000_0000_0000_0000, T::F64);
-        b.build_float_to_int(f, T::I64)
+        let f = b.build_float_const(0x4000_0000_0000_0000, T::float(64));
+        b.build_float_to_int(f, T::int(64))
     })
     .unwrap();
     assert_eq!(
@@ -726,9 +814,9 @@ fn const_family() {
 fn wildcard_family() {
     let v = reg_vn(0, 8);
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let z = b.build_int_const(0u64, T::I64)?;
-        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
-        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+        let z = b.build_int_const(0u64, T::int(64))?;
+        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::int(64))?;
+        b.extend_if_needed(cmp, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -759,11 +847,11 @@ fn wildcard_family() {
     );
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let z = b.build_int_const(0u64, T::I64)?;
-        let p = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
-        let q = b.build_int_cmp_operation(base, z, IntCmpOp::Less, T::I64)?;
+        let z = b.build_int_const(0u64, T::int(64))?;
+        let p = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::int(64))?;
+        let q = b.build_int_cmp_operation(base, z, IntCmpOp::Less, T::int(64))?;
         let r = b.build_int_binary_operation(p, q, IntBinaryOp::And, T::I1)?;
-        b.extend_if_needed(r, T::I64, ExtendOp::ZeroExtend)
+        b.extend_if_needed(r, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -809,9 +897,9 @@ fn initial_var_for_matches_sub_register_of_container() {
 #[test]
 fn combinators_filter_and_guard() {
     let fx = make_empty_fn(|b| {
-        let x = b.build_int_const(5u64, T::I64)?;
-        let k = b.build_int_const(1u64, T::I64)?;
-        b.build_int_binary_operation(x, k, IntBinaryOp::Add, T::I64)
+        let x = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(x, k, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
     assert_eq!(
@@ -834,8 +922,12 @@ fn combinators_filter_and_guard() {
     let pat = int_add(var(c), anything()).into_pattern();
     let hits = Matcher::new(&fx).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 2);
-    let bound: Vec<Option<u128>> = hits.iter().map(|m| m.bindings().get_uint(c, &fx)).collect();
-    assert_eq!(bound, vec![Some(5), Some(1)], "natural ordering first");
+    let bound: Vec<Option<UBig>> = hits.iter().map(|m| m.bindings().get_uint(c, &fx)).collect();
+    assert_eq!(
+        bound,
+        vec![Some(UBig::from(5u8)), Some(UBig::from(1u8))],
+        "natural ordering first"
+    );
 }
 
 #[test]
@@ -844,9 +936,9 @@ fn of_width_root_and_nested() {
     // One I1 value output (the cmp), four I64 ones (InitialVar, IntConst, Phi,
     // Extend).
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let z = b.build_int_const(0u64, T::I64)?;
-        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
-        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+        let z = b.build_int_const(0u64, T::int(64))?;
+        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::int(64))?;
+        b.extend_if_needed(cmp, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
@@ -882,15 +974,21 @@ fn of_width_root_and_nested() {
 fn output_ty_exact() {
     let v = reg_vn(0, 8);
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let z = b.build_int_const(0u64, T::I64)?;
-        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
-        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+        let z = b.build_int_const(0u64, T::int(64))?;
+        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::int(64))?;
+        b.extend_if_needed(cmp, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;
     assert_eq!(count(|| anything().value_ty(T::I1).into_pattern(), &fx), 1);
-    assert_eq!(count(|| anything().value_ty(T::I64).into_pattern(), &fx), 4);
-    assert_eq!(count(|| anything().value_ty(T::I32).into_pattern(), &fx), 0);
+    assert_eq!(
+        count(|| anything().value_ty(T::int(64)).into_pattern(), &fx),
+        4
+    );
+    assert_eq!(
+        count(|| anything().value_ty(T::int(32)).into_pattern(), &fx),
+        0
+    );
     assert_eq!(
         count(
             || int_zero_extend(anything().value_ty(T::I1)).into_pattern(),
@@ -904,9 +1002,9 @@ fn output_ty_exact() {
 fn of_width_with_capture() {
     let v = reg_vn(0, 8);
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let z = b.build_int_const(0u64, T::I64)?;
-        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
-        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+        let z = b.build_int_const(0u64, T::int(64))?;
+        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::int(64))?;
+        b.extend_if_needed(cmp, T::int(64), ExtendOp::ZeroExtend)
     })
     .unwrap()
     .0;

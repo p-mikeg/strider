@@ -37,6 +37,20 @@ def test_mem_reader_python_exception_text_propagates_into_reader_error():
     )
 
 
+
+def test_a_short_read_ends_in_the_unmapped_verdict():
+    """A reader that serves a truncated instruction gets the verdict, not a
+    claim that it has no bytes."""
+
+    class Short(MemReader):
+        def read(self, addr, size):
+            return b"\x48"
+
+    lift = strider.lift.lifter(SleighArch.x86_64(), Short())
+    with pytest.raises(StriderError) as excinfo:
+        lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+    assert str(excinfo.value).endswith(": 0x1000 is unmapped")
+
 def test_reader_exception_is_chained_as_cause():
     """The message survives, but only the original exception carries a
     traceback into the caller's own code."""
@@ -51,3 +65,94 @@ def test_reader_exception_is_chained_as_cause():
     cause = excinfo.value.__cause__
     assert isinstance(cause, LookupError), f"cause was {cause!r}"
     assert cause.__traceback__ is not None
+
+
+# 0x1000: test edi,edi; nop; ret. The fall-through 0x1002 is a later read.
+_CODE = bytes([0x85, 0xFF, 0x90, 0xC3])
+
+
+class _FailingAt(MemReader):
+    def __init__(self, bad: int, result):
+        super().__init__()
+        self.bad = bad
+        self.result = result
+
+    def read(self, addr: int, size: int):
+        if addr >= self.bad:
+            return self.result(size)
+        off = addr - 0x1000
+        return _CODE[off:off + size] if 0 <= off < len(_CODE) else None
+
+
+def _raise(size):
+    raise ValueError("backend down")
+
+
+@pytest.mark.parametrize("bad", [0x1000, 0x1002])
+@pytest.mark.parametrize(
+    "result, cause, text",
+    [
+        (_raise, ValueError, "backend down"),
+        (lambda size: "abc", TypeError, "must return bytes"),
+        (lambda size: b"\x90" * (size + 5), type(None), "more than requested"),
+    ],
+    ids=["raises", "wrong-type", "too-long"],
+)
+@pytest.mark.parametrize("call", ["analyze", "build_cfg"])
+def test_reader_failure_fails_the_lift_at_any_address(bad, result, cause, text, call):
+    lift = strider.lift.lifter(SleighArch.x86_64(), _FailingAt(bad, result))
+    with pytest.raises(StriderError) as excinfo:
+        if call == "analyze":
+            lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+        else:
+            lift.build_cfg(0x1000)
+    msg = str(excinfo.value)
+    assert text in msg
+    assert "MemReader.read" in msg and "PyMemReader" not in msg
+    assert isinstance(excinfo.value.__cause__, cause)
+
+
+def test_reader_failure_does_not_leak_into_the_next_call():
+    reader = _FailingAt(0x1002, _raise)
+    lift = strider.lift.lifter(SleighArch.x86_64(), reader)
+    with pytest.raises(StriderError):
+        lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+    reader.bad = 1 << 63
+    lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+
+
+@pytest.mark.parametrize("bad", [0x1000, 0x1002])
+def test_reader_failure_keeps_the_backtrace_and_the_decode_site(bad):
+    lift = strider.lift.lifter(SleighArch.x86_64(), _FailingAt(bad, _raise))
+    with pytest.raises(StriderError) as excinfo:
+        lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+    assert "backend down" in excinfo.value.backtrace
+    assert isinstance(excinfo.value.__cause__, ValueError)
+    if bad == 0x1000:
+        assert "sleigh could not lift 0x1000" in str(excinfo.value)
+
+
+def test_a_swallowed_rom_exception_is_not_a_later_errors_cause():
+    """A `ReadOnlyMemory.read` exception reads as unmapped, so it must not
+    become the `__cause__` of an unrelated failure later in the run."""
+    import struct
+
+    from strider.reader import BufferReader, ReadOnlyMemory
+
+    # 0x1000: mov rax, [0x3000]; mov [0x4000], rax; jmp [0x2000]
+    # 0x1100: vmmcall (no CallOther ABI); ret
+    code = bytes.fromhex("488b042500300000" "4889042500400000" "ff242500200000")
+    code = code.ljust(0x100, b"\x90") + bytes.fromhex("0f01d9c3")
+
+    class Rom(ReadOnlyMemory):
+        def read(self, addr, size):
+            if addr == 0x3000:
+                raise RuntimeError("swallowed")
+            if addr == 0x2000 and size == 8:
+                return struct.pack("<Q", 0x1100)
+            return None
+
+    lift = strider.lift.lifter(SleighArch.x86_64(), BufferReader(0x1000, code), Rom())
+    with pytest.raises(StriderError, match="vmmcall") as excinfo:
+        lift.analyze(0x1000, CallingConvention.x86_64_systemv())
+    assert excinfo.value.__cause__ is None, repr(excinfo.value.__cause__)

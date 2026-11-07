@@ -14,13 +14,23 @@ writable-section address; the code-fetch `mem` reader still must.  The
 
 from __future__ import annotations
 
+import pytest
 import strider
+import strider._strider as ext
 
+from . import _elf_builder as eb
 from .conftest import fixture_path
 
 
 X64_RELOCS = lambda: fixture_path("x64", "elf_relocs")  # noqa: E731
 
+
+
+def _rom(lift):
+    """The read-only view an `ElfLifter` folds against."""
+    rom = lift.rom()
+    assert rom is not None
+    return rom
 
 def test_rom_reader_excludes_writable_sections():
     # `dispatch_table` (0x3ea0) is SHF_WRITE, hence forbidden from the
@@ -50,3 +60,69 @@ def test_mem_reader_still_includes_writable_sections():
     assert elf.read(table, 8) is not None, (
         "mem (code reader) must still resolve writable sections"
     )
+
+
+def _image_with_data(path, base: int, past_eof: bool) -> None:
+    """A `.text` page and a writable `.data` page. `past_eof` points the
+    `.data` PT_LOAD at file bytes from the end of the file on, so reading
+    that mapping fails."""
+    eb.Elf(
+        loads=[(eb.PF_R | eb.PF_X, base, 0), (eb.PF_R | eb.PF_W, base + 0x1000, 1)],
+        sections=[
+            eb.Section(".text", base, b"\xc3" * 8),
+            eb.Section(".data", base + 0x1000, b"\x11" * 8, eb.SHF_ALLOC | eb.SHF_WRITE),
+        ],
+    ).write(path)
+    if past_eof:
+        eb.point_load_past_eof(path, 1)
+
+
+def _image_with_rodata(path, base: int, rodata: int) -> None:
+    """A `.text` page at `base` and a read-only `.rodata` at `rodata`."""
+    eb.Elf(
+        loads=[(eb.PF_R | eb.PF_X, base, 0), (eb.PF_R, rodata, 1)],
+        sections=[
+            eb.Section(".text", base, b"\xc3" * 8),
+            eb.Section(".rodata", rodata, b"\x22" * 8, eb.SHF_ALLOC),
+        ],
+    ).write(path)
+
+
+def test_an_unrelocated_load_never_reads_the_writable_mappings_it_drops(tmp_path):
+    """Unrelocated, writable non-executable mappings are not loaded, so bytes
+    they cannot supply fail nothing; their addresses still bar the ROM."""
+    path, rodata = tmp_path / "data_past_eof.elf", tmp_path / "rodata.elf"
+    _image_with_data(path, 0x400000, past_eof=True)
+    _image_with_rodata(rodata, 0x600000, 0x401000)
+
+    elf = strider.lift.load_elf(str(path), apply_relocations=False)
+    assert elf.read(0x400000, 1) == b"\xc3"
+    assert elf.read(0x401000, 1) is None
+    elf.add_elf(str(rodata), apply_relocations=False)
+    assert elf.read(0x401000, 1) == b"\x22"
+    assert _rom(elf).read(0x401000, 1) is None, (
+        "the dropped writable mapping still bars its addresses from the ROM"
+    )
+
+    with pytest.raises(strider.StriderError, match="failed to parse ELF"):
+        ext._load_elf(str(path), True, True, False)
+
+
+def test_an_unrelocated_merge_never_reads_the_writable_mappings_it_drops(tmp_path):
+    first, second = tmp_path / "first.elf", tmp_path / "second.elf"
+    rodata = tmp_path / "rodata.elf"
+    _image_with_data(first, 0x400000, past_eof=False)
+    _image_with_data(second, 0x500000, past_eof=True)
+    _image_with_rodata(rodata, 0x600000, 0x501000)
+    elf = strider.lift.load_elf(str(first), apply_relocations=False)
+
+    elf.add_elf(str(second), apply_relocations=False)
+    assert elf.read(0x500000, 1) == b"\xc3"
+    elf.add_elf(str(rodata), apply_relocations=False)
+    assert elf.read(0x501000, 1) == b"\x22"
+    assert _rom(elf).read(0x501000, 1) is None, (
+        "the dropped writable mapping still bars its addresses from the ROM"
+    )
+
+    with pytest.raises(strider.StriderError, match="failed to parse ELF"):
+        elf.add_elf(str(second))

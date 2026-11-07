@@ -1,0 +1,76 @@
+# mips64be/known_bits: Strider::analyze, default options
+endian big
+default_cc arg_passing_regs=[a0, a1, a2, a3, t0, t1, t2, t3] arg_passing_regs_float=[f12, f13, f14, f15, f16, f17, f18, f19] callee_saved_regs=[s0, s1, s2, s3, s4, s5, s6, s7, s8, gp, ra, f24, f25, f26, f27, f28, f29, f30, f31] ret_val_regs=[v0, v1] ret_val_regs_float=[f0, f2] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=ra preserves_memory=false preserves_all_registers=false entry_address_vn=t9 reg_args_adjoin_stack_args=true
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
+
+== main @0x120000890
+cfg
+  0x120000890 58 ops return -> []
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x8100:4, u:0x14600:4]
+arg 1 [%v17]
+arg 2 [%v18]
+arg 3 [%v19]
+arg 4 [%v20]
+arg 5 [%v21]
+arg 6 [%v22]
+arg 7 [%v23]
+float_arg 0 [%v24]
+float_arg 1 [%v25]
+float_arg 2 [%v26]
+float_arg 3 [%v27]
+float_arg 4 [%v28]
+float_arg 5 [%v29]
+float_arg 6 [%v30]
+float_arg 7 [%v31]
+%v0:ctrl = entry
+%v1:mem = initial_memory
+%v2:i64 = initial_var[sp]
+%v3:i64 = iconst[0xfffffffffffffff0]
+%v4:i64 = int.add %v2, %v3
+%v5:i64 = initial_var[gp]
+%v6:mem = store[r] %v1, %v4, %v5
+%v7:i64 = iconst[0xffffffffffffffe0]
+%v8:i64 = int.add %v2, %v7
+%v9:i32 = iconst[0x0]
+%v10:mem = store[r] %v6, %v8, %v9
+%v11:i64 = iconst[0xfffffffffffffff8]
+%v12:i64 = int.add %v2, %v11
+%v13:i64 = initial_var[ra]
+%v14:mem = store[r] %v10, %v12, %v13
+%v15:i64 = iconst[0x120000ac0]
+%v16:i64 = iconst[0x0]
+%v17:i64 = initial_var[a1]
+%v18:i64 = initial_var[a2]
+%v19:i64 = initial_var[a3]
+%v20:i64 = initial_var[t0]
+%v21:i64 = initial_var[t1]
+%v22:i64 = initial_var[t2]
+%v23:i64 = initial_var[t3]
+%v24:i64 = initial_var[f12]
+%v25:i64 = initial_var[f13]
+%v26:i64 = initial_var[f14]
+%v27:i64 = initial_var[f15]
+%v28:i64 = initial_var[f16]
+%v29:i64 = initial_var[f17]
+%v30:i64 = initial_var[f18]
+%v31:i64 = initial_var[f19]
+%v32:ctrl, %v33:mem, %v34:i64<v0>, %v35:i64<v1>, %v36:i64<f0>, %v37:i64<f2>, %v38:i64<a0>, %v39:i64<a1>, %v40:i64<a2>, %v41:i64<a3>, %v42:i64<t0>, %v43:i64<t1>, %v44:i64<t2>, %v45:i64<t3>, %v46:i64<t9>, %v47:i64<pc>, %v48:i64<f12>, %v49:i64<f13>, %v50:i64<f14>, %v51:i64<f15>, %v52:i64<f16>, %v53:i64<f17>, %v54:i64<f18>, %v55:i64<f19>, %v56:i8<ISAModeSwitch> = call %v0, %v14, %v15, %v8, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31, %v9
+%v57:i32 = load[r] %v33, %v8
+%v58:i64 = extend.sign %v57
+%v59:i64 = int.xor %v58, %v34
+%v60:i32 = truncate %v59
+%v61:mem = store[r] %v33, %v8, %v60
+%v62:i64 = extend.sign %v60
+return %v32, %v61, %v62, %v59, %v36, %v37
+
+== kb_or_then_mask @0x120000ac0
+cfg
+  0x120000ac0 8 ops return -> []
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8]
+%v0:ctrl = entry
+%v1:mem = initial_memory
+%v2:i64 = iconst[0x1]
+%v3:i64 = initial_var[v1]
+%v4:i64 = initial_var[f0]
+%v5:i64 = initial_var[f2]
+return %v0, %v1, %v2, %v3, %v4, %v5

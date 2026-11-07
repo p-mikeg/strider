@@ -12,9 +12,7 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 elf = strider.lift.load_elf(str(FIXTURE))
 addr = elf.symbol("array_sum").address
 
-_cfg, baseline, _unresolved = elf.analyze(
-    addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
-)
+_cfg, baseline, _unresolved = elf.analyze(addr)
 
 
 def shape(g: strider.ir.Function) -> dict[str, int]:
@@ -45,12 +43,12 @@ print(f"no further optimization applied                 : {shape(no_opt)}")
 partial_pipe = strider.opt.OptimizerPipeline.empty()
 partial_pipe.add(strider.opt.ConstantFold())
 partial = no_opt.clone()
-elf.optimize(partial, partial_pipe)
+partial.optimize(pipeline=partial_pipe)
 print(f"ConstantFold-only pipeline                      : {shape(partial)}")
 
 # The default pipeline reaches at least the same fixed point.
 full = no_opt.clone()
-elf.optimize(full, strider.opt.OptimizerPipeline.default())
+full.optimize(pipeline=strider.opt.OptimizerPipeline.default())
 print(f"default pipeline                                : {shape(full)}")
 
 print(

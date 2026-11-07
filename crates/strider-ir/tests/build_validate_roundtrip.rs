@@ -12,25 +12,12 @@ use strider_ir_test_utils::make_empty_fn;
 
 #[test]
 fn every_int_binary_op_validates() {
-    for op in [
-        IntBinaryOp::Add,
-        IntBinaryOp::Mul,
-        IntBinaryOp::Div,
-        IntBinaryOp::Sdiv,
-        IntBinaryOp::Rem,
-        IntBinaryOp::Srem,
-        IntBinaryOp::And,
-        IntBinaryOp::Or,
-        IntBinaryOp::Xor,
-        IntBinaryOp::ShiftLeft,
-        IntBinaryOp::ShiftRight,
-        IntBinaryOp::SShiftRight,
-    ] {
+    for op in IntBinaryOp::ALL {
         make_empty_fn(|fb| {
-            let lhs = fb.build_int_const(1u64, ValueType::I64)?;
-            let rhs = fb.build_int_const(2u64, ValueType::I64)?;
+            let lhs = fb.build_int_const(1u64, ValueType::int(64))?;
+            let rhs = fb.build_int_const(2u64, ValueType::int(64))?;
             let result = fb
-                .build_int_binary_operation(lhs, rhs, op, ValueType::I64)
+                .build_int_binary_operation(lhs, rhs, op, ValueType::int(64))
                 .unwrap_or_else(|e| panic!("op {op:?} failed to build: {e}"));
             Ok(result)
         })
@@ -40,16 +27,17 @@ fn every_int_binary_op_validates() {
 
 #[test]
 fn every_int_unary_op_validates() {
-    // `Neg` is the only variant: bitwise complement is `Xor(x, all_ones)`.
-    let op = IntUnaryOp::Neg;
-    make_empty_fn(|fb| {
-        let x = fb.build_int_const(5u64, ValueType::I64)?;
-        let result = fb
-            .build_int_unary_operation(x, op, ValueType::I64)
-            .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
-        Ok(result)
-    })
-    .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
+    // Bitwise complement is `Xor(x, all_ones)`, not a unary op.
+    for op in IntUnaryOp::ALL {
+        make_empty_fn(|fb| {
+            let x = fb.build_int_const(5u64, ValueType::int(64))?;
+            let result = fb
+                .build_int_unary_operation(x, op, ValueType::int(64))
+                .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
+            Ok(result)
+        })
+        .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
+    }
 }
 
 #[test]
@@ -80,29 +68,22 @@ fn bool_ops_validate() {
 #[test]
 fn float_ops_validate() {
     // The lifter lowers `FloatSub` to `FloatAdd(a, Neg(b))`.
-    for op in [FloatBinaryOp::Add, FloatBinaryOp::Mul, FloatBinaryOp::Div] {
+    for op in FloatBinaryOp::ALL {
         make_empty_fn(|fb| {
-            let a = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::F64); // 1.0
-            let b = fb.build_float_const(0x4000_0000_0000_0000u64, ValueType::F64); // 2.0
+            let a = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::float(64)); // 1.0
+            let b = fb.build_float_const(0x4000_0000_0000_0000u64, ValueType::float(64)); // 2.0
             let result = fb
-                .build_float_binary_op(a, b, op, ValueType::F64)
+                .build_float_binary_op(a, b, op, ValueType::float(64))
                 .unwrap_or_else(|e| panic!("FloatBinaryOp::{op:?} failed: {e}"));
             Ok(result)
         })
         .unwrap_or_else(|e| panic!("FloatBinaryOp::{op:?} invalid: {e}"));
     }
-    for op in [
-        FloatUnaryOp::Neg,
-        FloatUnaryOp::Abs,
-        FloatUnaryOp::Sqrt,
-        FloatUnaryOp::Ceil,
-        FloatUnaryOp::Floor,
-        FloatUnaryOp::Round,
-    ] {
+    for op in FloatUnaryOp::ALL {
         make_empty_fn(|fb| {
-            let x = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::F64);
+            let x = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::float(64));
             let result = fb
-                .build_float_unary_op(x, op, ValueType::F64)
+                .build_float_unary_op(x, op, ValueType::float(64))
                 .unwrap_or_else(|e| panic!("FloatUnaryOp::{op:?} failed: {e}"));
             Ok(result)
         })
@@ -122,16 +103,20 @@ fn loads_and_stores_validate() {
         .expect("builder");
 
     let sp_val = b.read_variable(&sp_vn).expect("read sp");
-    let offset = b.build_int_const(8u64, ValueType::I64).expect("const 8");
+    let offset = b
+        .build_int_const(8u64, ValueType::int(64))
+        .expect("const 8");
     let addr = b
-        .build_int_binary_operation(sp_val, offset, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(sp_val, offset, IntBinaryOp::Add, ValueType::int(64))
         .expect("addr");
 
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .expect("load");
 
-    let data = b.build_int_const(0x42u64, ValueType::I64).expect("data");
+    let data = b
+        .build_int_const(0x42u64, ValueType::int(64))
+        .expect("data");
     b.build_store(addr, data, rsleigh::VnSpace::RAM)
         .expect("store");
 
@@ -166,12 +151,12 @@ fn region_join_with_phi_validates() {
     b.build_if(cond, region_t, region_f).expect("build_if");
 
     b.set_region(region_t);
-    let v1 = b.build_int_const(1u64, ValueType::I64).expect("v1");
+    let v1 = b.build_int_const(1u64, ValueType::int(64)).expect("v1");
     b.write_variable(&var_vn, v1).expect("write var true");
     b.build_branch(join).expect("branch to join from true");
 
     b.set_region(region_f);
-    let v2 = b.build_int_const(2u64, ValueType::I64).expect("v2");
+    let v2 = b.build_int_const(2u64, ValueType::int(64)).expect("v2");
     b.write_variable(&var_vn, v2).expect("write var false");
     b.build_branch(join).expect("branch to join from false");
 
@@ -188,10 +173,10 @@ fn region_join_with_phi_validates() {
 #[test]
 fn const_then_return_validates() {
     for (val, ty) in [
-        (0u128, ValueType::I32),
-        (0xCAFE_BABE_u128, ValueType::I64),
-        (0u128, ValueType::I8),
-        (0xFF_u128, ValueType::I8),
+        (0u128, ValueType::int(32)),
+        (0xCAFE_BABE_u128, ValueType::int(64)),
+        (0u128, ValueType::int(8)),
+        (0xFF_u128, ValueType::int(8)),
     ] {
         make_empty_fn(|b| b.build_int_const(val, ty))
             .unwrap_or_else(|e| panic!("const_then_return failed for ({val:#x}, {ty:?}): {e}"));
@@ -201,18 +186,11 @@ fn const_then_return_validates() {
 #[test]
 fn every_int_cmp_op_validates() {
     // The lifter lowers LessEqual / SlessEqual / NotEqual into these six.
-    for op in [
-        IntCmpOp::Equal,
-        IntCmpOp::Less,
-        IntCmpOp::Sless,
-        IntCmpOp::Carry,
-        IntCmpOp::Scarry,
-        IntCmpOp::Sborrow,
-    ] {
+    for op in IntCmpOp::ALL {
         make_empty_fn(|b| {
-            let lhs = b.build_int_const(1u64, ValueType::I32)?;
-            let rhs = b.build_int_const(2u64, ValueType::I32)?;
-            b.build_int_cmp_operation(lhs, rhs, op, ValueType::I32)
+            let lhs = b.build_int_const(1u64, ValueType::int(32))?;
+            let rhs = b.build_int_const(2u64, ValueType::int(32))?;
+            b.build_int_cmp_operation(lhs, rhs, op, ValueType::int(32))
         })
         .unwrap_or_else(|e| panic!("IntCmpOp::{op:?} invalid: {e}"));
     }
@@ -221,12 +199,12 @@ fn every_int_cmp_op_validates() {
 #[test]
 fn extend_and_truncate_validate() {
     make_empty_fn(|b| {
-        let v8 = b.build_int_const(0xFFu64, ValueType::I8)?;
-        let v32_zero = b.extend_if_needed(v8, ValueType::I32, ExtendOp::ZeroExtend)?;
-        let v32_sign = b.extend_if_needed(v8, ValueType::I32, ExtendOp::SignExtend)?;
-        let _back_to_u8 = b.truncate_if_needed(v32_sign, ValueType::I8)?;
+        let v8 = b.build_int_const(0xFFu64, ValueType::int(8))?;
+        let v32_zero = b.extend_if_needed(v8, ValueType::int(32), ExtendOp::ZeroExtend)?;
+        let v32_sign = b.extend_if_needed(v8, ValueType::int(32), ExtendOp::SignExtend)?;
+        let _back_to_u8 = b.truncate_if_needed(v32_sign, ValueType::int(8))?;
         // Combine both extensions so neither becomes dead.
-        b.build_int_binary_operation(v32_zero, v32_sign, IntBinaryOp::Add, ValueType::I32)
+        b.build_int_binary_operation(v32_zero, v32_sign, IntBinaryOp::Add, ValueType::int(32))
     })
     .expect("extend_and_truncate must validate");
 }
@@ -244,7 +222,7 @@ fn switch_target_arity_mismatch_is_rejected() {
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
     b.build_switch(addr, &[(a, 0x1000), (c, 0x1020)]).unwrap();
     b.set_region(a);
     b.build_return(None, &[]).unwrap();
@@ -276,12 +254,12 @@ fn switch_target_arity_mismatch_is_rejected() {
 #[test]
 fn float_int_conversions_validate() {
     make_empty_fn(|b| {
-        let i = b.build_int_const(42u64, ValueType::I32)?;
-        let f32_via_to_float = b.build_int_to_float(i, ValueType::F32)?;
-        let _back_u32 = b.build_float_to_int(f32_via_to_float, ValueType::I32)?;
-        let f32_via_bits = b.build_int_bits_to_float(i, ValueType::F32)?;
-        let _bits_back = b.build_float_bits_to_int(f32_via_bits, ValueType::I32)?;
-        let f64v = b.build_float_to_float(f32_via_to_float, ValueType::F64)?;
+        let i = b.build_int_const(42u64, ValueType::int(32))?;
+        let f32_via_to_float = b.build_int_to_float(i, ValueType::float(32))?;
+        let _back_u32 = b.build_float_to_int(f32_via_to_float, ValueType::int(32))?;
+        let f32_via_bits = b.build_int_bits_to_float(i, ValueType::float(32))?;
+        let _bits_back = b.build_float_bits_to_int(f32_via_bits, ValueType::int(32))?;
+        let f64v = b.build_float_to_float(f32_via_to_float, ValueType::float(64))?;
         Ok(f64v)
     })
     .expect("float_int_conversions must validate");
@@ -290,10 +268,10 @@ fn float_int_conversions_validate() {
 #[test]
 fn bit_counts_validate() {
     make_empty_fn(|b| {
-        let v = b.build_int_const(0xF0F0u64, ValueType::I32)?;
-        let pop = b.build_popcount(v, ValueType::I32)?;
-        let lz = b.build_lzcount(v, ValueType::I32)?;
-        b.build_int_binary_operation(pop, lz, IntBinaryOp::Add, ValueType::I32)
+        let v = b.build_int_const(0xF0F0u64, ValueType::int(32))?;
+        let pop = b.build_popcount(v, ValueType::int(32))?;
+        let lz = b.build_lzcount(v, ValueType::int(32))?;
+        b.build_int_binary_operation(pop, lz, IntBinaryOp::Add, ValueType::int(32))
     })
     .expect("popcount / lzcount must validate");
 }
@@ -322,7 +300,7 @@ fn indirect_branch_placeholder_validates() {
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let target = b
-        .build_int_const(0x1000u64, ValueType::I64)
+        .build_int_const(0x1000u64, ValueType::int(64))
         .expect("build_int_const");
     b.build_indirect_branch(target)
         .expect("build_indirect_branch");
@@ -332,9 +310,9 @@ fn indirect_branch_placeholder_validates() {
 #[test]
 fn opaque_ops_validate() {
     make_empty_fn(|b| {
-        let seed = b.build_int_const(0x10u64, ValueType::I32)?;
-        let pooled = b.build_cpool_ref(&[seed], ValueType::I32)?;
-        let obj = b.build_new(&[pooled], ValueType::I32)?;
+        let seed = b.build_int_const(0x10u64, ValueType::int(32))?;
+        let pooled = b.build_cpool_ref(&[seed], ValueType::int(32))?;
+        let obj = b.build_new(&[pooled], ValueType::int(32))?;
         Ok(obj)
     })
     .expect("cpool_ref / new must validate");

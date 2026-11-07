@@ -1,12 +1,8 @@
-//! The defs of a [`MemLayout`] grouped by what they can clobber, so a climb asks
-//! for the highest possible clobber of a location in a position range without
-//! visiting the range.
-//!
-//! Every answer is a superset: [`MemWalker::def_clobbers`] still decides each
-//! candidate.  A store is classified once, when the index is built; a store
-//! whose address a later rewrite can still change is one whose address
-//! depended on a load, which classifies as an `Anchor` and is a candidate for
-//! every location.
+//! The defs of a [`MemLayout`] grouped by what they can clobber, so a climb
+//! finds the highest possible clobber in a position range without visiting
+//! it. Answers are supersets; [`super::walker::MemWalker`] decides each. Each
+//! store is classified once, at build. An address a forward can still change
+//! derives from a load, so it is an `Anchor`, a candidate for every location.
 
 use std::collections::BTreeMap;
 
@@ -14,9 +10,10 @@ use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
-use super::{
-    AddrClass, MemOptions, SizedAddr, addr_bit_width, classify_addr, store_value_byte_size,
-};
+use super::AddrClass;
+use super::alias::Loc;
+use super::query::{Calls, Policy};
+use super::ring::{addr_bit_width, ring_overlap_at, ring_window};
 use crate::mem_ssa::{MemLayout, Shape};
 
 const NONE: u32 = u32::MAX;
@@ -28,21 +25,12 @@ fn highest_in(positions: &[u32], lo: u32, hi: u32) -> Option<u32> {
 }
 
 /// Ascending positions, each with a key.
+#[derive(Default)]
 struct Keyed<K> {
     pos: Vec<u32>,
     key: Vec<K>,
     /// Index of the nearest earlier entry with a different key.
     prev_other: Vec<u32>,
-}
-
-impl<K> Default for Keyed<K> {
-    fn default() -> Self {
-        Self {
-            pos: Vec::new(),
-            key: Vec::new(),
-            prev_other: Vec::new(),
-        }
-    }
 }
 
 impl<K: Copy + Eq> Keyed<K> {
@@ -79,97 +67,44 @@ impl<K: Copy + Eq> Keyed<K> {
 /// Stores whose offsets share one coordinate system and one address width.
 #[derive(Default)]
 struct Offsets {
-    /// Start offset, then each store width at it with its positions.
-    starts: BTreeMap<i128, Vec<(i128, Vec<u32>)>>,
+    /// The positions of the stores of each start offset and byte size.
+    starts: BTreeMap<(i128, i128), Vec<u32>>,
     all: Vec<u32>,
-    /// Stores whose end saturates the carrier, which no range test separates.
-    unbounded: Vec<u32>,
     max_size: i128,
-    min_start: i128,
-    max_start: i128,
 }
 
 impl Offsets {
     fn push(&mut self, pos: u32, start: i128, size: i128) {
-        if self.all.is_empty() {
-            self.min_start = start;
-            self.max_start = start;
-        } else {
-            self.min_start = self.min_start.min(start);
-            self.max_start = self.max_start.max(start);
-        }
         self.all.push(pos);
         self.max_size = self.max_size.max(size);
-        if start.saturating_add(size) == i128::MAX {
-            self.unbounded.push(pos);
-            return;
-        }
-        let widths = self.starts.entry(start).or_default();
-        match widths.iter_mut().find(|(w, _)| *w == size) {
-            Some((_, positions)) => positions.push(pos),
-            None => widths.push((size, vec![pos])),
-        }
+        self.starts.entry((start, size)).or_default().push(pos);
     }
 
-    /// The highest store in `lo..=hi` whose verdict against `[offset, offset +
-    /// size)` at `bits` can be anything but `Disjoint`.
+    /// The highest store in `lo..=hi` that may overlap `[offset, offset +
+    /// size)` at `bits`.
     fn highest(&self, offset: i128, size: i128, bits: u32, lo: u32, hi: u32) -> Option<u32> {
-        // Past half the modulus two offsets name no distance, and at exactly
-        // 128 bits none is comparable (see `offsets_comparable`).
-        if bits == 128 || offset.saturating_add(size) == i128::MAX {
-            return highest_in(&self.all, lo, hi);
+        let all = || highest_in(&self.all, lo, hi);
+        // At 128 bits a ring window does not fit `i128`.
+        if bits == 128 {
+            return all();
         }
-        if bits < 128 {
-            let half = 1i128 << (bits - 1);
-            let bound = half
-                .saturating_sub(size.max(self.max_size))
-                .max(0)
-                .unsigned_abs();
-            if offset.abs_diff(self.min_start) > bound || offset.abs_diff(self.max_start) > bound {
-                return highest_in(&self.all, lo, hi);
-            }
-        }
-        let mut best = highest_in(&self.unbounded, lo, hi);
         let from = offset.saturating_sub(self.max_size.max(1) - 1);
         let to = offset.saturating_add(size.max(1) - 1);
-        for (&start, widths) in self.starts.range(from..=to) {
-            for (width, positions) in widths {
-                if start == offset || start.saturating_add(*width) > offset {
+        let Some(windows) = ring_window(bits, from, to) else {
+            return all();
+        };
+        let mut best = None;
+        for (window_lo, window_hi) in windows.into_iter().flatten() {
+            for (&(start, width), positions) in self
+                .starts
+                .range((window_lo, i128::MIN)..=(window_hi, i128::MAX))
+            {
+                if ring_overlap_at(bits, start, width, offset, size) {
                     best = best.max(highest_in(positions, lo, hi));
                 }
             }
         }
         best
-    }
-}
-
-/// Stores rooted at one base, split by address width.
-#[derive(Default)]
-struct Rooted {
-    widths: Keyed<Option<u32>>,
-    offsets: FxHashMap<Option<u32>, Offsets>,
-}
-
-impl Rooted {
-    fn push(&mut self, pos: u32, offset: i128, size: i128, bits: Option<u32>) {
-        self.widths.push(pos, bits);
-        self.offsets
-            .entry(bits)
-            .or_default()
-            .push(pos, offset, size);
-    }
-
-    fn highest(&self, probe: &SizedAddr, offset: i128, lo: u32, hi: u32) -> Option<u32> {
-        // Another width, or none at all, is never comparable.
-        let other = self.widths.highest_not(probe.addr_bits, lo, hi);
-        let same = match probe.addr_bits {
-            None => self.widths.highest(lo, hi),
-            Some(bits) => self
-                .offsets
-                .get(&Some(bits))
-                .and_then(|o| o.highest(offset, probe.size, bits, lo, hi)),
-        };
-        other.max(same)
     }
 }
 
@@ -180,14 +115,25 @@ struct SpaceStores {
     heap_opaque: Vec<u32>,
     heap_any: Vec<u32>,
     stack_any: Keyed<ValueId>,
-    constant_any: Vec<u32>,
-    stack: FxHashMap<ValueId, Rooted>,
-    heap: FxHashMap<ValueId, Rooted>,
-    constant: Rooted,
+    /// Per base, at the base's width.
+    stack: FxHashMap<ValueId, Offsets>,
+    heap: FxHashMap<ValueId, Offsets>,
+    /// Per address width.
+    constant: FxHashMap<u32, Offsets>,
+}
+
+impl SpaceStores {
+    /// The highest constant-address store in `lo..=hi`, whatever its address.
+    fn any_constant(&self, lo: u32, hi: u32) -> Option<u32> {
+        self.constant
+            .values()
+            .filter_map(|o| highest_in(&o.all, lo, hi))
+            .max()
+    }
 }
 
 pub(crate) struct StoreIndex {
-    /// Defs that are neither a store nor a call, which clobber every location.
+    /// `CallOther`s, which clobber every location.
     opaque: Vec<u32>,
     /// Calls not declared `preserves_memory`.
     calls: Vec<u32>,
@@ -195,11 +141,7 @@ pub(crate) struct StoreIndex {
 }
 
 impl StoreIndex {
-    pub(crate) fn build(
-        function: &Function,
-        layout: &MemLayout,
-        noalias_allocators: &rustc_hash::FxHashSet<u64>,
-    ) -> Self {
+    pub(crate) fn build(function: &Function, layout: &MemLayout) -> Self {
         let mut index = Self {
             opaque: Vec::new(),
             calls: Vec::new(),
@@ -211,11 +153,13 @@ impl StoreIndex {
             }
             let def = layout.node_at(pos);
             match *function.node_kind(def) {
-                NodeKind::Store(space) => {
-                    let addr = function.store_addr(def);
-                    let class = classify_addr(function, addr, noalias_allocators);
-                    let size = store_value_byte_size(function, function.store_data(def));
-                    let bits = addr_bit_width(function, addr);
+                NodeKind::Store(_) => {
+                    let Loc {
+                        class,
+                        size,
+                        bits,
+                        space,
+                    } = Loc::written_by(function, def);
                     let s = index.spaces.entry(space).or_default();
                     s.all.push(pos);
                     match class {
@@ -225,22 +169,17 @@ impl StoreIndex {
                             s.heap_any.push(pos);
                         }
                         AddrClass::HeapRooted { base, offset } => {
+                            assert_eq!(bits, addr_bit_width(function, base));
                             s.heap_any.push(pos);
-                            s.heap
-                                .entry(base)
-                                .or_default()
-                                .push(pos, offset, size, bits);
+                            s.heap.entry(base).or_default().push(pos, offset, size);
                         }
                         AddrClass::StackRooted { base, offset } => {
+                            assert_eq!(bits, addr_bit_width(function, base));
                             s.stack_any.push(pos, base);
-                            s.stack
-                                .entry(base)
-                                .or_default()
-                                .push(pos, offset, size, bits);
+                            s.stack.entry(base).or_default().push(pos, offset, size);
                         }
                         AddrClass::Constant { addr } => {
-                            s.constant_any.push(pos);
-                            s.constant.push(pos, addr, size, bits);
+                            s.constant.entry(bits).or_default().push(pos, addr, size);
                         }
                     }
                 }
@@ -255,22 +194,14 @@ impl StoreIndex {
         index
     }
 
-    /// The highest def in `lo..=hi` that may clobber `probe` in `space` under
-    /// `options`.
-    pub(crate) fn candidate(
-        &self,
-        probe: &SizedAddr,
-        space: rsleigh::VnSpace,
-        options: &MemOptions,
-        lo: u32,
-        hi: u32,
-    ) -> Option<u32> {
+    /// The highest def in `lo..=hi` that may clobber `probe` under
+    /// `policy`.
+    pub(crate) fn candidate(&self, probe: &Loc, policy: Policy, lo: u32, hi: u32) -> Option<u32> {
         let mut best = highest_in(&self.opaque, lo, hi);
-        // Without `calls_block` every call steps through, relaxed or not.
-        if options.calls_block {
+        if policy.calls != Calls::Pass {
             best = best.max(highest_in(&self.calls, lo, hi));
         }
-        let Some(s) = self.spaces.get(&space) else {
+        let Some(s) = self.spaces.get(&probe.space) else {
             return best;
         };
         let stores = match probe.class {
@@ -279,18 +210,28 @@ impl StoreIndex {
                 let mut b = s
                     .stack
                     .get(&base)
-                    .and_then(|r| r.highest(probe, offset, lo, hi));
-                if !options.distinct_sp_bases_disjoint {
+                    .and_then(|o| o.highest(offset, probe.size, probe.bits, lo, hi));
+                if !policy.distinct_sp_bases_disjoint {
                     b = b.max(s.stack_any.highest_not(base, lo, hi));
                 }
-                if !options.stack_global_disjoint {
-                    b = b.max(highest_in(&s.constant_any, lo, hi));
+                if !policy.stack_global_disjoint {
+                    b = b.max(s.any_constant(lo, hi));
                 }
                 b.max(highest_in(&s.anchor, lo, hi))
             }
             AddrClass::Constant { addr } => {
-                let mut b = s.constant.highest(probe, addr, lo, hi);
-                if !options.stack_global_disjoint {
+                let mut b = s
+                    .constant
+                    .iter()
+                    .filter_map(|(&bits, o)| {
+                        if bits == probe.bits {
+                            o.highest(addr, probe.size, bits, lo, hi)
+                        } else {
+                            highest_in(&o.all, lo, hi)
+                        }
+                    })
+                    .max();
+                if !policy.stack_global_disjoint {
                     b = b.max(s.stack_any.highest(lo, hi));
                 }
                 b.max(highest_in(&s.anchor, lo, hi))
@@ -298,7 +239,7 @@ impl StoreIndex {
             AddrClass::HeapRooted { base, offset } => s
                 .heap
                 .get(&base)
-                .and_then(|r| r.highest(probe, offset, lo, hi))
+                .and_then(|o| o.highest(offset, probe.size, probe.bits, lo, hi))
                 .max(highest_in(&s.heap_opaque, lo, hi))
                 .max(highest_in(&s.anchor, lo, hi)),
             AddrClass::HeapOpaque => {

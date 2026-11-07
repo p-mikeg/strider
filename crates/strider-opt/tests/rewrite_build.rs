@@ -6,7 +6,7 @@ use strider_ir::node::{NodeKind, ValueType as T};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
-use strider_opt::{EditFunction, rewrite_rule, rewrite_rule_runtime};
+use strider_opt::{EditFunction, UnboundCapture, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
     Capture, MatchPat, Matcher, TemplatePat, int_add, int_const, int_const_with, one_of, template,
     var,
@@ -17,11 +17,11 @@ use strider_pattern::{
 fn add_zero_identity_fires_and_redirects() {
     let x = Capture::new();
     let mut fx = make_empty_fn(|b| {
-        let a = b.build_int_const(7u64, T::I64)?;
-        let zero = b.build_int_const(0u64, T::I64)?;
-        let sum = b.build_int_binary_operation(a, zero, IntBinaryOp::Add, T::I64)?;
+        let a = b.build_int_const(7u64, T::int(64))?;
+        let zero = b.build_int_const(0u64, T::int(64))?;
+        let sum = b.build_int_binary_operation(a, zero, IntBinaryOp::Add, T::int(64))?;
         // A consumer of the Add, so the rewrite has a use to redirect.
-        b.build_int_binary_operation(sum, a, IntBinaryOp::Or, T::I64)
+        b.build_int_binary_operation(sum, a, IntBinaryOp::Or, T::int(64))
     })
     .unwrap();
 
@@ -69,19 +69,16 @@ fn reassoc_rule_nests_computed_const_in_add() {
 
     // `(x + 1) + 2` over a tracked register var.
     let (mut fx, _xval) = make_fn_with_var(reg_vn(0, 8), |b, xv| {
-        let one = b.build_int_const(1u64, T::I64)?;
-        let inner = b.build_int_binary_operation(xv, one, IntBinaryOp::Add, T::I64)?;
-        let two = b.build_int_const(2u64, T::I64)?;
-        b.build_int_binary_operation(inner, two, IntBinaryOp::Add, T::I64)
+        let one = b.build_int_const(1u64, T::int(64))?;
+        let inner = b.build_int_binary_operation(xv, one, IntBinaryOp::Add, T::int(64))?;
+        let two = b.build_int_const(2u64, T::int(64))?;
+        b.build_int_binary_operation(inner, two, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
     let rule = rewrite_rule(
         int_add(int_add(var(x), int_const(c1)), int_const(c2)),
-        template::int_add(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-        ),
+        template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
     );
 
     let outer_root = {
@@ -125,15 +122,27 @@ fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
         msg.contains("does not bind"),
         "expected unbound-capture error mentioning \"does not bind\", got: {msg}"
     );
+    let unbound = err.downcast_ref::<UnboundCapture>().expect("typed error");
+    assert_eq!(unbound.capture, c);
+    assert!(!unbound.on_some_arms);
 }
 
-/// A capture bound on only SOME `one_of` arms must be rejected at construction.
-///
-/// Exactly one arm fires per match, so a rule whose RHS needs `k` has nothing to
-/// instantiate when the arm that does not bind `k` matches. Accepting it defers
-/// the failure to whichever binary first exercises that arm, where
-/// `instantiate`'s unbound-capture error is not a skip and aborts the pipeline
-/// for the whole function.
+/// A refused RHS fails the rule at construction, not on every firing.
+#[test]
+fn rewrite_rule_runtime_rejects_a_refused_template() {
+    let a = Capture::new();
+    let mut tb = strider_pattern::template::TemplateBuilder::new();
+    let rhs = tb.capture(a);
+    tb.set_value_ty(rhs, T::int(64));
+    let err = match rewrite_rule_runtime(var(a).into_pattern(), tb.finish()) {
+        Ok(_) => panic!("expected the template's refusal, got Ok"),
+        Err(e) => e.to_string(),
+    };
+    assert!(err.contains("targets a capture"), "{err}");
+}
+
+/// A capture bound on only some `one_of` arms is rejected at construction,
+/// since only one arm fires per match.
 #[test]
 fn rewrite_rule_runtime_rejects_capture_bound_on_only_some_arms() {
     let x = Capture::new();
@@ -152,6 +161,9 @@ fn rewrite_rule_runtime_rejects_capture_bound_on_only_some_arms() {
         msg.contains("only on SOME alternation arms"),
         "expected a partial-arm-binding error, got: {msg}"
     );
+    let unbound = err.downcast_ref::<UnboundCapture>().expect("typed error");
+    assert_eq!(unbound.capture, k);
+    assert!(unbound.on_some_arms);
 }
 
 /// The complement: a capture every arm binds is guaranteed, so the rule builds.
@@ -181,3 +193,48 @@ fn rewrite_rule_runtime_accepts_capture_bound_on_every_arm() {
 //     let p: strider_pattern::Pattern = var(c).into_pattern();
 //     rewrite_rule_runtime(lhs, p);
 //     // error[E0308]: expected `Template`, found `Pattern`
+
+/// A computed template constant is interned at the declared width, so a
+/// rewrite at `I256` mints every limb instead of skipping past a carrier.
+#[test]
+fn computed_const_is_interned_at_an_i256_width() {
+    use strider_ir::UBig;
+    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+    let ty = T::int(256);
+    let big = UBig::from_words(&[1, 2, 3, 4]);
+
+    let (mut fx, _xval) = make_fn_with_var(reg_vn(0, 32), |b, xv| {
+        let one = b.build_int_const(big.clone(), ty)?;
+        let inner = b.build_int_binary_operation(xv, one, IntBinaryOp::Add, ty)?;
+        let two = b.build_int_const(UBig::from_words(&[5, 6, 7, 8]), ty)?;
+        b.build_int_binary_operation(inner, two, IntBinaryOp::Add, ty)
+    })
+    .unwrap();
+
+    let rule = rewrite_rule(
+        int_add(int_add(var(x), int_const(c1)), int_const(c2)),
+        template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
+    );
+
+    let outer_root = {
+        let m = Matcher::new(&fx);
+        let pat = int_add(int_add(var(x), int_const(c1)), int_const(c2)).into_pattern();
+        let hits = m.find_all(&pat).unwrap();
+        assert!(!hits.is_empty(), "the I256 reassoc LHS must match");
+        hits[0].root()
+    };
+
+    let mut ctx = EditFunction::new(&mut fx);
+    assert!(
+        rule(&mut ctx, outer_root).unwrap().is_some(),
+        "the I256 reassoc rule must fire"
+    );
+    // No limb carries, so the sum is limb-wise.
+    let want = UBig::from_words(&[6, 8, 10, 12]);
+    let minted = ctx.function().walk().any(|n| {
+        let f = ctx.function();
+        matches!(f.node_kind(n), NodeKind::IntConst(_))
+            && f.int_const(f.node_outputs(n)[0]) == Some(&want)
+    });
+    assert!(minted, "the rewrite must intern the 256-bit sum");
+}

@@ -1,10 +1,10 @@
-//! Whole-graph IR validator. Every check aggregates into a
-//! [`ValidationErrors`] bundle rather than failing fast.
+//! IR validator over the entry-reachable graph; every violation is collected
+//! into one [`ValidationErrors`].
 
 use crate::IRViewer;
 use crate::function::Function;
+use crate::node::signature::ExpectedValueKind;
 use crate::node::{NodeId, ValueId, ValueKind, ValueType};
-use crate::node_signature::ExpectedValueKind;
 use crate::schedule::ScheduleContext;
 use crate::walk::NodeIdSet;
 
@@ -14,15 +14,12 @@ mod local_typing;
 mod tests;
 
 use graph_invariants::{
-    check_function_invariants_arith_widths, check_function_invariants_asm_fingerprints,
-    check_function_invariants_availability, check_function_invariants_call_cc,
-    check_function_invariants_consts, check_function_invariants_control_single_use,
-    check_function_invariants_data_cycles, check_function_invariants_extend_truncate,
-    check_function_invariants_initial_vars, check_function_invariants_memory_chain,
-    check_function_invariants_memory_linearity, check_function_invariants_phis,
-    check_function_invariants_region, check_function_invariants_side_indices,
-    check_function_invariants_switch, check_function_invariants_terminator_reachable,
-    check_function_invariants_uniqueness,
+    UniqueKinds, check_arith_widths, check_asm_fingerprint, check_call_cc, check_consts,
+    check_control_single_use, check_extend_truncate, check_function_invariants_availability,
+    check_function_invariants_data_cycles, check_function_invariants_memory_linearity,
+    check_function_invariants_side_indices, check_function_invariants_terminator_reachable,
+    check_initial_vars, check_memory_chain, check_phis, check_region, check_switch,
+    check_unique_kinds, note_unique_kinds,
 };
 use local_typing::check_local_typing;
 
@@ -33,39 +30,37 @@ use local_typing::check_local_typing;
 /// Returns a [`ValidationErrors`] bundle aggregating every violation found.
 pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     let entry = function.entry();
-    // Detached zombies (dead-branch residue, collapsed phis) carry stale
-    // shapes, so only the entry-reachable set is checked.
+    // Only reachable nodes are judged; detached ones keep stale shapes.
     let mut walk = crate::walk::walk_graph(function.graph(), entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();
     let mut errs: Vec<ValidationError> = Vec::new();
 
-    for (node, _kind) in function.reachable_kind_iter(&reachable) {
+    let mut seen = UniqueKinds::default();
+    for node in &reachable {
+        let kind = function.node_kind(node);
         check_local_typing(function.graph(), node, &mut errs);
+        note_unique_kinds(&mut seen, node, kind);
+        check_region(function, node, kind, &mut errs);
+        check_control_single_use(function, node, &mut errs);
+        check_phis(function, node, kind, &mut errs);
+        check_consts(function, node, kind, &mut errs);
+        check_initial_vars(function, node, kind, &mut errs);
+        check_extend_truncate(function, node, kind, &mut errs);
+        check_arith_widths(function, node, kind, &mut errs);
+        check_switch(function, node, kind, &mut errs);
+        check_call_cc(function, node, kind, &mut errs);
+        check_asm_fingerprint(function, node, kind, &mut errs);
+        check_memory_chain(function, &reachable, node, kind, &mut errs);
     }
+    check_unique_kinds(&seen, &mut errs);
 
-    check_function_invariants_uniqueness(function, &reachable, &mut errs);
-    check_function_invariants_region(function, &reachable, &mut errs);
-    check_function_invariants_control_single_use(function, &reachable, &mut errs);
-    check_function_invariants_phis(function, &reachable, &mut errs);
-    check_function_invariants_consts(function, &reachable, &mut errs);
-    check_function_invariants_initial_vars(function, &reachable, &mut errs);
-    check_function_invariants_extend_truncate(function, &reachable, &mut errs);
-    check_function_invariants_arith_widths(function, &reachable, &mut errs);
-    check_function_invariants_switch(function, &reachable, &mut errs);
-    check_function_invariants_call_cc(function, &reachable, &mut errs);
-    check_function_invariants_asm_fingerprints(function, &reachable, &mut errs);
-    check_function_invariants_memory_chain(function, &reachable, &mut errs);
     check_function_invariants_data_cycles(function, &reachable, &mut errs);
     check_function_invariants_side_indices(function, &reachable, &mut errs);
     check_function_invariants_terminator_reachable(function, &mut errs);
 
-    // The dataflow checks schedule the graph, so they judge only one that
-    // passed every structural check. A missing asm fingerprint is side-table
-    // bookkeeping and cannot make scheduling unsafe, so it does not gate
-    // them: letting it would hide a real `LostStore` / `MemoryRewind` /
-    // `InputNotAvailable` behind one unstamped node, against this module's
-    // own rule that every check aggregates rather than failing fast.
+    // Scheduling needs a structurally valid graph; a missing asm fingerprint
+    // cannot make it unsafe.
     if errs
         .iter()
         .all(|e| matches!(e, ValidationError::MissingAsmFingerprint { .. }))
@@ -82,24 +77,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     }
 }
 
-fn kind_matches(expected: ExpectedValueKind, actual: ValueKind) -> bool {
-    match expected {
-        ExpectedValueKind::Control => matches!(actual, ValueKind::Control),
-        ExpectedValueKind::Memory => matches!(actual, ValueKind::Memory),
-        ExpectedValueKind::PhiToken => matches!(actual, ValueKind::PhiToken),
-        ExpectedValueKind::Bool => {
-            matches!(actual, ValueKind::Typed(ValueType::I1))
-        }
-        ExpectedValueKind::AnyInt => {
-            matches!(actual, ValueKind::Typed(t) if t.is_integer())
-        }
-        ExpectedValueKind::AnyFloat => {
-            matches!(actual, ValueKind::Typed(t) if t.is_float())
-        }
-        ExpectedValueKind::AnyValue => matches!(actual, ValueKind::Typed(_)),
-    }
-}
-
+#[derive(Debug)]
 pub struct ValidationErrors(pub Vec<ValidationError>);
 
 #[derive(Debug, thiserror::Error)]
@@ -134,6 +112,13 @@ pub enum ValidationError {
         actual: ValueKind,
     },
 
+    #[error("node {node:?} output[{output_idx}] is {ty:?}, a width outside ValueType::SUPPORTED")]
+    UnsupportedValueType {
+        node: NodeId,
+        output_idx: usize,
+        ty: ValueType,
+    },
+
     #[error("multiple Entry nodes: {first:?} and {second:?}")]
     MultipleEntryNodes { first: NodeId, second: NodeId },
 
@@ -145,23 +130,19 @@ pub enum ValidationError {
 
     #[error(
         "node {node:?} produces a Control output {value:?} that no reachable node \
-         consumes; every control edge must reach a terminator (`Return` / \
-         `IndirectBranch` / `Unreachable`)"
+         consumes"
     )]
     UnusedControlOutput { node: NodeId, value: ValueId },
 
     #[error(
         "node {node:?} produces a Control output {value:?} consumed by more than \
-         one node; a control edge has exactly one successor (a split must be an \
-         `If`, a merge must go through a `Region`)"
+         one node"
     )]
     ReusedControlOutput { node: NodeId, value: ValueId },
 
     #[error(
         "{count} node(s) control-reachable from Entry, the first being {node:?}, \
-         reach no terminator (`Return` / `IndirectBranch` / `Unreachable`); an \
-         exit-free control cycle anchors no liveness, so compaction drops its \
-         whole body"
+         reach no terminator (`Return` / `IndirectBranch` / `Unreachable`)"
     )]
     NoTerminatorReachable { node: NodeId, count: usize },
 
@@ -169,13 +150,13 @@ pub enum ValidationError {
     InputNotAvailable { node: NodeId, input_idx: usize },
 
     #[error(
-        "phi node {phi:?} input[0] token producer {producer:?} has kind \
-         {producer_kind:?}; expected PhiToken from a Region"
+        "phi {phi:?} input[0] is {token_kind:?} from {producer:?}; expected \
+         a Region's PhiToken"
     )]
     PhiTokenNotFromRegion {
         phi: NodeId,
         producer: NodeId,
-        producer_kind: ValueKind,
+        token_kind: ValueKind,
     },
 
     #[error(
@@ -203,8 +184,7 @@ pub enum ValidationError {
 
     #[error(
         "node {node:?} (kind {kind:?}) is reachable but has an empty \
-         asm-fingerprint; non-exempt nodes must record at least one \
-         contributing machine-instruction address"
+         asm-fingerprint"
     )]
     MissingAsmFingerprint {
         node: NodeId,
@@ -217,7 +197,7 @@ pub enum ValidationError {
     )]
     DanglingConstId {
         node: NodeId,
-        id: crate::node::const_value::ConstId,
+        id: crate::node::IntConstId,
     },
 
     #[error(
@@ -226,27 +206,24 @@ pub enum ValidationError {
     )]
     ConstWidthMismatch {
         node: NodeId,
-        id: crate::node::const_value::ConstId,
+        id: crate::node::IntConstId,
     },
 
     #[error(
         "node {node:?} is `FloatConst({bits:#x})`, which has bits set above its \
-         declared output width; a float constant carries only its own IEEE 754 \
-         pattern, so two otherwise-equal constants would not dedup"
+         declared output width"
     )]
     FloatConstWidthMismatch { node: NodeId, bits: u64 },
 
     #[error(
-        "node {node:?} is a `FloatConst` declared {ty:?}, wider than the `u64` \
-         payload: past 8 bytes the node carries only the low 64 bits of the \
-         IEEE 754 pattern, which no mask can distinguish from the whole of it"
+        "node {node:?} is a `FloatConst` declared {ty:?}, wider than its 64-bit \
+         payload"
     )]
     FloatConstUnrepresentableType { node: NodeId, ty: ValueType },
 
     #[error(
         "node {node:?} (kind {kind:?}) is its own transitive data producer; only a \
-         Phi / MemPhi may close a data cycle, and reverse post-order otherwise \
-         yields the node before its own producer"
+         Phi / MemPhi may close a data cycle"
     )]
     DataCycle {
         node: NodeId,
@@ -254,15 +231,10 @@ pub enum ValidationError {
     },
 
     #[error(
-        "reachable Store {node:?} (kind {kind:?}) produces a Memory output that no \
-         reachable node consumes; a Store must stay anchored in the live memory \
-         chain (back to a Return / IndirectBranch terminator) or it is silently \
-         dropped by compaction"
+        "reachable Store {node:?}: its Memory output lists no reachable \
+         consumer, so its use-list is severed"
     )]
-    OrphanedMemoryOutput {
-        node: NodeId,
-        kind: crate::node::NodeKind,
-    },
+    OrphanedMemoryOutput { node: NodeId },
 
     #[error(
         "reachable Store {node:?} is off the memory chain: no Return, \
@@ -299,8 +271,7 @@ pub enum ValidationError {
 
     #[error(
         "initial_var_index entry for varnode {vn:?} points at reachable node \
-         {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node. \
-         The index has drifted from the live graph"
+         {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node"
     )]
     StaleInitialVarIndex {
         node: NodeId,
@@ -323,8 +294,7 @@ pub enum ValidationError {
     #[error(
         "node {node:?} (kind {kind:?}) has input width {in_width} and output \
          width {out_width}; `Extend` must strictly widen and `Truncate` must \
-         strictly narrow (same value, opposite-direction op is a redundant \
-         spelling)"
+         strictly narrow"
     )]
     ExtendTruncateWidthDirection {
         node: NodeId,
@@ -344,9 +314,6 @@ pub enum ValidationError {
         operand_width: usize,
         expected_width: usize,
     },
-
-    #[error("Switch {node:?} has no control outputs")]
-    EmptySwitchTargets { node: NodeId },
 
     #[error("node {node:?} is `Switch({id:?})` but the function has no table for that id")]
     DanglingSwitchTableId {
@@ -368,12 +335,6 @@ pub enum ValidationError {
         outputs: usize,
         targets: usize,
     },
-}
-
-impl std::fmt::Debug for ValidationErrors {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("ValidationErrors").field(&self.0).finish()
-    }
 }
 
 impl std::fmt::Display for ValidationErrors {
@@ -467,6 +428,7 @@ impl ValidationError {
             | E::NodeInputKindMismatch { node, .. }
             | E::NodeOutputCountMismatch { node, .. }
             | E::NodeOutputKindMismatch { node, .. }
+            | E::UnsupportedValueType { node, .. }
             | E::UnusedControlOutput { node, .. }
             | E::ReusedControlOutput { node, .. }
             | E::NoTerminatorReachable { node, .. }
@@ -477,14 +439,13 @@ impl ValidationError {
             | E::FloatConstWidthMismatch { node, .. }
             | E::FloatConstUnrepresentableType { node, .. }
             | E::DataCycle { node, .. }
-            | E::OrphanedMemoryOutput { node, .. }
+            | E::OrphanedMemoryOutput { node }
             | E::LostStore { node }
             | E::DanglingInitialVnId { node, .. }
             | E::InitialVarTypeMismatch { node, .. }
             | E::StaleInitialVarIndex { node, .. }
             | E::ExtendTruncateWidthDirection { node, .. }
             | E::ArithmeticWidthMismatch { node, .. }
-            | E::EmptySwitchTargets { node }
             | E::DanglingSwitchTableId { node, .. }
             | E::DanglingCcId { node, .. }
             | E::SwitchTargetArityMismatch { node, .. } => smallvec::smallvec![node],

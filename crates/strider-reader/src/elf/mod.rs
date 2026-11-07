@@ -1,12 +1,19 @@
+pub(crate) mod dynamic;
 pub(crate) mod encodings;
-pub mod load;
-pub mod reader;
+mod load;
+mod reader;
 pub(crate) mod relocations;
-pub mod sections;
+pub(crate) mod sections;
 
-pub use load::{OwnedElf, load_elf};
+#[cfg(test)]
+mod encodings_tests;
+
+pub use load::{ElfImage, OwnedElf, RelocationMode, load_elf};
 pub use reader::ElfFileMemReader;
+pub use relocations::local_entry_offset;
+#[cfg(feature = "test-util")]
+pub use sections::LoadFilter;
 pub use sections::{
-    ElfSectionLayout, LoadFilter, OpdTable, RegionSource, elf_get_loadable_regions,
-    mapping_symbol_data_ranges, without_ranges,
+    AddressSet, ElfSectionLayout, OpdTable, RegionSource, mapping_symbol_data_ranges,
+    mapping_symbol_kind, without_ranges,
 };

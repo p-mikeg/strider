@@ -1,27 +1,36 @@
-//! The build-side mirror of [`MatchPat`](crate::MatchPat), implemented only by
-//! the buildable typed structs. That restriction is what makes a wildcard in a
-//! rewrite RHS a compile error: `rewrite_rule<L, T: TemplatePat>` cannot accept
-//! one.
+use crate::expr::IntoExpr;
+use crate::template::Template;
 
-use crate::template::{Template, TemplateBuilder, TmplValueRef};
-
-pub trait TemplatePat: Sized {
-    /// Returns the value-output handle of the lowered root node.
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef;
-
-    fn into_template(self) -> Template {
-        let mut b = TemplateBuilder::new();
-        self.compile(&mut b);
-        b.finish()
-    }
+/// Seals [`TemplatePat`].
+pub(crate) mod sealed {
+    pub trait Sealed {}
 }
 
-/// A build-side `.capture(c)` reuses the LHS binding for `c` verbatim, so it
-/// REPLACES what it wraps rather than wrapping it. Only a `var()` leaf may be wrapped:
-/// over a composite the discarded operands would vanish from the RHS in
-/// silence, so `template::int_add(..).capture(c)` is a compile error.
-impl TemplatePat for crate::matcher::match_pat::Captured<crate::typed::wildcards::Var> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        b.capture(self.cap)
+/// A build-side `var()` and its `.capture()` are templates; `var(a).capture(b)` builds `b`'s
+/// binding, not `a`'s:
+///
+/// ```
+/// use strider_pattern::{Capture, CaptureExt, TemplatePat, template, var};
+/// let (a, b) = (Capture::new(), Capture::new());
+/// TemplatePat::into_template(template::int_add(var(a).capture(b), var(a)));
+/// ```
+///
+/// A wildcard is not:
+///
+/// ```compile_fail,E0277
+/// use strider_pattern::{Capture, TemplatePat, anything, template, var};
+/// TemplatePat::into_template(template::int_add(anything(), var(Capture::new())));
+/// ```
+///
+/// Nor is a composite's `.capture()`:
+///
+/// ```compile_fail,E0277
+/// use strider_pattern::{Capture, CaptureExt, TemplatePat, template, var};
+/// let c = Capture::new();
+/// TemplatePat::into_template(template::int_add(var(c), var(c)).capture(c));
+/// ```
+pub trait TemplatePat: IntoExpr + Send + sealed::Sealed {
+    fn into_template(self) -> Template {
+        self.into_expr().into_template()
     }
 }

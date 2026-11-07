@@ -49,6 +49,42 @@ def test_add_symbol_file_leaves_the_mapped_bytes_alone(tmp_path):
     assert lift.build_cfg(entry).to_dot() == before
 
 
+def test_a_symbol_file_changed_after_its_table_is_built_is_not_reread(tmp_path):
+    """`analyze` reads the image's bytes, re-stat on every read, and a symbol
+    file only through the tables built from it. Once those are built, a
+    change to that file is nothing `analyze` reads, so it does not raise."""
+    full, dbg, stripped = _strip_and_split(tmp_path)
+    lift = strider.lift.load_elf(str(stripped))
+    lift.add_symbol_file(str(dbg))
+    name = "dispatch_value"
+    lift.analyze(name)
+    with dbg.open("ab") as f:
+        f.write(b"\0" * 64)
+    assert lift.analyze(name).function.node_count() > 0
+    assert lift.analyze(lift.symbol(name).address).function.node_count() > 0
+    with stripped.open("ab") as f:
+        f.write(b"\0" * 64)
+    with pytest.raises(strider.StriderError, match="changed on disk"):
+        lift.analyze(name)
+
+
+def test_add_symbols_keeps_the_data_ranges_it_cannot_change(tmp_path):
+    """`$d` spans come from the ELFs and symbol files, never from symbols
+    supplied directly, so `add_symbols` leaves the built ones in place. A
+    rebuild re-stats every symbol file, so one changed since is how a rebuild
+    shows."""
+    companion = tmp_path / "companion.elf"
+    shutil.copy(fixture_path("arm", "calls"), companion)
+    lift = strider.lift.load_elf(str(fixture_path("arm", "calls")))
+    lift.add_symbol_file(str(companion))
+    start = lift.symbol("_start").address
+    first = lift.build_cfg(start).incomplete
+    with companion.open("ab") as f:
+        f.write(b"\0" * 64)
+    lift.add_symbols({"made_up": 0x1234})
+    assert lift.build_cfg(start).incomplete == first
+
+
 def test_add_symbols_takes_addresses_and_extents():
     lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
     lift.add_symbols({"bare": 0x40_0000, "sized": (0x50_0000, 0x40)})
@@ -97,3 +133,21 @@ def test_the_merge_methods_take_a_path_object(tmp_path, x86_memory_elf, x86_relo
     stripped_lift = strider.lift.load_elf(pathlib.Path(stripped))
     stripped_lift.add_symbol_file(pathlib.Path(dbg))
     assert stripped_lift.symbols()
+
+
+def test_a_rom_mapped_from_another_file_is_checked_on_its_own(tmp_path):
+    """`analyze` stats each mapping behind `mem` and `rom` once, so a `rom`
+    cut from a different file than `mem` still raises when only it changed."""
+    code, data = tmp_path / "code.elf", tmp_path / "data.elf"
+    shutil.copy(fixture_path("x64", "switch"), code)
+    shutil.copy(fixture_path("x64", "switch"), data)
+    mem = strider.lift.load_elf(str(code))
+    rom = strider.lift.load_elf(str(data)).reader()
+    lift = strider.lift.lifter(mem.arch, mem.reader(), rom=rom)
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
+    entry = mem.symbol("dispatch_value").address
+    lift.analyze(entry, cc)
+    with data.open("ab") as f:
+        f.write(b"\0" * 64)
+    with pytest.raises(strider.StriderError, match="data.elf changed on disk"):
+        lift.analyze(entry, cc)

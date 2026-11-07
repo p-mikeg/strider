@@ -8,7 +8,7 @@ use super::support::Tb;
 #[test]
 fn negative_int_const_matches_at_u32_width() {
     let mut t = Tb::empty();
-    let neg50_u32 = t.int_of(0xffff_ffceu64, ValueType::I32);
+    let neg50_u32 = t.int_of(0xffff_ffceu64, ValueType::int(32));
     let function = t.ret_val(neg50_u32);
     let hits = Matcher::new(&function)
         .find_all(&int_const_any_width(-50).into_pattern())
@@ -41,7 +41,7 @@ fn negative_int_const_matches_at_u128_width() {
     let neg50_at_u128: u128 = (-50i128) as u128;
     let neg50 = t
         .fb_mut()
-        .build_int_const(neg50_at_u128, ValueType::I128)
+        .build_int_const(neg50_at_u128, ValueType::int(128))
         .unwrap();
     let function = t.ret_val(neg50);
     let hits = Matcher::new(&function)
@@ -58,7 +58,7 @@ fn negative_int_const_matches_at_u128_width() {
 #[test]
 fn positive_int_const_matches_unchanged_and_negative_does_not() {
     let mut t = Tb::empty();
-    let fifty = t.int_of(50u64, ValueType::I32);
+    let fifty = t.int_of(50u64, ValueType::int(32));
     let function = t.ret_val(fifty);
     let m = Matcher::new(&function);
     assert!(
@@ -146,7 +146,7 @@ fn int_const_any_width_set_membership() {
 #[test]
 fn an_odd_value_does_not_match_an_unrelated_odd_constant() {
     let mut t = Tb::empty();
-    let one = t.int_of(1u64, ValueType::I32);
+    let one = t.int_of(1u64, ValueType::int(32));
     let function = t.ret_val(one);
     let m = Matcher::new(&function);
     assert!(
@@ -168,7 +168,7 @@ fn an_odd_value_does_not_match_an_unrelated_odd_constant() {
 #[test]
 fn an_odd_value_does_not_match_an_all_ones_constant() {
     let mut t = Tb::empty();
-    let all_ones = t.int_of(0xffff_ffffu64, ValueType::I32);
+    let all_ones = t.int_of(0xffff_ffffu64, ValueType::int(32));
     let function = t.ret_val(all_ones);
     let m = Matcher::new(&function);
     assert!(
@@ -218,7 +218,7 @@ fn a_bool_constant_matches_at_its_own_width() {
 #[test]
 fn an_any_width_query_wider_than_the_constant_does_not_match_its_low_bits() {
     let mut t = Tb::empty();
-    let low_byte = t.int_of(0x34u64, ValueType::I8);
+    let low_byte = t.int_of(0x34u64, ValueType::int(8));
     let function = t.ret_val(low_byte);
     assert!(
         Matcher::new(&function)
@@ -229,7 +229,7 @@ fn an_any_width_query_wider_than_the_constant_does_not_match_its_low_bits() {
     );
 
     let mut t = Tb::empty();
-    let low_word = t.int_of(0x5678u64, ValueType::I32);
+    let low_word = t.int_of(0x5678u64, ValueType::int(32));
     let function = t.ret_val(low_word);
     assert!(
         Matcher::new(&function)
@@ -245,7 +245,7 @@ fn an_any_width_query_wider_than_the_constant_does_not_match_its_low_bits() {
 #[test]
 fn an_int_const_query_is_truncated_to_the_constant_width() {
     let mut t = Tb::empty();
-    let low_byte = t.int_of(0x34u64, ValueType::I8);
+    let low_byte = t.int_of(0x34u64, ValueType::int(8));
     let function = t.ret_val(low_byte);
     assert_eq!(
         Matcher::new(&function)
@@ -254,4 +254,30 @@ fn an_int_const_query_is_truncated_to_the_constant_width() {
             .len(),
         1
     );
+}
+
+/// Past the `u128` carrier: an I256 `-50`, and the all-ones that is `-1`
+/// sign-extended from any width.
+#[test]
+fn a_negative_int_const_any_width_matches_at_i256() {
+    use strider_ir::UBig;
+    for v in [-50i64, -1] {
+        let mut t = Tb::empty();
+        let stored = (UBig::ONE << 256usize) - UBig::from(v.unsigned_abs());
+        let c = t
+            .fb_mut()
+            .build_int_const(stored, ValueType::int(256))
+            .unwrap();
+        let function = t.ret_val(c);
+        let m = Matcher::new(&function);
+        let exact = !m.find_all(&int_const(v).into_pattern()).unwrap().is_empty();
+        let any = !m
+            .find_all(&int_const_any_width(v).into_pattern())
+            .unwrap()
+            .is_empty();
+        assert!(
+            any,
+            "int_const_any_width({v}) misses the I256 constant int_const({v}) matches={exact}"
+        );
+    }
 }

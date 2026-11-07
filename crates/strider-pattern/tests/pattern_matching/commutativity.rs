@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::NodeKind;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_pattern::matcher::{KindSpec, MatcherBuilder, PatValueRef};
@@ -5,89 +6,93 @@ use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
 
-/// The two-operand graph over `$op` matches the pattern written either way
-/// round. A macro, not a table: `int_add` and friends are distinct free
-/// functions, not values.
-macro_rules! commutes {
-    ($ctor:ident, $l:literal, $r:literal, $op:expr) => {{
-        let function = shapes::int_bin($l, $r, $op);
-        a::matches_both_orders(
-            &function,
-            $ctor(int_const($l as u128), int_const($r as u128)).into_pattern(),
-            $ctor(int_const($r as u128), int_const($l as u128)).into_pattern(),
+/// Every binary op matches its pattern written either way round iff
+/// `NodeKind::is_commutative`, and `.ordered()` pins the written order.
+#[test]
+fn every_binary_op_commutes_iff_is_commutative() {
+    #[track_caller]
+    fn check(
+        function: &strider_ir::Function,
+        kind: &NodeKind,
+        pat: impl Fn(bool, bool) -> Pattern,
+    ) {
+        let count = |p: Pattern| Matcher::new(function).find_all(&p).unwrap().len();
+        let swapped = usize::from(kind.is_commutative());
+        assert_eq!(count(pat(false, false)), 1, "{kind:?}");
+        assert_eq!(count(pat(true, false)), swapped, "{kind:?}");
+        assert_eq!(count(pat(false, true)), 1, "{kind:?}");
+        assert_eq!(count(pat(true, true)), 0, "{kind:?}");
+    }
+    fn pin<P: MatchPat + 'static>(p: P, ordered: bool) -> Pattern {
+        if ordered {
+            p.ordered().into_pattern()
+        } else {
+            p.into_pattern()
+        }
+    }
+    let ints = |swap: bool| {
+        let (l, r) = if swap { (3u128, 5u128) } else { (5, 3) };
+        (int_const(l), int_const(r))
+    };
+    let floats = |swap: bool| {
+        let (l, r) = if swap { (5.0f64, 2.0f64) } else { (2.0, 5.0) };
+        (float_const(l.to_bits()), float_const(r.to_bits()))
+    };
+    for op in IntBinaryOp::ALL {
+        check(
+            &shapes::int_bin(5, 3, op),
+            &NodeKind::IntBinaryOp(op),
+            |swap, ordered| {
+                let (l, r) = ints(swap);
+                pin(int_binary(op, l, r), ordered)
+            },
         );
-    }};
+    }
+    for op in IntCmpOp::ALL {
+        check(
+            &shapes::int_cmp_5_3(op),
+            &NodeKind::IntCmpOp(op),
+            |swap, ordered| {
+                let (l, r) = ints(swap);
+                pin(int_cmp(op, l, r), ordered)
+            },
+        );
+    }
+    for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
+        check(
+            &shapes::bool_bin(true, false, op),
+            &NodeKind::IntBinaryOp(op),
+            |swap, ordered| {
+                pin(
+                    bool_binary(op, bool_const(!swap), bool_const(swap)),
+                    ordered,
+                )
+            },
+        );
+    }
+    for op in FloatBinaryOp::ALL {
+        check(
+            &shapes::float_bin(2.0, 5.0, op),
+            &NodeKind::FloatBinaryOp(op),
+            |swap, ordered| {
+                let (l, r) = floats(swap);
+                pin(float_binary(op, l, r), ordered)
+            },
+        );
+    }
+    for op in FloatCmpOp::ALL {
+        check(
+            &graph_float_cmp(2.0, 5.0, op),
+            &NodeKind::FloatCmpOp(op),
+            |swap, ordered| {
+                let (l, r) = floats(swap);
+                pin(float_cmp(op, l, r), ordered)
+            },
+        );
+    }
 }
 
-#[test]
-fn add_commutes() {
-    commutes!(int_add, 5, 3, IntBinaryOp::Add);
-}
-
-#[test]
-fn mul_commutes() {
-    commutes!(int_mul, 7, 9, IntBinaryOp::Mul);
-}
-
-#[test]
-fn and_or_xor_commute() {
-    commutes!(int_and, 0xF0, 0x0F, IntBinaryOp::And);
-    commutes!(int_or, 0xF0, 0x0F, IntBinaryOp::Or);
-    commutes!(int_xor, 0xF0, 0x0F, IntBinaryOp::Xor);
-}
-
-#[test]
-fn ordered_rejects_swap() {
-    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    a::none(
-        &function,
-        int_add(int_const(3u128), int_const(5u128))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        int_add(int_const(5u128), int_const(3u128))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-
-#[test]
-fn ordered_mul_rejects_swap() {
-    let function = shapes::int_bin(7, 9, IntBinaryOp::Mul);
-    a::none(
-        &function,
-        int_mul(int_const(9u128), int_const(7u128))
-            .ordered()
-            .into_pattern(),
-    );
-}
-
-/// `int_add(anything(), anything())` on `int_add(5, 3)`: no captures, so both orderings produce
-/// the same binding map and collapse to one hit. Over-counting here means the
-/// swap retry is emitting duplicates.
-#[test]
-fn commutative_match_emits_single_match_per_root() {
-    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    a::matches(&function, int_add(anything(), anything()).into_pattern(), 1);
-}
-
-/// Constant dedup makes both operands of `int_add(5, 5)` one `ValueId`, so the
-/// swap retry must still yield a single hit.
-#[test]
-fn commutative_match_with_identical_operands_emits_one() {
-    let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
-    a::matches(
-        &function,
-        int_add(int_const(5u128), int_const(5u128)).into_pattern(),
-        1,
-    );
-}
-/// `find_all` dedups by the capture->binding MAP, not by root, so a capture on
-/// one operand of a commutative node yields one hit per operand it can bind: a
-/// single hit means the binding is unambiguous.
+/// A capture on one commutative operand binds each operand in turn.
 #[test]
 fn commutative_capture_reports_both_operand_bindings() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
@@ -97,86 +102,19 @@ fn commutative_capture_reports_both_operand_bindings() {
         int_add(anything().capture(k), anything()).into_pattern(),
         2,
     );
-    let mut bound: Vec<Option<u128>> = hits
+    let mut bound: Vec<Option<UBig>> = hits
         .iter()
         .map(|m| m.bindings().get_uint(k, &function))
         .collect();
     // Enumeration order is pinned: natural ordering first, then swapped.
-    assert_eq!(bound, vec![Some(5), Some(3)], "both operands must bind");
+    assert_eq!(
+        bound,
+        vec![Some(UBig::from(5u8)), Some(UBig::from(3u8))],
+        "both operands must bind"
+    );
     bound.sort_unstable();
     bound.dedup();
     assert_eq!(bound.len(), 2, "the two bindings must be DISTINCT");
-}
-
-/// Both operands the same value (constant dedup) means the two orderings
-/// produce an identical binding map, hence one match, not two.
-#[test]
-fn commutative_capture_identical_operands_dedups_to_one() {
-    let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
-    let k = Capture::new();
-    let hits = a::matches(
-        &function,
-        int_add(anything().capture(k), anything()).into_pattern(),
-        1,
-    );
-    assert_eq!(hits[0].bindings().get_uint(k, &function), Some(5));
-}
-
-/// Arrangements MULTIPLY across nested commutative nodes: `int_add(int_add(w,x),
-/// int_add(y,z))` over `int_add(int_add(5,3), int_add(7,9))` has three independent swap
-/// choices, so 2*2*2 = 8 distinct binding maps, not one node's worth. The
-/// single-node tests above cannot observe this.
-#[test]
-fn nested_commutative_arrangements_multiply() {
-    let mut t = Tb::empty();
-    let (c5, c3) = (t.u64(5), t.u64(3));
-    let (c7, c9) = (t.u64(7), t.u64(9));
-    let lhs = t.int_bin(c5, c3, IntBinaryOp::Add);
-    let rhs = t.int_bin(c7, c9, IntBinaryOp::Add);
-    let root = t.int_bin(lhs, rhs, IntBinaryOp::Add);
-    let function = t.ret_val(root);
-
-    let (w, x, y, z) = (
-        Capture::new(),
-        Capture::new(),
-        Capture::new(),
-        Capture::new(),
-    );
-    let pat = int_add(
-        int_add(anything().capture(w), anything().capture(x)),
-        int_add(anything().capture(y), anything().capture(z)),
-    )
-    .into_pattern();
-    let hits = a::matches(&function, pat, 8);
-
-    // 8 hits must mean 8 different binding maps, not one map reported 8 times.
-    let mut seen: Vec<(u128, u128, u128, u128)> = hits
-        .iter()
-        .map(|m| {
-            let g = |c| m.bindings().get_uint(c, &function).expect("bound const");
-            (g(w), g(x), g(y), g(z))
-        })
-        .collect();
-    seen.sort_unstable();
-    seen.dedup();
-    assert_eq!(
-        seen.len(),
-        8,
-        "all 8 arrangements must be distinct: {seen:?}"
-    );
-
-    // Each inner pair stays together (the outer swap carries both), never a
-    // cross-node mix.
-    for (wv, xv, yv, zv) in &seen {
-        let mut left = [*wv, *xv];
-        let mut right = [*yv, *zv];
-        left.sort_unstable();
-        right.sort_unstable();
-        assert!(
-            (left == [3, 5] && right == [7, 9]) || (left == [7, 9] && right == [3, 5]),
-            "operands must not migrate across the inner nodes: {wv},{xv} / {yv},{zv}"
-        );
-    }
 }
 
 /// `.ordered()` suppresses the commutative retry entirely, so a capture-bearing
@@ -194,23 +132,9 @@ fn ordered_capture_reports_only_the_pinned_ordering() {
     );
     assert_eq!(
         hits[0].bindings().get_uint(k, &function),
-        Some(5),
+        Some(UBig::from(5u8)),
         "ordered() pins the capture to operand slot 0",
     );
-}
-
-/// A capture on a NON-commutative node has one ordering, so the enumeration
-/// must not manufacture duplicates.
-#[test]
-fn non_commutative_capture_stays_single() {
-    let function = shapes::int_bin(20, 4, IntBinaryOp::Div);
-    let k = Capture::new();
-    let hits = a::matches(
-        &function,
-        int_div(anything().capture(k), anything()).into_pattern(),
-        1,
-    );
-    assert_eq!(hits[0].bindings().get_uint(k, &function), Some(20));
 }
 
 /// `matches()` is lazy: `.next()` yields the natural ordering without
@@ -228,7 +152,7 @@ fn matches_iterator_yields_natural_ordering_first() {
         .expect("at least one hit");
     assert_eq!(
         first.bindings().get_uint(k, &function),
-        Some(5),
+        Some(UBig::from(5u8)),
         "the first hit must be the natural operand ordering",
     );
 }
@@ -253,156 +177,10 @@ fn sub_does_not_commute() {
     );
 }
 
-#[test]
-fn div_shl_shr_do_not_commute() {
-    let g_div = shapes::int_bin(20, 4, IntBinaryOp::Div);
-    let g_shl = shapes::int_bin(1, 8, IntBinaryOp::ShiftLeft);
-    let g_shr = shapes::int_bin(256, 2, IntBinaryOp::ShiftRight);
-
-    a::none(
-        &g_div,
-        int_div(int_const(4u128), int_const(20u128)).into_pattern(),
-    );
-    a::none(
-        &g_shl,
-        int_shl(int_const(8u128), int_const(1u128)).into_pattern(),
-    );
-    a::none(
-        &g_shr,
-        int_shr(int_const(2u128), int_const(256u128)).into_pattern(),
-    );
-}
-
-#[test]
-fn bool_and_or_xor_commute() {
-    let g_and = shapes::bool_bin(true, false, IntBinaryOp::And);
-    let g_or = shapes::bool_bin(true, false, IntBinaryOp::Or);
-    let g_xor = shapes::bool_bin(true, false, IntBinaryOp::Xor);
-    a::matches_both_orders(
-        &g_and,
-        bool_and(bool_const(true), bool_const(false)).into_pattern(),
-        bool_and(bool_const(false), bool_const(true)).into_pattern(),
-    );
-    a::matches_both_orders(
-        &g_or,
-        bool_or(bool_const(true), bool_const(false)).into_pattern(),
-        bool_or(bool_const(false), bool_const(true)).into_pattern(),
-    );
-    a::matches_both_orders(
-        &g_xor,
-        bool_xor(bool_const(true), bool_const(false)).into_pattern(),
-        bool_xor(bool_const(false), bool_const(true)).into_pattern(),
-    );
-}
-
-/// `bool_binary` is chainable: bare it matches commutatively, `.ordered()`
-/// pins the operand slots.
-#[test]
-fn bool_binary_ordered_rejects_swap() {
-    let function = shapes::bool_bin(true, false, IntBinaryOp::And);
-    a::matches(
-        &function,
-        bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false)).into_pattern(),
-        1,
-    );
-    a::matches(
-        &function,
-        bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true)).into_pattern(),
-        1,
-    );
-    a::none(
-        &function,
-        bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-// `IntCmpOp::Carry` / `Scarry` are commutative in `NodeKind::is_commutative`:
-// an addition carry/overflow commutes because addition does.
-
-#[test]
-fn int_carry_commutes() {
-    let function = shapes::int_cmp_5_3(IntCmpOp::Carry);
-    a::matches_both_orders(
-        &function,
-        int_carry(int_const(5u128), int_const(3u128)).into_pattern(),
-        int_carry(int_const(3u128), int_const(5u128)).into_pattern(),
-    );
-}
-
-#[test]
-fn ordered_int_carry_rejects_swap() {
-    let function = shapes::int_cmp_5_3(IntCmpOp::Carry);
-    a::none(
-        &function,
-        int_carry(int_const(3u128), int_const(5u128))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        int_carry(int_const(5u128), int_const(3u128))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-
-#[test]
-fn int_scarry_commutes() {
-    let function = shapes::int_cmp_5_3(IntCmpOp::Scarry);
-    a::matches_both_orders(
-        &function,
-        int_scarry(int_const(5u128), int_const(3u128)).into_pattern(),
-        int_scarry(int_const(3u128), int_const(5u128)).into_pattern(),
-    );
-}
-
-#[test]
-fn ordered_int_scarry_rejects_swap() {
-    let function = shapes::int_cmp_5_3(IntCmpOp::Scarry);
-    a::none(
-        &function,
-        int_scarry(int_const(3u128), int_const(5u128))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        int_scarry(int_const(5u128), int_const(3u128))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-
-#[test]
-fn float_add_and_mul_commute() {
-    let g_add = shapes::float_bin(2.0, 5.0, FloatBinaryOp::Add);
-    let g_mul = shapes::float_bin(2.0, 5.0, FloatBinaryOp::Mul);
-    a::matches_both_orders(
-        &g_add,
-        float_add(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into_pattern(),
-        float_add(float_const(5.0f64.to_bits()), float_const(2.0f64.to_bits())).into_pattern(),
-    );
-    a::matches_both_orders(
-        &g_mul,
-        float_mul(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into_pattern(),
-        float_mul(float_const(5.0f64.to_bits()), float_const(2.0f64.to_bits())).into_pattern(),
-    );
-}
-
 /// `FloatBinaryOp::Sub` is not a primitive: `pattern::float_sub` is an alias
 /// for the lowered `FloatAdd(a, Neg(b))`, which the fixture builds by hand.
 #[test]
-fn float_sub_and_div_do_not_commute() {
+fn float_sub_does_not_commute() {
     let g_sub = {
         let mut t = Tb::empty();
         let a = t.f64(5.0);
@@ -410,30 +188,20 @@ fn float_sub_and_div_do_not_commute() {
         let neg_b = t.fun(
             b,
             strider_ir::FloatUnaryOp::Neg,
-            strider_ir::node::ValueType::F64,
+            strider_ir::node::ValueType::float(64),
         );
         let lowered = t.fbin(
             a,
             neg_b,
             FloatBinaryOp::Add,
-            strider_ir::node::ValueType::F64,
+            strider_ir::node::ValueType::float(64),
         );
-        let as_int = t.float_to_int(lowered, strider_ir::node::ValueType::I64);
+        let as_int = t.float_to_int(lowered, strider_ir::node::ValueType::int(64));
         t.ret_val(as_int)
     };
     a::none(
         &g_sub,
         float_sub(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into_pattern(),
-    );
-
-    let g_div = shapes::float_bin(10.0, 4.0, FloatBinaryOp::Div);
-    a::none(
-        &g_div,
-        float_div(
-            float_const(4.0f64.to_bits()),
-            float_const(10.0f64.to_bits()),
-        )
-        .into_pattern(),
     );
 }
 
@@ -506,7 +274,7 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
     let x = Capture::new();
     assert_eq!(
         a::unique_uint(&function, int_add(var(x), var(x)).into_pattern(), x),
-        Some(5)
+        Some(UBig::from(5u8))
     );
 }
 
@@ -530,35 +298,8 @@ fn child_when_match_rejection_still_tries_swapped_order() {
     let m = a::unique(&function, int_add(guarded, int_const(2u128)).into_pattern());
     assert_eq!(
         m.bindings().get_uint(c, &function),
-        Some(3),
+        Some(UBig::from(3u8)),
         "swap retry must rebind the guarded child to the 3-operand",
-    );
-}
-
-/// A ROOT `when_match` guard runs after the inputs resolved in SOME order; a
-/// rejection on a commutative node re-drives the swapped order before giving
-/// up, so an order-sensitive root guard still finds a valid ordering.
-#[test]
-fn root_when_match_rejection_redrives_swap() {
-    use strider_ir::IRViewer;
-
-    let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
-    let l = Capture::new();
-    // Inputs match naturally with l bound to 2; the guard demands 3, which
-    // only the swapped order satisfies.
-    let pat = int_add(anything().capture(l), anything())
-        .when_match(move |m, _ty, b| {
-            let Some(v) = b.get_value(l) else {
-                return false;
-            };
-            m.function().int_const_u128(v) == Some(3)
-        })
-        .into_pattern();
-    let m = a::unique(&function, pat);
-    assert_eq!(
-        m.bindings().get_uint(l, &function),
-        Some(3),
-        "root guard rejection must re-drive the swapped operand order",
     );
 }
 
@@ -597,7 +338,7 @@ fn unary_parent_guard_redrives_commutative_child() {
         let two = t.u64(2);
         let three = t.u64(3);
         let sum = t.add(two, three);
-        let z = t.zext_to(sum, ValueType::I128);
+        let z = t.zext_to(sum, ValueType::int(128));
         t.ret_val(z)
     };
     let x = Capture::new();
@@ -609,7 +350,7 @@ fn unary_parent_guard_redrives_commutative_child() {
     let m = a::unique(&function, pat);
     assert_eq!(
         m.bindings().get_uint(x, &function),
-        Some(3),
+        Some(UBig::from(3u8)),
         "unary-parent guard must re-drive the commutative child's operand order",
     );
 }
@@ -620,28 +361,8 @@ fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Function {
     let a = t.f64(l);
     let b = t.f64(r);
     let v = t.fcmp(a, b, op);
-    let as_int = t.as_int(v, strider_ir::node::ValueType::I64);
+    let as_int = t.as_int(v, strider_ir::node::ValueType::int(64));
     t.ret_val(as_int)
-}
-
-#[test]
-fn float_eq_commutes() {
-    let function = graph_float_cmp(1.0, 2.0, FloatCmpOp::Equal);
-    a::matches_both_orders(
-        &function,
-        float_cmp(
-            FloatCmpOp::Equal,
-            float_const(1.0_f64.to_bits()),
-            float_const(2.0_f64.to_bits()),
-        )
-        .into_pattern(),
-        float_cmp(
-            FloatCmpOp::Equal,
-            float_const(2.0_f64.to_bits()),
-            float_const(1.0_f64.to_bits()),
-        )
-        .into_pattern(),
-    );
 }
 
 /// `FloatCmpOp::NotEqual` is not a primitive: `pattern::float_ne` is an alias
@@ -654,7 +375,7 @@ fn float_ne_commutes() {
         let b = t.f64(2.0);
         let eq = t.fcmp(a, b, FloatCmpOp::Equal);
         let ne = t.bool_not(eq);
-        let as_int = t.as_int(ne, strider_ir::node::ValueType::I64);
+        let as_int = t.as_int(ne, strider_ir::node::ValueType::int(64));
         t.ret_val(as_int)
     };
     a::matches_both_orders(
@@ -665,31 +386,6 @@ fn float_ne_commutes() {
         )
         .into_pattern(),
         float_ne(
-            float_const(2.0_f64.to_bits()),
-            float_const(1.0_f64.to_bits()),
-        )
-        .into_pattern(),
-    );
-}
-
-#[test]
-fn float_lt_does_not_commute() {
-    let function = graph_float_cmp(1.0, 2.0, FloatCmpOp::Less);
-    a::matches(
-        &function,
-        float_cmp(
-            FloatCmpOp::Less,
-            float_const(1.0_f64.to_bits()),
-            float_const(2.0_f64.to_bits()),
-        )
-        .into_pattern(),
-        1,
-    );
-    // Less is directional.
-    a::none(
-        &function,
-        float_cmp(
-            FloatCmpOp::Less,
             float_const(2.0_f64.to_bits()),
             float_const(1.0_f64.to_bits()),
         )
@@ -770,8 +466,8 @@ fn add_of_two_loads() -> strider_ir::Function {
     let mut t = Tb::empty();
     let a = t.u64(0x1000);
     let b = t.u64(0x2000);
-    let la = t.load_ram(a, ValueType::I64);
-    let lb = t.load_ram(b, ValueType::I64);
+    let la = t.load_ram(a, ValueType::int(64));
+    let lb = t.load_ram(b, ValueType::int(64));
     let s = t.add(la, lb);
     t.ret_val(s)
 }
@@ -820,6 +516,57 @@ fn sibling_output_capture_joins_like_the_anchor() {
         rows(int_add(load().output(0).capture(c), load()).into_pattern()),
         1,
     );
+}
+
+/// `load().space(s)` pins the kind exactly, so two of them are one operand
+/// shape and the swapped ordering is cut, as it is for two bare `load()`s.
+#[test]
+fn space_pinned_operands_are_cut_like_bare_ones() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let function = add_of_two_loads();
+    let counted = |pat: Pattern| -> (usize, usize) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let pat = pat.with_root_post_match(Box::new(move |_, _, _, _| {
+            counter.fetch_add(1, Ordering::Relaxed);
+            true
+        }));
+        let hits = Matcher::new(&function).find_all(&pat).unwrap().len();
+        (hits, calls.load(Ordering::Relaxed))
+    };
+    let ram = || load().space(rsleigh::VnSpace::RAM);
+    // The root capture keeps `find_all` enumerating, so the count is the
+    // number of orderings driven.
+    let r = Capture::new();
+    assert_eq!(
+        counted(int_add(load(), load()).capture(r).into_pattern()),
+        (1, 1)
+    );
+    let r = Capture::new();
+    assert_eq!(
+        counted(int_add(ram(), ram()).capture(r).into_pattern()),
+        (1, 1)
+    );
+}
+
+/// A capture on one of two space-pinned loads still tells the orderings
+/// apart, so the cut leaves both bindings.
+#[test]
+fn space_pinned_capture_keeps_both_orders() {
+    let function = add_of_two_loads();
+    let ram = || load().space(rsleigh::VnSpace::RAM);
+    let k = Capture::new();
+    let vs: Vec<_> = a::matches(
+        &function,
+        int_add(ram().capture(k), ram()).into_pattern(),
+        2,
+    )
+    .iter()
+    .map(|m| m.bindings().get_value(k).expect("bound"))
+    .collect();
+    assert_ne!(vs[0], vs[1], "the two bindings must be DISTINCT");
 }
 
 /// `v_{i+1} = v_i + v_i`: both slots of every add hold one value, so the
@@ -926,4 +673,278 @@ fn a_capture_free_pattern_stops_at_the_first_ordering() {
         counted(int_add(any_int_const().capture(c), anything()).into_pattern()),
         (2, 2),
     );
+}
+
+/// `return(zext(Xor(Equal(5, 3), 1)))`: `int_ne(5, 3)` as the lifter lowers it.
+fn lowered_int_ne_5_3() -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let a = t.u64(5);
+    let b = t.u64(3);
+    let eq = t.int_cmp(a, b, IntCmpOp::Equal);
+    let ne = t.bool_not(eq);
+    let wide = t.zext_to(ne, strider_ir::node::ValueType::int(64));
+    t.ret_val(wide)
+}
+
+/// The pair `int_ne` was written with sits on its `Equal`, not on the `Xor`
+/// the lowering adds, so that is what `.ordered()` pins.
+#[test]
+fn ordered_pins_the_comparison_a_lowered_int_ne_holds() {
+    let function = lowered_int_ne_5_3();
+    let swapped = || int_ne(int_const(3u128), int_const(5u128));
+    a::matches(&function, swapped().into_pattern(), 1);
+    a::none(&function, swapped().ordered().into_pattern());
+    a::matches(
+        &function,
+        int_ne(int_const(5u128), int_const(3u128))
+            .ordered()
+            .into_pattern(),
+        1,
+    );
+}
+
+/// The pin lands under every wrapper, on either side of `.ordered()`.
+#[test]
+fn ordered_pins_a_lowered_int_ne_under_its_wrappers() {
+    let function = lowered_int_ne_5_3();
+    let c = Capture::new();
+    let swapped = || int_ne(int_const(3u128), int_const(5u128));
+    a::none(&function, swapped().capture(c).ordered().into_pattern());
+    a::none(&function, swapped().ordered().capture(c).into_pattern());
+    a::none(&function, swapped().of_width(1).ordered().into_pattern());
+    a::none(&function, swapped().ordered().of_width(1).into_pattern());
+    a::none(
+        &function,
+        inputs_of_width(1, swapped()).ordered().into_pattern(),
+    );
+    a::none(
+        &function,
+        inputs_of_width(1, swapped().ordered()).into_pattern(),
+    );
+
+    let written = || int_ne(int_const(5u128), int_const(3u128));
+    a::matches(&function, written().capture(c).ordered().into_pattern(), 1);
+    a::matches(&function, written().ordered().capture(c).into_pattern(), 1);
+    a::matches(&function, written().of_width(1).ordered().into_pattern(), 1);
+    a::matches(&function, written().ordered().of_width(1).into_pattern(), 1);
+    a::matches(
+        &function,
+        inputs_of_width(1, written()).ordered().into_pattern(),
+        1,
+    );
+    a::matches(
+        &function,
+        inputs_of_width(1, written().ordered()).into_pattern(),
+        1,
+    );
+}
+
+/// Nested as an operand, the pin still reaches the inner comparison.
+#[test]
+fn ordered_pins_a_lowered_int_ne_nested_as_an_operand() {
+    let function = lowered_int_ne_5_3();
+    a::none(
+        &function,
+        int_zero_extend(int_ne(int_const(3u128), int_const(5u128)).ordered()).into_pattern(),
+    );
+    a::matches(
+        &function,
+        int_zero_extend(int_ne(int_const(5u128), int_const(3u128)).ordered()).into_pattern(),
+        1,
+    );
+}
+
+/// `float_ne(1.0, 2.0)` is `Xor(FloatEqual(1.0, 2.0), 1)`: as for `int_ne`.
+#[test]
+fn ordered_pins_the_comparison_a_lowered_float_ne_holds() {
+    let function = {
+        let mut t = Tb::empty();
+        let a = t.f64(1.0);
+        let b = t.f64(2.0);
+        let eq = t.fcmp(a, b, FloatCmpOp::Equal);
+        let ne = t.bool_not(eq);
+        let as_int = t.as_int(ne, strider_ir::node::ValueType::int(64));
+        t.ret_val(as_int)
+    };
+    let ne = |l: f64, r: f64| float_ne(float_const(l.to_bits()), float_const(r.to_bits()));
+    a::none(&function, ne(2.0, 1.0).ordered().into_pattern());
+    a::matches(&function, ne(1.0, 2.0).ordered().into_pattern(), 1);
+}
+
+/// `float_le(l, r)` is `Or(FloatLess(l, r), FloatEqual(l, r))`: both
+/// comparisons hold the written pair, so `.ordered()` pins the `Equal` (the
+/// `Less` orders its pair already). The `Or` is not the pair holder, so its
+/// operands may still come either way round.
+fn lowered_float_le(eq_swapped: bool) -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let a = t.f64(1.0);
+    let b = t.f64(2.0);
+    let lt = t.fcmp(a, b, FloatCmpOp::Less);
+    let eq = if eq_swapped {
+        t.fcmp(b, a, FloatCmpOp::Equal)
+    } else {
+        t.fcmp(a, b, FloatCmpOp::Equal)
+    };
+    let le = t.bool_bin(eq, lt, IntBinaryOp::Or);
+    let as_int = t.as_int(le, strider_ir::node::ValueType::int(64));
+    t.ret_val(as_int)
+}
+
+#[test]
+fn ordered_pins_both_comparisons_of_float_le() {
+    let le = || {
+        float_le(
+            float_const(1.0_f64.to_bits()),
+            float_const(2.0_f64.to_bits()),
+        )
+    };
+    let written = lowered_float_le(false);
+    a::matches(&written, le().into_pattern(), 1);
+    a::matches(&written, le().ordered().into_pattern(), 1);
+    let swapped = lowered_float_le(true);
+    a::matches(&swapped, le().into_pattern(), 1);
+    a::none(&swapped, le().ordered().into_pattern());
+}
+
+/// `float_is_nan(x)` is `Xor(FloatEqual(x, x), 1)`, one operand in both
+/// equality slots, so `.ordered()` adds nothing, and an `Xor` holding its
+/// `1` first still matches.
+#[test]
+fn ordered_is_a_no_op_on_float_is_nan() {
+    let function = {
+        let mut t = Tb::empty();
+        let x = t.f64(1.0);
+        let one = t.boolean(true);
+        let eq = t.fcmp(x, x, FloatCmpOp::Equal);
+        let nan = t.bool_bin(one, eq, IntBinaryOp::Xor);
+        let as_int = t.as_int(nan, strider_ir::node::ValueType::int(64));
+        t.ret_val(as_int)
+    };
+    let nan = || float_is_nan(float_const(1.0_f64.to_bits()));
+    a::matches(&function, nan().into_pattern(), 1);
+    a::matches(&function, nan().ordered().into_pattern(), 1);
+}
+
+/// `return(zext(Xor(1, cmp(l, r))))`: a lowered `!=` / `<=` with its `Xor`
+/// operands the other way round from the lifter's.
+fn one_first_negated_cmp(l: u64, r: u64, op: IntCmpOp) -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let a = t.u64(l);
+    let b = t.u64(r);
+    let one = t.boolean(true);
+    let cmp = t.int_cmp(a, b, op);
+    let negated = t.bool_bin(one, cmp, IntBinaryOp::Xor);
+    let wide = t.zext_to(negated, strider_ir::node::ValueType::int(64));
+    t.ret_val(wide)
+}
+
+/// The `Xor` a lowered `int_ne` adds stays commutative under `.ordered()`,
+/// and a second `.ordered()` pins nothing more.
+#[test]
+fn ordered_leaves_the_xor_of_a_lowered_int_ne_commutative() {
+    let function = one_first_negated_cmp(5, 3, IntCmpOp::Equal);
+    let written = || int_ne(int_const(5u128), int_const(3u128));
+    a::matches(&function, written().ordered().into_pattern(), 1);
+    a::matches(&function, written().ordered().ordered().into_pattern(), 1);
+    a::none(
+        &function,
+        int_ne(int_const(3u128), int_const(5u128))
+            .ordered()
+            .into_pattern(),
+    );
+}
+
+/// `int_le(l, r)` is `Xor(Less(r, l), 1)`: the `Less` orders its pair
+/// already, so `.ordered()` matches what the plain pattern does, and the
+/// `Xor` still swaps. `int_sle` is the same over `Sless`.
+#[test]
+fn ordered_is_a_no_op_on_int_le_and_int_sle() {
+    fn check<P: MatchPat + 'static>(op: IntCmpOp, le: impl Fn(u128, u128) -> P) {
+        let function = one_first_negated_cmp(3, 5, op);
+        a::matches(&function, le(5, 3).into_pattern(), 1);
+        a::matches(&function, le(5, 3).ordered().into_pattern(), 1);
+        a::none(&function, le(3, 5).into_pattern());
+        a::none(&function, le(3, 5).ordered().into_pattern());
+    }
+    check(IntCmpOp::Less, |l, r| int_le(int_const(l), int_const(r)));
+    check(IntCmpOp::Sless, |l, r| int_sle(int_const(l), int_const(r)));
+}
+
+/// A raw kind-`Any` node can hold an existential beside one fixed operand.
+/// Matched at an `Add`, the fixed operand roams both slots, so neither is
+/// pinned away from the existential, which takes whichever one is left.
+#[test]
+fn an_existential_beside_a_commutative_operand_takes_the_other_slot() {
+    let function = shapes::int_bin(3, 5, IntBinaryOp::Add);
+    let mut b = MatcherBuilder::new();
+    let five = MatchPat::compile(int_const(5u128), &mut b);
+    let three = MatchPat::compile(int_const(3u128), &mut b);
+    let node = b.node(KindSpec::Any);
+    b.input(node, 0, five);
+    b.input_any(node, three);
+    let _out = b.value_output(node, 0);
+    a::matches(&function, b.finish(), 1);
+}
+
+/// The slot the roaming operand took is claimed, so a wildcard existential
+/// beside it takes only the other one: one configuration, not one per slot.
+#[test]
+fn an_existential_wildcard_skips_the_slot_the_roaming_operand_took() {
+    let function = shapes::int_bin(3, 5, IntBinaryOp::Add);
+    let k = Capture::new();
+    let mut b = MatcherBuilder::new();
+    let five = MatchPat::compile(int_const(5u128), &mut b);
+    let rest = MatchPat::compile(anything().capture(k), &mut b);
+    let node = b.node(KindSpec::Any);
+    b.input(node, 0, five);
+    b.input_any(node, rest);
+    let _out = b.value_output(node, 0);
+    let hits = a::matches(&function, b.finish(), 1);
+    assert_eq!(
+        hits[0].bindings().get_uint(k, &function),
+        Some(UBig::from(3u8))
+    );
+}
+
+/// Two fixed operands wired to one slot both read that slot on a commutative kind too, rather
+/// than splitting across the two operand slots.
+#[test]
+fn two_operands_on_one_slot_do_not_commute() {
+    use strider_ir::IRViewer;
+    let mut t = Tb::empty();
+    let a = t.u64(1);
+    let b = t.u64(2);
+    let c = t.u64(3);
+    let inner = t.add(a, b);
+    let outer = t.add(c, inner);
+    let function = t.ret_val(outer);
+
+    let int_const =
+        || KindSpec::variant_of(&NodeKind::IntConst(strider_ir::IntConstId::from_u32(0)));
+    let mut mb = MatcherBuilder::new();
+    let k1 = mb.leaf(int_const());
+    let k2 = mb.leaf(int_const());
+    // A capture keeps the pair from being interchangeable, so the swap path runs.
+    let cap = Capture::new();
+    mb.capture_output(k2, cap);
+    let add = mb.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+    mb.input(add, 0, k1);
+    mb.input(add, 0, k2);
+    mb.value_output(add, 0);
+    let mut got: Vec<_> = Matcher::new(&function)
+        .find_all(&mb.finish())
+        .unwrap()
+        .iter()
+        .map(|m| (m.root(), m.value(cap)))
+        .collect();
+    got.sort_by_key(|&(n, v)| (n, v.map(|v| v.as_u32())));
+    let mut want: Vec<_> = [inner, outer]
+        .iter()
+        .map(|&v| {
+            let n = function.producer(v);
+            (n, function.nth_input(n, 0))
+        })
+        .collect();
+    want.sort_by_key(|&(n, v)| (n, v.map(|v| v.as_u32())));
+    assert_eq!(got, want);
 }

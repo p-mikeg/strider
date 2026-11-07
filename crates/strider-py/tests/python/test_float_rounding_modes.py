@@ -6,6 +6,9 @@ IEEE `roundToIntegralTiesToEven`. `round(2.5)` is therefore 3 and
 folding is the only place that distinction is observable from Python, so the
 value is read back off a folded constant rather than asserted about the node
 kind alone.
+
+The last test ties each of the six float unary templates to the pattern of
+the same name.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import struct
 import pytest
 
 import strider
+from strider import pattern as p
 from strider import template as tpl
 from strider.pattern import (
     Capture,
@@ -47,7 +51,7 @@ def _folded_constants(build, operand: float):
         find=float_add(var(x), var(y)), replace=build(tpl.float_const(_bits(operand)))
     )
     assert g.validate() is None
-    lift.optimize(g)
+    g.optimize()
     c = Capture()
     return {_value(m.float_bits(c)) for m in g.find_all(float_const(c))}
 
@@ -83,13 +87,27 @@ def test_the_ceiling_and_round_patterns_do_not_match_each_other():
     assert not g.find_all(float_floor(anything()))
 
 
-def test_the_round_pattern_matches_the_x87_lift_that_emits_it():
-    """`fistp` lowers to FLOAT_ROUND then a float-to-int conversion, the one
-    place in the fixture corpus a rounding op arrives from real bytes."""
-    prog = strider.lift.load_elf(str(fixture_path("x86", "floats")))
+def test_the_round_pattern_matches_the_aarch64_lift_that_emits_it():
+    """Unoptimised, `fcvtzs`'s conversion selects among roundings built on
+    one FLOAT_ROUND, where a rounding op arrives from real bytes."""
+    prog = strider.lift.load_elf(str(fixture_path("aarch64", "floats")))
     g = prog.analyze(
         "float_to_int",
-        opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
+        opts=strider.lift.LifterOptions(
+            pipeline=strider.opt.OptimizerPipeline.empty(),
+        ),
     ).function
     assert len(g.find_all(float_round(anything()))) == 1
-    assert not g.find_all(float_ceil(anything()))
+
+
+FLOAT_UNARY = ["float_neg", "float_abs", "float_sqrt", "float_ceil", "float_floor", "float_round"]
+
+
+@pytest.mark.parametrize("name", FLOAT_UNARY)
+def test_a_float_unary_template_builds_what_its_pattern_alone_matches(name):
+    _lift, g = built_lifter_and_function("x64", "floats", "f64_arith", optimize=False)
+    x, y = Capture(), Capture()
+    grafted = g.rewrite(find=float_add(var(x), var(y)), replace=getattr(tpl, name)(x))
+    assert grafted
+    found = {other: len(g.find_all(getattr(p, other)(anything()))) for other in FLOAT_UNARY}
+    assert found == {other: grafted if other == name else 0 for other in FLOAT_UNARY}

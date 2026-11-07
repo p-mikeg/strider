@@ -1,106 +1,71 @@
 # strider-lift
 
 Turns one function's `strider_cfg::Cfg` into a `strider_ir::Function`: a
-sea-of-nodes graph in semi-pruned SSA, with one IR `Region` per CFG region, the
-control and memory edges wired along the CFG's edges, and every machine
-register modelled as an SSA variable.
+semi-pruned SSA sea-of-nodes graph with one IR `Region` per CFG region and every
+tracked register modelled as an SSA variable.
 
-## What's here
+## API
 
-- `Lifter<R>`, the engine: built once per architecture over an
-  `rsleigh::Sleigh<R>` and reused across functions and rebuild rounds, since
-  `Sleigh::regs()` is expensive and the register table never changes.
-  `build_cfg(entry, cfg_opts, per_address_ccs)` decodes; `build_ir(cfg, cc)` /
-  `build_ir_with(cfg, cc, opts)` lift. The calling convention is per function,
-  hence an argument rather than engine state.
-- `LiftOutcome`: the `Function`, plus `unresolved_branches` (each unresolved
-  `BranchIndirect`'s pcode address and its `IndirectBranch` placeholder),
-  `switch_anchors` (each seated `Switch`, so a resolver can re-derive and WIDEN
-  a table that resolved before the CFG finished growing) and `return_sites`
-  (each Sleigh `RETURN`'s pcode address, its `Return` node and the address it
-  jumps to, which only a check against the optimised IR can confirm is the
-  caller's).
-- `LiftOptions<'a>`: the `CfgOptions` to decode with, `per_address_ccs`
-  (borrowed, as `CfgOptions::known_targets` is) for direct call targets, and
-  `compact`, which this crate only carries for the orchestrator to read after
-  the pipeline.
-- `FunctionLifter`, internal: the per-function context holding the
-  `FunctionBuilder`, the varnode-to-container map, and the per-instruction
-  constant tracker.
+- `Lifter<R>`: wraps a `strider_cfg::DecodeEngine<R>`, reused across functions
+  and rebuild rounds. `build_cfg(entry, cfg_opts)` decodes;
+  `build_ir(cfg, cc)` / `build_ir_with(cfg, cc, cfg_opts, per_address_ccs,
+  claims, entry_values)` lift; `entry_values` binds registers to known
+  entry values (ppc64 ELFv1 `r2`).
+- `LiftOutcome`: the `Function` and its `LiftSites` (`unresolved_branches`,
+  `switch_anchors`, `return_sites`).
 
 ## The tracked varnode set
 
-A varnode is an SSA variable only if it is REGISTER or UNIQUE space; CONST
-becomes a literal and RAM a `Load` / `Store`. The set is frozen before the lift
-starts and comes from four places, because a register missing from it has no
-`InitialVar` and a write to it fails the whole function:
+Only REGISTER and UNIQUE varnodes are SSA variables; CONST becomes a literal and
+RAM a `Load` / `Store`. The set is frozen before the lift, and a write to a
+register outside it fails the function. It holds:
 
-- every REGISTER / UNIQUE varnode the decoded pcode names,
-- the convention, above all the stack pointer, which a function may never name
-  yet the stack analysis still needs, plus the argument registers of the
-  `per_address_ccs` overrides this CFG's own direct calls select, a binary-wide
-  table costing the whole table per function otherwise,
-- each `CallOther`'s ABI footprint, whose implicit reads and writes appear in no
-  pcode operand (x86-64 `syscall` reads `R10` and writes `R11`),
-- every register a LOAD or STORE reaches through the REGISTER space by a
-  computed address, which is likewise in no operand.
+- every REGISTER / UNIQUE varnode the pcode names,
+- the convention's stack pointer, argument and return registers, plus the
+  argument registers of the `per_address_ccs` overrides this CFG's direct
+  calls and tail calls select,
+- each `CallOther`'s ABI footprint (x86-64 `syscall` reads `R10`, writes `R11`),
+- the declared register enclosing each resolved register-space LOAD / STORE
+  address,
+- each input-less rounding-mode op's register, unless
+  `fp_rounding_mode_is_nearest`.
 
-`FunctionBuilder::new` then folds the set into largest containers.
+`Function::new` folds the set into largest containers, a partially overlapping
+run into its union, and sorts it. The lift first adds the smallest declared
+register enclosing each such union.
 
 ## Register aliasing
 
-Reads and writes go through the largest *tracked* varnode containing the one
-addressed, so `eax` and `rax` are one variable rather than two. A read shifts
-its slice out of the container and truncates; a write reads the container,
-positions the value at the slice's bit offset, clears that slot and ORs it back.
-Masks are built in container coordinates, so an upper-half write (AArch64
-`FCVT D0,S0`) clears the right half. Bit offsets follow the arch's
-`register_endianness`.
+Reads and writes go through the largest tracked container, so `eax` and `rax`
+are one variable: a read shifts and truncates, a write clears the slice in the
+container and ORs the value in. Bit offsets follow `register_endianness`.
 
-A register slot holds an integer at the register's natural width: an `I1` flag
-is zero-extended on the way in and a float is rejected, every float producer
-having bitcast first. That is what makes a cross-region `Phi` over a register
-type-homogeneous, and the conditional-branch lifter reads such a flag back by
-testing `!= 0` at the slot's own width rather than narrowing it to `I1`.
+A register holds an integer at its own width: an `I1` is zero-extended on write
+and floats are bitcast first, so a register `Phi` is type-homogeneous. A
+conditional branch tests a flag `!= 0` at its slot width.
 
-## A register-space LOAD or STORE is a register access
+## Register-space LOAD / STORE
 
-The REGISTER space is addressable, and a sla uses it when an instruction field
-picks the register (ARM `vld1.N {dX[i]}`). When the address resolves against the
-declared register file the access becomes an ordinary read or write of that
-register, not a memory operation. When it does not resolve, every tracked
-register's current value is first stored into its slot, since a named write
-never reaches the space. An unresolved STORE then lands in the space and every
-tracked register is re-read out of it: a register the write misses reads back
-its own value, and one it may hit reads a value that depends on the store, so
-the optimizer forwards the old value only where it proves the address misses
-that slot. An unresolved LOAD reads the space, answering a register's current
-value when the address names one.
+A sla addresses the REGISTER space when an instruction field picks the register
+(ARM `vld1.N {dX[i]}`). An address that resolves to a declared register is an
+ordinary register read or write. Otherwise every tracked register inside
+`SleighArch::register_space_reach` (ARM: the NEON file; elsewhere the whole
+space) is first stored into its slot; an unresolved STORE is then followed by
+re-reading those registers from the space, and an unresolved LOAD reads the
+space. The space uses `register_endianness` (`Function::byte_order`).
 
 ## SSA construction
 
-Semi-pruned SSA. `collect_def_sites` walks every region's pcode and records what
-the lift will write; `is_local_temporary` drops the UNIQUE temporaries no region
-reads before writing, and `iterated_frontier` turns the rest into the set of
-variables needing a `Phi` at each region.
-`record_insn_effects` is a HAND-WRITTEN mirror of the lift's write paths, not a
-shared code path: a def it records that the lift never writes costs a dead phi,
-one the lift writes and it misses loses the phi and miscompiles.
+Semi-pruned: phis at the iterated dominance frontier of each variable's def
+sites, less UNIQUE temporaries no region reads before writing. The def sites
+come from `record_insn_effects`, a hand-written mirror of the lift's write
+paths: a spurious def costs a dead phi, a missed one miscompiles.
 
-Renaming walks the dominator tree in pre-order: each region takes its immediate
-dominator's finished variable map and overrides the variables carrying a phi of
-their own, so a region is renamed only after the dominator whose values reach
-it. The terminator handlers wire their own successors as they lift; the
-fallthrough edges are wired afterwards, from each source region's final map.
-
-Reading a variable no definition reaches is an error, not a default value. The
-walk covers only the regions reachable from the entry, so an unreachable region
-branching into one that carries phis fails the lift rather than seating
-`ValueId(0)`, the `Entry` node's control output, as a phi operand.
+Regions are renamed in dominator-tree pre-order, each starting from its
+immediate dominator's variable map. The entry defines every tracked variable
+as an `InitialVar`, so every read finds a definition.
 
 ## Lift-time canonicalisations
-
-Each shape has exactly one form in the IR, so a pattern matches one thing:
 
     IntSub(a, b)         -> Add(a, Neg(b))
     IntNotEqual(a, b)    -> Xor(Equal(a, b), IntConst(1)):I1
@@ -108,51 +73,34 @@ Each shape has exactly one form in the IR, so a pattern matches one thing:
     IntSlessEqual(a, b)  -> Xor(Sless(b, a), IntConst(1)):I1
     IntNeg(x)            -> Xor(x, all_ones)        (Sleigh IntNeg is ~x)
     BoolNeg(x)           -> Xor(x, IntConst(1)):I1
-    FloatSub(a, b)       -> FloatAdd(a, Neg(b))
+    FloatSub(a, b)       -> FloatAdd(a, Neg(b))     (a NaN b's sign flips)
     FloatNotEqual(a, b)  -> Xor(FloatEqual(a, b), IntConst(1)):I1
     FloatNan(x)          -> Xor(FloatEqual(x, x), IntConst(1)):I1
     FloatLessEqual(a, b) -> Or(FloatLess(a, b), FloatEqual(a, b)):I1
 
-Every one is exact. Subtraction wraps identically to adding the negation; the
-integer negations are `Xor` with the all-ones constant of their width, which at
-`I1` is 1; `x != x` is IEEE 754's definition of NaN. The float `<=` is the one
-that does NOT follow the integer pattern: `Not(Less(b, a))` answers TRUE on a
-NaN operand, where IEEE 754 requires false, and both `Less` and `Equal` answer
-false on NaN, so their `Or` is right.
-
-Two further rewrites are not canonicalisations but semantics. A shift count
-wider than the output is SATURATED rather than truncated, since p-code tests the
-full count against the output width and truncating `0x1_0000_0000` to `I32`
-would turn an x86 SIMD shift-by-register into a no-op. A float result written to
-a register is bitcast to an integer, registers holding no float type.
+All are exact but `FloatSub` on a NaN subtrahend, whose sign IEEE 754 leaves
+unspecified. A shift count wider than the output saturates rather than
+truncating (p-code compares the full count). BOOL ops read their input's low
+bit (p-code: the whole byte); every vendored spec feeds them 0/1.
 
 ## Terminators
 
-`Return` and a link-register `BranchIndirect` (ARM `bx lr`) both emit a
-convention `Return` reading the CC's return registers through the aliasing path.
-The CFG's dedicated terminators are lifted after a region's instruction loop,
-from the region's last machine address: a resolved `Switch` with one control
-output per arm and its selector kept live, a `TailCall` as `Call` + `Return`, and
-an unresolved indirect branch as an `IndirectBranch` placeholder anchoring the
-dispatch varnode plus, on ARM and MIPS, the ISA-mode bit the branch's
-instruction committed, so a resolver can decode each target in the right mode.
+`Return` and a link-register `BranchIndirect` (ARM `pop {pc}`) emit a convention
+`Return`. A `NoReturn` call or `CallOther` ends in `Unreachable`. A resolved
+`Switch` gets one control output per arm and keeps its selector live; a
+`TailCall` becomes `Call` + `Return`; an unresolved indirect branch becomes an
+`IndirectBranch` anchoring the dispatch varnode and, on ARM and MIPS, the
+ISA-mode bit the branch commits, if any, so a resolver decodes each target in
+the right mode.
 
-A control cycle that never exits (`while (1)`, a spin loop, x86's `hlt`) roots
-no terminator, so `retain_reachable` would drop its whole body and `validate`
-rejects the shape. One `If(true) { back edge } { Unreachable }` is seated on each
-such cycle to give it a root.
+A control cycle with no exit reaches no terminator, so an
+`If(true) { back edge } { Unreachable }` is seated on each to keep it valid.
 
 ## Fail-closed
 
-`Insert` / `Extract`, `PtrAdd` / `PtrSub`, `MultiEqual`, `SegmentOp` and
-`Indirect` are all decompiler-internal: no SLEIGH production emits them, so each
-is a named error rather than a guessed lowering. The opcode match is exhaustive
-over `rsleigh::Opcode`, so a new opcode is a compile error here.
-
-A width no `ValueType` carries, a `Subpiece` offset at or past its input's
-width, a signed shift whose operand and output widths disagree, an ABI register
-name outside the arch's table: each fails the whole function's lift rather
-than producing an approximation.
-
-Depends on `strider-cfg`, `strider-ir`, `strider-target`, `graph-algorithms`,
-`vn-container`, `rsleigh`, `anyhow`, `petgraph` and `rustc-hash`.
+Decompiler-internal opcodes (`Insert`, `Extract`, `PtrAdd`, `PtrSub`,
+`MultiEqual`, `SegmentOp`, `Indirect`) are named errors; the opcode match is
+exhaustive. An unmapped width, a `Subpiece` offset at or past its input's
+width, an operand off its op's width (a shift count, a BOOL input and a
+`POPCOUNT` / `LZCOUNT` input excepted) or an unknown ABI register name fails
+the function's lift.

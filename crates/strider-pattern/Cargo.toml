@@ -8,28 +8,20 @@ repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[features]
-# Exposes `Match::get_vn`, used only by this crate's integration tests. Off in
-# the wheel, on for `cargo test` via the self dev-dependency below.
-test-util = []
-
 [dependencies]
 strider-ir = { workspace = true }
 strider-graph = { workspace = true }
 rsleigh = { workspace = true }
 vn-container = { workspace = true }
-petgraph = { workspace = true }
 anyhow = { workspace = true }
-itertools = { workspace = true, features = ["use_alloc"] }
+either = { workspace = true }
+thiserror.workspace = true
+petgraph = { workspace = true }
 rustc-hash.workspace = true
 
 [dev-dependencies]
-# Self dev-dependency: turns `test-util` on for the `tests/` targets only.
-strider-pattern = { workspace = true, features = ["test-util"] }
-# Test-only IR helper (build_sub_as_add_neg) used in typed_match tests.
-strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { path = "../strider-ir-test-utils" }
-# Used only by the integration tests (e.g. control_build, call_other slots).
+# Integration tests only.
 strider-target = { workspace = true, features = ["test-util"] }
 criterion = { workspace = true }
 

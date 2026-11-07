@@ -13,15 +13,19 @@ readme = "README.md"
 rsleigh.workspace = true
 anyhow.workspace = true
 rustc-hash.workspace = true
+vn-container.workspace = true
 
 [features]
-# `SleighArch::probe_regs`, a register table read off an empty image, and
-# `ArchPreset::arch`.
+# `SleighArch::probe_regs`, a copy of `SleighArch::names`' register table,
+# and `ArchPreset::arch` / `ghidra_id` / `ghidra_ldefs` / `family_name`.
 test-util = []
 
 [dev-dependencies]
 # Self dev-dependency: turns `test-util` on for the `tests/` targets only.
 strider-target = { workspace = true, features = ["test-util"] }
+# The vendored Ghidra .cspec / .ldefs the presets are checked against.
+roxmltree.workspace = true
+expect-test.workspace = true
 
 [lints]
 workspace = true

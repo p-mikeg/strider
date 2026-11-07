@@ -1,5 +1,4 @@
-//! Each iteration rebuilds the input in the `iter_batched` setup closure;
-//! only `pipeline.run` is timed.
+//! Times `default_pipeline().run` alone; the input is rebuilt per iteration.
 
 use std::hint::black_box;
 
@@ -7,8 +6,8 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use strider_ir_test_utils::Tb;
 use strider_opt::{OptCtx, default_pipeline};
 
-/// 1000 iterations alternating Add / Mul / Xor from a constant seed. Every
-/// operand is a constant, so `ConstantFold` can collapse the whole chain.
+/// A 1000-op all-constant Add / Mul / Xor chain, which `ConstantFold`
+/// collapses.
 fn build_foldable_chain() -> strider_ir::Function {
     let mut t = Tb::empty();
     let mut acc = t.u64(1);
@@ -29,8 +28,8 @@ fn pipeline_benches(c: &mut Criterion) {
         b.iter_batched(
             build_foldable_chain,
             |mut function| {
-                let mut ctx = OptCtx::new(None);
-                pipeline.run(&mut function, &mut ctx).unwrap();
+                function.assume(&strider_opt::AssumptionOptions::default());
+                pipeline.run(&mut function, &OptCtx::new(None)).unwrap();
                 black_box(function)
             },
             BatchSize::LargeInput,

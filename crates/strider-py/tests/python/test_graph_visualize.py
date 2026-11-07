@@ -1,3 +1,4 @@
+import pytest
 import strider
 
 from .conftest import built_function, built_lifter_and_function, fixture_path
@@ -137,3 +138,14 @@ def test_function_to_dot_str_and_file(tmp_path):
         "raw_neighborhood_dot",
     ):
         assert not hasattr(fn, gone)
+
+
+@pytest.mark.parametrize("method", ["to_dot", "to_html"])
+@pytest.mark.parametrize("owner", ["function", "cfg"])
+def test_a_failed_write_raises_os_error_naming_the_path(tmp_path, method, owner):
+    fn = _build_graph()
+    target = fn if owner == "function" else fn.cfg
+    missing = tmp_path / "missing" / "out"
+    with pytest.raises(FileNotFoundError) as e:
+        getattr(target, method)(str(missing))
+    assert e.value.filename == str(missing)

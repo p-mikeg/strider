@@ -1,29 +1,21 @@
-//! Braun redundant-phi elimination for `Phi` and `MemPhi` ("Simple and
-//! Efficient Construction of SSA Form", section 3.2).
+//! Braun redundant-phi elimination ("Simple and Efficient Construction of SSA
+//! Form", section 3.2) for `Phi` and `MemPhi`.
 //!
-//! Inputs are `[phi_token, val_0, val_1, ...]`. The phi graph has an edge from
-//! each phi to every phi among its value inputs. A strongly connected component
-//! whose value inputs from outside itself are exactly ONE value is that value:
-//! every use of every phi in it is redirected there. A single trivial phi, one
-//! whose inputs other than itself are one value, is the one-phi case. A
-//! component with two or more outside values is a genuine merge, and the same
-//! test runs again over the components of its phis that take no outside value.
-//! Zero outside values (a fully self-referential cycle) is left alone.
-//!
-//! A phi takes part only when its `Region` and every input producer are live.
-//! Every value input counts, dead predecessor edge or not.
-//!
-//! Braun's argument needs each arm's definition to dominate the phi, which
-//! fails on a `Region` unreachable from entry: `phi(token, Add(phi, 2))` is
-//! then a one-member component whose single outside value is the `Add`, and
-//! collapsing onto it closes a non-phi data cycle.  Such a phi is skipped.
+//! A strongly connected phi component whose outside value inputs are exactly
+//! one value is replaced by it; with more, the test reruns over its phis that
+//! take no outside value. Inputs on unreachable predecessor slots count as
+//! outside values. Phis over a `Region` unreachable from entry are skipped:
+//! collapsing there can close a non-phi data cycle. Then folds `And(phi, C)`
+//! when every arm masked by `C` agrees ([`masked`]).
 
 use cranelift_entity::SecondaryMap;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::error::Result;
-use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::Result;
+use crate::pipeline::{OptCtx, Optimizer};
+
+mod masked;
 
 #[cfg(test)]
 mod tests;
@@ -32,31 +24,18 @@ mod tests;
 /// reruns stay linear in the phi count.
 const INNER_VISITS_PER_PHI: usize = 4;
 
-#[derive(Clone, Copy)]
 pub struct PhiCollapse;
 
 impl Optimizer for PhiCollapse {
-    fn apply(
-        &self,
-        edit: &mut crate::EditFunction<'_>,
-        _opt: &mut OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
+    fn apply(&self, edit: &mut crate::EditFunction<'_>, _opt: &OptCtx<'_>) -> Result<()> {
         let reachable = strider_ir::walk::cfg_reachable(edit.function().graph(), edit.entry());
         let phis: Vec<NodeId> = edit
-            .reverse_postorder_filter(|k| matches!(k, NodeKind::Phi | NodeKind::MemPhi))
-            .filter(|&phi| {
-                edit.nth_input(phi, 0)
-                    .is_some_and(|token| reachable.contains(edit.producer(token)))
-                    && edit
-                        .node_inputs(phi)
-                        .into_iter()
-                        .all(|v| edit.is_live(edit.producer(v)))
-            })
+            .live_reverse_postorder_filter(|k| matches!(k, NodeKind::Phi | NodeKind::MemPhi))
+            .filter(|&phi| reachable.contains(edit.phi_region(phi)))
             .collect();
         let mut sccs = PhiSccs::default();
         let mut frames = vec![sccs.run(edit, &phis)];
         let mut inner_budget = phis.len().saturating_mul(INNER_VISITS_PER_PHI);
-        let mut overall = OptimizationResult::NoChange;
         while let Some(frame) = frames.last_mut() {
             let Some(range) = frame.next_component() else {
                 frames.pop();
@@ -64,10 +43,7 @@ impl Optimizer for PhiCollapse {
             };
             let scc = &frame.nodes[range];
             match sccs.outside_values(edit, scc) {
-                Outside::One(value) => {
-                    collapse(edit, scc, value)?;
-                    overall = OptimizationResult::Changed;
-                }
+                Outside::One(value) => collapse(edit, scc, value),
                 Outside::Many(inner) if !inner.is_empty() && inner.len() <= inner_budget => {
                     inner_budget -= inner.len();
                     frames.push(sccs.run(edit, &inner));
@@ -75,24 +51,21 @@ impl Optimizer for PhiCollapse {
                 Outside::Many(_) | Outside::None => {}
             }
         }
-        Ok(overall)
+        masked::fold_masked_uses(edit, &phis)
     }
 }
 
 /// Redirects every use of the phis in `scc` to `value`, then kills them.
-///
-/// Killed here rather than by the end-of-iteration cull, so a dead phi stops
-/// counting as a live consumer of its Region's phi-token and `RegionCollapse`
-/// can detach that Region in the same iteration.
-fn collapse(edit: &mut crate::EditFunction<'_>, scc: &[NodeId], value: ValueId) -> Result<()> {
+fn collapse(edit: &mut crate::EditFunction<'_>, scc: &[NodeId], value: ValueId) {
     for &phi in scc {
-        let [out] = edit.node_outputs_exact::<1>(phi)?;
-        edit.replace_value(out, value)?;
+        let [out] = edit
+            .node_outputs_exact::<1>(phi)
+            .expect("a phi has one output");
+        edit.replace_value(out, value);
     }
     for &phi in scc {
         edit.kill_node(phi);
     }
-    Ok(())
 }
 
 enum Outside {

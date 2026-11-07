@@ -13,14 +13,14 @@ fn store_and_load_address_data_accessors() {
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let store_addr_val = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-    let store_data_val = b.build_int_const(0x42u64, ValueType::I32).unwrap();
+    let store_addr_val = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+    let store_data_val = b.build_int_const(0x42u64, ValueType::int(32)).unwrap();
     b.build_store(store_addr_val, store_data_val, rsleigh::VnSpace::RAM)
         .unwrap();
 
-    let load_addr_val = b.build_int_const(0x2000u64, ValueType::I64).unwrap();
+    let load_addr_val = b.build_int_const(0x2000u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(load_addr_val, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(load_addr_val, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     b.set_lift_addr(None);
@@ -35,6 +35,15 @@ fn store_and_load_address_data_accessors() {
 
     let load = f.producer(loaded);
     assert_eq!(f.load_addr(load), load_addr_val, "load_addr is slot 1");
+
+    assert_eq!(f.access_address(store), Some(store_addr_val));
+    assert_eq!(f.access_address(load), Some(load_addr_val));
+    // A `Return` has a slot 1 too (its memory), but no address.
+    let ret = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
+        .expect("a Return node");
+    assert_eq!(f.access_address(ret), None);
 }
 
 #[test]
@@ -50,10 +59,10 @@ fn if_cond_accessor() {
     b.build_if(cond, true_region, false_region).unwrap();
 
     b.set_region(true_region);
-    let tv = b.build_int_const(1u64, ValueType::I64).unwrap();
+    let tv = b.build_int_const(1u64, ValueType::int(64)).unwrap();
     b.build_return(Some(tv), &[]).unwrap();
     b.set_region(false_region);
-    let fv = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let fv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     b.build_return(Some(fv), &[]).unwrap();
     b.set_lift_addr(None);
     let f = b.build().unwrap();
@@ -72,7 +81,9 @@ fn indirect_branch_target_accessor() {
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let target = b.build_int_const(0xDEAD_0000u64, ValueType::I64).unwrap();
+    let target = b
+        .build_int_const(0xDEAD_0000u64, ValueType::int(64))
+        .unwrap();
     let branch = b.build_indirect_branch(target).unwrap();
     b.set_lift_addr(None);
     let f = b.build().unwrap();
@@ -81,6 +92,28 @@ fn indirect_branch_target_accessor() {
         f.indirect_branch_target(branch),
         target,
         "indirect_branch_target is slot 2",
+    );
+}
+
+#[test]
+fn switch_selector_accessor() {
+    let mut b = strider_ir_test_utils::empty_builder().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let arm = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let selector = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+    let switch = b.build_switch(selector, &[(arm, 0x1000)]).unwrap();
+    b.set_region(arm);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+
+    assert_eq!(
+        f.switch_selector(switch),
+        selector,
+        "switch_selector is slot 1"
     );
 }
 
@@ -96,7 +129,7 @@ mod wrong_kind {
             .build_fn_single_region()
             .unwrap();
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let target = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+        let target = b.build_int_const(0xF00Du64, ValueType::int(64)).unwrap();
         let (call, _) = b.build_call(target, &[], &[], 0).unwrap();
         b.build_return(None, &[]).unwrap();
         b.set_lift_addr(None);
@@ -111,6 +144,13 @@ mod wrong_kind {
     }
 
     #[test]
+    #[should_panic(expected = "switch_selector on a non-Switch")]
+    fn switch_selector_rejects_a_call() {
+        let (f, call) = call_node();
+        let _ = f.switch_selector(call);
+    }
+
+    #[test]
     #[should_panic(expected = "indirect_branch_target on a non-IndirectBranch")]
     fn target_rejects_a_store() {
         let mut b = strider_ir_test_utils::empty_builder().unwrap();
@@ -118,8 +158,8 @@ mod wrong_kind {
         b.set_entry_region_all(entry).unwrap();
         b.set_region(entry);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-        let data = b.build_int_const(0x42u64, ValueType::I32).unwrap();
+        let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+        let data = b.build_int_const(0x42u64, ValueType::int(32)).unwrap();
         b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
         b.build_return(None, &[]).unwrap();
         b.set_lift_addr(None);

@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 use dot::GraphDotDumper;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -11,71 +9,51 @@ use anyhow::anyhow;
 use crate::Result;
 
 impl Cfg {
-    /// `sleigh` is borrowed for register-name resolution and instruction
-    /// formatting.
-    pub fn dot_dumper<'a, R: rsleigh::MemReader>(
-        &'a self,
-        sleigh: &'a rsleigh::Sleigh<R>,
-    ) -> CfgDotDumper<'a, R> {
+    /// Names registers and spaces through `names`; a LOAD / STORE space id
+    /// resolves through this CFG's own space ids.
+    pub fn dot_dumper<'a>(&'a self, names: &'a strider_target::ArchNames) -> CfgDotDumper<'a> {
         CfgDotDumper {
             cfg: self,
-            sleigh,
-            nodes: None,
-            center: None,
+            names,
+            view: None,
         }
     }
 }
 
-pub struct CfgDotDumper<'a, R: rsleigh::MemReader> {
+pub struct CfgDotDumper<'a> {
     cfg: &'a Cfg,
-    sleigh: &'a rsleigh::Sleigh<R>,
-    /// Restricts the dump to these regions; `None` dumps every region.
-    nodes: Option<&'a rustc_hash::FxHashSet<NodeIndex>>,
-    /// Rendered with a gold border.
-    center: Option<NodeIndex>,
+    names: &'a strider_target::ArchNames,
+    /// A neighborhood render; `None` dumps every region.
+    view: Option<dot::View<NodeIndex>>,
 }
 
-impl<'a, R: rsleigh::MemReader> CfgDotDumper<'a, R> {
-    /// Restricts the dump to `nodes` and highlights `center`, so a
-    /// neighborhood renders through the same label and edge rules as a whole
-    /// CFG rather than a second emitter.
-    pub(crate) fn restricted(
-        mut self,
-        nodes: &'a rustc_hash::FxHashSet<NodeIndex>,
-        center: NodeIndex,
-    ) -> Self {
-        self.nodes = Some(nodes);
-        self.center = Some(center);
-        self
+impl CfgDotDumper<'_> {
+    /// Renders only `view`.
+    pub(crate) fn restricted(self, view: dot::View<NodeIndex>) -> Self {
+        Self {
+            view: Some(view),
+            ..self
+        }
     }
 }
 
-impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
+impl GraphDotDumper for CfgDotDumper<'_> {
     type Node = NodeIndex;
-    type Error = anyhow::Error;
-    /// Resolving `regs` walks the arch's register table over FFI, and
-    /// `GraphDot` calls [`Self::dump_as_dot`] once per region, so it is built
-    /// once per dump here.  The failure is carried as text: creating the state
-    /// cannot fail.
-    type State = std::result::Result<rsleigh::SleighRegs, String>;
-
-    fn create_initial_state(&self) -> Self::State {
-        self.sleigh.regs().map_err(|e| e.to_string())
-    }
+    type State = ();
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        self.cfg
-            .region_graph
-            .node_indices()
-            .filter(|n| self.nodes.is_none_or(|keep| keep.contains(n)))
-            .collect::<Vec<_>>()
+        self.cfg.region_graph.node_indices()
+    }
+
+    fn view(&self) -> Option<&dot::View<NodeIndex>> {
+        self.view.as_ref()
     }
 
     fn dump_as_dot(
         &self,
         node_id: Self::Node,
         out: &mut dot::DotEmitter,
-        state: &mut Self::State,
+        _state: &mut Self::State,
     ) -> Result<()> {
         let dot_id = node_id.index().to_string();
         let node = self
@@ -84,54 +62,30 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
             .node_weight(node_id)
             .ok_or_else(|| anyhow!("invalid region index {node_id:?}"))?;
         let first_insn_index = node.start_addr.insn_index;
-        let start_addr = node.start_addr.machine_addr.addr;
+        let start_addr = node.start_addr.machine();
 
-        let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
+        let head = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
+        let lines = node.insns.iter().map(|insn| {
+            let pretty = crate::insn_text(&insn.insn, &self.cfg.space_ids, self.names);
+            format!("{:#x}: {pretty}", insn.addr.machine())
+        });
+        out.node_left_lines(&dot_id, &head, lines, "box", self.center_attrs(node_id));
 
-        let regs = state
-            .as_ref()
-            .map_err(|e| anyhow!("sleigh register table unavailable: {e}"))?;
-        for insn in &node.insns {
-            let insn_addr = insn.addr.machine_addr.addr;
-            let pretty = crate::insn_text(&insn.insn, &self.cfg.space_ids, self.sleigh, regs);
-            write!(&mut label, "\\l{insn_addr:#x}: {pretty}").map_err(anyhow::Error::from)?;
-        }
-        write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
-
-        let extra: &[(&str, &str)] = if self.center == Some(node_id) {
-            &[("color", "#ffcc00"), ("penwidth", "2.5")]
-        } else {
-            &[]
-        };
-        // The label carries hand-emitted `\l` breaks per instruction.
-        out.node_raw_label(&dot_id, &label, "box", extra);
-
-        // Edges are unweighted, so label and style come from the SOURCE
-        // region's terminator.  A `CondBranch` source defers to `region_if`
-        // rather than re-implementing the containment rule here.
-        //
-        // The set tracks which sources already labelled their one if-true
-        // edge.  In the degenerate `if (c) goto L else goto L` case a source
-        // has two parallel edges here and `region_if` names the same region
-        // for both arms; without the guard both would render "if-true".
-        let mut cond_true_labelled: std::collections::HashSet<NodeIndex> =
-            std::collections::HashSet::new();
+        // Labels come from the source's terminator. The set keeps
+        // `if (c) goto L else goto L`'s two parallel edges from both reading
+        // "if-true".
+        let mut cond_true_labelled = rustc_hash::FxHashSet::default();
         for edge in self
             .cfg
             .region_graph
             .edges_directed(node_id, petgraph::Incoming)
         {
             let src = edge.source();
-            if self.nodes.is_some_and(|keep| !keep.contains(&src)) {
+            if !self.in_view(src) {
                 continue;
             }
             let src_id = src.index().to_string();
-            let src_region = self
-                .cfg
-                .region_graph
-                .node_weight(src)
-                .ok_or_else(|| anyhow!("dangling edge source {src:?}"))?;
-            let (label, style) = match &src_region.terminator {
+            let (label, style) = match &self.cfg.region_graph[src].terminator {
                 RegionTerminator::CondBranch { .. } => {
                     let succ = self.cfg.region_if(src)?;
                     if succ.if_true_region == Some(node_id) && cond_true_labelled.insert(src) {
@@ -142,9 +96,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
                 }
                 RegionTerminator::Switch { .. } => ("switch", "solid"),
                 RegionTerminator::Unconditional => ("unconditional", "solid"),
-                // These have no outgoing edge, so an edge from one is a
-                // construction bug.  Render it visibly rather than failing the
-                // whole dump.
+                // No outgoing edge exists here; render a bug visibly.
                 RegionTerminator::Return
                 | RegionTerminator::NoReturn
                 | RegionTerminator::TailCall { .. }
@@ -163,20 +115,41 @@ mod tests {
     use rsleigh::mem_readers::BufMemReader;
     use strider_target::SleighArch;
 
-    use crate::{Builder, CfgOptions};
+    use crate::{CfgOptions, DecodeEngine};
 
-    /// Keeps the `Sleigh` alive across the render.
     fn dot_string(bytes: Vec<u8>, start: u64) -> String {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let cfg = Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-            .build()
-            .expect("Builder::build on synthetic bytes");
-        GraphDot::new(cfg.dot_dumper(&sleigh), DotStyle::dark_cfg())
+        let mut engine = DecodeEngine::new(arch, reader).expect("decode engine");
+        let cfg = engine
+            .build_cfg(start.into(), &CfgOptions::default())
+            .expect("build_cfg on synthetic bytes");
+        GraphDot::new(cfg.dot_dumper(arch.names()), DotStyle::dark_cfg())
             .as_dot()
             .expect("render dot")
+    }
+
+    /// A budget that leaves one of a region's predecessors out of the view
+    /// leaves out that predecessor's edge too, or the DOT draws an edge from a
+    /// node it never declares.
+    #[test]
+    fn a_budgeted_neighborhood_draws_no_edge_from_a_region_outside_it() {
+        // `jne +1; nop; ret`: the `ret` region has two predecessors.
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(vec![0x75, 0x01, 0x90, 0xc3], 0x1000);
+        let mut engine = DecodeEngine::new(arch, reader).expect("decode engine");
+        let cfg = engine
+            .build_cfg(0x1000.into(), &CfgOptions::default())
+            .expect("build_cfg on synthetic bytes");
+        let g = cfg.region_graph();
+        let ret = g
+            .node_indices()
+            .find(|&n| g.neighbors_directed(n, petgraph::Incoming).count() == 2)
+            .expect("a two-predecessor region");
+        let dot = cfg
+            .neighborhood_dot(arch.names(), ret, 1, 2)
+            .expect("neighborhood_dot");
+        assert_eq!(dot.matches(" -> ").count(), 1, "dot:\n{dot}");
     }
 
     #[test]

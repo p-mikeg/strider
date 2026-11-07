@@ -2,18 +2,11 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
-/// A shared, immutable byte buffer regions are cut from: a memory-mapped file
-/// or an owned allocation. Cloning shares, never copies.
+/// A shared byte buffer: a memory-mapped file or an owned allocation.
 ///
-/// # Mapping contract
-///
-/// A mapped file must not change on disk while it is mapped; the mapping's
-/// bytes are otherwise not immutable, and a read can observe a torn or
-/// truncated file (SIGBUS past the new end). The common case is a rebuild
-/// between two operations, which [`check_unchanged`] turns into an `Err`. A
-/// change racing a read in progress still tears.
-///
-/// [`check_unchanged`]: FileBytes::check_unchanged
+/// A mapped file must not change on disk while mapped, else a read tears or
+/// SIGBUSes past a new end; [`check_unchanged`](Self::check_unchanged) catches
+/// a change between operations.
 #[derive(Clone)]
 pub(crate) struct FileBytes(Store);
 
@@ -25,27 +18,18 @@ enum Store {
 
 struct MappedFile {
     map: memmap2::Mmap,
-    /// Held open so the check re-stats the mapped INODE. Re-resolving the path
-    /// would compare against whatever sits at that name now, which a rename, a
-    /// replacement or the caller's `chdir` all change while the mapping stays
-    /// valid.
+    /// Held open so the check re-stats the mapped inode, not the path.
     file: std::fs::File,
-    /// For the error message only.
     path: std::path::PathBuf,
     identity: FileIdentity,
 }
 
-/// What a `stat` says about the mapped inode, sampled when it was mapped.
-///
-/// Only a coherence hint: a rewrite in place that keeps the size and lands
-/// inside the same second is indistinguishable from no change at all. mtime is
-/// compared at whole seconds because drvfs truncates it on `utimensat`, so a
-/// `cp -p` or `touch -r` of a file onto itself otherwise reports a change.
+/// The mapped inode's size and mtime, blind to a same-size rewrite within one
+/// second. Whole seconds because drvfs truncates mtime on `utimensat`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FileIdentity {
     len: u64,
-    /// Whole seconds since the epoch; `None` on a filesystem that reports no
-    /// mtime, or for a timestamp before it.
+    /// Seconds since the epoch; `None` when unavailable or before it.
     mtime_secs: Option<u64>,
 }
 
@@ -61,8 +45,7 @@ impl FileIdentity {
         }
     }
 
-    /// What differs from `now`, for the error message; `None` when equal.
-    /// The inode is pinned by the held fd, so only its contents can move.
+    /// What differs from `now`; `None` when equal.
     fn diff(&self, now: &Self) -> Option<String> {
         if self == now {
             return None;
@@ -77,18 +60,10 @@ impl FileIdentity {
     }
 }
 
-/// Ceiling on what a `stat` alone buys in reserved capacity. `read_to_end`
-/// grows past it; a sparse or concurrently-truncated file that reports
-/// terabytes must not turn into an allocation abort before a byte is read.
+/// Cap on the capacity reserved from a `stat` size, which may be bogus.
 const MAX_RESERVED_READ: u64 = 64 << 20;
 
-/// The first `len` bytes of the already-open `file`, `len` being what its
-/// `stat` reported: the extent a mapping would cover. A file growing under the
-/// read, or a `/proc` file that stats empty and reads for 256 GiB
-/// (`/proc/self/pagemap`), stops there.
-///
-/// Through the fd rather than the path, so the bytes come from the inode the
-/// checks above ran on however the name is rebound meanwhile.
+/// The first `len` bytes of `file`, `len` being its `stat` size.
 fn read_all(file: &mut std::fs::File, len: u64) -> std::io::Result<Vec<u8>> {
     use std::io::Read as _;
     let reserve = usize::try_from(len.min(MAX_RESERVED_READ)).unwrap_or(0);
@@ -102,35 +77,18 @@ impl FileBytes {
         Self(Store::Owned(Arc::new(bytes)))
     }
 
-    /// Maps `path` read-only, falling back to reading it into memory on any
-    /// mapping failure (a filesystem that cannot map).
-    ///
-    /// Set `STRIDER_NO_MMAP=1` to read the file instead of mapping it. A
-    /// mapping turns a paging error into SIGBUS, which no caller can catch and
-    /// which kills the process; on a network or 9p mount that is a live risk
-    /// even for a file nothing is writing. Reading costs the file's size in
-    /// memory and gives an ordinary `Err` instead.
-    ///
-    /// # Errors
-    ///
-    /// When the file cannot be opened or stat'd, is not a regular file, or when
-    /// the fallback read fails too; the mapping error is then folded into the
-    /// message.
+    /// Maps `path` read-only, reading it instead when mapping fails or
+    /// `STRIDER_NO_MMAP` is set to anything but `0`. Errs when the file cannot
+    /// be opened, stat'd or read, or is not a regular file.
     pub(crate) fn map_path<P: AsRef<std::path::Path>>(path: P) -> crate::Result<Self> {
         let path = path.as_ref();
-        // Before any open: opening a FIFO read-only BLOCKS until a writer
-        // appears, so the open below would hang rather than fail. `metadata`
-        // follows symlinks and does not open, so a link to a regular file
-        // still passes and a pipe cannot stall the check itself.
-        // A stat failure falls through, so a missing path still reports the
-        // io error the open below produces rather than this one.
+        // Before the open, which blocks on a FIFO. A stat failure falls
+        // through to the open's own error.
         if std::fs::metadata(path).is_ok_and(|m| !m.is_file()) {
             anyhow::bail!("{}: not a regular file", path.display());
         }
         let mut file = std::fs::File::open(path).context("failed to read file")?;
-        // Again on the fd, which is the one every read below goes through: a
-        // FIFO a writer had already opened swapped onto the path between the
-        // stat and the open passes the check above and then blocks the read.
+        // Again on the fd: the path may have been swapped since the stat.
         let opened = file.metadata().context("failed to stat file")?;
         if !opened.is_file() {
             anyhow::bail!("{}: not a regular file", path.display());
@@ -144,8 +102,6 @@ impl FileBytes {
         // only ever read through a shared reference.
         match unsafe { memmap2::Mmap::map(&file) } {
             Ok(map) => {
-                // fstat on the fd just mapped, so the identity cannot be one a
-                // rename slipped in between the open and the map.
                 let meta = file.metadata().context("failed to stat mapped file")?;
                 Ok(Self(Store::Mapped(Arc::new(MappedFile {
                     map,
@@ -163,17 +119,8 @@ impl FileBytes {
         }
     }
 
-    /// One `stat` of the mapped file, comparing it against what it was when it
-    /// was mapped. Owned bytes are always coherent, and answer `Ok` without a
-    /// syscall.
-    ///
-    /// Meant for the top of an operation, not for the read path: a change
-    /// between this and a later read is still a torn read or a SIGBUS.
-    ///
-    /// # Errors
-    ///
-    /// When the file no longer stats, or no longer looks like the file that
-    /// was mapped.
+    /// Re-stats the mapped file against its identity when mapped; `Ok` for
+    /// owned bytes. Errs when it no longer stats or its identity changed.
     pub(crate) fn check_unchanged(&self) -> crate::Result<()> {
         let Store::Mapped(m) = &self.0 else {
             return Ok(());
@@ -192,8 +139,7 @@ impl FileBytes {
         }
     }
 
-    /// Identity of the backing mapping, so a caller holding many regions cut
-    /// from one file stats it once. `None` for owned bytes, which never stat.
+    /// Identity of the backing mapping; `None` for owned bytes.
     pub(crate) fn mapping_id(&self) -> Option<usize> {
         match &self.0 {
             Store::Owned(_) => None,
@@ -210,5 +156,30 @@ impl FileBytes {
 
     pub(crate) fn len(&self) -> usize {
         self.as_slice().len()
+    }
+}
+
+/// The unsigned integer `bytes` hold, little-endian under `le`.
+pub(crate) fn read_uint(bytes: &[u8], le: bool) -> u64 {
+    let n = bytes.len();
+    debug_assert!(n <= 8, "a field wider than the carrier");
+    let mut word = [0u8; 8];
+    if le {
+        word[..n].copy_from_slice(bytes);
+        u64::from_le_bytes(word)
+    } else {
+        word[8 - n..].copy_from_slice(bytes);
+        u64::from_be_bytes(word)
+    }
+}
+
+/// The low `out.len()` bytes of `value`, little-endian under `le`.
+pub(crate) fn write_uint(out: &mut [u8], value: u64, le: bool) {
+    let n = out.len();
+    debug_assert!(n <= 8, "a field wider than the carrier");
+    if le {
+        out.copy_from_slice(&value.to_le_bytes()[..n]);
+    } else {
+        out.copy_from_slice(&value.to_be_bytes()[8 - n..]);
     }
 }

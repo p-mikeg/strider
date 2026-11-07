@@ -1,12 +1,8 @@
-#![allow(
-    dead_code,
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
+#![allow(dead_code)]
 
-use std::ops::ControlFlow;
+pub mod cases;
+
+use std::cell::Cell;
 
 use cranelift_entity::{PrimaryMap, entity_impl};
 use graph_algorithms::walk::GraphRef;
@@ -23,9 +19,47 @@ struct Node {
 pub struct Graph {
     nodes: PrimaryMap<NodeId, Node>,
     nodes_by_name: std::collections::HashMap<String, NodeId>,
+    /// Calls to `successors`, the unit the scale tests count.
+    succ_calls: Cell<u64>,
+    /// The call that would exceed this panics.
+    succ_budget: Cell<u64>,
 }
 
 impl Graph {
+    fn empty() -> Self {
+        Self {
+            nodes: PrimaryMap::new(),
+            nodes_by_name: std::collections::HashMap::default(),
+            succ_calls: Cell::new(0),
+            succ_budget: Cell::new(u64::MAX),
+        }
+    }
+
+    /// Nodes `0..n`, unnamed, successors in `edges` order.
+    pub fn from_edges(n: u32, edges: &[(u32, u32)]) -> Self {
+        let mut graph = Self::empty();
+        for _ in 0..n {
+            graph.nodes.push(Node {
+                name: String::new(),
+                succs: Vec::new(),
+            });
+        }
+        for &(a, b) in edges {
+            graph.add_succ(NodeId(a), NodeId(b));
+        }
+        graph
+    }
+
+    pub fn succ_calls(&self) -> u64 {
+        self.succ_calls.get()
+    }
+
+    /// Fails a superlinear walk at the first call over `calls`, before it
+    /// can exhaust time or memory.
+    pub fn set_succ_budget(&self, calls: u64) {
+        self.succ_budget.set(calls);
+    }
+
     /// The first node named in the DSL input, by construction.
     pub const fn entry(&self) -> NodeId {
         NodeId(0)
@@ -66,10 +100,7 @@ impl Graph {
 /// Input is a literal at every call site, so a malformed line panics rather
 /// than returning an error.
 pub(crate) fn graph(input: &str) -> Graph {
-    let mut graph = Graph {
-        nodes: PrimaryMap::new(),
-        nodes_by_name: std::collections::HashMap::default(),
-    };
+    let mut graph = Graph::empty();
 
     for line in input.lines() {
         if line.trim().is_empty() {
@@ -108,11 +139,15 @@ pub(crate) fn graph(input: &str) -> Graph {
 impl GraphRef for &'_ Graph {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: Self::NodeId,
-        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        self.nodes[node].succs.iter().copied().try_for_each(f)
+    fn successors(&self, node: Self::NodeId, mut f: impl FnMut(Self::NodeId)) {
+        let calls = self.succ_calls.get() + 1;
+        assert!(
+            calls <= self.succ_budget.get(),
+            "{calls} successor calls exceed the budget"
+        );
+        self.succ_calls.set(calls);
+        for succ in self.nodes[node].succs.iter().copied() {
+            f(succ);
+        }
     }
 }

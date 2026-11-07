@@ -6,90 +6,85 @@ use super::vertex::{PatNode, PatValue, PostMatchFn};
 
 pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 
-/// Pattern nodes one query may recurse through, counting those of every branch
-/// pattern nested inside. The engine is continuation-passing, so a node's later
-/// operands are matched inside the deepest frame of its earlier operands'
-/// subtrees and the stack grows with the TREE-UNFOLDED node count, not the
-/// depth: a vertex feeding several slots is walked once per slot, which is what
-/// [`unfolded_nodes`] charges. The cap keeps the deepest pattern a query can
-/// describe inside the 2 MiB a spawned thread gets by default.
-pub(crate) const MAX_PATTERN_NODES: usize = 256;
+/// Pattern nodes one query may recurse through, counted tree-unfolded (a vertex once per consumer
+/// slot) plus one per output vertex past a node's first. Under it a query fits a spawned thread's
+/// 2 MiB stack.
+pub const MAX_PATTERN_NODES: usize = 256;
 
-/// Nodes a match attempt recurses through: every vertex once per consumer slot
-/// that reaches it, so a sub-pattern feeding two slots is charged twice.
-/// Saturating, and never below the raw node count, so a cyclic or multi-sink
-/// graph still reports its size.
-///
-/// An alternation's inputs are alternatives rather than operands, run one at a
-/// time with the frame unwound between them, so it costs its DEEPEST arm, not
-/// their sum.
-///
-/// Taken over every node rather than from the root, which is not derived yet
-/// and may not exist.
-fn unfolded_nodes(graph: &PatGraph) -> usize {
-    let raw = graph.all_node_ids().count();
-    let Ok(order) = petgraph::algo::toposort(graph, None) else {
-        return raw;
-    };
-    let mut size: FxHashMap<NodeId, usize> = FxHashMap::default();
-    let mut deepest = 0;
-    for vertex in order {
-        let strider_graph::Vertex::Node(node) = vertex else {
-            continue;
-        };
+/// Per pat node: the most nodes one match configuration recurses through
+/// (each vertex once per consumer slot reaching it, each output vertex past the
+/// first as one more), saturating; and the reads it unfolds to (see
+/// [`super::walk::Read`]), `None` at 2^64 or more. An alternation charges its
+/// heaviest arm to the first and every arm to the second.
+fn unfolded(graph: &PatGraph) -> Vec<(usize, Option<u64>)> {
+    // Id order is topological: producers are built first.
+    let mut size: Vec<(usize, Option<u64>)> = Vec::with_capacity(graph.all_node_ids().count());
+    for node in graph.all_node_ids() {
         let inputs = graph
             .node_inputs(node)
             .into_iter()
-            .map(|value| size.get(&graph.producer(value)).copied().unwrap_or(1));
-        let own = if graph.node_kind(node).alternation {
-            1usize.saturating_add(inputs.max().unwrap_or(0))
+            .map(|value| size[graph.producer(value).as_u32() as usize]);
+        let reads = inputs.clone().try_fold(1, |n: u64, s| n.checked_add(s.1?));
+        let below = if graph.node_kind(node).is_alternation() {
+            inputs.map(|s| s.0).max().unwrap_or(0)
         } else {
-            inputs.fold(1usize, usize::saturating_add)
+            inputs.fold(0, |n, s| s.0.saturating_add(n))
         };
-        deepest = deepest.max(own);
-        size.insert(node, own);
+        let extra_outputs = graph.node_outputs(node).len().saturating_sub(1);
+        size.push((below.saturating_add(1).saturating_add(extra_outputs), reads));
     }
-    raw.max(deepest)
+    size
+}
+
+/// The most nodes a query recurses through, at least the raw node count. Taken over every node,
+/// since the root may not exist.
+fn unfolded_nodes(size: &[(usize, Option<u64>)]) -> usize {
+    size.iter().map(|s| s.0).max().unwrap_or(0).max(size.len())
+}
+
+/// The pat nodes consuming `node`'s outputs, once per consuming edge.
+fn consumers(graph: &PatGraph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    (graph.node_outputs(node).iter()).flat_map(|&v| graph.value_uses(v).map(|(c, _)| c))
 }
 
 pub struct Pattern {
     pub(crate) graph: PatGraph,
     pub(crate) cast_mask: CastMask,
-    /// Resolved once at seal and memoized, verdict included.
+    /// Resolved at seal.
     root: Result<NodeId, String>,
-    /// This graph's unfolded nodes plus those of the branch patterns nested
-    /// in it.
-    total_nodes: usize,
     /// Per pat node, indexed by `NodeId::as_u32`.
     inputs: Vec<super::walk::NodeInputs>,
+    pub(crate) holds_first_of: bool,
+    /// The `first_of` that skips arms past one that matched: the first built, if one edge path
+    /// reaches it from the root.
+    pub(crate) pruned_first_of: Option<NodeId>,
 }
 
 impl Pattern {
-    /// Whether the root vertex's kind spec can admit `kind`.
-    ///
-    /// A pre-filter for a caller trying MANY patterns at one node, as the fold
-    /// rule table does: `Matcher::new` plus `match_at` allocate per attempt
-    /// and the root check happens inside, so a rule whose root cannot match
-    /// still paid for the attempt. `discriminant` alone does not separate
-    /// them -- every `IntBinaryOp` shares one -- so this compares the spec,
-    /// payload included.
-    ///
-    /// `true` for a refused pattern and for an alternation root, so the
-    /// reject or the arm walk still reaches `match_at`.
+    /// Whether the root's kind spec, payload included, can admit `kind`: a cheap pre-filter
+    /// before `match_at`. `true` for a refused pattern and an alternation root.
     #[must_use]
     pub fn root_admits_kind(&self, kind: &strider_ir::node::NodeKind) -> bool {
         let Ok(root) = self.root() else {
             return true;
         };
         let vertex = self.graph.node_kind(root);
-        vertex.alternation || vertex.kind.matches(kind)
+        vertex.is_alternation() || vertex.kind.matches(kind)
     }
 
-    /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
-    /// resolves and memoizes the match root.
-    pub(crate) fn from_graph(graph: PatGraph, nested_nodes: usize) -> Self {
-        let count = unfolded_nodes(&graph).saturating_add(nested_nodes);
-        let root = if count > MAX_PATTERN_NODES {
+    /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder): resolves the match root.
+    /// A build-time `refusal` takes precedence over the structural verdict.
+    pub(crate) fn from_graph(graph: PatGraph, refusal: Option<String>) -> Self {
+        let size = unfolded(&graph);
+        let count = unfolded_nodes(&size);
+        let root = if let Some(why) = refusal {
+            Err(why)
+        } else if count > MAX_PATTERN_NODES {
+            // A chain of shared operands can unfold past `usize`.
+            let count = match count {
+                usize::MAX => format!("over 2^{}", usize::BITS),
+                n => n.to_string(),
+            };
             Err(format!(
                 "pattern has {count} nodes, over the {MAX_PATTERN_NODES} a query can \
                  recurse through; split it or match the parts separately"
@@ -97,46 +92,71 @@ impl Pattern {
         } else {
             crate::graph_ext::derive_root(&graph).map_err(|e| e.to_string())
         };
-        let inputs = super::walk::collect_node_inputs(&graph, root.is_ok());
+        let inputs = super::walk::collect_node_inputs(&graph, &size, root.is_ok());
+        let root = root.and_then(|r| {
+            if size.iter().any(|s| s.1.is_none()) {
+                return Err(
+                    "pattern unfolds to 2^64 or more reads through its alternations; \
+                     split it or match the parts separately"
+                        .to_string(),
+                );
+            }
+            Ok(r)
+        });
+        let first_of = graph
+            .all_node_ids()
+            .find(|&n| graph.node_kind(n).role == super::Role::FirstOf);
+        let one_route = |p| {
+            std::iter::successors(Some(p), |&n| consumers(&graph, n).next())
+                .all(|n| consumers(&graph, n).nth(1).is_none())
+        };
+        let pruned_first_of = first_of.filter(|&p| one_route(p));
         Self {
+            holds_first_of: first_of.is_some(),
+            pruned_first_of,
             graph,
             cast_mask: CastMask::empty(),
             root,
-            total_nodes: count,
             inputs,
         }
     }
 
-    /// Nodes a query recurses through, nested branch patterns included.
+    /// Nodes a query recurses through.
+    #[cfg(test)]
     pub(crate) fn total_nodes(&self) -> usize {
-        self.total_nodes
+        unfolded_nodes(&unfolded(&self.graph))
     }
 
-    /// The structure is frozen at seal, so a match attempt reads this instead
-    /// of rebuilding the edge list per operand ordering.
+    /// `node`'s inputs, resolved at seal.
     pub(crate) fn inputs_of(&self, node: NodeId) -> &super::walk::NodeInputs {
         &self.inputs[node.as_u32() as usize]
     }
 
-    /// A build-time refusal, reported through the same channel as an
-    /// unmatchable graph and preferred over it: a refusal names the spelling,
-    /// while the structural verdict describes whatever the refused lowering
-    /// left staged.
-    pub(crate) fn reject(&mut self, why: String) {
-        self.root = Err(why);
-    }
-
-    /// O(1) read of the verdict memoized at construction.
+    /// The match root, resolved at seal.
     ///
     /// # Errors
-    /// If the pattern is rootless, cyclic, multi-sink, or was refused at build
-    /// time.
+    /// If the pattern was refused at build time, unfolds past [`MAX_PATTERN_NODES`] nodes or
+    /// 2^64 reads, or has not exactly one sink.
     pub fn root(&self) -> anyhow::Result<NodeId> {
         self.root.clone().map_err(anyhow::Error::msg)
     }
 
-    /// Includes what a node's binding walk declares: that sub-pattern's graph
-    /// lives inside the walk closure, not here.
+    /// Whether a match may bind a value it reached through a join, which
+    /// need not sit below the match root: a pat node admitting a `Phi`,
+    /// `MemPhi` or `Region` pins an input.
+    pub fn may_bind_through_a_join(&self) -> bool {
+        use strider_ir::node::NodeKind;
+        self.graph.all_node_ids().any(|n| {
+            let node = self.graph.node_kind(n);
+            !node.is_alternation()
+                && !node.input_slots.is_empty()
+                && [NodeKind::Phi, NodeKind::MemPhi, NodeKind::Region]
+                    .iter()
+                    .any(|k| node.kind.matches(k))
+        })
+    }
+
+    /// Every capture appearing anywhere in the graph.
     pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
         self.graph
             .all_node_ids()
@@ -146,29 +166,19 @@ impl Pattern {
                     .all_value_ids()
                     .flat_map(|v| self.graph.value_kind_ref(v).captures.iter().copied()),
             )
-            .chain(
-                self.graph
-                    .all_node_ids()
-                    .flat_map(|n| self.graph.node_kind(n).walk_captures.bound.iter().copied()),
-            )
     }
 
-    /// The captures bound on EVERY successful match, as opposed to
-    /// [`Self::bound_captures`], which reports every capture appearing anywhere
-    /// in the graph.
-    ///
-    /// The two differ only under an alternation: `one_of` binds whichever arm
-    /// fires, so a capture present in some arms but not all is not guaranteed.
+    /// The captures bound on every successful match. Differs from [`Self::bound_captures`] only
+    /// by captures some but not all alternation arms bind.
     ///
     /// # Errors
-    /// If the pattern is rootless, cyclic, or multi-sink.
+    /// As [`Self::root`].
     pub fn guaranteed_captures(&self) -> anyhow::Result<FxHashSet<crate::capture::Capture>> {
         let mut memo: FxHashMap<NodeId, FxHashSet<crate::capture::Capture>> = FxHashMap::default();
         Ok(self.guaranteed_from(self.root()?, &mut memo))
     }
 
-    /// A sealed graph is acyclic, so the memo makes this linear and the
-    /// recursion terminates.
+    /// Memoized over the acyclic pattern graph, so linear.
     fn guaranteed_from(
         &self,
         node: NodeId,
@@ -178,24 +188,11 @@ impl Pattern {
             return hit.clone();
         }
         let mut out: FxHashSet<crate::capture::Capture> = FxHashSet::default();
-        // This node's own capture, and any on the values it produces, bind
-        // whenever the node matches at all. A binding walk has to succeed for
-        // the node to match, so what it guarantees is guaranteed here.
         out.extend(self.graph.node_kind(node).captures.iter().copied());
-        out.extend(
-            self.graph
-                .node_kind(node)
-                .walk_captures
-                .guaranteed
-                .iter()
-                .copied(),
-        );
         for &vertex in self.graph.node_outputs(node) {
             out.extend(self.graph.value_kind_ref(vertex).captures.iter().copied());
         }
-        // Each input contributes its own vertex capture plus everything its
-        // producer guarantees. For an alternation those are ARMS, so the vertex
-        // capture belongs to that arm and must not be hoisted out of the
+        // An alternation input's vertex capture belongs to its arm, so it stays inside the
         // intersection.
         let per_input: Vec<FxHashSet<crate::capture::Capture>> =
             crate::graph_ext::consumed_inputs(&self.graph, node)
@@ -206,15 +203,13 @@ impl Pattern {
                     caps
                 })
                 .collect();
-        if self.graph.node_kind(node).alternation {
-            // Exactly one arm fires, so only what EVERY arm binds is guaranteed.
+        if self.graph.node_kind(node).is_alternation() {
             let mut arms = per_input.into_iter();
             if let Some(first) = arms.next() {
                 let common = arms.fold(first, |acc, arm| acc.intersection(&arm).copied().collect());
                 out.extend(common);
             }
         } else {
-            // Every operand must match, so all of their captures bind.
             for caps in per_input {
                 out.extend(caps);
             }
@@ -223,33 +218,18 @@ impl Pattern {
         out
     }
 
-    /// Runs after root and all inputs have matched; returning `false` rejects
-    /// the match. The type is that of the matched output, `None` where there
-    /// is none: a control, memory or `PhiToken` edge, or a zero-output node.
-    /// Composes with a guard already on the root, like
-    /// [`MatcherBuilder::set_post_match`](crate::matcher::MatcherBuilder::set_post_match).
-    ///
-    /// A pattern with no unique sink root has nowhere to put the guard; it
-    /// already errors at query time, so this is a no-op there.
-    pub(crate) fn set_root_post_match(&mut self, f: PostMatchFn) {
-        let Ok(root) = self.root() else {
-            return;
-        };
-        let slot = &mut self.graph.node_kind_mut(root).post_match;
-        *slot = Some(match slot.take() {
-            Some(prev) => Box::new(move |m, n, ty, b| prev(m, n, ty, b) && f(m, n, ty, b)),
-            None => f,
-        });
-    }
-
-    /// Builder form of `set_root_post_match`.
+    /// Adds a root guard that runs after the whole match, seeing every capture; `false` rejects
+    /// it. A no-op when [`Self::root`] errs.
     pub fn with_root_post_match(mut self, f: PostMatchFn) -> Self {
-        self.set_root_post_match(f);
+        if let Ok(&root) = self.root.as_ref() {
+            self.graph.node_kind_mut(root).post_matches.push(f);
+        }
         self
     }
 
-    /// Adds `m` to the cast-walk-through mask; the matcher then skips the
-    /// selected cast kinds transparently.
+    /// Adds `m` to the cast mask: an operand produced by a selected cast also matches at the
+    /// cast's input. Per operand only the outermost matching level is kept, settled in
+    /// pattern-build order (operands before their consumer) after every `first_of`.
     pub fn ignore_casts_mask(mut self, m: CastMask) -> Self {
         self.cast_mask |= m;
         self
@@ -258,6 +238,12 @@ impl Pattern {
     /// Walk through every value-passthrough cast kind.
     pub fn ignore_casts(self) -> Self {
         self.ignore_casts_mask(CastMask::all())
+    }
+
+    /// Whether any cast kind is walked through.
+    #[must_use]
+    pub fn ignores_casts(&self) -> bool {
+        !self.cast_mask.is_empty()
     }
 
     #[cfg(test)]
@@ -276,16 +262,67 @@ impl Pattern {
 
 #[cfg(test)]
 mod tests {
+    use super::{PatGraph, Pattern};
+    use crate::MatchPat;
     use crate::matcher::MatcherBuilder;
-    use strider_ir::ConstId;
+    use crate::matcher::{KindSpec, PatValueRef};
+    use rustc_hash::FxHashMap;
+    use strider_graph::NodeId;
+    use strider_ir::IntConstId;
     use strider_ir::node::NodeKind;
+    use strider_ir_test_utils::Rng;
+
+    /// A join bound as a leaf binds nothing through it; one whose inputs the
+    /// pattern pins may.
+    #[test]
+    fn may_bind_through_a_join_reads_the_pattern_shape() {
+        use crate::{Capture, anything, call, int_add, load, mem_phi, phi, region, var};
+        let c = Capture::new();
+        let shape = |p: Pattern| p.may_bind_through_a_join();
+        assert!(!shape(int_add(phi(), var(c)).into_pattern()));
+        assert!(!shape(int_add(var(c), anything()).into_pattern()));
+        assert!(shape(
+            int_add(phi().phi_input(0, var(c)), anything()).into_pattern()
+        ));
+        assert!(shape(mem_phi().phi_input(0, crate::store()).into_pattern()));
+        assert!(!shape(load().mem(call().ctrl(region())).into_pattern()));
+        assert!(shape(
+            load()
+                .mem(call().ctrl(region().any_input(anything())))
+                .into_pattern()
+        ));
+        // An alternation's inputs are arms, not operands.
+        let (a, b) = (Capture::new(), Capture::new());
+        assert!(!shape(
+            crate::one_of![int_add(var(a), var(b)), crate::int_mul(var(a), var(b))].into_pattern()
+        ));
+        assert!(shape(
+            crate::one_of![phi().phi_input(0, var(a)), var(b)].into_pattern()
+        ));
+    }
+
+    /// Each `one_of` reads its one vertex through both arms, so 63 of them
+    /// unfold to 2^64 - 1 reads, the most a `u64` counts; 64 overflow it.
+    #[test]
+    fn a_pattern_overflowing_the_read_count_is_refused() {
+        let chain = |n| {
+            let mut b = MatcherBuilder::new();
+            let mut v = b.leaf(KindSpec::Any);
+            for _ in 0..n {
+                v = b.one_of(&[v, v]);
+            }
+            b.finish().root().map_err(|e| e.to_string())
+        };
+        assert!(chain(63).is_ok());
+        assert!(chain(64).unwrap_err().contains("2^64 or more reads"));
+    }
 
     #[test]
     fn builds_bipartite_add_shape() {
         let mut b = MatcherBuilder::new();
         let x = b.leaf(crate::matcher::KindSpec::Any);
         let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(
-            ConstId::from_u32(1),
+            IntConstId::from_u32(1),
         )));
         let _sum = b.binary(strider_ir::IntBinaryOp::Add, x, k);
         let p = b.finish();
@@ -295,15 +332,105 @@ mod tests {
         assert!(p.root().is_ok());
     }
 
-    #[test]
-    fn reachable_topo_orders_producers_before_consumers() {
+    /// The tree unfolding of `n`, by memoised recursion.
+    fn unfold(g: &PatGraph, n: NodeId, memo: &mut FxHashMap<NodeId, usize>) -> usize {
+        if let Some(&s) = memo.get(&n) {
+            return s;
+        }
+        let kids: Vec<usize> = g
+            .node_inputs(n)
+            .into_iter()
+            .map(|v| unfold(g, g.producer(v), memo))
+            .collect();
+        let own = 1 + g.node_outputs(n).len().saturating_sub(1);
+        let s = if g.node_kind(n).is_alternation() {
+            own.saturating_add(kids.iter().copied().max().unwrap_or(0))
+        } else {
+            kids.iter().fold(own, |acc, &k| acc.saturating_add(k))
+        };
+        memo.insert(n, s);
+        s
+    }
+
+    /// A wildcard node consuming `inner` at slot 0.
+    fn wildcard_over(b: &mut MatcherBuilder, inner: PatValueRef) -> PatValueRef {
+        let n = b.node(KindSpec::Any);
+        b.input(n, 0, inner);
+        b.value_output(n, 0)
+    }
+
+    /// A random pattern over at most twelve steps. Checks that `total_nodes`
+    /// is the larger of the raw count and the deepest unfolding.
+    ///
+    /// `shapes` counts: the unfolding wins, the raw count wins, an alternation
+    /// whose arms unfold to different sizes.
+    fn random_pattern(rng: &mut Rng, shapes: &mut [usize; 3]) {
         let mut b = MatcherBuilder::new();
-        let a = b.leaf(crate::matcher::KindSpec::Any);
-        let _unary = b.unary(crate::matcher::KindSpec::Any, a);
+        let mut vals: Vec<PatValueRef> = vec![b.leaf(KindSpec::Any)];
+        for _ in 0..rng.below(12) {
+            let (l, r) = (vals[rng.below(vals.len())], vals[rng.below(vals.len())]);
+            let v = match rng.below(4) {
+                1 => wildcard_over(&mut b, l),
+                2 => b.binary(strider_ir::IntBinaryOp::Add, l, r),
+                3 => b.one_of(&[l, r]),
+                _ => b.leaf(KindSpec::Any),
+            };
+            vals.push(v);
+        }
         let p = b.finish();
-        let root = p.root().unwrap();
-        let order = crate::graph_ext::reachable_topo(&p.graph, root).unwrap();
-        assert_eq!(order.len(), 2);
-        assert_eq!(*order.last().unwrap(), root);
+        let mut memo = FxHashMap::default();
+        let deepest = p
+            .graph
+            .all_node_ids()
+            .map(|n| unfold(&p.graph, n, &mut memo))
+            .max()
+            .unwrap_or(0);
+        let raw = p.graph.all_node_ids().count();
+        assert_eq!(p.total_nodes(), raw.max(deepest));
+        shapes[0] += usize::from(deepest > raw);
+        shapes[1] += usize::from(deepest < raw);
+        shapes[2] += usize::from(p.graph.all_node_ids().any(|n| {
+            let arms: Vec<usize> = p
+                .graph
+                .node_inputs(n)
+                .into_iter()
+                .map(|v| memo[&p.graph.producer(v)])
+                .collect();
+            p.graph.node_kind(n).is_alternation() && arms.iter().any(|&a| a != arms[0])
+        }));
+    }
+
+    /// `total_nodes` is the larger of the raw count and the deepest unfolding.
+    #[test]
+    fn unfolded_node_count_matches_a_recursive_unfolding() {
+        let cases = if cfg!(debug_assertions) {
+            1_000
+        } else {
+            20_000
+        };
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let mut shapes = [0usize; 3];
+        for _ in 0..cases {
+            random_pattern(&mut rng, &mut shapes);
+        }
+        assert!(
+            shapes.iter().all(|&c| c >= cases / 20),
+            "too few of a shape, floor {}: {shapes:?}",
+            cases / 20
+        );
+    }
+
+    /// A 100,000-node chain is refused over the cap, not overflowed.
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
+    fn a_hundred_thousand_node_chain_is_refused_not_overflowed() {
+        let mut b = MatcherBuilder::new();
+        let mut v = b.leaf(KindSpec::Any);
+        for _ in 0..100_000 {
+            v = wildcard_over(&mut b, v);
+        }
+        let p = b.finish();
+        assert_eq!(p.total_nodes(), 100_001);
+        assert!(p.root().is_err());
     }
 }

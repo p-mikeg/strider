@@ -1,0 +1,115 @@
+# aarch64be/zero_pcode_holes: Strider::analyze, default options
+endian big
+default_cc arg_passing_regs=[x0, x1, x2, x3, x4, x5, x6, x7] arg_passing_regs_float=[q0, q1, q2, q3, q4, q5, q6, q7] callee_saved_regs=[x19, x20, x21, x22, x23, x24, x25, x26, x27, x28, x29, x30, sp_el0, d8, d9, d10, d11, d12, d13, d14, d15] ret_val_regs=[x0, x1] ret_val_regs_float=[q0, q1, q2, q3] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=x30 preserves_memory=false preserves_all_registers=false entry_address_vn=none
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
+
+== _start @0x210170
+unresolved_branch [0x21018c.1]
+cfg
+  0x210170 9 ops cbranch 0x21018c -> [0x210188, 0x21018c]
+  0x210188 0 ops goto -> [0x21018c]
+  0x21018c 2 ops return -> []
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x8, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x31100:1]
+arg 1 [%v5]
+arg 2 [%v6]
+arg 3 [%v7]
+arg 4 [%v8]
+arg 5 [%v9]
+arg 6 [%v10]
+arg 7 [%v11]
+float_arg 0 [%v12]
+float_arg 1 [%v13]
+float_arg 2 [%v14]
+float_arg 3 [%v15]
+float_arg 4 [%v16]
+float_arg 5 [%v17]
+float_arg 6 [%v18]
+float_arg 7 [%v19]
+%v0:ctrl = entry
+%v1:mem = initial_memory
+%v2:i64 = iconst[0x210184]
+%v3:i64 = initial_var[sp]
+%v4:i64 = iconst[0x0]
+%v5:i64 = initial_var[x1]
+%v6:i64 = initial_var[x2]
+%v7:i64 = initial_var[x3]
+%v8:i64 = initial_var[x4]
+%v9:i64 = initial_var[x5]
+%v10:i64 = initial_var[x6]
+%v11:i64 = initial_var[x7]
+%v12:i128 = initial_var[q0]
+%v13:i128 = initial_var[q1]
+%v14:i128 = initial_var[q2]
+%v15:i128 = initial_var[q3]
+%v16:i128 = initial_var[q4]
+%v17:i128 = initial_var[q5]
+%v18:i128 = initial_var[q6]
+%v19:i128 = initial_var[q7]
+%v20:ctrl, %v21:mem, %v22:i64<x0>, %v23:i64<x1>, %v24:i128<q0>, %v25:i128<q1>, %v26:i128<q2>, %v27:i128<q3>, %v28:i64<pc>, %v29:i64<x2>, %v30:i64<x3>, %v31:i64<x4>, %v32:i64<x5>, %v33:i64<x6>, %v34:i64<x7>, %v35:i64<x8>, %v36:i128<q4>, %v37:i128<q5>, %v38:i128<q6>, %v39:i128<q7> = call %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18, %v19
+%v40:i64 = iconst[0x210190]
+%v41:ctrl, %v42:mem, %v43:i64<x0>, %v44:i64<x1>, %v45:i128<q0>, %v46:i128<q1>, %v47:i128<q2>, %v48:i128<q3>, %v49:i64<pc>, %v50:i64<x2>, %v51:i64<x3>, %v52:i64<x4>, %v53:i64<x5>, %v54:i64<x6>, %v55:i64<x7>, %v56:i64<x8>, %v57:i128<q4>, %v58:i128<q5>, %v59:i128<q6>, %v60:i128<q7> = call %v20, %v21, %v40, %v3, %v22, %v23, %v29, %v30, %v31, %v32, %v33, %v34, %v24, %v25, %v26, %v27, %v36, %v37, %v38, %v39
+%v61:i64 = iconst[0x5d]
+%v62:i16 = iconst[0x0]
+%v63:ctrl, %v64:mem, %v65:i64<x0> = callother[25 "CallSupervisor"] %v41, %v42, %v61, %v43, %v44, %v50, %v51, %v52, %v53, %v62
+%v66:i1 = icmp.equal %v65, %v4
+%v67:ctrl, %v68:ctrl = if %v63, %v66
+
+%v69:ctrl, %v70:token = region %v67, %v68
+return %v69, %v64, %v65, %v44, %v45, %v46, %v47, %v48
+
+== nop_fallthrough @0x210184
+cfg
+  0x210184 2 ops cbranch 0x21018c -> [0x210188, 0x21018c]
+  0x210188 0 ops goto -> [0x21018c]
+  0x21018c 2 ops return -> []
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x31100:1]
+arg 0 [%v1]
+arg 1 [%v9]
+float_arg 0 [%v10]
+float_arg 1 [%v11]
+float_arg 2 [%v12]
+float_arg 3 [%v13]
+%v0:ctrl = entry
+%v1:i64 = initial_var[x0]
+%v2:i64 = iconst[0x0]
+%v3:i1 = icmp.equal %v1, %v2
+%v4:ctrl, %v5:ctrl = if %v0, %v3
+
+%v6:ctrl, %v7:token = region %v4, %v5
+%v8:mem = initial_memory
+%v9:i64 = initial_var[x1]
+%v10:i128 = initial_var[q0]
+%v11:i128 = initial_var[q1]
+%v12:i128 = initial_var[q2]
+%v13:i128 = initial_var[q3]
+return %v6, %v8, %v1, %v9, %v10, %v11, %v12, %v13
+
+== autiasp_split @0x210190
+cfg
+  0x210190 2 ops cbranch 0x210198 -> [0x210194, 0x210198]
+  0x210194 1 ops goto -> [0x210198]
+  0x210198 0 ops goto -> [0x21019c]
+  0x21019c 2 ops return -> []
+tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x31100:1]
+arg 0 [%v1]
+arg 1 [%v11]
+float_arg 0 [%v12]
+float_arg 1 [%v13]
+float_arg 2 [%v14]
+float_arg 3 [%v15]
+%v0:ctrl = entry
+%v1:i64 = initial_var[x0]
+%v2:i64 = iconst[0x0]
+%v3:i1 = icmp.equal %v1, %v2
+%v4:ctrl, %v5:ctrl = if %v0, %v3
+%v6:i64 = iconst[0x1]
+
+%v7:ctrl, %v8:token = region %v4, %v5
+%v9:i64<x0> = phi %v8, %v1, %v6
+%v10:mem = initial_memory
+%v11:i64 = initial_var[x1]
+%v12:i128 = initial_var[q0]
+%v13:i128 = initial_var[q1]
+%v14:i128 = initial_var[q2]
+%v15:i128 = initial_var[q3]
+return %v7, %v10, %v9, %v11, %v12, %v13, %v14, %v15

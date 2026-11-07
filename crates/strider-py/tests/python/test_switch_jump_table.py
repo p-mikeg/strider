@@ -11,6 +11,7 @@ case, which the tests below query and rewrite against.
 from __future__ import annotations
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, var, int_add, call, int_const, load
 
 
@@ -36,17 +37,14 @@ def test_orchestrator_resolves_jump_table_x86(x86_switch_elf):
 
 def test_case_bodies_match_add_const_pattern(x86_switch_elf):
     # Cases 0..4 and 6..7 are `return x + K`.  Case 5 calls `f(value->a)`,
-    # so it lifts to a Load + Call and K=6 must not match.  The threshold is
-    # loose because the optimiser is free to fold or reshape individual arms.
+    # so it lifts to a Load + Call and K=6 must not match.
     _lift, g = _run(x86_switch_elf)
-    seen_constants = set()
-    for k in range(1, 9):
-        hits = g.find_all(int_add(Capture("x"), int_const(k)), ignore_casts=True)
-        if hits:
-            seen_constants.add(k)
-    assert len(seen_constants) >= 4, (
-        f"expected >=4 of x+K (K=1..8) to survive in IR; saw {sorted(seen_constants)}"
-    )
+    seen_constants = {
+        k
+        for k in range(1, 9)
+        if g.find_all(int_add(Capture("x"), int_const(k)), ignore_casts=True)
+    }
+    assert seen_constants == {1, 2, 3, 4, 5, 7, 8}
 
 
 def test_case5_calls_helper_with_struct_field(x86_switch_elf):
@@ -65,9 +63,9 @@ def test_rewrite_collapses_add_zero_then_reoptimize(x86_switch_elf):
     # still works on the post-rewrite graph.
     lift, g = _run(x86_switch_elf)
     x = Capture()
-    n = g.rewrite(find=int_add(var(x), int_const(0)), replace=var(x))
+    n = g.rewrite(find=int_add(var(x), int_const(0)), replace=tpl.var(x))
     assert isinstance(n, int) and n >= 0
-    lift.optimize(g)
+    g.optimize()
     assert g.node_count() > 0
 
 
@@ -77,8 +75,8 @@ def test_rewrite_collapses_add_one_to_marker(x86_switch_elf):
     lift, g = _run(x86_switch_elf)
     n_before_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
     x = Capture()
-    fired = g.rewrite(find=int_add(var(x), int_const(1)), replace=var(x))
-    lift.optimize(g)
+    fired = g.rewrite(find=int_add(var(x), int_const(1)), replace=tpl.var(x))
+    g.optimize()
     n_after_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
     # Either the rule fired and the node-removing passes pruned the freed
     # constants, or ConstantFold absorbed the shape first.  Both satisfy the

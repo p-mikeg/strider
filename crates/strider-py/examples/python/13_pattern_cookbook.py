@@ -21,16 +21,10 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 prog = strider.lift.load_elf(str(FIXTURE))
-_cfg, fn, _unresolved = prog.analyze(
-    "array_sum",
-    opts=strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-    ),
-)
+_cfg, fn, _unresolved = prog.analyze("array_sum")
 print(f"array_sum: {len(fn.find_all(anything()))} reachable IR nodes\n")
 
 
-# --- 1. one_of / first_of: alternation ---
 # Disjoint arms behave the same either way.
 print("=== one_of / first_of ===")
 mem_ops = fn.find_all(one_of([load(), store()]))
@@ -52,13 +46,11 @@ for label, addr_pat in (
     print(f"{label:22} {len(rows):3d} rows, {bound} with `off` bound")
 
 
-# --- 2. int_const of a set: a constant drawn from several ---
 print("\n=== int_const([...]) ===")
 powers = fn.find_all(int_const([1, 2, 4, 8, 16, 32]))
 print(f"power-of-two constants in {{1..32}}: {len(powers)}")
 
 
-# --- 3. var(c).when(...): a Python guard on a captured value ---
 # .when is on Pat, so wrap the capture in var() first. Return False to drop.
 print("\n=== var(c).when(predicate) ===")
 c = Capture("c")
@@ -69,13 +61,11 @@ sample = sorted({m.uint(c) for m in big})[:8]
 print(f"  distinct values (first 8): {sample}")
 
 
-# --- 4. find_unique: raises unless the pattern matches exactly once ---
 print("\n=== find_unique ===")
 the_ret = fn.find_unique(ret())
 print(f"exactly one Return node (root node id {the_ret.root})")
 
 
-# --- 5. any_int_binary: bind the operator variant ---
 # The first Capture binds the node; Match.op reads back which variant fired.
 # Both operands are wildcards, so a commutative op answers twice per node;
 # collecting roots into a set counts nodes.

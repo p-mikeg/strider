@@ -103,3 +103,59 @@ def test_captured_one_of_in_memory_slot():
     capped = fn.find_all(p.load().mem(p.one_of([p.store(), p.mem_phi()]).capture("m")))
     assert len(capped) == plain
     assert all("m" in m for m in capped)
+
+
+def test_a_union_beside_a_shared_first_of_keeps_its_match():
+    """`float_is_nan` reads its operand twice, so a match through `var(x)` at
+    both reads ties with one through it at a single read, and the union arm
+    beside the `first_of` drops neither."""
+    fn = _lift(str(fixture_path("x64", "floats")), "f64_compare")
+    x, t = p.Capture("x"), p.Capture("t")
+    first = p.first_of([p.var(x), p.anything()])
+    alone = fn.find_all(p.float_is_nan(first))
+    hits = fn.find_all(p.float_is_nan(p.one_of([first, p.anything().capture(t)])))
+    assert alone and all(x in m for m in alone)
+    assert sum(1 for m in hits if x in m and t not in m) == len(alone)
+
+
+def test_a_shared_first_of_takes_the_first_matching_arm_at_each_read():
+    """A guard below each arm reads the bindings from before the arm binds,
+    so `float_is_nan`'s two reads differ: after arm 0 at the first read, arms
+    0 and 1 fail at the second, which then takes arm 2."""
+    fn = _lift(str(fixture_path("x64", "floats")), "f64_compare")
+    x, y, z = p.Capture("x"), p.Capture("y"), p.Capture("z")
+
+    def bits(c):
+        guard = p.anything().when(lambda m: x not in m)
+        return p.int_bits_to_float(guard).capture(c)
+
+    hits = fn.find_all(p.float_is_nan(p.first_of([bits(x), bits(y), p.var(z)])))
+    assert hits and all(x in m and z in m and y not in m for m in hits)
+
+
+def test_a_read_a_union_routes_away_settles_on_its_own():
+    """The union arm binds `t` at the first read of `float_is_nan` and skips
+    the `first_of`, whose arm 0 needs the `y` only arm 1 binds. Arm 1 then arm
+    0 (`{y}`) beats the match taking arm 1 at the second read (`{t, y}`)."""
+    y, t = p.Capture("y"), p.Capture("t")
+
+    def has_y():
+        return p.anything().when(lambda m: y in m)
+
+    def no_y():
+        return p.anything().when(lambda m: y not in m)
+
+    def nan(alt):
+        arms = [has_y(), p.int_bits_to_float(no_y()).capture(y)]
+        return p.float_is_nan(p.one_of([alt(arms), no_y().capture(t)]))
+
+    for arch in ("x64", "aarch64", "arm"):
+        for sym in ("f32_compare", "f64_compare"):
+            fn = _lift(str(fixture_path(arch, "floats")), sym)
+
+            def rows(pat):
+                return {(m.root, y in m, t in m) for m in fn.find_all(pat)}
+
+            union = rows(nan(p.one_of))
+            assert any(r[1] and r[2] for r in union), (arch, sym)
+            assert rows(nan(p.first_of)) == {r for r in union if not (r[1] and r[2])}

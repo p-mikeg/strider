@@ -15,23 +15,15 @@ fn lift(
     cc: CallingConvention,
     ret_reg: &str,
 ) -> (Function, ValueId, rsleigh::SleighRegs) {
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(bytes, BASE),
-    )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, BASE))
+            .expect("lifter");
     let regs = lifter.sleigh_regs().clone();
     let cc: BuiltCallingConvention = cc.build(&regs).expect("cc");
-    let opts = strider_lift::LiftOptions::default();
     let cfg = lifter
-        .build_cfg(BASE.into(), &opts.cfg, opts.per_address_ccs)
+        .build_cfg(BASE.into(), &strider_cfg::CfgOptions::default())
         .expect("cfg");
-    let f = lifter
-        .build_ir_with(&cfg, cc.clone(), &opts)
-        .expect("ir")
-        .function;
+    let f = lifter.build_ir(&cfg, cc.clone()).expect("ir").function;
     let ret = f
         .walk_kind(|k| matches!(k, NodeKind::Return))
         .next()

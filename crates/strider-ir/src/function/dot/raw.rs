@@ -1,54 +1,95 @@
-//! Raw graph renderer for debugging: the graph **exactly as stored**, one DOT
-//! node per reachable-from-entry [`NodeId`], one edge per input edge, and
-//! side-table state inline.
-
 use ::dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
+use dashu_int::UBig;
 use rustc_hash::FxHashMap;
 
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind};
 use crate::{IRViewer, IRWalker};
 
-/// `{space-shortcut}{offset:#x}:{size}`, e.g. `%0x38:8`.
+/// A constant's decimal value at any width. Rendered graphs are compared
+/// across builds, so this spelling must stay fixed.
+pub(super) fn const_label(value: &UBig) -> String {
+    format!("{value}")
+}
+
+/// `{space}{offset:#x}:{size}`, the space as the text format spells it, e.g.
+/// `%0x38:8`.
 fn fmt_vn(vn: &rsleigh::Vn) -> String {
-    format!("{}{:#x}:{}", vn.addr_space.shortcut(), vn.addr_off, vn.size)
+    format!(
+        "{}{:#x}:{}",
+        crate::function::space_str(vn.addr_space),
+        vn.addr_off,
+        vn.size
+    )
 }
 
 pub(super) struct RawFunctionDumper<'a> {
     function: &'a Function,
-    /// Carrier node -> arg tags.
-    arg_index: FxHashMap<NodeId, Vec<super::ArgTag>>,
+    /// Carrier node -> its arg tags, joined.
+    arg_labels: FxHashMap<NodeId, String>,
+    /// A neighbourhood render; `None` dumps the whole walk.
+    view: Option<::dot::View<NodeId>>,
 }
 
 impl<'a> RawFunctionDumper<'a> {
     pub(super) fn new(function: &'a Function) -> Self {
         Self {
-            arg_index: super::build_arg_reverse_map(function),
+            arg_labels: super::arg_labels(function),
             function,
+            view: None,
         }
     }
 
-    /// id + kind + output kinds + every side-table entry recorded for the node.
+    /// Id, kind, output kinds and every side-table entry for the node.
     fn node_label(&self, node: NodeId) -> String {
         let f = self.function;
         let kind = f.node_kind(node);
         // `InitialVar` carries an index; resolve it to the varnode.
         let kind_str = match kind {
             NodeKind::InitialVar(id) => match f.initial_vn_opt(*id) {
-                Some(vn) => format!("InitialVar(#{} {})", id.index(), fmt_vn(&vn)),
-                None => format!("InitialVar(#{} ?)", id.index()),
+                Some(vn) => format!("InitialVar(#{} {})", id.as_u32(), fmt_vn(&vn)),
+                None => format!("InitialVar(#{} ?)", id.as_u32()),
             },
             // The value itself goes on the next line.
             NodeKind::IntConst(id) => format!("IntConst(#{})", id.as_u32()),
             NodeKind::Switch(_) => "Switch".to_string(),
             NodeKind::Call { .. } => "Call".to_string(),
-            other => format!("{other:?}"),
+            NodeKind::Entry
+            | NodeKind::InitialMemory
+            | NodeKind::Region
+            | NodeKind::MemPhi
+            | NodeKind::Phi
+            | NodeKind::If
+            | NodeKind::Return
+            | NodeKind::IndirectBranch
+            | NodeKind::Unreachable
+            | NodeKind::Load(_)
+            | NodeKind::Store(_)
+            | NodeKind::IntUnaryOp(_)
+            | NodeKind::IntBinaryOp(_)
+            | NodeKind::IntCmpOp(_)
+            | NodeKind::Truncate
+            | NodeKind::Popcount
+            | NodeKind::Lzcount
+            | NodeKind::Extend(_)
+            | NodeKind::FloatConst(_)
+            | NodeKind::FloatBinaryOp(_)
+            | NodeKind::FloatUnaryOp(_)
+            | NodeKind::FloatCmpOp(_)
+            | NodeKind::IntToFloat
+            | NodeKind::FloatToInt
+            | NodeKind::FloatToFloat
+            | NodeKind::IntBitsToFloat
+            | NodeKind::FloatBitsToInt
+            | NodeKind::CallOther { .. }
+            | NodeKind::CPoolRef
+            | NodeKind::New => format!("{kind:?}"),
         };
         let mut s = format!("n{}  {kind_str}", node.as_u32());
 
         if let NodeKind::IntConst(id) = kind {
-            let value = match f.const_interner.get(*id) {
-                Some(cv) => format!("{cv:?}"),
+            let value = match f.side_tables().const_interner.get(*id) {
+                Some(cv) => const_label(cv),
                 None => format!("<dangling const {id:?}>"),
             };
             s.push_str(&format!("\n= {value}"));
@@ -77,7 +118,7 @@ impl<'a> RawFunctionDumper<'a> {
         if let Some(name) = f.call_other_name(node) {
             s.push_str(&format!("\nop={name}"));
         }
-        if matches!(f.node_kind(node), NodeKind::Call { .. }) {
+        if matches!(kind, NodeKind::Call { .. }) {
             // How many outputs past Control/Memory carry a clobber tag.
             let tagged = f
                 .node_outputs(node)
@@ -86,70 +127,25 @@ impl<'a> RawFunctionDumper<'a> {
                 .count();
             s.push_str(&format!("\nclobbers={tagged}"));
         }
-        if let Some(tags) = self.arg_index.get(&node) {
-            let joined: Vec<String> = tags.iter().map(ToString::to_string).collect();
-            s.push_str(&format!("\n{}", joined.join(", ")));
+        if let Some(tags) = self.arg_labels.get(&node) {
+            s.push_str(&format!("\n{tags}"));
         }
         s
-    }
-
-    /// Same BFS + `max_nodes` budget as
-    /// [`super::FunctionDotDumper::neighborhood_dot`], rendered raw.
-    fn neighborhood_dot(
-        &self,
-        center: NodeId,
-        depth: usize,
-        hub_cap: usize,
-        max_nodes: usize,
-        count_producers: bool,
-    ) -> anyhow::Result<String> {
-        let consumers = super::neighborhood::build_consumers(self.function);
-        let set = super::neighborhood::neighborhood_nodes(
-            self.function,
-            center,
-            depth,
-            hub_cap,
-            max_nodes,
-            count_producers,
-            &consumers,
-        );
-        let mut out = DotEmitter::new("G", &DotStyle::dark());
-        for &node in &set {
-            let dot_id = format!("n{}", node.as_u32());
-            let extra: &[(&str, &str)] = if node == center {
-                &[("color", "#ffcc00"), ("penwidth", "2.5")]
-            } else {
-                &[]
-            };
-            out.node(&dot_id, &self.node_label(node), "box", extra);
-        }
-        for &node in &set {
-            let dot_id = format!("n{}", node.as_u32());
-            for (in_slot, value) in self.function.node_inputs(node).into_iter().enumerate() {
-                let (producer, out_slot) = self.function.value_definition(value);
-                if !set.contains(&producer) {
-                    continue;
-                }
-                let from = format!("n{}", producer.as_u32());
-                let label = format!("{out_slot}:{in_slot}");
-                out.edge(&from, &dot_id, &[("label", &label)]);
-            }
-        }
-        Ok(out.finish())
     }
 }
 
 impl GraphDotDumper for RawFunctionDumper<'_> {
     type Node = NodeId;
-    type Error = anyhow::Error;
     type State = ();
 
-    fn create_initial_state(&self) -> Self::State {}
-
+    /// The walk follows backward-data and forward-control edges, so every
+    /// rendered node's input producers are rendered too: no dangling edges.
     fn iter_nodes(&self) -> impl IntoIterator<Item = NodeId> {
-        // The walk follows backward-data and forward-control edges, so every
-        // rendered node's input producers are rendered too: no dangling edges.
-        self.function.walk().collect::<Vec<_>>()
+        self.function.walk()
+    }
+
+    fn view(&self) -> Option<&::dot::View<NodeId>> {
+        self.view.as_ref()
     }
 
     fn dump_as_dot(
@@ -159,10 +155,18 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
         _state: &mut Self::State,
     ) -> anyhow::Result<()> {
         let dot_id = format!("n{}", node.as_u32());
-        out.node(&dot_id, &self.node_label(node), "box", &[]);
+        out.node(
+            &dot_id,
+            &self.node_label(node),
+            "box",
+            self.center_attrs(node),
+        );
         // Edge label is producer-output-slot : consumer-input-slot.
         for (in_slot, value) in self.function.node_inputs(node).into_iter().enumerate() {
             let (producer, out_slot) = self.function.value_definition(value);
+            if !self.in_view(producer) {
+                continue;
+            }
             let from = format!("n{}", producer.as_u32());
             let label = format!("{out_slot}:{in_slot}");
             out.edge(&from, &dot_id, &[("label", &label)]);
@@ -172,25 +176,22 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
 }
 
 impl Function {
-    /// Graphviz DOT of the graph **exactly as stored**.
+    /// The renderer of the graph exactly as stored, in the dark theme.
+    pub fn raw_graph_dot(&self) -> GraphDot<impl GraphDotDumper + '_> {
+        GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark())
+    }
+
+    /// Graphviz DOT of [`Self::raw_graph_dot`].
     ///
     /// # Errors
     ///
     /// Propagates a DOT-emit error from the renderer.
     pub fn raw_dot(&self) -> crate::Result<String> {
-        GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark()).as_dot()
+        self.raw_graph_dot().as_dot()
     }
 
-    /// [`Self::raw_dot`] wrapped in a self-contained HTML page.
-    ///
-    /// # Errors
-    ///
-    /// Propagates a DOT-emit error from the renderer.
-    pub fn raw_html(&self) -> crate::Result<String> {
-        GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark()).as_html_from_dot()
-    }
-
-    /// Raw counterpart to the pretty explorer view; needs no Sleigh.
+    /// `FunctionDotDumper::neighborhood_dot` over the raw renderer; needs no
+    /// `ArchNames`.
     ///
     /// # Errors
     ///
@@ -203,12 +204,18 @@ impl Function {
         max_nodes: usize,
         count_producers: bool,
     ) -> crate::Result<String> {
-        RawFunctionDumper::new(self).neighborhood_dot(
+        let set = super::neighborhood::neighborhood_nodes(
+            self,
             center,
             depth,
             hub_cap,
             max_nodes,
             count_producers,
-        )
+        );
+        let dumper = RawFunctionDumper {
+            view: Some(::dot::View::new(set, center)),
+            ..RawFunctionDumper::new(self)
+        };
+        GraphDot::new(dumper, DotStyle::dark()).as_dot()
     }
 }

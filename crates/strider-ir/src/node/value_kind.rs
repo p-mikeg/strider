@@ -1,5 +1,3 @@
-use anyhow::anyhow;
-
 use super::value_type::ValueType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -7,10 +5,22 @@ pub enum ValueKind {
     Typed(ValueType),
     /// One edge per region predecessor, one per branch successor.
     Control,
-    /// Dataless sync edge from a `Region` to every `Phi`/`MemPhi` in that join.
+    /// Dataless edge from a `Region` to its `Phi`s / `MemPhi`s.
     PhiToken,
-    /// Memory state threaded through the graph.
     Memory,
+}
+
+// Fits the slot the 16-byte value record leaves.
+const _: () = assert!(size_of::<ValueKind>() <= 4);
+
+/// A typed value prints as its type (`f64`), the others by name.
+impl std::fmt::Display for ValueKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Typed(ty) => write!(f, "{ty}"),
+            Self::Control | Self::PhiToken | Self::Memory => write!(f, "{self:?}"),
+        }
+    }
 }
 
 impl ValueKind {
@@ -23,13 +33,8 @@ impl ValueKind {
     pub fn as_value(self) -> Option<ValueType> {
         match self {
             Self::Typed(v) => Some(v),
-            _ => None,
+            Self::Control | Self::PhiToken | Self::Memory => None,
         }
-    }
-
-    pub fn as_value_or_err(self) -> crate::Result<ValueType> {
-        self.as_value()
-            .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
     }
 
     #[inline]
@@ -38,12 +43,7 @@ impl ValueKind {
     }
 
     #[inline]
-    pub(crate) fn is_phi_token(self) -> bool {
-        self == Self::PhiToken
-    }
-
-    #[inline]
-    pub fn is_memory(self) -> bool {
+    pub(crate) fn is_memory(self) -> bool {
         self == Self::Memory
     }
 

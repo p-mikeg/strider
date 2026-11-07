@@ -1,234 +1,58 @@
-//! `pcode_at` / `fingerprint_pcode` are LOOKUPS against the CFG's own
-//! lift-time decodes rather than a fresh re-decode, so they stay correct on
-//! context-dependent architectures (ARM/Thumb, MIPS16) where a default-context
-//! Sleigh would render the wrong p-code for a mid-function mode switch.
+//! `pcode_at` / `fingerprint_pcode` read the CFG's own decodes, never
+//! re-decode, so a mid-function ISA-mode switch renders right.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use pyo3::prelude::*;
 
+use crate::bigint::Unsigned;
 use crate::dot::{DEFAULT_CFG_STYLE, dot_style_for, render};
 use crate::errors::into_strider_err;
 use crate::node::PyNode;
-use crate::reader::AnyMemReader;
-use crate::strider_cls::{PyLifter, machine_addrs};
+use crate::strider_cls::PyLifter;
 
-/// Control-flow graph of a single function, from `Lifter.build_cfg` or
-/// `Lifter.analyze`. Renders to Graphviz dot / dark-themed HTML, and serves
-/// the p-code audit trail (`pcode_at` / `fingerprint_pcode`).
-#[pyclass(name = "Cfg", module = "strider.cfg")]
+/// Control-flow graph of one function, from `Lifter.build_cfg` or
+/// `Lifter.analyze`.
+#[pyclass(name = "Cfg", module = "strider.cfg", frozen)]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
-    /// The `Lifter` that built `inner`, borrowed for its Sleigh.
     pub(crate) lifter: Py<PyLifter>,
-    /// That lifter's arch preset, copied at construction so a render can check
-    /// a supplied handle against it WITHOUT borrowing `lifter`: `analyze` holds
-    /// that one mutably with the GIL released, and a borrow here would fail for
-    /// the length of an analysis, which is exactly when a background explorer
-    /// is rendering.
-    pub(crate) arch_name: &'static str,
+    /// Kept so a render never borrows `lifter`.
+    pub(crate) arch: strider_target::SleighArch,
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
-    region_index: OnceLock<RegionIndex>,
-    reports: CfgReports,
 }
 
-/// The incompleteness channels as `analyze` reported them. Read from here
-/// rather than from `inner`, which is the FINAL round's CFG: a round that
-/// raised a report and was then rebuilt without the edge that raised it
-/// leaves nothing behind in `inner`.
-///
-/// `unresolved`, `isa_mode_conflicts`, `interior_branch_targets`,
-/// `unmapped_branch_targets` and `undecodable_branch_targets` accumulate over the resolver's rounds, so a later
-/// round cannot launder an earlier loss; `unverified_seeded` is derived once
-/// from the final CFG.
-pub(crate) struct CfgReports {
-    /// The same list `AnalyzeResult.unresolved` carries, held here so
-    /// `is_complete` can test all six channels from one object. For a
-    /// `build_cfg` result it is read off the regions instead, since no
-    /// resolver ran to report one: every site that build left an
-    /// `UnresolvedIndirectBranch`.
-    pub(crate) unresolved: Vec<u64>,
-    /// For a `build_cfg` result this is every seed that build SEATED: no
-    /// classifier ran, so nothing checked any of them, while a seed the CFG
-    /// had no dispatch for seats nothing. `analyze` narrows it to the seeds
-    /// its resolver could not confirm.
-    pub(crate) unverified_seeded: Vec<u64>,
-    pub(crate) isa_mode_conflicts: Vec<u64>,
-    pub(crate) interior_branch_targets: Vec<u64>,
-    pub(crate) unmapped_branch_targets: Vec<u64>,
-    pub(crate) undecodable_branch_targets: Vec<u64>,
-}
-
-impl CfgReports {
-    /// Every channel, which is what `is_complete` reads. The one place they
-    /// are enumerated, so a seventh cannot be left out of the answer.
-    fn channels(&self) -> [&[u64]; 6] {
-        [
-            &self.unresolved,
-            &self.unverified_seeded,
-            &self.isa_mode_conflicts,
-            &self.interior_branch_targets,
-            &self.unmapped_branch_targets,
-            &self.undecodable_branch_targets,
-        ]
-    }
-}
-
-/// Region starts in address order, plus the longest span any region covers:
-/// a region containing `addr` starts no lower than `addr - max_span`, which
-/// bounds `region_at`'s reverse walk. `Region::contains_addr` stays the only
-/// authority on containment.
-struct RegionIndex {
-    starts: Vec<(strider_cfg::PcodeInsnAddr, strider_cfg::RegionId)>,
-    max_span: u64,
-}
-
-/// Machine addresses of the branches this build left unresolved, sorted and
-/// deduped. The `build_cfg` stand-in for `AnalyzeResult.unresolved`: no
-/// resolver ran, so the regions are the only record that a site has no
-/// outgoing edge.
-fn unresolved_indirect_sites(cfg: &strider_cfg::Cfg) -> Vec<u64> {
-    let g = cfg.region_graph();
-    let mut out: Vec<u64> = g
-        .node_indices()
-        .filter_map(|idx| {
-            match &g
-                .node_weight(idx)
-                .expect("node_indices() only yields present nodes")
-                .terminator
-            {
-                strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
-                    Some(addr.machine_addr.addr)
-                }
-                _ => None,
-            }
-        })
+/// `incomplete` at machine-address granularity, sorted and deduplicated.
+pub(crate) fn incomplete_list(
+    incomplete: &strider_cfg::Incompleteness,
+) -> Vec<(u64, &'static str)> {
+    let by_machine_addr: std::collections::BTreeSet<(u64, strider_cfg::Reason)> = incomplete
+        .iter()
+        .map(|(addr, reason)| (addr.machine_addr.addr, reason))
         .collect();
-    out.sort_unstable();
-    out.dedup();
-    out
-}
-
-/// Over-estimating costs probes, never a missed owner.
-fn span_upper_bound(region: &strider_cfg::Region) -> u64 {
-    let start = region.start_addr.machine_addr.addr;
-    match region.insns.last() {
-        Some(last) => last
-            .addr
-            .machine_addr
-            .addr
-            .saturating_add(u64::from(last.len)),
-        None => start.saturating_add(u64::from(region.empty_span_len)),
-    }
-    .saturating_sub(start)
+    by_machine_addr
+        .into_iter()
+        .map(|(addr, reason)| (addr, reason.name()))
+        .collect()
 }
 
 impl PyCfg {
-    /// The `build_cfg` path: one build, no resolver, so that build's own
-    /// reports are the whole accumulation.
     pub(crate) fn new(
-        py: Python<'_>,
         inner: strider_cfg::Cfg,
         lifter: Py<PyLifter>,
-        seeded: Vec<u64>,
+        arch: strider_target::SleighArch,
     ) -> Self {
-        let reports = CfgReports {
-            unresolved: unresolved_indirect_sites(&inner),
-            unverified_seeded: seeded,
-            isa_mode_conflicts: machine_addrs(inner.isa_mode_conflicts()),
-            interior_branch_targets: machine_addrs(inner.interior_branch_targets()),
-            unmapped_branch_targets: machine_addrs(inner.unmapped_branch_targets()),
-            undecodable_branch_targets: machine_addrs(inner.undecodable_branch_targets()),
-        };
-        Self::with_reports(py, inner, lifter, reports)
-    }
-
-    pub(crate) fn with_reports(
-        py: Python<'_>,
-        inner: strider_cfg::Cfg,
-        lifter: Py<PyLifter>,
-        reports: CfgReports,
-    ) -> Self {
-        let arch_name = lifter.borrow(py).arch_name;
         Self {
             inner,
             lifter,
-            arch_name,
+            arch,
             pcode_map: OnceLock::new(),
-            region_index: OnceLock::new(),
-            reports,
         }
     }
 
-    /// Sound to cache: `inner` is moved in here and never mutated, the same
-    /// reason `pcode_map` caches.
-    fn region_index(&self) -> &RegionIndex {
-        self.region_index.get_or_init(|| {
-            let g = self.inner.region_graph();
-            let regions = || {
-                g.node_indices().map(|id| {
-                    let region = g
-                        .node_weight(id)
-                        .expect("node_indices() only yields present nodes");
-                    (id, region)
-                })
-            };
-            let mut starts: Vec<_> = regions().map(|(id, r)| (r.start_addr, id)).collect();
-            starts.sort_unstable_by_key(|&(addr, id)| (addr, id.index()));
-            RegionIndex {
-                starts,
-                max_span: regions()
-                    .map(|(_, r)| span_upper_bound(r))
-                    .max()
-                    .unwrap_or(0),
-            }
-        })
-    }
-
-    fn with_sleigh<R>(
-        &self,
-        py: Python<'_>,
-        f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
-    ) -> PyResult<R> {
-        self.with_sleigh_of(py, None, f)
-    }
-
-    /// `with` renders through a handle other than the one that built this CFG,
-    /// which is how a thread that does not own the original decoder renders.
-    fn with_sleigh_of<R>(
-        &self,
-        py: Python<'_>,
-        with: Option<&Bound<'_, PyLifter>>,
-        f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
-    ) -> PyResult<R> {
-        // `borrow` would panic when the owning `Lifter` is mid-`analyze`
-        // (a `read()` callback rendering this Cfg), and that surfaces as
-        // `PanicException`, a `BaseException` no `except Exception` catches.
-        match with {
-            Some(l) => {
-                let b = l
-                    .try_borrow()
-                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-                b.check_arch_is(self.arch_name)?;
-                f(b.sleigh()?)
-            }
-            None => {
-                let lifter_borrow = self
-                    .lifter
-                    .try_borrow(py)
-                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-                f(lifter_borrow.sleigh()?)
-            }
-        }
-    }
-
-    /// `center` as a region id this CFG actually has.
-    ///
-    /// `RegionId::new` takes any `usize`, so an out-of-range argument would
-    /// render an empty graph rather than say anything, and `u32::MAX` is
-    /// petgraph's end sentinel, never a region.
+    /// `u32::MAX` is petgraph's end sentinel, never a region.
     fn region_id(&self, center: u32) -> PyResult<strider_cfg::RegionId> {
         if center != u32::MAX {
             let id = strider_cfg::RegionId::new(center as usize);
@@ -243,41 +67,37 @@ impl PyCfg {
 
     fn render_dot(
         &self,
-        py: Python<'_>,
         style: Option<&str>,
         html: bool,
-        path: Option<&str>,
-        with: Option<&Bound<'_, PyLifter>>,
+        path: Option<std::path::PathBuf>,
     ) -> PyResult<Option<String>> {
-        let style = style.unwrap_or(DEFAULT_CFG_STYLE);
-        self.with_sleigh_of(py, with, |sleigh| {
-            let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style))?);
-            render(&d, html, path)
-        })
+        let d = dot::GraphDot::new(
+            self.inner.dot_dumper(self.arch.names()),
+            dot_style_for(style.unwrap_or(DEFAULT_CFG_STYLE))?,
+        );
+        render(&d, html, path)
     }
 
-    /// Ops of one machine instruction are joined with `"; "` in `insn_index`
-    /// order.
+    /// Ops joined with `"; "` in `insn_index` order.
     fn pcode_map(&self) -> &HashMap<u64, String> {
         self.pcode_map.get_or_init(|| {
-            let mut grouped: HashMap<u64, Vec<(u64, String)>> = HashMap::new();
+            let mut grouped: HashMap<u64, Vec<(u64, &rsleigh::Insn)>> = HashMap::new();
             for region in self.inner.regions() {
                 for ri in &region.insns {
-                    grouped.entry(ri.addr.machine_addr.addr).or_default().push((
-                        ri.addr.insn_index,
-                        strider_cfg::insn_plain_text(&ri.insn, self.inner.space_ids()).to_string(),
-                    ));
+                    grouped
+                        .entry(ri.addr.machine_addr.addr)
+                        .or_default()
+                        .push((ri.addr.insn_index, &ri.insn));
                 }
             }
             grouped
                 .into_iter()
                 .map(|(addr, mut ops)| {
                     ops.sort_by_key(|(idx, _)| *idx);
-                    let text = ops
-                        .into_iter()
-                        .map(|(_, text)| text)
-                        .collect::<Vec<_>>()
-                        .join("; ");
+                    let text = crate::pcode::pcode_text(
+                        ops.into_iter().map(|(_, insn)| insn),
+                        self.inner.space_ids(),
+                    );
                     (addr, text)
                 })
                 .collect()
@@ -288,201 +108,80 @@ impl PyCfg {
 #[pymethods]
 impl PyCfg {
     /// The `Lifter` that built this CFG.
-    ///
-    /// Its `arch` / `reader()` / `rom()` are what a second handle over the same
-    /// memory is built from, which is how a renderer on another thread gets a
-    /// decoder of its own without disturbing this one.
     #[getter]
     fn lifter(&self, py: Python<'_>) -> Py<PyLifter> {
         self.lifter.clone_ref(py)
     }
 
-    /// Machine addresses this CFG reached carrying two different ISA modes.
-    ///
-    /// One region owns the bytes, decoded in whichever mode the work queue
-    /// reached first, so the losing path's arm is not the instruction stream it
-    /// believes. A direct edge can cause this, not only a resolved indirect
-    /// branch, which is why it is reported here rather than in `unresolved`.
-    /// Non-empty means part of this CFG is decoded in a mode some path into it
-    /// disagrees with.
-    ///
-    /// Accumulated over every round `analyze` ran: a clash decodes the bytes
-    /// twice and costs the site, whose next round rebuilds without the edge
-    /// that raised it, so the final CFG alone would launder the report.
-    fn isa_mode_conflicts(&self) -> Vec<u64> {
-        self.reports.isa_mode_conflicts.clone()
+    /// Sorted `(machine_addr, reason)` pairs this CFG cannot vouch for; empty
+    /// is complete.
+    #[getter]
+    fn incomplete(&self) -> Vec<(u64, &'static str)> {
+        incomplete_list(self.inner.incomplete())
     }
 
-    /// Branch targets interior to a region but off every instruction boundary.
-    ///
-    /// No region can start there (decoding from inside an instruction yields a
-    /// different stream), so the edge is seated on the region owning the
-    /// bytes, whose instructions start earlier. A direct edge can cause this,
-    /// not only a resolved indirect branch. Non-empty means this CFG claims a
-    /// successor the branch does not actually enter at.
-    ///
-    /// Accumulated over every round `analyze` ran: the inexact edge fed the
-    /// classifier, whose derived targets outlive it, so a later round that
-    /// no longer carries the edge does not undo what it cost.
-    fn interior_branch_targets(&self) -> Vec<u64> {
-        self.reports.interior_branch_targets.clone()
-    }
-
-    /// Direct-branch targets no byte of this image backs.
-    ///
-    /// Each is seated as an empty tail-call stub, so the branch keeps an edge
-    /// and every region that did decode survives; nothing past the stub is
-    /// known. A buffer whose window the branch leaves, a partially-mapped
-    /// image, an unrelocated `jmp`, a ROM built from a symbol subset. A direct
-    /// edge produces these, so they are reported here rather than in
-    /// `unresolved`.
-    ///
-    /// Accumulated over every round `analyze` ran.
-    fn unmapped_branch_targets(&self) -> Vec<u64> {
-        self.reports.unmapped_branch_targets.clone()
-    }
-
-    /// Addresses a direct branch or a fall-through past a call reached that
-    /// hold no instruction: bytes Sleigh rejects, or a range
-    /// `CfgOptions.data_ranges` marks as data.
-    ///
-    /// A direct branch there keeps an edge to an empty tail-call stub. A
-    /// fall-through past a call ends that call as no-return, which is what a
-    /// callee nobody marked no-return leaves behind (a literal pool, a
-    /// traceback table, a deliberately invalid word), though nothing proves it
-    /// never returns.
-    ///
-    /// Accumulated over every round `analyze` ran.
-    fn undecodable_branch_targets(&self) -> Vec<u64> {
-        self.reports.undecodable_branch_targets.clone()
-    }
-
-    /// Dispatch addresses nothing verified: a site seated with exactly the
-    /// `known_targets` you supplied and nothing the classifier derived, every
-    /// site the CFG consumed outright as a tail call, and a site consumed as a
-    /// return because YOUR `"return"` seat consumed it, which is also where a
-    /// FAILED re-check of that seat lands: the seat decided a CFG edge, so the
-    /// site is not reported as unresolved. A `Return` the CLASSIFIER derived
-    /// rides no channel once
-    /// `assumptions.return_slots_survive_untracked_writes` (default `True`)
-    /// carries its proof; clearing that claim and re-running is how you audit
-    /// one.
-    ///
-    /// A fourth shape is not a dispatch you seeded: an arm a mode-less
-    /// re-derivation found at a site whose other arms all carry the flowing
-    /// ISA mode. It is seated on the mode a caller's seed gave its siblings,
-    /// and nobody evaluated that arm's own.
-    ///
-    /// Not unresolved (nothing contradicts the answer), but nothing checked it.
-    /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
-    /// seed can stop it deriving and take the site's real arms with it. These
-    /// are the sites where that cannot be ruled out. For a `build_cfg` result
-    /// it is every seed the build SEATED, since no classifier ran to check any
-    /// of them; a seed at an address the function dispatches from nowhere
-    /// seats nothing and is not reported.
-    fn unverified_seeded_sites(&self) -> Vec<u64> {
-        self.reports.unverified_seeded.clone()
-    }
-
-    /// Whether all six incompleteness channels are empty: the `unresolved`
-    /// of the `AnalyzeResult` this CFG came from, `unverified_seeded_sites`,
-    /// `isa_mode_conflicts`, `interior_branch_targets`,
-    /// `unmapped_branch_targets` and `undecodable_branch_targets`.
-    ///
-    /// The answer to "may this be incomplete?", which none of the six gives
-    /// alone. `False` is not always a loss: `unverified_seeded_sites` holds
-    /// answers that are complete but unverified, among them a site seated with
-    /// only your own `known_targets`. `False` over that channel alone reads
-    /// "complete but unverified", EXCEPT for a `"return"` seat whose re-check
-    /// failed, which lands there too. Read whichever channel is non-empty to
-    /// tell the cases apart.
-    ///
-    /// On a `build_cfg` CFG `unresolved` is every indirect branch that build
-    /// left without an outgoing edge, since `build_cfg` resolves none of them,
-    /// and `unverified_seeded_sites` holds the seeds it seated.
-    fn is_complete(&self) -> bool {
-        self.reports.channels().iter().all(|c| c.is_empty())
-    }
-
-    /// Exposes the strong `lifter` back-reference so the cyclic GC can see a
-    /// cycle routed through a `Cfg` and on to the Lifter's Python reader. The
-    /// cycle is broken at the reader's `__dict__` / `PyLifter::__clear__`, and
-    /// `lifter` is load-bearing while the `Cfg` lives.
+    /// Lets the cyclic GC see a cycle through `lifter` to its Python reader.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.lifter)
     }
 
-    /// Render the CFG to DOT. Returns the DOT string when `path` is
-    /// `None`, otherwise writes it to `path` and returns `None`.
-    /// `style` selects the dot theme (default `"dark_cfg"`).
-    #[pyo3(signature = (path=None, style=None, *, lifter=None))]
+    /// Render to DOT: the string when `path` is `None`, else written to
+    /// `path`. `style` is the theme (default `"dark_cfg"`).
+    #[pyo3(signature = (path=None, style=None))]
     fn to_dot(
         &self,
-        py: Python<'_>,
-        path: Option<&str>,
+        path: Option<std::path::PathBuf>,
         style: Option<&str>,
-        lifter: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<Option<String>> {
-        self.render_dot(py, style, false, path, lifter)
+        self.render_dot(style, false, path)
     }
 
-    /// Render the CFG to a standalone HTML page. Returns the HTML string
-    /// when `path` is `None`, otherwise writes it and returns `None`.
-    /// `style` selects the dot theme (default `"dark_cfg"`).
-    ///
-    /// Takes no `lifter=`, so it always renders through the owning handle and
-    /// raises off its thread; `to_dot(lifter=...)` is the escape hatch.
+    /// Render to a standalone HTML page: the string when `path` is `None`,
+    /// else written to `path`. `style` is the theme (default `"dark_cfg"`).
     #[pyo3(signature = (path=None, style=None))]
     fn to_html(
         &self,
-        py: Python<'_>,
-        path: Option<&str>,
+        path: Option<std::path::PathBuf>,
         style: Option<&str>,
     ) -> PyResult<Option<String>> {
-        self.render_dot(py, style, true, path, None)
+        self.render_dot(style, true, path)
     }
 
-    /// The lifted p-code for the machine instruction at `addr`: every p-code
-    /// op decoded there, joined with `"; "`, or `None` when this CFG decoded
-    /// nothing at `addr`.
-    ///
-    /// Known limitation: an instruction lifting to ZERO p-code ops (x86
-    /// `endbr64`, AArch64 `paciasp`) is indistinguishable from an address
-    /// never decoded; both give `None`.  `Lifter.pcode_at` returns `""`.
-    fn pcode_at(&self, addr: u64) -> Option<String> {
+    /// The p-code ops this CFG decoded at `addr`, joined with `"; "`, or
+    /// `None`; on ARM or MIPS `addr`'s low bit is ignored. An instruction
+    /// lifting to no ops (x86 `endbr64`) also gives `None`; `Lifter.pcode_at`
+    /// returns `""` for it.
+    fn pcode_at(&self, addr: crate::bigint::Addr) -> Option<String> {
+        let addr = if self.arch.isa_mode_var().is_some() {
+            addr.0 & !1
+        } else {
+            addr.0
+        };
         self.pcode_map().get(&addr).cloned()
     }
 
-    /// `node`'s asm fingerprint as `(addr, text)` p-code pairs sorted by
-    /// address. `[]` for structural nodes carrying no fingerprint.
-    ///
-    /// An address this CFG has no decode for is skipped, so every pair is a
-    /// genuine hit.
-    ///
-    /// Raises `StriderError` for a `node` from a function some other `Cfg`
-    /// produced: addresses collide across images, so the answer would be this
-    /// CFG's p-code labelled with the other's node.
+    /// `node`'s asm fingerprint as sorted `(addr, pcode)` pairs, skipping an
+    /// address this CFG has no decode for; `[]` for a structural node. Raises
+    /// `StriderError` for a `node` of another `Cfg`'s function.
     fn fingerprint_pcode(
         slf: &Bound<'_, Self>,
         py: Python<'_>,
         node: PyRef<'_, PyNode>,
     ) -> PyResult<Vec<(u64, String)>> {
-        if !node.function.bind(py).try_borrow()?.cfg.bind(py).is(slf) {
+        if !node.at.function.borrow(py).cfg.bind(py).is(slf) {
             return Err(into_strider_err(anyhow::anyhow!(
                 "this Node belongs to a function another Cfg lifted; a \
                  fingerprint is machine addresses, which collide across images, \
                  so the two must be the same Cfg"
             )));
         }
-        let slf = slf.borrow();
+        let slf = slf.get();
         let addrs = node.asm_fingerprint(py)?;
         let map = slf.pcode_map();
-        let mut out: Vec<(u64, String)> = addrs
+        Ok(addrs
             .into_iter()
             .filter_map(|addr| map.get(&addr).cloned().map(|text| (addr, text)))
-            .collect();
-        out.sort_by_key(|(addr, _)| *addr);
-        Ok(out)
+            .collect())
     }
 
     /// Region index of the CFG entry.
@@ -498,35 +197,28 @@ impl PyCfg {
         )
     }
 
-    /// Pretty neighborhood DOT around region `center`: BFS over predecessor
-    /// and successor regions, capped at `max_nodes`.
-    #[pyo3(signature = (center, depth=5, max_nodes=60, *, lifter=None))]
+    /// DOT of the regions within `depth` edges of region `center`, capped at
+    /// `max_nodes`.
+    #[pyo3(signature = (center, depth=Unsigned(5), max_nodes=Unsigned(60)))]
     fn neighborhood_dot(
         &self,
-        py: Python<'_>,
-        center: u32,
-        depth: usize,
-        max_nodes: usize,
-        lifter: Option<&Bound<'_, PyLifter>>,
+        center: crate::bigint::Unsigned<u32>,
+        depth: Unsigned<usize>,
+        max_nodes: Unsigned<usize>,
     ) -> PyResult<String> {
-        let node = self.region_id(center)?;
-        self.with_sleigh_of(py, lifter, |sleigh| {
-            self.inner
-                .neighborhood_dot(sleigh, node, depth, max_nodes)
-                .map_err(into_strider_err)
-        })
+        let node = self.region_id(center.0)?;
+        self.inner
+            .neighborhood_dot(self.arch.names(), node, depth.0, max_nodes.0)
+            .map_err(into_strider_err)
     }
 
-    /// Disassembly text per region index, joined with `"\n"`.
+    /// P-code text per region index, one op per line.
     #[pyo3(name = "_region_texts")]
-    fn region_texts(&self, py: Python<'_>) -> PyResult<HashMap<u32, String>> {
-        self.with_sleigh(py, |sleigh| {
-            let regs = sleigh
-                .regs()
-                .map_err(|e| into_strider_err(anyhow::anyhow!("{e:#}")))?;
-            let g = self.inner.region_graph();
-            let mut out = HashMap::new();
-            for idx in g.node_indices() {
+    fn region_texts(&self) -> HashMap<u32, String> {
+        let names = self.arch.names();
+        let g = self.inner.region_graph();
+        g.node_indices()
+            .map(|idx| {
                 let region = g
                     .node_weight(idx)
                     .expect("node_indices() only yields present nodes");
@@ -534,45 +226,35 @@ impl PyCfg {
                     .insns
                     .iter()
                     .map(|ri| {
-                        strider_cfg::insn_text(&ri.insn, self.inner.space_ids(), sleigh, &regs)
-                            .to_string()
+                        strider_cfg::insn_text(&ri.insn, self.inner.space_ids(), names).to_string()
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                out.insert(idx.index() as u32, text);
-            }
-            Ok(out)
-        })
+                (idx.index() as u32, text)
+            })
+            .collect()
     }
 
-    /// The region index whose instruction range contains `addr`, if any.
-    /// Lowest index when regions overlap, as a full scan reports.
-    fn region_at(&self, addr: u64) -> Option<u32> {
-        let target = strider_cfg::PcodeInsnAddr::at_machine_start(addr);
-        let index = self.region_index();
-        let below = &index.starts[..index.starts.partition_point(|&(s, _)| s <= target)];
-        let (greatest, _) = *below.last()?;
-        // The greatest start below `addr` is always probed: it can own `addr`
-        // however short every span is.
-        let floor = addr
-            .saturating_sub(index.max_span)
-            .min(greatest.machine_addr.addr);
-        let g = self.inner.region_graph();
-        below
-            .iter()
-            .rev()
-            .take_while(|(s, _)| s.machine_addr.addr >= floor)
-            .filter(|(_, id)| {
-                g.node_weight(*id)
-                    .expect("node_indices() only yields present nodes")
-                    .contains_addr(target)
-            })
-            .map(|(_, id)| id.index() as u32)
-            .min()
+    /// The region holding `addr`; of overlapping ones, the latest start.
+    fn region_at(&self, addr: crate::bigint::Addr) -> Option<u32> {
+        self.inner
+            .region_containing(strider_cfg::PcodeInsnAddr::at_machine_start(addr.0))
+            .map(|id| id.index() as u32)
     }
 }
 
-pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCfg>()?;
+    m.add(
+        "DOT_STYLES",
+        pyo3::types::PyTuple::new_bound(py, crate::dot::DOT_STYLES.map(|(name, _)| name)),
+    )?;
+    m.add(
+        "INCOMPLETE_REASONS",
+        pyo3::types::PyTuple::new_bound(
+            py,
+            strider_cfg::Reason::ALL.map(strider_cfg::Reason::name),
+        ),
+    )?;
     Ok(())
 }

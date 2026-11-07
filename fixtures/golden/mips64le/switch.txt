@@ -1,0 +1,101 @@
+# mips64le/switch: Strider::analyze, default options
+# dispatch_value: unresolved_branch (the table base is a GOT slot, unrelocated in the default ROM)
+endian little
+default_cc arg_passing_regs=[a0, a1, a2, a3, t0, t1, t2, t3] arg_passing_regs_float=[f12, f13, f14, f15, f16, f17, f18, f19] callee_saved_regs=[s0, s1, s2, s3, s4, s5, s6, s7, s8, gp, ra, f24, f25, f26, f27, f28, f29, f30, f31] ret_val_regs=[v0, v1] ret_val_regs_float=[f0, f2] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=ra preserves_memory=false preserves_all_registers=false entry_address_vn=t9 reg_args_adjoin_stack_args=true
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
+
+== main @0x120000880
+unresolved_branch [0x1200008cc.7]
+cfg
+  0x120000880 29 ops goto -> [0x1200008b4]
+  0x1200008b4 0 ops goto -> [0x1200008b8]
+  0x1200008b8 16 ops unresolved@0x1200008cc.7 -> []
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x14600:4]
+%v0:ctrl = entry
+%v1:mem = initial_memory
+%v2:i64 = initial_var[sp]
+%v3:i64 = iconst[0xfffffffffffffff0]
+%v4:i64 = int.add %v2, %v3
+%v5:i64 = initial_var[gp]
+%v6:mem = store[r] %v1, %v4, %v5
+%v7:i64 = iconst[0xfffffffffffffff8]
+%v8:i64 = int.add %v2, %v7
+%v9:i64 = initial_var[ra]
+%v10:mem = store[r] %v6, %v8, %v9
+%v11:i64 = iconst[0xffffffffffffffe0]
+%v12:i64 = int.add %v2, %v11
+%v13:i32 = iconst[0x0]
+%v14:mem = store[r] %v10, %v12, %v13
+%v15:i64 = iconst[0x120011050]
+%v16:i64 = load[r] %v1, %v15
+%v17:i64 = iconst[0xd60]
+%v18:i64 = int.add %v16, %v17
+%v19:i64 = load[r] %v14, %v18
+%v20:i64 = iconst[0x120019010]
+%v21:i64 = int.add %v19, %v20
+%v22:i64 = iconst[0xfffffffffffffffe]
+%v23:i64 = int.and %v21, %v22
+%v24:i64 = iconst[0x1]
+%v25:i64 = int.and %v21, %v24
+%v26:i64 = iconst[0x0]
+%v27:i1 = icmp.equal %v25, %v26
+%v28:i1 = iconst[0x1]
+%v29:i1 = int.xor %v27, %v28
+indirect_branch %v0, %v14, %v23, %v29
+
+== f @0x120000b30
+cfg
+  0x120000b30 8 ops return -> []
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8]
+arg 0 [%v2]
+%v0:ctrl = entry
+%v1:mem = initial_memory
+%v2:i64 = initial_var[a0]
+%v3:i32 = truncate %v2
+%v4:i32 = iconst[0x64]
+%v5:i32 = int.add %v3, %v4
+%v6:i64 = extend.sign %v5
+%v7:i64 = initial_var[v1]
+%v8:i64 = initial_var[f0]
+%v9:i64 = initial_var[f2]
+return %v0, %v1, %v6, %v7, %v8, %v9
+
+== dispatch_value @0x120000b38
+unresolved_branch [0x120000b68.9]
+cfg
+  0x120000b38 32 ops unresolved@0x120000b68.9 -> []
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x14600:4]
+arg 0 [%v15]
+%v0:ctrl = entry
+%v1:mem = initial_memory
+%v2:i64 = initial_var[sp]
+%v3:i64 = iconst[0xfffffffffffffff0]
+%v4:i64 = int.add %v2, %v3
+%v5:i64 = initial_var[gp]
+%v6:mem = store[r] %v1, %v4, %v5
+%v7:i64 = iconst[0xfffffffffffffff8]
+%v8:i64 = int.add %v2, %v7
+%v9:i64 = initial_var[ra]
+%v10:mem = store[r] %v6, %v8, %v9
+%v11:i64 = iconst[0x120011050]
+%v12:i64 = load[r] %v1, %v11
+%v13:i64 = iconst[0xd20]
+%v14:i64 = int.add %v12, %v13
+%v15:i64 = initial_var[a0]
+%v16:i64 = iconst[0x7]
+%v17:i64 = int.and %v15, %v16
+%v18:i64 = iconst[0x3]
+%v19:i64 = int.shift_left %v17, %v18
+%v20:i64 = int.add %v14, %v19
+%v21:i64 = load[r] %v6, %v20
+%v22:i64 = iconst[0x120019010]
+%v23:i64 = int.add %v21, %v22
+%v24:i64 = iconst[0xfffffffffffffffe]
+%v25:i64 = int.and %v23, %v24
+%v26:i64 = iconst[0x1]
+%v27:i64 = int.and %v23, %v26
+%v28:i64 = iconst[0x0]
+%v29:i1 = icmp.equal %v27, %v28
+%v30:i1 = iconst[0x1]
+%v31:i1 = int.xor %v29, %v30
+indirect_branch %v0, %v10, %v25, %v31

@@ -1,25 +1,13 @@
 import strider
 
 
-def test_sleigh_construct_with_buffer_reader():
-    arch = strider.sleigh.SleighArch.x86_64()
-    mem = strider.reader.BufferReader(0x1000, b"\x90\x90\x90\x90")  # 4 NOPs
-    sleigh = strider.sleigh.Sleigh(arch, mem)
-    assert sleigh is not None
-    assert sleigh.arch_name() == "x86_64"
-    assert "Sleigh" in repr(sleigh)
-
-
 # `Vn.__repr__` delegates to rsleigh's own formatter, so a formatter change
 # upstream lands here directly and these expectations move with it.
 
 
 def test_vn_repr_for_register_uses_rsleigh_display():
     # Sleigh always assigns x86_64 RSP to REGISTER:0x20, size 8.
-    arch = strider.sleigh.SleighArch.x86_64()
-    mem = strider.reader.BufferReader(0x1000, b"\x00")
-    sleigh = strider.sleigh.Sleigh(arch, mem)
-    rsp = sleigh.reg("RSP")
+    rsp = strider.sleigh.SleighArch.x86_64().reg("RSP")
     assert rsp is not None
     # Registers format as `<space-shortcut>[0x<off>]:<size>`; REGISTER's
     # shortcut character is `%`.
@@ -41,6 +29,15 @@ def test_vnspace_constants_are_instances_not_callables():
     assert VnSpace.REGISTER == VnSpace.REGISTER
     assert VnSpace.REGISTER != VnSpace.RAM
     assert VnSpace.REGISTER.name() == "REGISTER"
+
+
+def test_a_vn_space_reprs_as_its_class_constant():
+    from strider.sleigh import VnSpace
+
+    for name in ("RAM", "REGISTER", "CONST", "UNIQUE"):
+        space = getattr(VnSpace, name)
+        assert repr(space) == f"VnSpace.{name}"
+        assert eval(repr(space), {"VnSpace": VnSpace}) == space
 
 
 def test_vn_space_hash_consistent_with_eq():
@@ -82,3 +79,13 @@ def test_vn_hash_includes_addr_space():
         "Vn.__hash__ must mix in addr_space; otherwise different-space "
         "varnodes share a bucket"
     )
+
+
+def test_sleigh_arch_resolves_register_names_both_ways():
+    arch = strider.sleigh.SleighArch.x86_64()
+    for name in ("RSP", "EAX", "XMM0"):
+        vn = arch.reg(name)
+        assert vn is not None
+        assert arch.reg_name(vn) == name
+    assert arch.reg("NOT_A_REGISTER") is None
+    assert arch.reg_name(strider.sleigh.Vn(strider.sleigh.VnSpace.RAM, 0, 8)) is None

@@ -3,36 +3,58 @@ use anyhow::Context as _;
 use crate::{FileBytes, MemRegion, Result};
 
 use super::relocations::apply_elf_relocations_with;
-use super::sections::{ElfSectionLayout, LoadFilter, RegionSource};
+use super::sections::{AddressSet, ElfSectionLayout, LoadFilter, RegionSource};
 
-/// Maps the file: it must not change on disk while the returned `OwnedElf`
-/// lives. [`OwnedElf::check_unchanged`] catches a file rebuilt between two
-/// operations, and every region build runs it; a change racing a read in
-/// progress is still a torn read, or SIGBUS past a shortened end.
+/// Maps the file, which must not change on disk while the `OwnedElf` or
+/// anything built from it lives; see [`OwnedElf::check_unchanged`].
 ///
 /// # Errors
 ///
 /// When the file cannot be read from disk, or its bytes do not parse as ELF.
 pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
-    OwnedElf::open(path)
+    OwnedElf::validated(FileBytes::map_path(path)?)
 }
 
-/// An owned ELF: the backing file bytes, freed on drop.
-///
-/// Only the bytes are stored. [`object::File`] is a borrowing view with no
-/// owned variant, so holding one alongside its bytes would make this
-/// self-referential; [`checked_file`](Self::checked_file) re-parses instead.
+/// An owned ELF's bytes.
 pub struct OwnedElf {
     backing: FileBytes,
 }
 
 impl std::fmt::Debug for OwnedElf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Never dump the backing bytes (an ELF can be hundreds of MB).
         f.debug_struct("OwnedElf")
             .field("backing_len", &self.backing.len())
             .finish_non_exhaustive()
     }
+}
+
+/// What an image's relocations are taken to have done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelocationMode {
+    /// Nothing: each field serves its file-initial bytes, an addend or `ld`'s
+    /// link-time value rather than its target.
+    Unapplied,
+    /// Applied by this loader; fetch then maps writable sections too.
+    /// `got_is_rom` also serves `.got`, PPC32's `.got2` and `.data.rel.ro` as
+    /// ROM: an unchecked claim that nothing writes them after the loader (full
+    /// RELRO; PPC32 code relocating its own `.got2` breaks it) and that a
+    /// symbol the image defines binds to that definition. A slot only the
+    /// loader computes stays a hole; `.got.plt` is not served. An object
+    /// file's synthetic GOT is ROM either way: its synthetic link binds every
+    /// symbol locally.
+    Applied { got_is_rom: bool },
+}
+
+/// One image's views, from one parse and one layout.
+#[derive(Debug)]
+pub struct ElfImage {
+    /// Code and read-only mappings, plus writable ones when relocated.
+    pub fetch: Vec<MemRegion>,
+    /// The runtime-immutable mappings, an object file's synthetic GOT, and
+    /// `.got`, `.got2` and `.data.rel.ro` under `got_is_rom`.
+    pub rom: Vec<MemRegion>,
+    /// Every address the image maps writable, loaded or not.
+    pub writable: AddressSet,
 }
 
 /// First line of a Git LFS pointer file.
@@ -46,85 +68,51 @@ impl OwnedElf {
         Self::validated(FileBytes::from_vec(bytes))
     }
 
-    /// Maps the file rather than reading it, so only the pages an analysis
-    /// touches are ever faulted in. The file's `stat` identity is sampled here
-    /// for [`check_unchanged`](Self::check_unchanged).
-    ///
-    /// # Errors
-    ///
-    /// When the file cannot be read from disk, or does not parse as ELF.
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        Self::validated(FileBytes::map_path(path)?)
-    }
-
     fn validated(backing: FileBytes) -> Result<Self> {
-        // A clone without git-lfs leaves pointer text where the image should
-        // be, and "failed to parse ELF" sends the reader hunting a corrupt
-        // binary instead of running `git lfs pull`.
         anyhow::ensure!(
             !backing.as_slice().starts_with(LFS_POINTER_MAGIC),
             "a Git LFS pointer, not an ELF: run `git lfs pull`"
         );
-        object::File::parse(backing.as_slice()).context("failed to parse ELF")?;
+        let file = object::File::parse(backing.as_slice()).context("failed to parse ELF")?;
+        anyhow::ensure!(
+            matches!(file, object::File::Elf32(_) | object::File::Elf64(_)),
+            "a {:?} object, not an ELF",
+            file.format()
+        );
         Ok(Self { backing })
     }
 
-    /// Re-parses the mapping, behind
-    /// [`check_unchanged`](Self::check_unchanged): the only way in for
-    /// anything that parses the image (regions, entry point, symbol table,
-    /// header flags), since an unguarded parse of a shortened mapping is a
-    /// SIGBUS no caller can catch.
+    /// Parses the mapping after [`check_unchanged`](Self::check_unchanged):
+    /// parsing a shortened mapping is an uncatchable SIGBUS.
     ///
     /// # Errors
     ///
-    /// When the file changed on disk since it was mapped, or when the mapped
-    /// bytes no longer parse. The guard reads a truncated mtime and a size, so
-    /// a same-length rewrite within one second passes it; parsing fallibly
-    /// here is what keeps that case an error rather than a panic.
+    /// When the file changed on disk since it was mapped, or the mapped bytes
+    /// no longer parse.
     pub fn checked_file(&self) -> Result<object::File<'_>> {
         self.check_unchanged()?;
         object::File::parse(self.backing.as_slice())
             .map_err(|e| anyhow::anyhow!("the mapped image no longer parses as ELF: {e}"))
     }
 
-    /// One `stat` of the mapped file, comparing it against what it was when
-    /// [`open`](Self::open) mapped it. Call it at the top of an operation on a
-    /// long-lived handle (a REPL session that outlives a rebuild) to get an
-    /// `Err` rather than bytes from a program that is no longer there.
-    ///
-    /// Always `Ok` for bytes that were read or handed in rather than mapped,
-    /// `STRIDER_NO_MMAP=1` included: a copy cannot change underneath.
+    /// Compares one `stat` of the mapped file with the one [`load_elf`]
+    /// took; `Ok` for bytes not mapped.
     ///
     /// # Errors
     ///
-    /// When the file no longer stats, or no longer looks like the file that
-    /// was mapped: a different size or a different modification time, the only
-    /// two fields the recorded identity holds. A rewrite in place that
-    /// preserves both passes, and so does a different file moved onto the
-    /// path: the held fd pins the inode, so only the contents can move under
-    /// it.
+    /// When the file no longer stats, or its size or modification time
+    /// changed. A rewrite preserving both passes.
     pub fn check_unchanged(&self) -> Result<()> {
         self.backing.check_unchanged()
     }
 
-    /// Whether the ARM `EF_ARM_BE8` flag is set: instructions are stored
-    /// little-endian while data stays big-endian.
-    ///
-    /// `EI_DATA` cannot answer this. A BE8 image and a traditional BE32 one are
-    /// both `ELFDATA2MSB`, and decoding either as the other yields byte-swapped
-    /// instructions, so the flag is the only thing that separates them. Always
-    /// `false` off ARM, where the bit is not defined.
-    ///
-    /// Parses the mapping, so it is guarded: a `bool` return could not report a
-    /// file rebuilt under a live handle, and reading a shortened mapping is a
-    /// SIGBUS no caller can catch.
+    /// Whether ARM `EF_ARM_BE8` is set: little-endian instructions, big-endian
+    /// data. `EI_DATA` is MSB for both BE8 and BE32. `false` off ARM.
     ///
     /// # Errors
     ///
-    /// When the file changed on disk since it was mapped, or the mapped bytes
-    /// no longer parse.
+    /// As [`checked_file`](Self::checked_file).
     pub fn is_arm_be8(&self) -> Result<bool> {
-        /// `EF_ARM_BE8`, from the ARM ELF ABI.
         const EF_ARM_BE8: u32 = 0x0080_0000;
         let file = self.checked_file()?;
         if object::read::Object::architecture(&file) != object::Architecture::Arm {
@@ -137,21 +125,13 @@ impl OwnedElf {
     }
 
     /// The mappings `source` and `filter` select, as windows into this ELF's
-    /// bytes: no copy, and with `relocate` the relocations land as a patch list
-    /// rather than as writes into a materialised image.
-    ///
-    /// Two region sets built from one [`OwnedElf`] (a fetch image and its ROM
-    /// subset) share the single backing buffer.
+    /// bytes, with `relocate` carrying the relocations as a patch list.
     ///
     /// # Errors
     ///
-    /// When a mapping's data can't be read, or its `address + length` would
-    /// exceed `u64::MAX`, plus anything
-    /// [`checked_file`](Self::checked_file) reports.
-    ///
-    /// Also when [`LoadFilter::ImmutableAndRelocatedGot`] meets
-    /// `relocate == false`: the filter's claim is that the loader has
-    /// relocated those slots, which `relocate == false` denies.
+    /// As [`image`](Self::image), and when
+    /// [`LoadFilter::ImmutableAndRelocatedGot`] meets `relocate == false`.
+    #[cfg(feature = "test-util")]
     pub fn regions(
         &self,
         source: RegionSource,
@@ -159,40 +139,67 @@ impl OwnedElf {
         relocate: bool,
     ) -> Result<Vec<MemRegion>> {
         let obj = self.checked_file()?;
+        let view = super::dynamic::loader_view(&obj);
         Ok(self
-            .regions_with(&obj, &ElfSectionLayout::new(&obj), source, filter, relocate)?
+            .regions_with(
+                &obj,
+                &ElfSectionLayout::new(&obj),
+                source,
+                filter,
+                relocate,
+                &view,
+            )?
             .regions)
     }
 
-    /// `[start, end)` of every address a mapping `source` walks declares
-    /// writable, loaded or not, ascending and merged.
+    /// The fetch and ROM region sets `mode` picks, and the writable addresses,
+    /// from one parse.
     ///
     /// # Errors
     ///
-    /// Anything [`regions`](Self::regions) reports.
-    pub fn writable_ranges(&self, source: RegionSource) -> Result<Vec<(u64, u64)>> {
+    /// When a mapping can't be read or ends past `u64::MAX`, the relocation
+    /// tables name more entries than the file holds or are unreadable where
+    /// the image may relocate code, or [`checked_file`](Self::checked_file)
+    /// fails.
+    pub fn image(&self, source: RegionSource, mode: RelocationMode) -> Result<ElfImage> {
         let obj = self.checked_file()?;
-        let image = super::sections::collect_regions(
-            &obj,
-            Some(&self.backing),
-            source,
-            LoadFilter::AllAllocatable,
-            &ElfSectionLayout::new(&obj),
-        )?;
-        Ok(image.writable.as_slice().to_vec())
+        let layout = ElfSectionLayout::new(&obj);
+        let (fetch, rom, relocate) = match mode {
+            RelocationMode::Unapplied => (
+                LoadFilter::CodeAndReadOnly,
+                LoadFilter::ImmutableOnly,
+                false,
+            ),
+            RelocationMode::Applied { got_is_rom } => (
+                LoadFilter::AllAllocatable,
+                if got_is_rom {
+                    LoadFilter::ImmutableAndRelocatedGot
+                } else {
+                    LoadFilter::ImmutableOnly
+                },
+                true,
+            ),
+        };
+        let view = if relocate {
+            super::dynamic::loader_view(&obj)
+        } else {
+            super::dynamic::LoaderView::NotDynamic
+        };
+        let fetch = self.regions_with(&obj, &layout, source, fetch, relocate, &view)?;
+        Ok(ElfImage {
+            rom: self
+                .regions_with(&obj, &layout, source, rom, relocate, &view)?
+                .regions,
+            fetch: fetch.regions,
+            writable: fetch.writable,
+        })
     }
 
-    /// [`regions`](Self::regions) over a parse and a layout the caller already
-    /// holds, both of which must be of these bytes. The layout is a pure
-    /// function of them, so one built from any parse serves every later parse.
-    ///
-    /// Takes the parse rather than making its own, so the
-    /// [`checked_file`](Self::checked_file) guard is the caller's and cannot
-    /// be skipped here.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`regions`](Self::regions).
+    /// The mappings `source` and `filter` select over a
+    /// [`checked_file`](Self::checked_file) parse. When `view` is unread, a
+    /// relocating load serves no writable, non-executable mapping. Errs when a
+    /// mapping cannot be loaded or relocated, or on `ImmutableAndRelocatedGot`
+    /// without `relocate`.
     pub(crate) fn regions_with(
         &self,
         obj: &object::File<'_>,
@@ -200,26 +207,39 @@ impl OwnedElf {
         source: RegionSource,
         filter: LoadFilter,
         relocate: bool,
+        view: &super::dynamic::LoaderView,
     ) -> Result<super::sections::LoadedImage> {
         if matches!(filter, LoadFilter::ImmutableAndRelocatedGot) && !relocate {
             anyhow::bail!(
-                "LoadFilter::ImmutableAndRelocatedGot claims the loader has relocated \
-                 `.got` / `.data.rel.ro`, which relocate=false denies: the slots would \
-                 be served as their on-disk bytes, 0 on a PIE where the address lives \
-                 in the relocation addend, and a load through one folds to that 0. \
-                 Relocate, or use LoadFilter::ImmutableOnly"
+                "LoadFilter::ImmutableAndRelocatedGot claims relocated `.got` / \
+                 `.data.rel.ro`, which relocate=false denies: relocate, or use \
+                 LoadFilter::ImmutableOnly"
             );
         }
-        let mut image =
-            super::sections::collect_regions(obj, Some(&self.backing), source, filter, layout)?;
+        let mut image = super::sections::collect_regions(
+            obj,
+            &self.backing,
+            source,
+            filter,
+            layout,
+            view.is_unread(),
+        )?;
         if relocate {
+            if view.is_unread() {
+                let data = AddressSet::without(&image.writable, &image.executable);
+                image.regions = crate::collapse_equal_starts(super::sections::without_ranges(
+                    std::mem::take(&mut image.regions),
+                    &data,
+                ));
+            }
             let got = apply_elf_relocations_with(
                 &mut image.regions,
                 obj,
-                filter,
+                &image.owners,
                 layout,
                 &image.writable,
                 &image.executable,
+                view,
             )?;
             image.regions.extend(got);
         }

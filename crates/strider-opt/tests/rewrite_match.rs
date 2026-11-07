@@ -159,7 +159,6 @@ fn sub_x_x_to_zero_rule() {
 /// rewire the wrong slot.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
-    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
     // `build_call` reads the stack pointer through the variable table and
     // errors if it is absent, so track one.
     let sp = strider_ir_test_utils::reg_vn(0x7000, 8);
@@ -168,11 +167,9 @@ fn rewrite_rule_on_call_root_returns_err() {
         .stack_vn(sp)
         .build_fn_single_region()
         .unwrap();
-    fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let tgt = fb.build_int_const(0x1234u64, ValueType::I64).unwrap();
+    let tgt = fb.build_int_const(0x1234u64, ValueType::int(64)).unwrap();
     fb.build_call_cc(tgt, None).unwrap();
     fb.build_return(None, &[]).unwrap();
-    fb.set_lift_addr(None);
     let mut function = fb.build().unwrap();
 
     let rule = rewrite_rule_runtime(call().build(), int_const(0u128).into_template()).unwrap();
@@ -375,9 +372,8 @@ where
     apply_rules_count(&mut ctx, std::slice::from_ref(&rule))
 }
 
-/// An RHS that consumes the matched ROOT has its own fresh edges redirected
-/// along with everyone else's, so the node becomes its own input.  The rule
-/// must refuse rather than install `x = f(x)`.
+/// An RHS that consumes the matched root would become its own input, so the
+/// rule refuses rather than install `x = f(x)`.
 #[test]
 fn rhs_consuming_the_root_is_refused_not_installed() {
     let mut function = graph_add_x_zero();
@@ -395,9 +391,8 @@ fn rhs_consuming_the_root_is_refused_not_installed() {
     );
 }
 
-/// The same hole without a capture: the RHS rebuilds the LHS shape, so the
-/// dedup cache hands back the matched node itself and the fresh parent ends up
-/// consuming the value it replaces.
+/// The same without a capture: the RHS rebuilds the LHS shape, which the
+/// dedup cache resolves to the matched node itself.
 #[test]
 fn rhs_rebuilding_the_lhs_shape_is_refused_not_installed() {
     let mut function = graph_add_x_zero();

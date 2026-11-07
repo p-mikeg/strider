@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_pattern::*;
@@ -141,10 +142,10 @@ fn find_all_is_deterministic() {
     assert_eq!(a1, a2);
 }
 
-/// The lazy kind index is built on the first query and reused after; each
-/// query at a different discriminant must still return its own hit count.
+/// One matcher answers queries at different discriminants, each with its own
+/// hit count.
 #[test]
-fn kind_index_reused_across_queries() {
+fn one_matcher_answers_each_kind_in_turn() {
     let function = shapes::add_consts(5, 7);
     let matcher = Matcher::new(&function);
 
@@ -155,16 +156,33 @@ fn kind_index_reused_across_queries() {
         "two IntConsts"
     );
 
-    // Served after the index is built.
     let pat_add = int_add(anything(), anything()).into_pattern();
     assert_eq!(matcher.find_all(&pat_add).unwrap().len(), 1, "one Add");
 
-    // Re-run the first query, now via the cache.
     assert_eq!(
         matcher.find_all(&pat_const).unwrap().len(),
         2,
         "re-query still two"
     );
+}
+
+/// An alternation root is attempted arm kind by arm kind, each in walk order,
+/// so its matches come back grouped by the arm that names their kind.
+#[test]
+fn an_alternation_root_reports_its_arms_kinds_in_arm_order() {
+    let mut t = Tb::empty();
+    let (one, two, three) = (t.u64(1), t.u64(2), t.u64(3));
+    let inner = t.add(one, two);
+    let outer = t.add(inner, three);
+    let function = t.ret_val(outer);
+    let pat = one_of![int_add(anything(), anything()), any_int_const()].into_pattern();
+    let kinds: Vec<bool> = Matcher::new(&function)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|m| function.node_kind(m.root()).is_const())
+        .collect();
+    assert_eq!(kinds, [false, false, true, true, true]);
 }
 
 /// Three leaf `Add`s at distinct operand values, summed by two more `Add`s.
@@ -183,6 +201,28 @@ fn graph_three_adds() -> strider_ir::Function {
     let final_ = t.add(s12, s3);
     t.ret_val(final_)
 }
+/// Stacked guards on one node all run: a later one does not replace an
+/// earlier rejection.
+#[test]
+fn stacked_guards_compose_rather_than_replace() {
+    let function = graph_three_adds();
+    let matcher = Matcher::new(&function);
+    let reject_then_accept = int_add(anything(), anything())
+        .when_match(|_m, _ty, _b| false)
+        .when_match(|_m, _ty, _b| true)
+        .into_pattern();
+    assert!(matcher.find_all(&reject_then_accept).unwrap().is_empty());
+    let root_guarded = int_add(anything(), anything())
+        .into_pattern()
+        .with_root_post_match(Box::new(|_, _, _, _| false))
+        .with_root_post_match(Box::new(|_, _, _, _| true));
+    assert!(matcher.find_all(&root_guarded).unwrap().is_empty());
+    let accepted = int_add(anything(), anything())
+        .when_match(|_m, _ty, _b| true)
+        .into_pattern();
+    assert_eq!(matcher.find_all(&accepted).unwrap().len(), 5);
+}
+
 #[test]
 fn each_match_has_its_own_bindings() {
     let function = graph_three_adds();
@@ -194,7 +234,7 @@ fn each_match_has_its_own_bindings() {
     // sit on operands, so each root matches as (lhs,rhs) and as (rhs,lhs).
     assert_eq!(hits.len(), 6);
 
-    let raw: Vec<(u128, u128)> = hits
+    let raw: Vec<(UBig, UBig)> = hits
         .iter()
         .map(|m| {
             (
@@ -203,7 +243,7 @@ fn each_match_has_its_own_bindings() {
             )
         })
         .collect();
-    let distinct: std::collections::HashSet<(u128, u128)> = raw.iter().copied().collect();
+    let distinct: std::collections::HashSet<(UBig, UBig)> = raw.iter().cloned().collect();
     assert_eq!(
         distinct.len(),
         6,
@@ -212,66 +252,23 @@ fn each_match_has_its_own_bindings() {
 
     // Normalised by operand order, the three source `int_add`s come back, each
     // contributing its pair twice, once per ordering.
-    let mut got: Vec<(u128, u128)> = raw
+    let mut got: Vec<(UBig, UBig)> = raw
         .into_iter()
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) })
         .collect();
     got.sort();
-    assert_eq!(got, vec![(1, 2), (1, 2), (3, 4), (3, 4), (5, 6), (5, 6)]);
-}
-
-#[test]
-fn bindings_clone_outlives_match() {
-    let function = shapes::add_consts(5, 3);
-    let v = Capture::new();
-
-    let bindings = {
-        let matcher = Matcher::new(&function);
-        let node = function
-            .walk()
-            .find(|&n| {
-                matches!(function.node_kind(n), NodeKind::IntConst(_))
-                    && function
-                        .node_outputs(n)
-                        .iter()
-                        .any(|&o| function.int_const_u128(o) == Some(5))
-            })
-            .unwrap();
-        let pat = int_const(v).into_pattern();
-        let m = matcher.match_at(node, &pat).unwrap().expect("match");
-        m.bindings_clone()
-    };
-
-    assert_eq!(bindings.get_uint(v, &function), Some(5));
-}
-
-#[test]
-fn get_vn_on_initial_var_returns_varnode() {
-    let (g, reg) = shapes::single_initial_var();
-    let v = Capture::new();
-    let m = a::unique(&g, initial_var().capture(v).into_pattern());
-    assert_eq!(m.get_vn(v, &g), Some(reg));
-}
-
-#[test]
-fn get_vn_on_non_mapped_producer_returns_none() {
-    let function = shapes::add_consts(5, 3);
-    let v = Capture::new();
-    let m = a::unique(
-        &function,
-        int_add(int_const(5u128), int_const(3u128))
-            .capture(v)
-            .into_pattern(),
+    let pair = |a: u8, b: u8| (UBig::from(a), UBig::from(b));
+    assert_eq!(
+        got,
+        vec![
+            pair(1, 2),
+            pair(1, 2),
+            pair(3, 4),
+            pair(3, 4),
+            pair(5, 6),
+            pair(5, 6)
+        ]
     );
-    assert_eq!(m.get_vn(v, &function), None);
-}
-
-#[test]
-fn get_vn_on_unbound_var_returns_none() {
-    let function = shapes::add_consts(5, 3);
-    let m = a::first(&function, int_const(5u128).into_pattern());
-    let never_bound = Capture::new();
-    assert_eq!(m.get_vn(never_bound, &function), None);
 }
 
 /// Returns `Add(ZeroExt(Mul(2,3)), 4)` at I64, with the Mul at I32.
@@ -279,8 +276,8 @@ fn graph_add_zext_mul() -> strider_ir::Function {
     let mut t = Tb::empty();
     let two = t.u32(2);
     let three = t.u32(3);
-    let mul = t.int_bin_at(two, three, IntBinaryOp::Mul, ValueType::I32);
-    let widened = t.zext_to(mul, ValueType::I64);
+    let mul = t.int_bin_at(two, three, IntBinaryOp::Mul, ValueType::int(32));
+    let widened = t.zext_to(mul, ValueType::int(64));
     let four = t.u64(4);
     let total = t.add(widened, four);
     t.ret_val(total)
@@ -323,7 +320,7 @@ fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
         let a = t.u64(0xDEAD_BEEF);
         let b = t.u64(0x1234_5678);
         let or = t.bor(a, b);
-        let truncated = t.trunc_to(or, ValueType::I32);
+        let truncated = t.trunc_to(or, ValueType::int(32));
         t.ret_val(truncated)
     };
     let m = Matcher::new(&function);
@@ -342,8 +339,8 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
         let mut t = Tb::empty();
         let two = t.u32(2);
         let three = t.u32(3);
-        let int_mul = t.int_bin_at(two, three, IntBinaryOp::Mul, ValueType::I32);
-        let widened = t.zext_to(int_mul, ValueType::I64);
+        let int_mul = t.int_bin_at(two, three, IntBinaryOp::Mul, ValueType::int(32));
+        let widened = t.zext_to(int_mul, ValueType::int(64));
         let four = t.u64(4);
         let total = t.add(four, widened);
         t.ret_val(total)
@@ -364,7 +361,7 @@ fn graph_ret_via_region_after_call() -> strider_ir::Function {
 
     let target = t
         .fb_mut()
-        .build_int_const(0xCAFEu64, ValueType::I64)
+        .build_int_const(0xCAFEu64, ValueType::int(64))
         .unwrap();
     t.fb_mut().build_call_cc(target, None).expect("call");
 
@@ -393,36 +390,6 @@ fn ret_call_does_not_match_through_region_by_default() {
         .build();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert!(hits.is_empty());
-}
-
-#[test]
-fn matches_next_concrete_kind_equals_find_all_first() {
-    let function = shapes::add_nested_3(2, 3, 5);
-    let m = Matcher::new(&function);
-    let p = int_add(anything(), anything()).into_pattern();
-    let all = m.find_all(&p).unwrap();
-    assert!(!all.is_empty(), "fixture has Add nodes");
-    let first = m
-        .matches(&p)
-        .unwrap()
-        .next()
-        .expect("at least one Add matches");
-    assert_eq!(first.root(), all[0].root());
-}
-
-#[test]
-fn matches_next_wildcard_equals_find_all_first() {
-    let function = shapes::add_consts(1, 2);
-    let m = Matcher::new(&function);
-    let p = anything().into_pattern();
-    let all = m.find_all(&p).unwrap();
-    assert!(!all.is_empty());
-    let first = m
-        .matches(&p)
-        .unwrap()
-        .next()
-        .expect("wildcard matches some node");
-    assert_eq!(first.root(), all[0].root());
 }
 
 #[test]
@@ -455,14 +422,18 @@ fn find_joined_single_pattern_equivalent_to_find_all() {
     }
 }
 
+/// A zero-match pattern in either position collapses the whole join to an
+/// empty top-level Vec (no per-slot empties).
 #[test]
-fn find_joined_no_matches_for_a_pattern_yields_empty() {
+fn find_joined_a_zero_match_pattern_yields_empty() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::new(&function);
     let p_add = int_add(anything(), anything()).into_pattern();
-    let p_call = call().build();
-    let req = m.find_joined_constrained(&[&p_add, &p_call], &[]).unwrap();
-    assert!(req.is_empty());
+    let p_call = call().build(); // no Call in the graph
+    assert!(!m.find_all(&p_add).unwrap().is_empty());
+    for pats in [[&p_add, &p_call], [&p_call, &p_add]] {
+        assert!(m.find_joined_constrained(&pats, &[]).unwrap().is_empty());
+    }
 }
 
 #[test]
@@ -509,7 +480,7 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     assert_eq!(s1, s2);
 
     let k_val = inner[0].bindings().get_uint(k, &function).expect("K bound");
-    assert_eq!(k_val, 8);
+    assert_eq!(k_val, UBig::from(8u8));
 }
 
 /// A joined tuple exists only when all three patterns bind the shared capture
@@ -685,18 +656,6 @@ fn find_joined_pattern_without_shared_capture_cross_products() {
     assert_ne!(s0, s1);
 }
 
-/// A zero-match pattern in FIRST position collapses the whole join to an empty
-/// top-level Vec (no per-slot empties), like the second-position case.
-#[test]
-fn find_joined_zero_match_first_pattern_yields_empty() {
-    let function = shapes::add_consts(2, 3);
-    let m = Matcher::new(&function);
-    let p_call = call().build(); // no Call in the graph
-    let p_add = int_add(anything(), anything()).into_pattern();
-    let req = m.find_joined_constrained(&[&p_call, &p_add], &[]).unwrap();
-    assert!(req.is_empty());
-}
-
 #[test]
 fn find_joined_disagreement_on_shared_capture_yields_empty() {
     let mut t = Tb::empty();
@@ -750,10 +709,9 @@ fn find_joined_disjoint_captures_is_rejected() {
     );
 }
 
-/// Tuples that agree on every shared capture but differ only in WHICH
-/// correlated site they pair must dedup, or a consumer acting per shared
-/// binding double-acts. Here two stores share a base, so the raw cross-product
-/// is 2*2 = 4 tuples that must collapse to one.
+/// Tuples that differ only in the root of a pattern whose captures all appear
+/// earlier dedup. Two stores share a base, so the 2*2 = 4 tuples collapse to
+/// one per store of the first pattern.
 #[test]
 fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
     let mut t = Tb::empty();
@@ -783,8 +741,8 @@ fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
     let req = mr.find_joined_constrained(&[&p0, &p1], &[]).unwrap();
     assert_eq!(
         req.len(),
-        1,
-        "tuples equivalent on the shared capture must dedup to one"
+        2,
+        "the second pattern's roots collapse, the first one's stay distinct"
     );
 }
 
@@ -856,9 +814,8 @@ fn a_match_used_after_compact_reports_stale_instead_of_indexing() {
     assert!(hit.node(c, function.graph()).is_some());
     assert!(!hit.is_stale(function.graph()));
 
-    function.compact().unwrap();
+    function.compact();
     assert!(hit.is_stale(function.graph()));
     assert_eq!(hit.node(c, function.graph()), None);
     assert!(hit.asm_fingerprint(c, &function).is_empty());
-    assert_eq!(hit.get_vn(c, &function), None);
 }

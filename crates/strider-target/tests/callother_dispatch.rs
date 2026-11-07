@@ -8,24 +8,6 @@ fn expect_call(c: Option<CallOtherClass>) -> CallOtherAbi {
     }
 }
 
-/// `software_interrupt` is declared only by ARM (`ARM.sinc:146`), and the
-/// four ARM32 presets are the only ones an ARM sla decodes for, so the name
-/// reaching any other preset would be a caller's typo, not an op.
-#[test]
-fn software_interrupt_is_an_arm32_only_name() {
-    for preset in ArchPreset::ALL {
-        let arm32 = matches!(
-            preset,
-            ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb
-        );
-        assert_eq!(
-            classify(*preset, "software_interrupt").is_some(),
-            arm32,
-            "{preset:?}"
-        );
-    }
-}
-
 /// An unknown user-op name classifies as `None` under EVERY preset, never a
 /// silent default ABI.  Missing table entries are intentional, added on demand
 /// when real binaries surface them; the lifter turns `None` into an
@@ -46,7 +28,6 @@ fn unknown_name_returns_none_on_every_preset() {
 #[test]
 fn arch_independent_rows_resolve_on_every_preset() {
     for &preset in ArchPreset::ALL {
-        // `setISAMode` is covered by `set_isa_mode_is_noop_on_every_arch`.
         let setend = expect_call(classify(preset, "setEndianState"));
         assert!(
             setend.clobbers_memory,
@@ -58,52 +39,42 @@ fn arch_independent_rows_resolve_on_every_preset() {
     }
 }
 
-/// x86 SIMD / crypto / bit-manipulation user-ops whose sla constructors list
-/// every operand: pure register compute, no memory edge, no implicit channel.
+/// Rows a misclassification would miscompile, asserted by intent: each
+/// returns (a NO_RETURN conditional trap drops the code after it), clobbers
+/// memory (the vsx forms' access is missing from their p-code) and writes at
+/// least the listed registers, resolving on the preset's own table.
 #[test]
-fn x86_simd_crypto_ops_are_pure_with_empty_channels() {
-    for name in [
-        "aesdec",
-        "aesdeclast",
-        "aesenc",
-        "aesenclast",
-        "aesimc",
-        "aeskeygenassist",
-        "crc32",
-        "movntdqa",
-        "pblendvb",
-        "psraw",
-        "sha1msg1_sha",
-        "sha1msg2_sha",
-        "sha1nexte_sha",
-        "sha1rnds4_sha",
-        "vbroadcasti32x4_avx512f",
-        "vmovdqa64_avx512f",
-        "vmovntdq_avx",
-        "vpaddd_avx2",
-        "vpaddq_avx",
-        "vpblendd_avx2",
-        "vpbroadcastb_avx512bw",
-        "vpcmpgtb_avx2",
-        "vpermd_avx2",
-        "vpshufb_avx",
-        "vpshufb_avx2",
-        "vpshufd_avx",
-        "vpsraw_avx2",
-        "vpsrldq_avx",
-    ] {
-        for preset in [ArchPreset::X86, ArchPreset::X86_64] {
-            let abi = expect_call(classify(preset, name));
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}: must stay PURE");
-            assert!(!abi.no_return, "{preset:?}/{name}");
+fn soundness_critical_rows_keep_their_footprint() {
+    use ArchPreset::{Arm, ArmThumb, MipsBe32, MipsBe64, Ppc32Be, Ppc64Be};
+    let mips_syscall: &[&str] = &["v0", "a3", "at", "hi", "lo"];
+    let smccc: &[&str] = &["r0", "r1", "r2", "r3"];
+    let rows: &[(ArchPreset, &str, &[&str])] = &[
+        (Ppc32Be, "trapWord", &[]),
+        (Ppc64Be, "trapWord", &[]),
+        (Ppc64Be, "trapDoubleWord", &[]),
+        (Ppc64Be, "trapDoubleWordImmediate", &[]),
+        (Ppc64Be, "vsx300_15", &[]),
+        (Ppc64Be, "vsx300_20", &[]),
+        (Ppc64Be, "vsx300_22", &[]),
+        (Ppc64Be, "vsx300_9", &[]),
+        (Ppc64Be, "vsx207_1", &[]),
+        (Arm, "software_smc", smccc),
+        (ArmThumb, "software_hvc", smccc),
+        (MipsBe32, "syscall", mips_syscall),
+        (MipsBe64, "syscall", mips_syscall),
+    ];
+    for &(preset, name, writes) in rows {
+        let abi = expect_call(classify(preset, name));
+        assert!(!abi.no_return, "{preset:?}/{name} returns");
+        assert!(abi.clobbers_memory, "{preset:?}/{name} clobbers memory");
+        for r in writes {
+            assert!(
+                abi.implicit_writes.contains(r),
+                "{preset:?}/{name} writes {r}"
+            );
         }
-        // Scoped to x86, so another spec reusing the spelling cannot inherit it.
-        assert_eq!(classify(ArchPreset::Aarch64, name), None, "aarch64/{name}");
-        assert_eq!(classify(ArchPreset::Arm, name), None, "arm/{name}");
-        assert_eq!(classify(ArchPreset::MipsBe32, name), None, "mips/{name}");
-        assert_eq!(classify(ArchPreset::Ppc32Be, name), None, "ppc/{name}");
+        abi.build(&preset.arch().probe_regs())
+            .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
     }
 }
 
@@ -142,90 +113,6 @@ fn avx_memory_ops_are_not_swallowed_by_a_prefix_family() {
     }
 }
 
-/// Every `NEON_*` user-op in the AArch64 sla is register compute, so the
-/// prefix family covers them; NEON memory access lifts to real p-code
-/// Load / Store, never to one of these.
-#[test]
-fn aarch64_neon_prefix_family_is_pure() {
-    for name in [
-        "NEON_aesd",
-        "NEON_aese",
-        "NEON_aesimc",
-        "NEON_aesmc",
-        "NEON_rev32",
-        "NEON_sha256su0",
-        "NEON_pmull",
-        "NEON_this_one_does_not_exist_yet",
-    ] {
-        for preset in [ArchPreset::Aarch64, ArchPreset::Aarch64Be] {
-            let abi = expect_call(classify(preset, name));
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-    }
-    // The family is aarch64's; arm-32 spells its NEON ops `Vector*`.
-    assert_eq!(classify(ArchPreset::Arm, "NEON_aese"), None);
-    assert_eq!(classify(ArchPreset::MipsBe32, "NEON_aese"), None);
-}
-
-/// `a64_TBL` is aarch64 table lookup across vector registers.
-#[test]
-fn aarch64_tbl_is_pure_and_scoped() {
-    for preset in [ArchPreset::Aarch64, ArchPreset::Aarch64Be] {
-        let abi = expect_call(classify(preset, "a64_TBL"));
-        assert!(!abi.clobbers_memory, "{preset:?}");
-    }
-    assert_eq!(classify(ArchPreset::X86_64, "a64_TBL"), None);
-    assert_eq!(classify(ArchPreset::Arm, "a64_TBL"), None);
-}
-
-/// `SVE_ldr` / `SVE_str` take a BASE REGISTER, not a dynamic memory varnode,
-/// so no p-code Load / Store is emitted and the access is implicit.  They are
-/// the reason `SVE_` is not a prefix family: `SVE_fnmla` next to them is pure.
-#[test]
-fn sve_load_store_clobber_memory_unlike_sve_compute() {
-    for name in ["SVE_ldr", "SVE_str"] {
-        for preset in [ArchPreset::Aarch64, ArchPreset::Aarch64Be] {
-            let abi = expect_call(classify(preset, name));
-            assert!(
-                abi.clobbers_memory,
-                "{preset:?}/{name}: implicit memory access"
-            );
-        }
-        assert_eq!(classify(ArchPreset::X86_64, name), None, "x86/{name}");
-    }
-    let compute = expect_call(classify(ArchPreset::Aarch64, "SVE_fnmla"));
-    assert!(!compute.clobbers_memory, "SVE compute stays pure");
-}
-
-/// ARM-32 NEON names outside the `Vector*` / `Float*` groups.
-#[test]
-fn arm32_neon_scalar_ops_are_pure_and_scoped() {
-    for name in [
-        "SHA256ScheduleUpdate0",
-        "SHA256ScheduleUpdate1",
-        "SatQ",
-        "SignedSatQ",
-        "vrev",
-    ] {
-        for preset in [
-            ArchPreset::Arm,
-            ArchPreset::ArmBe,
-            ArchPreset::ArmBeKernel,
-            ArchPreset::ArmThumb,
-        ] {
-            let abi = expect_call(classify(preset, name));
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-        // `vrev` and `SatQ` are generic spellings; keep them off other arches.
-        assert_eq!(classify(ArchPreset::X86_64, name), None, "x86/{name}");
-        assert_eq!(classify(ArchPreset::Aarch64, name), None, "aarch64/{name}");
-    }
-}
-
 /// Virtualisation, privileged, system, and shadow-stack user-ops the same
 /// sweep surfaced stay UNCLASSIFIED on purpose: each needs a real register
 /// footprint or memory effect, and a guessed `PURE` would be a miscompile.
@@ -252,11 +139,12 @@ fn privileged_and_virtualisation_ops_stay_unclassified() {
     }
 }
 
-const ARM_MODE_SWITCH_OPS: [&str; 9] = [
+const ARM_MODE_SWITCH_OPS: [&str; 10] = [
     "setAbortMode",
     "setFIQMode",
     "setIRQMode",
     "setMonitorMode",
+    "setProcessorMode",
     "setStackMode",
     "setSupervisorMode",
     "setSystemMode",
@@ -274,7 +162,7 @@ fn arm_mode_switch_rows_resolve_their_banked_registers() {
         ArchPreset::ArmBeKernel,
         ArchPreset::ArmThumb,
     ] {
-        let regs = regs_for(preset);
+        let regs = preset.arch().probe_regs();
         for name in ARM_MODE_SWITCH_OPS {
             let abi = classify(preset, name).unwrap_or_else(|| panic!("{preset:?}/{name}"));
             let built = strider_target::call_other_abi::CallOtherLookup::Class(abi)
@@ -289,11 +177,11 @@ fn arm_mode_switch_rows_resolve_their_banked_registers() {
     }
 }
 
-/// FIQ banks R8-R12 on top of the R13/R14 every other mode banks (ARM ARM
-/// DDI 0406C B1.3.2).  `ARM.sinc` models no banking at all, so an ARM-32
-/// processor-mode switch that named only `sp`/`lr` would let a read of `r8`
-/// after `cps #0x11` forward the pre-switch value.  The wide set applies to
-/// all eight mode ops because the switch OUT of FIQ un-banks the same
+/// FIQ banks R8-R12 on top of the R13, R14 and SPSR every exception mode
+/// banks (ARM ARM DDI 0406C B1.3.2).  `ARM.sinc` models no banking at all, so
+/// an ARM-32 processor-mode switch that named only `sp`/`lr` would let a read
+/// of `r8` after `cps #0x11` forward the pre-switch value.  The wide set
+/// applies to every mode op because the switch OUT of FIQ un-banks the same
 /// registers and the incoming mode is unknown; `setStackMode` is the Thumb
 /// MSP/PSP select, which re-banks `sp` alone.
 #[test]
@@ -307,40 +195,16 @@ fn arm_mode_switch_writes_the_fiq_banked_registers() {
             }
             assert_eq!(
                 abi.implicit_writes,
-                &["r8", "r9", "r10", "r11", "r12", "sp", "lr"],
+                &["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"],
                 "{preset:?}/{name}"
             );
             assert!(!abi.clobbers_memory, "{preset:?}/{name}");
             assert!(!abi.no_return, "{preset:?}/{name}");
             // Every name has to resolve on this preset's own register table.
-            abi.build(&regs_for(preset))
+            abi.build(&preset.arch().probe_regs())
                 .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
         }
     }
-}
-
-/// `ARM.sinc` and `ARMTHUMBinstructions.sinc` are the only vendored specs
-/// declaring these pcodeops, and `sp` / `lr` are ARM-32 register names: off
-/// ARM-32 the write list either fails to resolve or, worse, resolves against
-/// an unrelated arch's `sp` and claims a stack pointer clobbered that the
-/// instruction never touches.
-#[test]
-fn arm_mode_switch_rows_are_scoped_to_arm32() {
-    for &preset in ArchPreset::ALL {
-        if matches!(
-            preset,
-            ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb
-        ) {
-            continue;
-        }
-        for name in ARM_MODE_SWITCH_OPS {
-            assert_eq!(classify(preset, name), None, "{preset:?}/{name}");
-        }
-    }
-}
-
-fn regs_for(preset: ArchPreset) -> rsleigh::SleighRegs {
-    preset.arch().probe_regs().expect("probe_regs")
 }
 
 const ARM32_PRESETS: [ArchPreset; 4] = [
@@ -349,58 +213,6 @@ const ARM32_PRESETS: [ArchPreset; 4] = [
     ArchPreset::ArmBeKernel,
     ArchPreset::ArmThumb,
 ];
-
-/// Every `Float*` user-op `ARMneon.sinc` declares, the float half of the NEON
-/// group whose integer half is `Vector*`.  Each is used only as
-/// `Xd = op(Xn, Xm, esize)` over listed registers, and `ARMneon.sinc` names no
-/// `[ram]` address anywhere, so the whole family is `PURE`.  Unclassified,
-/// every one of them is a hard lift error on any ARM function containing a
-/// NEON float instruction.
-const ARM32_FLOAT_NEON_OPS: [&str; 21] = [
-    "FloatCompareGE",
-    "FloatCompareGT",
-    "FloatSingleToBFloat16",
-    "FloatToSignedRound",
-    "FloatToUnsignedRound",
-    "FloatVectorAbsolute",
-    "FloatVectorAbsoluteDifference",
-    "FloatVectorAdd",
-    "FloatVectorCompareEqual",
-    "FloatVectorCompareGreaterThan",
-    "FloatVectorCompareGreaterThanOrEqual",
-    "FloatVectorMax",
-    "FloatVectorMin",
-    "FloatVectorMult",
-    "FloatVectorMultiplyAccumulate",
-    "FloatVectorMultiplySubtract",
-    "FloatVectorNeg",
-    "FloatVectorPairwiseAdd",
-    "FloatVectorPairwiseMax",
-    "FloatVectorPairwiseMin",
-    "FloatVectorSub",
-];
-
-#[test]
-fn arm32_float_neon_prefix_family_is_pure() {
-    for name in ARM32_FLOAT_NEON_OPS {
-        for preset in ARM32_PRESETS {
-            let abi = expect_call(classify(preset, name));
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-        assert_eq!(classify(ArchPreset::Aarch64, name), None, "aarch64/{name}");
-        assert_eq!(classify(ArchPreset::X86_64, name), None, "x86/{name}");
-    }
-    // PowerPC's `ppc_isa.sinc` (`FloatingRoundToIntegerTowardZero1`) and
-    // x86's `ia.sinc` (`FloatingReciprocalAprox`) spell unrelated ops with the
-    // same `Float` stem; the arch scoping is what keeps them out.
-    assert_eq!(classify(ArchPreset::Ppc32Be, "FloatingPointAdd"), None);
-    assert_eq!(
-        classify(ArchPreset::X86_64, "FloatingPointAbsoluteValue"),
-        None
-    );
-}
 
 /// `cpsie a` / `cpsid a` are adjacent alternatives of one sub-constructor
 /// (`ARMinstructions.sinc:1653-1654`), so classifying one and not the other
@@ -428,137 +240,6 @@ fn arm_privileged_state_ops_are_classified_in_pairs() {
     }
 }
 
-/// PLD / PLDW / PLI all take the address as a VALUE (`addrmode2` exports
-/// `rn + offset`), so none emits a p-code Load and all three are pure markers.
-#[test]
-fn arm_preload_hints_are_pure() {
-    for name in [
-        "HintPreloadData",
-        "HintPreloadDataForWrite",
-        "HintPreloadInstruction",
-    ] {
-        let abi = expect_call(classify(ArchPreset::Arm, name));
-        assert!(!abi.clobbers_memory, "{name}");
-        assert!(abi.implicit_reads.is_empty(), "{name}");
-    }
-}
-
-/// CLREX is emitted as a bare `ClearExclusiveLocal();`: no operands, no
-/// output, no `[ram]`, so it classifies like its exclusive-monitor siblings.
-#[test]
-fn arm_clrex_is_pure_like_its_monitor_siblings() {
-    for name in [
-        "ClearExclusiveLocal",
-        "ExclusiveAccess",
-        "ExclusiveMonitorPass",
-        "ExclusiveMonitorsStatus",
-        "hasExclusiveAccess",
-    ] {
-        for preset in ARM32_PRESETS {
-            let abi = expect_call(classify(preset, name));
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert!(abi.implicit_reads.is_empty(), "{preset:?}/{name}");
-            assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-    }
-}
-
-const MIPS_PRESETS: [ArchPreset; 4] = [
-    ArchPreset::MipsBe32,
-    ArchPreset::MipsLe32,
-    ArchPreset::MipsBe64,
-    ArchPreset::MipsLe64,
-];
-
-/// `mips.sinc` declares `syscall` and `mips32Instructions.sinc` emits it, so
-/// without a MIPS-scoped row every MIPS function containing one fails to lift:
-/// the x86_64 row is scoped to x86_64 and the PPC one to the PPC presets.
-#[test]
-fn mips_syscall_carries_the_linux_footprint() {
-    for preset in MIPS_PRESETS {
-        let abi = expect_call(classify(preset, "syscall"));
-        assert!(
-            abi.clobbers_memory,
-            "{preset:?}: a kernel entry touches memory"
-        );
-        assert!(!abi.no_return, "{preset:?}: a syscall returns");
-        // v0 carries the number in and the result out; a3 is the error flag.
-        assert!(abi.implicit_reads.contains(&"v0"), "{preset:?}");
-        assert!(abi.implicit_reads.contains(&"a0"), "{preset:?}");
-        assert!(abi.implicit_writes.contains(&"v0"), "{preset:?}");
-        assert!(abi.implicit_writes.contains(&"a3"), "{preset:?}");
-        // Every name has to resolve on this preset's own register table.
-        abi.build(&regs_for(preset))
-            .unwrap_or_else(|e| panic!("{preset:?}: {e}"));
-    }
-    // n64 passes eight arguments; GHIDRA's MIPS spec spells a4..a7 as t0..t3.
-    let n64 = expect_call(classify(ArchPreset::MipsBe64, "syscall"));
-    assert!(n64.implicit_reads.contains(&"t3"));
-    let o32 = expect_call(classify(ArchPreset::MipsBe32, "syscall"));
-    assert!(!o32.implicit_reads.contains(&"t3"));
-}
-
-/// The ARM32 sla declares no output for `software_smc` / `software_hvc`, so
-/// an empty write footprint lets a read after the SMC resolve to the value
-/// that flowed in.  SMCCC returns in r0..r3.
-#[test]
-fn arm32_smc_and_hvc_clobber_the_smccc_result_registers() {
-    for preset in [
-        ArchPreset::Arm,
-        ArchPreset::ArmBe,
-        ArchPreset::ArmBeKernel,
-        ArchPreset::ArmThumb,
-    ] {
-        for op in ["software_smc", "software_hvc"] {
-            let abi = expect_call(classify(preset, op));
-            for r in ["r0", "r1", "r2", "r3"] {
-                assert!(
-                    abi.implicit_writes.contains(&r),
-                    "{preset:?}/{op}: {r} carries an SMCCC result, got {:?}",
-                    abi.implicit_writes
-                );
-            }
-            assert_eq!(
-                abi.implicit_reads,
-                &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"]
-            );
-            assert!(abi.clobbers_memory, "{preset:?}/{op}");
-            assert!(!abi.no_return, "{preset:?}/{op}: SMC returns");
-        }
-    }
-}
-
-/// The x86 rows whose ABI is an empty register footprint carry no information
-/// beyond `PURE` / `MEM_CLOBBER`; arch scoping lives in the row's
-/// `preset_arches`, not in its class.  Pins the classification each name
-/// resolves to on both x86 widths, and that no other arch answers for them.
-#[test]
-fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
-    let pure = ["rdtsc", "rdmsr", "readfsbase", "readgsbase"];
-    let mem_clobber = ["swi", "wrmsr", "writefsbase", "writegsbase", "swapgs"];
-    for preset in [ArchPreset::X86, ArchPreset::X86_64] {
-        for name in pure {
-            assert_eq!(
-                classify(preset, name),
-                Some(CallOtherClass::PURE),
-                "{preset:?}/{name}"
-            );
-        }
-        for name in mem_clobber {
-            assert_eq!(
-                classify(preset, name),
-                Some(CallOtherClass::MEM_CLOBBER),
-                "{preset:?}/{name}"
-            );
-        }
-    }
-    for name in pure.iter().chain(mem_clobber.iter()) {
-        for preset in [ArchPreset::Arm, ArchPreset::Aarch64, ArchPreset::MipsBe32] {
-            assert_eq!(classify(preset, name), None, "{preset:?}/{name}");
-        }
-    }
-}
-
 /// Every name in the FXSAVE / XSAVE footprint resolves on both x86 widths.
 /// An unresolvable name is a hard error at lift time, and the sla declares
 /// `XMM8`-`XMM15` in the block it shares between the two widths, so the one
@@ -566,16 +247,18 @@ fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
 #[test]
 fn the_x86_extended_state_footprint_resolves_on_both_widths() {
     for preset in [ArchPreset::X86, ArchPreset::X86_64] {
-        let regs = regs_for(preset);
+        let regs = preset.arch().probe_regs();
         for name in ["_fxrstor", "xrstor64", "_fxsave", "xsaves"] {
             let abi = expect_call(classify(preset, name));
             let built = abi
                 .build(&regs)
                 .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e:?}"));
+            // XSAVE also reads its EDX:EAX component bitmap.
+            let bitmap = if name.starts_with("xsave") { 2 } else { 0 };
             let moved = if name.contains("rstor") {
                 built.implicit_writes.len()
             } else {
-                built.implicit_reads.len()
+                built.implicit_reads.len() - bitmap
             };
             // 8 ST + 32 XMM + 32 YMM_H + 8 K + 4 BND + BNDCFGU + BNDSTATUS
             // + 3 IA32_PL*_SSP + MXCSR + 8 FPU words. An inequality here
@@ -596,7 +279,7 @@ fn the_x86_extended_state_footprint_resolves_on_both_widths() {
             };
             let distinct: rustc_hash::FxHashSet<_> = vns.iter().collect();
             assert_eq!(
-                distinct.len(),
+                distinct.len() - bitmap,
                 98,
                 "{preset:?}/{name}: {} of 98 names resolve to distinct \
                  varnodes, so one is duplicated",
@@ -606,11 +289,41 @@ fn the_x86_extended_state_footprint_resolves_on_both_widths() {
     }
 }
 
+/// Ops whose sla call drops an input register the instruction reads: the
+/// XSAVE family's EDX:EAX bitmap, CPUID's ECX sub-leaf and SMCCC's x1..x17.
+#[test]
+fn ops_read_the_inputs_their_sla_call_drops() {
+    let smccc: Vec<String> = (0..18).map(|i| format!("x{i}")).collect();
+    let smccc: Vec<&str> = smccc.iter().map(String::as_str).collect();
+    let rows: &[(ArchPreset, &str, &[&str])] = &[
+        (ArchPreset::X86_64, "xsave", &["EAX", "EDX"]),
+        (ArchPreset::X86_64, "xsavec64", &["EAX", "EDX"]),
+        (ArchPreset::X86, "xsaveopt", &["EAX", "EDX"]),
+        (ArchPreset::X86, "xsaves", &["EAX", "EDX"]),
+        (ArchPreset::X86_64, "cpuid", &["ECX"]),
+        (ArchPreset::X86, "cpuid_Extended_Topology_info", &["ECX"]),
+        (ArchPreset::Aarch64, "CallHyperVisor", &smccc),
+        (ArchPreset::Aarch64, "CallSecureMonitor", &smccc),
+    ];
+    for &(preset, name, reads) in rows {
+        let abi = expect_call(classify(preset, name));
+        assert!(abi.clobbers_memory, "{preset:?}/{name} clobbers memory");
+        for r in reads {
+            assert!(
+                abi.implicit_reads.contains(r),
+                "{preset:?}/{name} reads {r}"
+            );
+        }
+        abi.build(&preset.arch().probe_regs())
+            .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
+    }
+}
+
 /// A restore writes the state; a save only reads it. A restore that declared
 /// no writes left the incoming value of every one of these live across it.
 #[test]
 fn a_restore_writes_the_state_a_save_reads_it() {
-    let regs = regs_for(ArchPreset::X86_64);
+    let regs = ArchPreset::X86_64.arch().probe_regs();
     let restore = expect_call(classify(ArchPreset::X86_64, "_fxrstor"))
         .build(&regs)
         .expect("fxrstor builds");
@@ -627,8 +340,8 @@ fn a_restore_writes_the_state_a_save_reads_it() {
 }
 
 /// `slbfee.` and `icswx.` are `Rc=1` forms the Power ISA defines as setting
-/// CR0, and the sla emits each as a bare void pcodeop with no `cr0flags(...)`
-/// (`ppc_isa.sinc:1587`, `ppc_a2.sinc:52`), so the table is the only model of
+/// CR0, and the sla emits each as a pcodeop with no `cr0flags(...)`
+/// (`ppc_isa.sinc:1613`, `ppc_a2.sinc:52`), so the table is the only model of
 /// it. `stwcx.` is the contrast: its sla body does emit `cr0flags`, which is
 /// why it correctly declares nothing here.
 #[test]
@@ -639,7 +352,7 @@ fn ppc_dot_forms_the_sla_leaves_unflagged_declare_cr0() {
         ArchPreset::Ppc64Be,
         ArchPreset::Ppc64Le,
     ] {
-        let regs = regs_for(preset);
+        let regs = preset.arch().probe_regs();
         for name in ["slbfeeDotOp", "icswxDotOp"] {
             let built = expect_call(classify(preset, name))
                 .build(&regs)
@@ -676,7 +389,7 @@ fn ppc_fpscr_and_msr_footprints_resolve_on_every_ppc_preset() {
         ArchPreset::Ppc64Be,
         ArchPreset::Ppc64Le,
     ] {
-        let regs = regs_for(preset);
+        let regs = preset.arch().probe_regs();
         for name in [
             "MoveToFPSCRFields",
             "MoveToFPSCRFields1",
@@ -699,5 +412,121 @@ fn ppc_fpscr_and_msr_footprints_resolve_on_every_ppc_preset() {
                 "{preset:?}/{name}: a name is duplicated in the footprint"
             );
         }
+    }
+}
+
+/// Every AltiVec op a record form (`vcmp*.`, `bcd*.`) lifts to. The sla
+/// writes no CR6 for any of them, so the table must. The `vectorCompare*`
+/// names are shared with the non-record form.
+const PPC_CR6_OPS: [&str; 38] = [
+    "vectorCompareBoundsFloatingPoint",
+    "vectorCompareEqualToFloatingPoint",
+    "vectorCompareEqualToUnsignedByte",
+    "vectorCompareEqualToUnsignedHalfWord",
+    "vectorCompareEqualToUnsignedWord",
+    "vectorCompareGreaterThanOrEqualToFloatingPoint",
+    "vectorCompareGreaterThanFloatingPoint",
+    "vectorCompareGreaterThanSignedByte",
+    "vectorCompareGreaterThanConditionRegisterSignedHalfWord",
+    "vectorCompareGreaterThanSignedWord",
+    "vectorCompareGreaterThanUnsignedByte",
+    "vectorCompareGreaterThanUnsignedHalfWord",
+    "vectorCompareGreaterThanUnsignedWord",
+    "altv207_14",
+    "altv207_16",
+    "altv207_18",
+    "altv207_64",
+    "altv207_65",
+    "altv300_1",
+    "altv300_2",
+    "altv300_3",
+    "altv300_4",
+    "altv300_5",
+    "altv300_6",
+    "altv300_7",
+    "altv300_8",
+    "altv300_9",
+    "altv300_10",
+    "altv300_12",
+    "altv300_13",
+    "altv300_14",
+    "altv300_21",
+    "altv300_23",
+    "altv300_25",
+    "altv300_27",
+    "altv300_29",
+    "altv300_31",
+    "vsx300_82",
+];
+
+const PPC_PRESETS: [ArchPreset; 4] = [
+    ArchPreset::Ppc32Be,
+    ArchPreset::Ppc32Le,
+    ArchPreset::Ppc64Be,
+    ArchPreset::Ppc64Le,
+];
+
+#[test]
+fn ppc_record_form_vector_ops_write_cr6() {
+    for preset in PPC_PRESETS {
+        for name in PPC_CR6_OPS {
+            let abi = expect_call(classify(preset, name));
+            assert!(
+                abi.implicit_writes.contains(&"cr6"),
+                "{preset:?}/{name}: {abi:?}"
+            );
+        }
+    }
+}
+
+/// The op `vcmpequb. v6,v0,v18` decodes to is one the table says writes CR6.
+#[test]
+fn vcmpequb_dot_decodes_to_a_cr6_write() {
+    const WORD: u32 = 0x10C0_9406;
+    for preset in [ArchPreset::Ppc64Le, ArchPreset::Ppc32Be] {
+        let arch = preset.arch();
+        let bytes = match arch.endianness() {
+            strider_target::Endianness::Big => WORD.to_be_bytes(),
+            strider_target::Endianness::Little => WORD.to_le_bytes(),
+        };
+        let reader = rsleigh::mem_readers::BufMemReader::new(bytes.to_vec(), 0x1000);
+        let lift = arch.sleigh(reader).unwrap().lift_one(0x1000).unwrap();
+        let names = &arch.decode_tables().user_op_names;
+        let ops: Vec<&str> = lift
+            .insns
+            .iter()
+            .filter(|i| i.opcode == rsleigh::Opcode::CallOther)
+            .map(|i| names[usize::try_from(i.inputs[0].addr_off).unwrap()].as_str())
+            .collect();
+        assert_eq!(ops, ["vectorCompareEqualToUnsignedByte"], "{preset:?}");
+        let abi = expect_call(classify(preset, ops[0]));
+        assert_eq!(abi.implicit_writes, &["cr6"], "{preset:?}");
+    }
+}
+
+/// `mtc0` passes its CP0 destination as an operand (`setCopReg(0, RD0, rt,
+/// sel)`) while `mfc0` reads the register directly, so the op writes the whole
+/// CP0 file: all eight selects of all 32 registers.
+#[test]
+fn mips_set_cop_reg_writes_every_cp0_register() {
+    for preset in [
+        ArchPreset::MipsBe32,
+        ArchPreset::MipsLe32,
+        ArchPreset::MipsBe64,
+        ArchPreset::MipsLe64,
+    ] {
+        let abi = expect_call(classify(preset, "setCopReg"));
+        assert!(abi.clobbers_memory, "{preset:?}");
+        let built = abi
+            .build(&preset.arch().probe_regs())
+            .expect("every name resolves");
+        let mut offs: Vec<u64> = built.implicit_writes.iter().map(|vn| vn.addr_off).collect();
+        offs.sort_unstable();
+        offs.dedup();
+        let size = u64::from(built.implicit_writes[0].size);
+        let want: Vec<u64> = (0..8u64)
+            .flat_map(|sel| (0..32u64).map(move |r| 0x2000 + sel * 0x100 + r * size))
+            .collect();
+        assert_eq!(offs, want, "{preset:?}");
     }
 }

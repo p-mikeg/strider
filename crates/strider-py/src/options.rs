@@ -1,16 +1,17 @@
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::bigint::{Addr, IntSeq};
 use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
-use crate::strider_cls::reject_zero_max_size;
+use crate::strider_cls::function_bound;
 use strider_orchestrator::opt::AssumptionOptions;
 
-/// One caller-supplied indirect-branch answer: concrete targets, or a return.
+/// One `known_targets` value.
 #[derive(Clone, Debug)]
 pub enum KnownTarget {
     Targets(Vec<u64>),
@@ -28,24 +29,25 @@ impl<'py> FromPyObject<'py> for KnownTarget {
                 ))),
             };
         }
-        Ok(KnownTarget::Targets(ob.extract::<Vec<u64>>()?))
+        let targets: IntSeq<Addr> = ob.extract()?;
+        Ok(KnownTarget::Targets(
+            targets.0.into_iter().map(|a| a.0).collect(),
+        ))
     }
 }
 
 impl IntoPy<PyObject> for KnownTarget {
     fn into_py(self, py: Python<'_>) -> PyObject {
         match self {
-            // A tuple, not a list: the view below blocks writes to its keys
-            // only, so a mutable value would take an edit the analysis never
-            // reads.
+            // A tuple, so the read-only view is read-only all the way down.
             KnownTarget::Targets(v) => pyo3::types::PyTuple::new_bound(py, v).into_py(py),
             KnownTarget::Return => "return".into_py(py),
         }
     }
 }
 
-/// One `call_other_abis` value. A string raises a message naming the
-/// `CallOtherAbi` constructors rather than a bare type error.
+/// One `call_other_abis` value; a string raises naming the `CallOtherAbi`
+/// constructors.
 pub struct CallOtherAbiArg(pub PyCallOtherAbi);
 
 impl<'py> FromPyObject<'py> for CallOtherAbiArg {
@@ -63,9 +65,22 @@ impl<'py> FromPyObject<'py> for CallOtherAbiArg {
     }
 }
 
-/// A mapping argument. Any mapping, not only a `dict`: the `known_targets` /
-/// `call_other_abis` getters hand back a read-only proxy, and that has to
-/// round-trip through the constructor.
+pub struct AddrSetArg(pub rustc_hash::FxHashSet<u64>);
+
+impl<'py> FromPyObject<'py> for AddrSetArg {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        crate::bigint::refuse_bytes(ob)?;
+        ob.iter()?
+            .map(|item| Ok(item?.extract::<Addr>()?.0))
+            .collect::<PyResult<_>>()
+            .map(Self)
+    }
+}
+
+/// Any mapping, so a getter's read-only proxy round-trips. Items are
+/// collected (`PyDict_Next`, which runs no Python and a `dict` subclass cannot
+/// narrow) before any is extracted: an `extract` can run Python
+/// (`__index__`), and PyO3 panics if the dict changes size mid-iteration.
 pub struct MapArg<T>(pub T);
 
 impl<'py, K, V, S> FromPyObject<'py> for MapArg<HashMap<K, V, S>>
@@ -75,23 +90,6 @@ where
     S: std::hash::BuildHasher + Default,
 {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        // Two phases, because a per-element `extract` runs Python through
-        // `__index__`, and PyO3 PANICS if a dict changes size or keys while it
-        // is iterating it (`PanicException` is a `BaseException`, which no
-        // `except Exception` catches).
-        //
-        // `iter` is `PyDict_Next` over raw storage and runs no Python, so
-        // collecting cannot be interrupted and a `dict` SUBCLASS cannot narrow
-        // it.  `PyDict::copy` is not equivalent: its raw-storage fast path is
-        // conditional on the subclass not overriding `__iter__`, and the
-        // `PyDict_Merge` fallback then honours an overridden `keys`, so a
-        // subclass overriding both copies as `{}`.
-        //
-        // Phase two extracts from the `Vec`, so the Python it runs is
-        // iterating nothing.  The non-dict branch is not Python-free (`dict`
-        // runs `keys` and `__getitem__`) but completes before any extract.
-        // Values are the caller's own objects, so a list value is read live
-        // (`KnownTarget`'s `Vec<u64>`).
         let items: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)> = match ob.downcast::<PyDict>() {
             Ok(d) => d.iter().collect(),
             Err(_) => ob
@@ -110,134 +108,174 @@ where
     }
 }
 
-/// A table's Python face, built once and handed out read-only.
-///
-/// The authority is the Rust map beside it, which no mutation here would
-/// reach, so every value in the proxy is immutable too.
-///
-/// Read-only to ordinary access only. `MappingProxyType` wraps a dict, and
-/// `gc.get_referents(view)[0]` hands that dict back mutably -- CPython gives
-/// no way to hide an object's referents. Writing to it desynchronizes the view
-/// from the Rust map, which keeps answering every `analyze`; a value fed back
-/// through a constructor is re-extracted and re-validated like any other, so
-/// the reach is a caller confusing itself about its own options, not getting
-/// an unchecked value into the analysis.
-#[derive(Default)]
-struct MappingView(OnceLock<PyObject>);
+/// A `MappingProxyType` over `source`, built once. The Rust map stays the
+/// authority.
+fn mapping_view<'py, T: IntoPy<PyObject> + Clone>(
+    view: &OnceLock<PyObject>,
+    py: Python<'py>,
+    source: &T,
+) -> PyResult<Bound<'py, PyAny>> {
+    memo_obj(view, py, || {
+        let proxy = py.import_bound("types")?.getattr("MappingProxyType")?;
+        proxy.call1((source.clone().into_py(py),))
+    })
+}
 
-impl MappingView {
-    fn get<'py, T: IntoPy<PyObject> + Clone>(
-        &self,
-        py: Python<'py>,
-        source: &T,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let obj = match self.0.get() {
-            Some(o) => o,
-            None => {
-                let dict = source.clone().into_py(py);
-                let proxy = py
-                    .import_bound("types")?
-                    .getattr("MappingProxyType")?
-                    .call1((dict,))?;
-                self.0.get_or_init(|| proxy.unbind())
-            }
-        };
-        Ok(obj.bind(py).clone())
+fn memo_obj<'py>(
+    view: &OnceLock<PyObject>,
+    py: Python<'py>,
+    build: impl FnOnce() -> PyResult<Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    if let Some(obj) = view.get() {
+        return Ok(obj.bind(py).clone());
     }
+    let obj = build()?.unbind();
+    Ok(view.get_or_init(|| obj).bind(py).clone())
 }
 
 /// CFG-shaping knobs, keyword-only.
-#[pyclass(name = "CfgOptions", module = "strider.cfg")]
-#[derive(Clone, Default)]
+#[pyclass(name = "CfgOptions", module = "strider.cfg", frozen)]
+#[derive(Default)]
 pub struct PyCfgOptions {
-    /// When set, an unconditional branch targeting at or past
-    /// `entry + function_max_size` is treated as a tail call, bounding the
-    /// lift. Must be `> 0`.
-    #[pyo3(get)]
-    pub function_max_size: Option<u64>,
-    /// When `False` (the default), an unconditional branch targeting an
-    /// address *below* the function start is treated as a tail call.
-    /// When `True`, such branches are followed normally.
-    #[pyo3(get)]
-    pub allow_code_before_start_addr: bool,
-    /// Indirect-branch answers supplied by the caller, as
-    /// `{dispatch_address: [target_address, ...] | "return"}`, in the Python
-    /// form the getter hands back; `seated` is the same table as
-    /// `strider_cfg` reads it.
-    ///
-    /// A listed site seats these answers directly instead of deferring to the
-    /// classifier. `"return"` seats the site as a function return, which the
-    /// resolver itself proves only for a bare link register. An empty list
-    /// seats nothing, leaving the site an unresolved indirect branch; the
-    /// classifier still runs unless `resolve_indirect_branches=False`.
-    ///
-    /// `Arc`: one seeded table is read by every `analyze` through the same
-    /// options object, and a per-call clone of it is O(table).
-    pub known_targets: Arc<HashMap<u64, KnownTarget>>,
-    /// Classifications for Sleigh user-op names, as
-    /// `{name: strider.sleigh.CallOtherAbi}`, winning over the built-in table.
-    ///
-    /// `Lifter.user_op_names()` lists the names a binary can contain, and
-    /// `Lifter.call_other_abi(name)` reads back what strider already makes of
-    /// one.
-    pub call_other_abis: Arc<HashMap<String, PyCallOtherAbi>>,
-    /// Address ranges `(start, end)` the image marks as data, decoded only for
-    /// the entry instruction.
+    pub bound: strider_cfg::FunctionBound,
+    /// `seated` is the same table in `strider_cfg`'s form.
+    pub known_targets: HashMap<u64, KnownTarget>,
+    pub call_other_abis: HashMap<String, PyCallOtherAbi>,
+    pub(crate) no_return_targets: rustc_hash::FxHashSet<u64>,
     pub data_ranges: strider_cfg::DataRanges,
-    /// The two tables' Python faces, shared with every clone of this object,
-    /// which shares the tables themselves.
-    known_targets_view: Arc<MappingView>,
-    call_other_abis_view: Arc<MappingView>,
-    /// `known_targets` in `strider_cfg`'s own form, seated at construction:
-    /// every analyse through this object BORROWS it, so neither the seating
-    /// nor a copy is charged per call. Shared with every clone, as the table
-    /// it is built from is.
-    pub(crate) seated: Arc<SeatedTargets>,
+    pub fragment_ranges: strider_cfg::DataRanges,
+    known_targets_view: OnceLock<PyObject>,
+    call_other_abis_view: OnceLock<PyObject>,
+    no_return_targets_view: OnceLock<PyObject>,
+    pub(crate) seated: SeatedTargets,
+    /// Rebuilt per arch.
+    overrides: Mutex<OverridesMemo>,
 }
 
-/// `known_targets` as `strider_cfg::CfgOptions` borrows it.
+/// `slot`'s table if built for `target`'s preset, else `build`'s, kept in
+/// `slot`.
+fn memo_per_arch<T>(
+    slot: &mut Option<(strider_target::SleighArch, Arc<T>)>,
+    target: strider_target::SleighArch,
+    build: impl FnOnce() -> PyResult<T>,
+) -> PyResult<Arc<T>> {
+    if let Some((arch, built)) = slot
+        && arch.preset() == target.preset()
+    {
+        return Ok(Arc::clone(built));
+    }
+    let built = Arc::new(build()?);
+    *slot = Some((target, Arc::clone(&built)));
+    Ok(built)
+}
+
+#[derive(Default)]
+struct OverridesMemo {
+    built: Option<(
+        strider_target::SleighArch,
+        Arc<strider_target::call_other_abi::CallOtherOverrides>,
+    )>,
+    #[cfg(feature = "test-hooks")]
+    builds: usize,
+}
+
 pub(crate) type SeatedTargets =
     rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
 
+impl PyCfgOptions {
+    /// `call_other_abis` checked and built for `target`, memoized per arch.
+    pub(crate) fn call_other_overrides(
+        &self,
+        target: strider_target::SleighArch,
+    ) -> PyResult<Arc<strider_target::call_other_abi::CallOtherOverrides>> {
+        let mut memo = self
+            .overrides
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let memo = &mut *memo;
+        memo_per_arch(&mut memo.built, target, || {
+            let overrides = crate::strider_cls::overrides_from(&self.call_other_abis, target)?;
+            #[cfg(feature = "test-hooks")]
+            {
+                memo.builds += 1;
+            }
+            Ok(overrides)
+        })
+    }
+}
+
 #[pymethods]
 impl PyCfgOptions {
-    /// Raises `ValueError` for `function_max_size=0`; omit the argument
-    /// for an unbounded lift.
+    /// Raises `ValueError` for `function_max_size=0`, or a size with
+    /// `allow_code_before_start_addr=True`.
     #[new]
     #[pyo3(signature = (*, function_max_size = None, allow_code_before_start_addr = false,
                         known_targets = MapArg(HashMap::new()),
                         call_other_abis = MapArg(HashMap::new()),
-                        data_ranges = Vec::new()))]
+                        data_ranges = Vec::new(),
+                        fragment_ranges = Vec::new(),
+                        no_return_targets = AddrSetArg(rustc_hash::FxHashSet::default())))]
     fn new(
-        function_max_size: Option<u64>,
+        function_max_size: Option<crate::bigint::Unsigned<u64>>,
         allow_code_before_start_addr: bool,
-        known_targets: MapArg<HashMap<u64, KnownTarget>>,
+        known_targets: MapArg<HashMap<Addr, KnownTarget>>,
         call_other_abis: MapArg<HashMap<String, CallOtherAbiArg>>,
-        data_ranges: Vec<(u64, u64)>,
+        data_ranges: Vec<(Addr, Addr)>,
+        fragment_ranges: Vec<(Addr, Addr)>,
+        no_return_targets: AddrSetArg,
     ) -> PyResult<Self> {
-        reject_zero_max_size(function_max_size)?;
-        let seated = crate::strider_cls::seat_known_targets(&known_targets.0);
+        let bound = function_bound(function_max_size.map(|s| s.0), allow_code_before_start_addr)?;
+        let known_targets: HashMap<u64, KnownTarget> =
+            known_targets.0.into_iter().map(|(a, t)| (a.0, t)).collect();
+        let ranges = |r: Vec<(Addr, Addr)>| -> Vec<(u64, u64)> {
+            r.into_iter().map(|(s, e)| (s.0, e.0)).collect()
+        };
+        let seated = crate::strider_cls::seat_known_targets(&known_targets);
         Ok(Self {
-            function_max_size,
-            allow_code_before_start_addr,
-            known_targets: Arc::new(known_targets.0),
-            call_other_abis: Arc::new(
-                call_other_abis
-                    .0
-                    .into_iter()
-                    .map(|(name, abi)| (name, abi.0))
-                    .collect(),
-            ),
-            data_ranges: data_ranges_from(data_ranges)?,
-            known_targets_view: Arc::default(),
-            call_other_abis_view: Arc::default(),
-            seated: Arc::new(seated),
+            bound,
+            known_targets,
+            call_other_abis: call_other_abis
+                .0
+                .into_iter()
+                .map(|(name, abi)| (name, abi.0))
+                .collect(),
+            data_ranges: strider_cfg::DataRanges::try_new("data_ranges", ranges(data_ranges))
+                .map_err(pyo3::exceptions::PyValueError::new_err)?,
+            fragment_ranges: strider_cfg::DataRanges::try_new(
+                "fragment_ranges",
+                ranges(fragment_ranges),
+            )
+            .map_err(pyo3::exceptions::PyValueError::new_err)?,
+            no_return_targets: no_return_targets.0,
+            seated,
+            ..Self::default()
         })
     }
 
-    /// Address ranges `(start, end)`, end exclusive, the image marks as data,
-    /// sorted and merged. A branch or fall-through into one is reported, never
-    /// decoded.
+    /// When set, an unconditional branch at or past `entry + function_max_size`
+    /// is a tail call; a fall-through past it is `"past_function_end"`.
+    #[getter]
+    fn function_max_size(&self) -> Option<u64> {
+        match self.bound {
+            strider_cfg::FunctionBound::Size(size) => Some(size.get()),
+            strider_cfg::FunctionBound::Open { .. } => None,
+        }
+    }
+
+    /// `False` (default): an unconditional branch below the function start is
+    /// a tail call. `True` follows it; always `False` beside a size.
+    #[getter]
+    fn allow_code_before_start_addr(&self) -> bool {
+        matches!(
+            self.bound,
+            strider_cfg::FunctionBound::Open {
+                code_before_start: true
+            }
+        )
+    }
+
+    /// Sorted, merged `(start, end)` ranges marked as data. A branch or
+    /// fall-through into one is reported, never decoded.
     #[getter]
     fn data_ranges(&self) -> Vec<(u64, u64)> {
         self.data_ranges
@@ -247,360 +285,292 @@ impl PyCfgOptions {
             .collect()
     }
 
-    /// This object with `data_ranges` replaced, sharing both tables.
-    ///
-    /// # Errors
-    /// As the constructor does, for a range that ends at or below its start.
-    fn with_data_ranges(&self, data_ranges: Vec<(u64, u64)>) -> PyResult<Self> {
-        Ok(Self {
-            data_ranges: data_ranges_from(data_ranges)?,
-            ..self.clone()
-        })
+    /// Sorted, merged `(start, end)` ranges outside the function's extent that
+    /// are still its code (GCC `<name>.cold`). A branch into one is followed;
+    /// a fall-through past one's end is `"past_function_end"`.
+    #[getter]
+    fn fragment_ranges(&self) -> Vec<(u64, u64)> {
+        self.fragment_ranges
+            .ranges()
+            .iter()
+            .map(|r| (r.start, r.end))
+            .collect()
     }
 
-    /// This object with the mapping-symbol data ranges of `elf`, unless it
-    /// already names some. Shares the ELF's table rather than copying it
-    /// through Python on every analyse.
-    fn _with_elf_data_ranges(&self, elf: PyRef<'_, crate::reader::PyLoadedElf>) -> PyResult<Self> {
-        if !self.data_ranges.ranges().is_empty() {
-            return Ok(self.clone());
-        }
-        Ok(Self {
-            data_ranges: elf.data_ranges()?,
-            ..self.clone()
-        })
-    }
-
-    /// Indirect-branch answers supplied by the caller, as a read-only
-    /// `{dispatch_address: [target_address, ...] | "return"}` mapping.
+    /// Read-only `{dispatch_address: (target, ...) | "return"}`.
     #[getter]
     fn known_targets<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.known_targets_view.get(py, &*self.known_targets)
+        mapping_view(&self.known_targets_view, py, &self.known_targets)
     }
 
-    /// Classifications for Sleigh user-op names, as a read-only
-    /// `{name: strider.sleigh.CallOtherAbi}` mapping.
+    /// Read-only `{user_op_name: CallOtherAbi}`.
     #[getter]
     fn call_other_abis<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.call_other_abis_view.get(py, &*self.call_other_abis)
+        mapping_view(&self.call_other_abis_view, py, &self.call_other_abis)
     }
 
-    /// This object with `function_max_size` set, sharing both tables rather
-    /// than rebuilding them through Python.
-    fn with_function_max_size(&self, function_max_size: u64) -> PyResult<Self> {
-        reject_zero_max_size(Some(function_max_size))?;
-        Ok(Self {
-            function_max_size: Some(function_max_size),
-            ..self.clone()
+    /// Direct-call targets that never return, a `frozenset`.
+    #[getter]
+    fn no_return_targets<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        memo_obj(&self.no_return_targets_view, py, || {
+            Ok(pyo3::types::PyFrozenSet::new_bound(py, &self.no_return_targets)?.into_any())
         })
+    }
+
+    /// How many times `call_other_abis` was resolved.
+    #[cfg(feature = "test-hooks")]
+    fn _call_other_override_builds(&self) -> usize {
+        self.overrides
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .builds
     }
 
     fn __repr__(&self) -> String {
-        // The two maps render as counts: a seeded table is what decides the
-        // successor set, so a `repr` that omits it describes a different
-        // analysis than the one that ran.
         format!(
-            "CfgOptions(function_max_size={:?}, allow_code_before_start_addr={}, \
+            "CfgOptions(function_max_size={}, allow_code_before_start_addr={}, \
              known_targets={{{} entries}}, call_other_abis={{{} entries}}, \
-             data_ranges=[{} ranges])",
-            self.function_max_size,
-            py_bool(self.allow_code_before_start_addr),
+             data_ranges=[{} ranges], fragment_ranges=[{} ranges], \
+             no_return_targets={{{} entries}})",
+            self.function_max_size()
+                .map_or_else(|| "None".to_owned(), |size| size.to_string()),
+            py_bool(self.allow_code_before_start_addr()),
             self.known_targets.len(),
             self.call_other_abis.len(),
             self.data_ranges.ranges().len(),
+            self.fragment_ranges.ranges().len(),
+            self.no_return_targets.len(),
         )
     }
 }
 
-/// # Errors
-/// If a range ends at or below its start. `start..end` with `end <= start` is
-/// empty, so it used to be accepted and silently drop the range the caller
-/// meant to name -- the literal pool it marks then decodes as instructions,
-/// which is the failure `data_ranges` exists to prevent. Every other
-/// range-checked ctor argument raises, so this one does too.
-fn data_ranges_from(ranges: Vec<(u64, u64)>) -> PyResult<strider_cfg::DataRanges> {
-    for &(start, end) in &ranges {
-        if end <= start {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "data_ranges: ({start:#x}, {end:#x}) is empty; a range runs \
-                 start..end with end > start"
-            )));
-        }
-    }
-    Ok(strider_cfg::DataRanges::new(
-        ranges.into_iter().map(|(start, end)| start..end),
-    ))
-}
-
-/// Render a bool the Python way, so a `repr` reads as an eval-able constructor
-/// call (`True`/`False`, not Rust's `true`/`false`).
 pub(crate) fn py_bool(b: bool) -> &'static str {
     if b { "True" } else { "False" }
 }
 
-/// Claims about the code being analysed, keyword-only. None is checked, and
-/// each one's risky value is the positive one, so any of them can make the
-/// answer wrong on valid input. Clearing all seven leaves only what the IR
-/// structurally proves, which still takes memory to be RAM.
-///
-/// Three default `True`: `stack_global_disjoint`,
-/// `assume_incoming_args_survive_calls` and
-/// `return_slots_survive_untracked_writes`, each of which every compiler this
-/// analyses honours.
-#[pyclass(name = "AssumptionOptions", module = "strider.lift")]
-#[derive(Clone)]
+/// Unchecked claims about the analysed code; a wrong claim makes the answer
+/// wrong.
+#[pyclass(eq, name = "AssumptionOptions", module = "strider.lift", frozen)]
+#[derive(Clone, Default, PartialEq)]
 pub struct PyAssumptionOptions {
-    /// The stack and global/constant memory (`.data`, `.rodata`, `.bss`,
-    /// MMIO) never overlap at runtime, so a memory walk steps through a
-    /// constant-address store when looking back from a stack load and
-    /// vice-versa (default `True`). Wrong only where a constant address
-    /// coincidentally equals `sp + K`.
-    #[pyo3(get)]
-    pub stack_global_disjoint: bool,
-
-    /// A call on an incoming stack-argument slot's memory chain leaves the
-    /// slot alone (default `True`). Reaches incoming-argument detection only,
-    /// where it holds for any conforming callee: those slots are the caller's
-    /// memory, above the entry SP.
-    #[pyo3(get)]
-    pub assume_incoming_args_survive_calls: bool,
-
-    /// A store rooted at a different SP base than the entry SP (an
-    /// alignment-masked frame local, say) is disjoint from the probed
-    /// location.
-    #[pyo3(get)]
-    pub distinct_sp_bases_disjoint: bool,
-
-    /// A callee leaves the outgoing-argument slots the caller wrote as it
-    /// found them, so a spill at the stack top survives the call. The psABIs
-    /// let a callee write those slots; this asserts compiler output does not.
-    ///
-    /// Inert on its own: it only empties an outgoing-argument window that
-    /// something else already consults, which is `escape_analysis` or a call
-    /// to an address listed in `noalias_allocators`. Set with one of those.
-    #[pyo3(get)]
-    pub callee_preserves_stack_args: bool,
-
-    /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
-    /// a size in, a fresh non-overlapping pointer out, no pointer arguments).
-    /// Distinct allocations are treated as disjoint, and a load steps through
-    /// such a call. Disjointness holds among allocations live at once: nothing
-    /// models deallocation, so a stale pointer is taken as disjoint from the
-    /// storage the allocator handed out again.
-    #[pyo3(get)]
-    pub noalias_allocators: Vec<u64>,
-
-    /// When the frame is provably private (no stack address escapes to a
-    /// callee), forward a spill load across a call and past an opaque store.
-    /// An address held in an argument, a stored value, a return, or a register
-    /// a call clobbers escapes; the claim is that no callee reads one from a
-    /// register its convention preserves.
-    #[pyo3(get)]
-    pub escape_analysis: bool,
-
-    /// A RAM store whose address the analysis cannot place on the entry stack,
-    /// and any callee or user-op, leave the slots the function saved its
-    /// return address and entry stack pointer in alone (default `True`). Read
-    /// by return-target verification alone: off, a return after a call is
-    /// reported as unverified, and a store through a pointer the analysis can
-    /// only guess at is checked against the slot. A store its SP decomposition
-    /// places is checked either way.
-    #[pyo3(get)]
-    pub return_slots_survive_untracked_writes: bool,
+    pub(crate) inner: AssumptionOptions,
 }
 
-impl Default for PyAssumptionOptions {
-    fn default() -> Self {
-        Self::from(&AssumptionOptions::default())
+trait PyField<P> {
+    fn to_py(&self) -> P;
+    fn from_py(value: P) -> Self;
+    fn py_repr(&self) -> String;
+}
+
+impl PyField<bool> for bool {
+    fn to_py(&self) -> bool {
+        *self
+    }
+
+    fn from_py(value: bool) -> Self {
+        value
+    }
+
+    fn py_repr(&self) -> String {
+        py_bool(*self).to_owned()
     }
 }
 
-impl From<&AssumptionOptions> for PyAssumptionOptions {
-    fn from(a: &AssumptionOptions) -> Self {
-        let mut noalias_allocators: Vec<u64> = a.noalias_allocators.iter().copied().collect();
-        noalias_allocators.sort_unstable();
-        Self {
-            stack_global_disjoint: a.stack_global_disjoint,
-            assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
-            callee_preserves_stack_args: a.callee_preserves_stack_args,
-            noalias_allocators,
-            escape_analysis: a.escape_analysis,
-            return_slots_survive_untracked_writes: a.return_slots_survive_untracked_writes,
+/// Sorted, so a `repr` reads back.
+impl PyField<IntSeq<Addr>> for rustc_hash::FxHashSet<u64> {
+    fn to_py(&self) -> IntSeq<Addr> {
+        let mut v: Vec<u64> = self.iter().copied().collect();
+        v.sort_unstable();
+        IntSeq(v.into_iter().map(crate::bigint::Unsigned).collect())
+    }
+
+    fn from_py(value: IntSeq<Addr>) -> Self {
+        value.0.into_iter().map(|a| a.0).collect()
+    }
+
+    fn py_repr(&self) -> String {
+        let v: Vec<u64> = PyField::<IntSeq<Addr>>::to_py(self)
+            .0
+            .iter()
+            .map(|a| a.0)
+            .collect();
+        format!("{v:?}")
+    }
+}
+
+/// The getters, constructor, `none` and `__repr__`, from one row per field.
+macro_rules! assumption_fields {
+    ($($(#[$doc:meta])* $name:ident: $py:ty),* $(,)?) => {
+        impl PyAssumptionOptions {
+            #[allow(clippy::too_many_arguments)]
+            fn with_fields(base: AssumptionOptions, $($name: Option<$py>),*) -> Self {
+                Self {
+                    inner: AssumptionOptions {
+                        $($name: $name.map_or(base.$name, PyField::from_py)),*
+                    },
+                }
+            }
         }
-    }
+
+        #[pymethods]
+        impl PyAssumptionOptions {
+            #[new]
+            #[allow(clippy::too_many_arguments)]
+            #[pyo3(signature = (*, $($name = None),*))]
+            fn new($($name: Option<$py>),*) -> Self {
+                Self::with_fields(AssumptionOptions::default(), $($name),*)
+            }
+
+            /// Every claim cleared, then the ones named set; with no argument,
+            /// the sound floor.
+            #[staticmethod]
+            #[allow(clippy::too_many_arguments)]
+            #[pyo3(signature = (*, $($name = None),*))]
+            fn none($($name: Option<$py>),*) -> Self {
+                Self::with_fields(AssumptionOptions::none(), $($name),*)
+            }
+
+            $(
+                $(#[$doc])*
+                #[getter]
+                fn $name(&self) -> $py {
+                    PyField::<$py>::to_py(&self.inner.$name)
+                }
+            )*
+
+            fn __repr__(&self) -> String {
+                let fields = [$(
+                    format!(
+                        "{}={}",
+                        stringify!($name),
+                        PyField::<$py>::py_repr(&self.inner.$name)
+                    )
+                ),*];
+                format!("AssumptionOptions({})", fields.join(", "))
+            }
+        }
+    };
 }
 
-impl From<&PyAssumptionOptions> for AssumptionOptions {
-    fn from(a: &PyAssumptionOptions) -> Self {
-        Self {
-            stack_global_disjoint: a.stack_global_disjoint,
-            assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
-            callee_preserves_stack_args: a.callee_preserves_stack_args,
-            noalias_allocators: a.noalias_allocators.iter().copied().collect(),
-            escape_analysis: a.escape_analysis,
-            return_slots_survive_untracked_writes: a.return_slots_survive_untracked_writes,
-        }
-    }
+assumption_fields! {
+    /// The stack never overlaps constant-address memory (`.data`, `.rodata`,
+    /// `.bss`, MMIO). Default `True`.
+    stack_global_disjoint: bool,
+
+    /// A call leaves the incoming stack-argument slots alone unless handed a
+    /// pointer into them. Default `True`; read by incoming-argument detection.
+    assume_incoming_args_survive_calls: bool,
+
+    /// A store rooted at an SP base other than the entry SP (e.g. `sp & -16`)
+    /// misses the probed slot. Default `False`; read by incoming-argument
+    /// detection.
+    distinct_sp_bases_disjoint: bool,
+
+    /// A callee leaves the outgoing-argument slots the caller wrote alone.
+    /// Inert without `escape_analysis` or `noalias_allocators`. Default `False`.
+    callee_preserves_stack_args: bool,
+
+    /// Callee addresses of pure `malloc`-like allocators, sorted. Each result
+    /// overlaps no other allocation, stack slot or constant address, so an arena
+    /// allocator does not qualify. Default empty.
+    noalias_allocators: IntSeq<Addr>,
+
+    /// When no stack address escapes to a callee, forward a spill load across
+    /// a call (and, under `stack_global_disjoint`, past an opaque store).
+    /// Misses a callee reaching the frame through a preserved register, or
+    /// writing an argument slot above an alignment hole. Default `False`.
+    escape_analysis: bool,
+
+    /// Untracked stores, callees and user-ops leave the saved return address
+    /// and entry SP slots alone. Default `True`; off, such a return is unverified.
+    return_slots_survive_untracked_writes: bool,
+
+    /// An ARM `msr cpsr_c, rN` writes the mode already in force; the
+    /// immediate form and `cps` still switch. Default `True`; a lift-time claim.
+    msr_register_keeps_mode: bool,
+
+    /// Float conversions reading the dynamic rounding mode round to nearest
+    /// even; off, each selects among the four modes. Wrong after `fesetround`.
+    /// Default `True`; a lift-time claim.
+    fp_rounding_mode_is_nearest: bool,
 }
 
 #[pymethods]
 impl PyAssumptionOptions {
-    /// The `#[new]` signature defaults ARE the `Default` values.
-    #[new]
-    #[pyo3(signature = (
-        *,
-        stack_global_disjoint = true,
-        assume_incoming_args_survive_calls = true,
-        distinct_sp_bases_disjoint = false,
-        callee_preserves_stack_args = false,
-        noalias_allocators = Vec::new(),
-        escape_analysis = false,
-        return_slots_survive_untracked_writes = true,
-    ))]
-    #[allow(clippy::fn_params_excessive_bools)]
-    fn new(
-        stack_global_disjoint: bool,
-        assume_incoming_args_survive_calls: bool,
-        distinct_sp_bases_disjoint: bool,
-        callee_preserves_stack_args: bool,
-        noalias_allocators: Vec<u64>,
-        escape_analysis: bool,
-        return_slots_survive_untracked_writes: bool,
-    ) -> Self {
-        Self {
-            stack_global_disjoint,
-            assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint,
-            callee_preserves_stack_args,
-            noalias_allocators,
-            escape_analysis,
-            return_slots_survive_untracked_writes,
-        }
+    /// Every claim either holds, every allocator either lists.
+    fn union(&self, other: &Self) -> Self {
+        let mut inner = self.inner.clone();
+        inner.union_with(&other.inner);
+        Self { inner }
     }
 
-    /// Every claim cleared: the sound floor of these fields under any input
-    /// program whose memory behaves as RAM, forwarding solely what the IR
-    /// structurally proves. A memory-mapped register polled after a write still reads as
-    /// the value written.
-    #[staticmethod]
-    fn none() -> Self {
-        Self::from(&AssumptionOptions::none())
-    }
-
-    /// Reads back as the constructor call that produces it.
-    fn __repr__(&self) -> String {
-        format!(
-            "AssumptionOptions(stack_global_disjoint={}, \
-             assume_incoming_args_survive_calls={}, distinct_sp_bases_disjoint={}, \
-             callee_preserves_stack_args={}, noalias_allocators={:?}, \
-             escape_analysis={}, return_slots_survive_untracked_writes={})",
-            py_bool(self.stack_global_disjoint),
-            py_bool(self.assume_incoming_args_survive_calls),
-            py_bool(self.distinct_sp_bases_disjoint),
-            py_bool(self.callee_preserves_stack_args),
-            self.noalias_allocators,
-            py_bool(self.escape_analysis),
-            py_bool(self.return_slots_survive_untracked_writes),
-        )
+    /// `a | b` is `a.union(b)`.
+    fn __or__(&self, other: &Self) -> Self {
+        self.union(other)
     }
 }
 
-/// A caller's `per_address_ccs` table and the resolution taken from it.
-///
-/// One object behind an `Arc`, because `ElfLifter.analyze` derives fresh
-/// options through `with_cfg` on every call to seat the ELF's data ranges: a
-/// memo on the options themselves is written on the throwaway and rebuilt
-/// next call, and cloning the table there is O(entries) in `Py` handle bumps.
 pub struct PerAddressCcs {
-    py: HashMap<u64, PyCallingConvention>,
-    built: std::sync::Mutex<Option<BuiltPerAddressCcs>>,
+    pub(crate) py: HashMap<u64, PyCallingConvention>,
+    built: Mutex<Option<BuiltPerAddressCcs>>,
 }
 
-impl PerAddressCcs {
-    fn new(py: HashMap<u64, PyCallingConvention>) -> Self {
-        Self {
-            py,
-            built: std::sync::Mutex::default(),
-        }
-    }
-}
-
-/// A resolved `per_address_ccs` table and the arch it was resolved against.
 type BuiltPerAddressCcs = (
-    crate::strider_cls::SourceArch,
-    std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
+    strider_target::SleighArch,
+    Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 );
 
 /// Lift, optimize, and CFG knobs for one `analyze` call.
-#[pyclass(name = "LifterOptions", module = "strider.lift")]
+#[pyclass(name = "LifterOptions", module = "strider.lift", frozen)]
 pub struct PyLifterOptions {
-    /// Nested CFG-shape knobs.
+    /// The `CfgOptions`.
     #[pyo3(get)]
     pub cfg: Py<PyCfgOptions>,
-    /// Nested claims about the analysed code, each one unchecked.
+    /// The `AssumptionOptions`.
     #[pyo3(get)]
     pub assumptions: Py<PyAssumptionOptions>,
     /// Drop unreachable IR nodes after analysis (default `True`).
     #[pyo3(get)]
     pub compact: bool,
-    /// Per-target-address calling-convention overrides (preset or custom
-    /// CCs accepted); `None`/omitted means no overrides.
-    /// Shared so the table and its resolution both survive `with_cfg`; see
-    /// [`PerAddressCcs`].
-    pub per_address_ccs: Option<std::sync::Arc<PerAddressCcs>>,
+    /// A call to an override whose `stack_pointer` is not the analysed
+    /// function's own raises.
+    pub per_address_ccs: Option<PerAddressCcs>,
     /// Run the indirect-branch classifier (default `True`). `False` leaves
-    /// every site an `IndirectBranch` placeholder, so you can supply your own
-    /// answers via `CfgOptions(known_targets=...)`, or inspect the raw
-    /// dispatch shape when a resolution looks wrong.
+    /// every site not in `known_targets` an `IndirectBranch`.
     #[pyo3(get)]
     pub resolve_indirect_branches: bool,
-    /// When set, `analyze` runs this pipeline instead of the built-in
-    /// default, for this call only.
+    /// When set, `analyze` runs this pipeline instead of the default.
     #[pyo3(get)]
     pub pipeline: Option<Py<PyOptimizerPipeline>>,
-    /// `per_address_ccs`' Python face.
-    per_address_ccs_view: MappingView,
+    per_address_ccs_view: OnceLock<PyObject>,
 }
 
 impl PyLifterOptions {
-    /// All-defaults fallback for `opts=None`.
     pub(crate) fn new_default(py: Python<'_>) -> PyResult<Self> {
         Self::new(py, None, None, true, None, true, None)
     }
 
-    /// The overrides resolved against `regs`, built once per arch.
+    /// Built once per arch.
     pub(crate) fn built_per_address_ccs(
         &self,
         regs: &rsleigh::SleighRegs,
-        target: crate::strider_cls::SourceArch,
-    ) -> PyResult<std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>>
-    {
+        target: strider_target::SleighArch,
+    ) -> PyResult<Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>> {
         let Some(table) = &self.per_address_ccs else {
-            return Ok(std::sync::Arc::default());
+            return Ok(Arc::default());
         };
         let mut slot = table
             .built
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((cached, built)) = slot.as_ref()
-            && *cached == target
-        {
-            return Ok(std::sync::Arc::clone(built));
-        }
-        let built = std::sync::Arc::new(crate::strider_cls::build_per_address_ccs(
-            &table.py, regs, target,
-        )?);
-        *slot = Some((target, std::sync::Arc::clone(&built)));
-        Ok(built)
+        memo_per_arch(&mut slot, target, || {
+            crate::strider_cls::build_per_address_ccs(&table.py, regs, target)
+        })
     }
 }
 
 #[pymethods]
 impl PyLifterOptions {
-    /// `cfg`, `assumptions` and `pipeline` are `Py` handles, invisible to the
-    /// collector without this.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.cfg)?;
         visit.call(&self.assumptions)?;
@@ -625,7 +595,7 @@ impl PyLifterOptions {
         cfg: Option<Py<PyCfgOptions>>,
         assumptions: Option<Py<PyAssumptionOptions>>,
         compact: bool,
-        per_address_ccs: Option<MapArg<HashMap<u64, PyCallingConvention>>>,
+        per_address_ccs: Option<MapArg<HashMap<Addr, PyCallingConvention>>>,
         resolve_indirect_branches: bool,
         pipeline: Option<Py<PyOptimizerPipeline>>,
     ) -> PyResult<Self> {
@@ -642,51 +612,37 @@ impl PyLifterOptions {
             cfg,
             assumptions,
             compact,
-            per_address_ccs: per_address_ccs.map(|t| std::sync::Arc::new(PerAddressCcs::new(t.0))),
+            per_address_ccs: per_address_ccs.map(|t| PerAddressCcs {
+                py: t.0.into_iter().map(|(a, cc)| (a.0, cc)).collect(),
+                built: Mutex::default(),
+            }),
             resolve_indirect_branches,
             pipeline,
-            per_address_ccs_view: MappingView::default(),
+            per_address_ccs_view: OnceLock::new(),
         })
     }
 
-    /// Per-target-address calling-convention overrides as a read-only
-    /// `{address: CallingConvention}` mapping, or `None` when there are none.
+    /// Read-only `{callee_address: CallingConvention}`, or `None`.
     #[getter]
     fn per_address_ccs<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         match &self.per_address_ccs {
-            Some(table) => self.per_address_ccs_view.get(py, &table.py).map(Some),
+            Some(table) => mapping_view(&self.per_address_ccs_view, py, &table.py).map(Some),
             None => Ok(None),
         }
     }
 
-    /// These options with `cfg` replaced and every other field carried over.
-    /// The supported way to override the nested `CfgOptions`, since the fields
-    /// are read-only.
-    fn with_cfg(&self, py: Python<'_>, cfg: Py<PyCfgOptions>) -> Self {
-        Self {
-            cfg,
-            assumptions: self.assumptions.clone_ref(py),
-            compact: self.compact,
-            per_address_ccs: self.per_address_ccs.clone(),
-            resolve_indirect_branches: self.resolve_indirect_branches,
-            pipeline: self.pipeline.as_ref().map(|p| p.clone_ref(py)),
-            per_address_ccs_view: MappingView::default(),
-        }
-    }
-
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        let cfg_repr = self.cfg.borrow(py).__repr__();
-        let assumptions_repr = self.assumptions.borrow(py).__repr__();
+    fn __repr__(&self) -> PyResult<String> {
+        let cfg_repr = self.cfg.get().__repr__();
+        let assumptions_repr = self.assumptions.get().__repr__();
         Ok(format!(
             "LifterOptions(cfg={}, compact={}, per_address_ccs={}, \
              resolve_indirect_branches={}, assumptions={}, pipeline={})",
             cfg_repr,
             py_bool(self.compact),
-            if self.per_address_ccs.is_some() {
-                "<...>"
-            } else {
-                "None"
-            },
+            self.per_address_ccs.as_ref().map_or_else(
+                || "None".to_owned(),
+                |t| format!("{{{} entries}}", t.py.len())
+            ),
             py_bool(self.resolve_indirect_branches),
             assumptions_repr,
             if self.pipeline.is_some() {

@@ -164,6 +164,19 @@ fn reachable_from<N, V, C: NodeCacheable<N, V>>(
     seen
 }
 
+/// A node's input producers, for `graph_algorithms::walk`.
+struct Producers<'a>(&'a TestGraph);
+
+impl graph_algorithms::walk::GraphRef for Producers<'_> {
+    type NodeId = NodeId;
+
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for value in self.0.node_inputs(node) {
+            f(self.0.producer(value));
+        }
+    }
+}
+
 fn region_node(g: &mut TestGraph) -> NodeId {
     g.create_node(TestKind::Region, [], [TestVal::Ctrl])
 }
@@ -359,19 +372,17 @@ proptest! {
             }
         }
 
-        // Toposort yields each producer before its consumers.
-        if let Ok(order) = petgraph::algo::toposort(&g, None) {
-            let pos: HashMap<strider_graph::Vertex, usize> =
-                order.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+        // An order built from the inputs puts every use-list consumer after
+        // its producer.
+        if let Ok(order) = graph_algorithms::walk::acyclic_postorder(Producers(&g), g.all_node_ids()) {
+            let pos: HashMap<NodeId, usize> =
+                order.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+            prop_assert_eq!(pos.len(), g.all_node_ids().count());
             for node in g.all_node_ids() {
-                let node_v = strider_graph::Vertex::Node(node);
                 for &out in g.node_outputs(node) {
-                    let val_v = strider_graph::Vertex::Value(out);
-                    prop_assert!(pos[&node_v] < pos[&val_v]);
                     for (consumer, _) in g.value_uses(out) {
-                        let cons_v = strider_graph::Vertex::Node(consumer);
-                        prop_assert!(pos[&val_v] < pos[&cons_v],
-                            "value {:?} must precede consumer {:?} in toposort", out, consumer);
+                        prop_assert!(pos[&node] < pos[&consumer],
+                            "{:?} must precede its consumer {:?}", node, consumer);
                     }
                 }
             }
@@ -537,6 +548,37 @@ fn compaction_rebuilds_cache() {
     );
 }
 
+/// Survivors are numbered in `reachable` order, and each use-list lists its
+/// consumers newest-numbered first.
+#[test]
+fn compaction_numbers_in_reachable_order_and_relinks_newest_first() {
+    let mut g = TestGraph::new();
+    let a = const_node(&mut g, 1);
+    let a_node = g.producer(a);
+    let _zombie = const_node(&mut g, 999);
+    let regions: Vec<NodeId> = (0..3)
+        .map(|_| {
+            let r = region_node(&mut g);
+            g.add_node_input(r, a);
+            r
+        })
+        .collect();
+
+    let keep = [a_node, regions[2], regions[0], regions[1]];
+    let remap = retain_reachable(&mut g, keep);
+    let new: Vec<NodeId> = keep
+        .iter()
+        .map(|&n| remap.node_old_to_new(n).expect("kept"))
+        .collect();
+    assert_eq!(new, (0..4).map(NodeId::from_u32).collect::<Vec<_>>());
+    let a_new = remap.value_old_to_new(a).expect("kept");
+    assert_eq!(
+        g.value_uses(a_new).collect::<Vec<_>>(),
+        [(new[3], 0), (new[2], 0), (new[1], 0)]
+    );
+    assert_use_list_consistent(&g);
+}
+
 /// The node, output, input and remap arenas are sized off the survivors up
 /// front, so compaction does not grow them by doubling beside the graph it
 /// replaces; only the two list pools, whose size classes the caller cannot
@@ -589,6 +631,66 @@ fn detach_then_readd_inputs() {
     assert_eq!(g.nth_input(region, 0), Some(y));
     assert_eq!(g.value_uses(y).count(), 1);
     assert_use_list_consistent(&g);
+}
+
+#[test]
+fn detach_evicts_a_cached_node() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    let add = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    assert!(g.is_cached(add));
+    g.detach_node_inputs(add);
+    assert!(!g.is_cached(add));
+    assert_ne!(g.create_node(TestKind::Add, [x, y], [TestVal::Int]), add);
+}
+
+/// `update_input` moves the use between use-lists; onto its own value it
+/// changes nothing, the list order included.
+#[test]
+fn update_input_moves_the_use() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    let a = region_node(&mut g);
+    let b = region_node(&mut g);
+    g.add_node_input(a, x);
+    g.add_node_input(b, x);
+    assert!(!g.value_has_one_use(x));
+    let head = g.value_first_use_id(x);
+    for node in [a, b] {
+        g.update_input(g.node_input_id_at(node, 0).unwrap(), x);
+        assert_eq!(g.value_first_use_id(x), head);
+    }
+    let b0 = g.node_input_id_at(b, 0).unwrap();
+
+    g.update_input(b0, y);
+    assert!(g.value_has_one_use(x));
+    assert_eq!(g.value_uses(y).collect::<Vec<_>>(), [(b, 0)]);
+    assert_use_list_consistent(&g);
+}
+
+#[test]
+fn exact_and_indexed_accessors_report_a_wrong_arity() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let region = region_node(&mut g);
+    g.add_node_input(region, x);
+    let err = g.node_inputs_exact::<2>(region).unwrap_err();
+    assert!(
+        err.to_string().contains("does not have exactly 2 inputs"),
+        "{err}"
+    );
+    let err = g.node_outputs_exact::<2>(g.producer(x)).unwrap_err();
+    assert!(
+        err.to_string().contains("does not have exactly 2 outputs"),
+        "{err}"
+    );
+    let err = g.node_input_id_at(region, 1).unwrap_err().to_string();
+    assert!(
+        err.contains("input index 1 out of bounds") && err.contains("len=1"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -753,8 +855,9 @@ fn stress_10k_nodes_dedup_bounded() {
         "4 consts + 1 deduped Add despite 1000 create calls",
     );
 
-    let order = petgraph::algo::toposort(&g, None).expect("acyclic");
-    assert!(!order.is_empty());
+    let order = graph_algorithms::walk::acyclic_postorder(Producers(&g), g.all_node_ids())
+        .expect("acyclic");
+    assert_eq!(order.len(), 5);
 }
 
 #[test]
@@ -782,6 +885,35 @@ fn replace_all_uses_moves_uses() {
 
     // No-op when old has no uses.
     assert!(!g.replace_all_uses(a, b));
+    assert_use_list_consistent(&g);
+}
+
+#[test]
+fn replace_all_uses_moves_uses_in_list_order() {
+    // Each moved use is head-inserted into `b`'s list in `a`'s list order
+    // (newest first), so `b` lists `a`'s consumers oldest first, ahead of
+    // its own.
+    let mut g = TestGraph::new();
+    let a = const_node(&mut g, 1);
+    let b = const_node(&mut g, 2);
+    let own = region_node(&mut g);
+    g.add_node_input(own, b);
+    let moved: Vec<NodeId> = (0..3)
+        .map(|_| {
+            let r = region_node(&mut g);
+            g.add_node_input(r, a);
+            g.add_node_input(r, a);
+            r
+        })
+        .collect();
+
+    assert!(g.replace_all_uses(a, b));
+    let mut expected: Vec<(NodeId, u32)> = Vec::new();
+    for &r in &moved {
+        expected.extend([(r, 0), (r, 1)]);
+    }
+    expected.push((own, 0));
+    assert_eq!(g.value_uses(b).collect::<Vec<_>>(), expected);
     assert_use_list_consistent(&g);
 }
 
@@ -854,21 +986,18 @@ fn reachable_by_inputs_high_fanin_traversal_unchanged() {
 }
 
 #[test]
-fn dfs_post_order_runs_on_graph() {
-    use petgraph::visit::{DfsPostOrder, Walker};
+fn producer_post_order_puts_the_root_last() {
     let mut g = TestGraph::new();
     let x = const_node(&mut g, 1);
     let y = const_node(&mut g, 2);
     let sum = add_node(&mut g, x, y);
-    let root = strider_graph::Vertex::Node(g.producer(sum));
-
-    let visited: Vec<_> = DfsPostOrder::new(&g, root).iter(&g).collect();
-    // Ordering against the produced value is not required here (post-order
-    // over outgoing edges), but the root must come last.
-    assert!(visited.contains(&root));
+    let root = g.producer(sum);
+    let order: Vec<NodeId> =
+        graph_algorithms::walk::PostOrder::new(Producers(&g), [root]).collect();
+    assert_eq!(order.len(), 3);
     assert_eq!(
-        *visited.last().unwrap(),
-        root,
+        order.last(),
+        Some(&root),
         "root last in post-order from root"
     );
 }
@@ -1074,7 +1203,7 @@ fn out_of_bounds_remove_node_input_leaves_dedup_intact() {
 /// and the blanket relink would splice the orphaned first batch into the same
 /// values' use-lists, so `value_uses` reported consumers no live node owns.
 #[test]
-#[should_panic(expected = "the second input batch")]
+#[should_panic(expected = "`reachable` repeats")]
 fn retain_reachable_rejects_a_duplicate_node_id() {
     let mut g = TestGraph::new();
     let x = const_node(&mut g, 1);
@@ -1086,4 +1215,61 @@ fn retain_reachable_rejects_a_duplicate_node_id() {
     let root = g.producer(sum);
     let keep = reachable_from(&g, [root]).into_iter().chain([dup]);
     let _ = retain_reachable(&mut g, keep);
+}
+
+#[test]
+fn add_node_output_appends_at_the_next_index() {
+    let mut g = TestGraph::new();
+    let region = region_node(&mut g);
+    let first = g.node_outputs(region)[0];
+    let second = g.add_node_output(region, TestVal::Int);
+    let third = g.add_node_output(region, TestVal::Ctrl);
+    assert_eq!(g.node_outputs(region), [first, second, third]);
+    assert_eq!(g.value_definition(second), (region, 1));
+    assert_eq!(g.value_definition(third), (region, 2));
+    assert_eq!(*g.value_kind_ref(second), TestVal::Int);
+    let sink = region_node(&mut g);
+    g.add_node_input(sink, third);
+    assert_eq!(g.value_uses(third).count(), 1);
+    assert_eq!(g.value_uses(first).count(), 0);
+}
+
+#[test]
+fn value_kind_mut_rewrites_one_output() {
+    let mut g = TestGraph::new();
+    let before = region_node(&mut g);
+    let region = region_node(&mut g);
+    let other = g.add_node_output(region, TestVal::Ctrl);
+    let first = g.node_outputs(region)[0];
+    *g.value_kind_mut(first) = TestVal::Int;
+    assert_eq!(*g.value_kind_ref(first), TestVal::Int);
+    assert_eq!(*g.value_kind_ref(other), TestVal::Ctrl);
+    assert_eq!(*g.value_kind_ref(g.node_outputs(before)[0]), TestVal::Ctrl);
+}
+
+/// Each counted input read is one edge actually read: a lookup past the last
+/// input counts nothing.
+#[test]
+fn an_input_lookup_that_misses_counts_no_edge_read() {
+    use strider_graph::NeverCacheable;
+    let mut g: Graph<u8, u8, NeverCacheable> = Graph::new();
+    let a = g.create_node(1u8, [], [9u8]);
+    let v = g.node_outputs(a)[0];
+    let n = g.create_node(2u8, [v, v], [9u8]);
+    let reads = |f: &dyn Fn()| {
+        let before = strider_graph::edge_reads();
+        f();
+        strider_graph::edge_reads() - before
+    };
+    assert_eq!(
+        reads(&|| assert_eq!(g.node_inputs(n).into_iter().count(), 2)),
+        2
+    );
+    assert_eq!(reads(&|| assert_eq!(g.node_inputs(n).get(2), None)), 0);
+    assert_eq!(
+        reads(&|| assert_eq!(g.node_inputs(n).into_iter().nth(2), None)),
+        0
+    );
+    assert_eq!(reads(&|| assert_eq!(g.nth_input(n, 2), None)), 0);
+    assert_eq!(reads(&|| assert_eq!(g.nth_input(n, 1), Some(v))), 1);
 }

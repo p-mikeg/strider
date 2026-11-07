@@ -28,7 +28,7 @@ class V:
     def search(self, query): return {"highlight": []}
     def completions(self): return []
 
-port = explore._serve_background(V(), host="127.0.0.1", port=0, depth=None)
+port = explore._serve(V(), host="127.0.0.1", port=0, background=True)
 # A tiny receive buffer keeps the body in the server's write rather than
 # letting the kernel swallow all 1.4 MB of it.
 s = socket.socket()

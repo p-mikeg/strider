@@ -9,9 +9,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-# Exposes the single-pass test runners (`run_one` / `run_post`) to downstream
-# integration tests (they compile against the non-`test` build).  Off in
-# production so those test-only helpers stay out of the public surface.
+# `run_one`, `run_one_unvalidated`, `run_post` and `classify_target`, for
+# integration tests and benches.
 test-util = []
 
 [dependencies]
@@ -20,10 +19,7 @@ strider-pattern = { workspace = true }
 strider-target.workspace = true
 entity-utils = { workspace = true }
 graph-algorithms = { workspace = true }
-# strider-cfg forward dep: the `indirect_branch_resolve` classifiers
-# produce `strider_cfg::ResolvedTargets` to seed the CFG-rebuild feedback
-# loop (the type only; the resolver implementation lives in
-# strider-orchestrator).
+# `ResolvedTargets`, the classifiers' answer type.
 strider-cfg = { workspace = true }
 rsleigh.workspace = true
 vn-container.workspace = true
@@ -35,7 +31,7 @@ smallvec.workspace = true
 [dev-dependencies]
 # Test-only IR helpers (build_sub_as_add_neg, count_kind, set_call_cc, …).
 strider-ir = { workspace = true, features = ["test-util"] }
-# `Graph::next_node_id`, used by the peephole's rewrite-bookkeeping test.
+# `next_node_id` and `remove_node_input` for unit tests.
 strider-graph = { workspace = true, features = ["test-injectors"] }
 strider-ir-test-utils = { workspace = true }
 criterion.workspace = true

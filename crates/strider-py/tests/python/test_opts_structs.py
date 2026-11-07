@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import inspect
+import sys
+
 import pytest
 
 import strider
@@ -39,9 +42,48 @@ def test_build_cfg_default_opts_when_omitted():
     assert cfg is not None
 
 
-def test_cfg_options_rejects_zero_function_max_size():
-    with pytest.raises(ValueError):
-        strider.cfg.CfgOptions(function_max_size=0)
+def _below_and_past_entry():
+    # 0x1000: c3     ret           (below the entry)
+    # 0x1010: 74 ee  je 0x1000
+    # 0x1012: eb 0c  jmp 0x1020
+    # 0x1020: c3     ret           (16 bytes past the entry)
+    buf = bytearray([0xCC] * 0x21)
+    buf[0x00] = 0xC3
+    buf[0x10:0x14] = bytes([0x74, 0xEE, 0xEB, 0x0C])
+    buf[0x20] = 0xC3
+    mem = strider.reader.BufferReader(0x1000, bytes(buf))
+    return strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+
+
+@pytest.mark.parametrize(
+    ("size", "allow", "expected"),
+    [
+        # expected: (function_max_size, allow_code_before_start_addr,
+        #            decodes below the entry, decodes past 16 bytes), or the
+        #            ValueError message.
+        (None, False, (None, False, False, True)),
+        (None, True, (None, True, True, True)),
+        (0, False, "> 0"),
+        (0, True, "> 0"),
+        (0x10, False, (0x10, False, False, False)),
+        (0x10, True, "allow_code_before_start_addr"),
+    ],
+)
+def test_cfg_options_bound_kwargs(size, allow, expected):
+    """Every `function_max_size` / `allow_code_before_start_addr` pair: a size
+    fixes the extent, so the flag beside it is refused rather than ignored."""
+    if isinstance(expected, str):
+        with pytest.raises(ValueError, match=expected):
+            strider.cfg.CfgOptions(function_max_size=size, allow_code_before_start_addr=allow)
+        return
+    opts = strider.cfg.CfgOptions(function_max_size=size, allow_code_before_start_addr=allow)
+    cfg = _below_and_past_entry().build_cfg(0x1010, opts)
+    assert (
+        opts.function_max_size,
+        opts.allow_code_before_start_addr,
+        cfg.pcode_at(0x1000) is not None,
+        cfg.pcode_at(0x1020) is not None,
+    ) == expected
 
 
 def test_lifter_options_defaults_are_not_shared_mutable():
@@ -69,6 +111,8 @@ def test_assumptions_default_to_a_fresh_group_with_the_pipeline_claims_on():
         "stack_global_disjoint",
         "assume_incoming_args_survive_calls",
         "return_slots_survive_untracked_writes",
+        "msr_register_keeps_mode",
+        "fp_rounding_mode_is_nearest",
     ):
         assert getattr(a.assumptions, name) is True
     for name in (
@@ -125,46 +169,6 @@ def test_pipeline_override_runs_custom_pipeline():
     assert empty_fn.node_count() > default_fn.node_count()
 
 
-def test_with_cfg_carries_over_every_other_field():
-    """`with_cfg` replaces only `cfg`.
-
-    Fields are read-only, so overriding the nested `CfgOptions` once meant
-    re-listing every field; anything forgotten silently reverted to its
-    default.  Every non-cfg field here is set away from its default, so a
-    dropped carry-over fails loudly.
-    """
-    pipeline = strider.opt.OptimizerPipeline.empty()
-    assumptions = strider.lift.AssumptionOptions(
-        stack_global_disjoint=False,
-        assume_incoming_args_survive_calls=False,
-        distinct_sp_bases_disjoint=True,
-        callee_preserves_stack_args=True,
-        noalias_allocators=[0x2000],
-        escape_analysis=True,
-        return_slots_survive_untracked_writes=False,
-    )
-    opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(function_max_size=64),
-        compact=False,
-        per_address_ccs={0x1000: strider.sleigh.CallingConvention.x86_64_systemv()},
-        assumptions=assumptions,
-        pipeline=pipeline,
-    )
-
-    out = opts.with_cfg(strider.cfg.CfgOptions(function_max_size=128))
-
-    assert out.cfg.function_max_size == 128
-    assert out.compact is False
-    assert out.per_address_ccs is not None and 0x1000 in out.per_address_ccs
-    assert out.assumptions is assumptions
-    # Identity, not just presence: the carried-over pipeline must be the
-    # SAME object, matching what passing `pipeline=opts.pipeline` did.
-    assert out.pipeline is pipeline
-
-    # `with_cfg` copies, it does not mutate the receiver.
-    assert opts.cfg.function_max_size == 64
-
-
 def test_none_clears_every_claim():
     n = strider.lift.AssumptionOptions.none()
     # Enumerated, not listed: a claim added default-on has to trip this, which
@@ -181,3 +185,191 @@ def test_none_clears_every_claim():
 def test_none_differs_from_the_default_group():
     assert strider.lift.AssumptionOptions().stack_global_disjoint is True
     assert strider.lift.AssumptionOptions.none().stack_global_disjoint is False
+
+
+# call 0x1080 ; jmp rax, with a `ret` at the callee
+CALL_THEN_JMP_RAX = b"\xe8\x7b\x00\x00\x00\xff\xe0" + b"\xcc" * 0x79 + b"\xc3"
+
+
+def test_a_no_return_target_ends_the_call_in_build_cfg_and_analyze():
+    """`build_cfg` ignored the no-return mark `analyze` honoured, and decoded
+    the `jmp rax` after the call."""
+    mem = strider.reader.BufferReader(0x1000, CALL_THEN_JMP_RAX)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    cfg_opts = strider.cfg.CfgOptions(function_max_size=0x40, no_return_targets=[0x1080])
+    built = lift.build_cfg(0x1000, cfg_opts)
+    assert built.region_at(0x1005) is None
+    assert built.incomplete == []
+    result = lift.analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(cfg=cfg_opts),
+    )
+    assert result.cfg.region_at(0x1005) is None
+    assert result.unresolved == []
+
+
+def test_no_return_targets_read_back_as_a_frozenset():
+    opts = strider.cfg.CfgOptions(no_return_targets=[0x2000, 0x2000, 0x1000])
+    assert opts.no_return_targets == frozenset({0x1000, 0x2000})
+    assert opts.no_return_targets is opts.no_return_targets
+
+
+def test_cfg_options_repr():
+    assert repr(strider.cfg.CfgOptions()) == (
+        "CfgOptions(function_max_size=None, allow_code_before_start_addr=False, "
+        "known_targets={0 entries}, call_other_abis={0 entries}, "
+        "data_ranges=[0 ranges], fragment_ranges=[0 ranges], "
+        "no_return_targets={0 entries})"
+    )
+    assert repr(
+        strider.cfg.CfgOptions(
+            function_max_size=16, no_return_targets=[0x2000], data_ranges=[(0x10, 0x18)]
+        )
+    ) == (
+        "CfgOptions(function_max_size=16, allow_code_before_start_addr=False, "
+        "known_targets={0 entries}, call_other_abis={0 entries}, "
+        "data_ranges=[1 ranges], fragment_ranges=[0 ranges], "
+        "no_return_targets={1 entries})"
+    )
+
+
+def test_lifter_options_repr_counts_per_address_ccs():
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
+    assert "per_address_ccs=None," in repr(strider.lift.LifterOptions())
+    opts = strider.lift.LifterOptions(per_address_ccs={0x10: cc, 0x20: cc})
+    assert "per_address_ccs={2 entries}," in repr(opts)
+
+
+_ASSUMPTION_FIELDS = (
+    "stack_global_disjoint",
+    "assume_incoming_args_survive_calls",
+    "distinct_sp_bases_disjoint",
+    "callee_preserves_stack_args",
+    "noalias_allocators",
+    "escape_analysis",
+    "return_slots_survive_untracked_writes",
+    "msr_register_keeps_mode",
+    "fp_rounding_mode_is_nearest",
+)
+
+
+def test_assumption_options_defaults_are_the_lifter_options_defaults():
+    """One default per field, Rust's, however the group is built."""
+    built = strider.lift.AssumptionOptions()
+    nested = strider.lift.LifterOptions().assumptions
+    for name in _ASSUMPTION_FIELDS:
+        assert getattr(built, name) == getattr(nested, name), name
+    assert repr(built) == repr(nested)
+
+
+def test_assumption_options_none_is_the_default_for_every_field():
+    default = repr(strider.lift.AssumptionOptions())
+    for name in _ASSUMPTION_FIELDS:
+        assert repr(strider.lift.AssumptionOptions(**{name: None})) == default, name
+    if sys.version_info >= (3, 10):  # abi3 exposes a class signature from 3.10
+        params = inspect.signature(strider.lift.AssumptionOptions).parameters
+        assert list(params) == list(_ASSUMPTION_FIELDS)
+        assert all(p.default is None for p in params.values())
+
+
+def test_assumption_options_repr():
+    assert repr(strider.lift.AssumptionOptions()) == (
+        "AssumptionOptions(stack_global_disjoint=True, "
+        "assume_incoming_args_survive_calls=True, distinct_sp_bases_disjoint=False, "
+        "callee_preserves_stack_args=False, noalias_allocators=[], "
+        "escape_analysis=False, return_slots_survive_untracked_writes=True, "
+        "msr_register_keeps_mode=True, fp_rounding_mode_is_nearest=True)"
+    )
+
+
+def test_noalias_allocators_read_back_sorted_and_deduplicated():
+    top = 2**64 - 1
+    a = strider.lift.AssumptionOptions(noalias_allocators=[top, 3, 3, 1])
+    assert a.noalias_allocators == [1, 3, top]
+    assert f"noalias_allocators=[1, 3, {top}]" in repr(a)
+
+
+def test_msr_register_keeps_mode_defaults_true_and_round_trips():
+    A = strider.lift.AssumptionOptions
+    assert A().msr_register_keeps_mode is True
+    assert A.none().msr_register_keeps_mode is False
+    off = A(msr_register_keeps_mode=False)
+    assert off.msr_register_keeps_mode is False
+    assert "msr_register_keeps_mode=False" in repr(off)
+    assert eval(repr(off), {"AssumptionOptions": A}) == off
+    on = A.none(msr_register_keeps_mode=True)
+    assert on.msr_register_keeps_mode is True
+    assert (A.none() | on).msr_register_keeps_mode is True
+    assert A.none() != on
+
+
+def test_fp_rounding_mode_is_nearest_defaults_true_and_round_trips():
+    A = strider.lift.AssumptionOptions
+    assert A().fp_rounding_mode_is_nearest is True
+    assert A.none().fp_rounding_mode_is_nearest is False
+    off = A(fp_rounding_mode_is_nearest=False)
+    assert "fp_rounding_mode_is_nearest=False" in repr(off)
+    assert eval(repr(off), {"AssumptionOptions": A}) == off
+    on = A.none(fp_rounding_mode_is_nearest=True)
+    assert (A.none() | on).fp_rounding_mode_is_nearest is True
+    assert A.none() != on
+
+
+#: cvtsd2si eax, xmm0; ret: rounds by MXCSR.RC, which only the claim fixes.
+_CVTSD2SI = b"\xf2\x0f\x2d\xc0\xc3"
+
+
+@pytest.mark.parametrize("nearest", [True, False])
+def test_fp_rounding_mode_is_nearest_reaches_the_lift(nearest):
+    arch = strider.sleigh.SleighArch.x86_64()
+    lift = strider.lift.lifter(arch, strider.reader.BufferReader(0x1000, _CVTSD2SI))
+    claims = strider.lift.AssumptionOptions(fp_rounding_mode_is_nearest=nearest)
+    cfg, function, unresolved = lift.analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(assumptions=claims),
+    )
+    assert function.assumptions.fp_rounding_mode_is_nearest is nearest
+    mxcsr = arch.reg("MXCSR")
+    assert mxcsr is not None
+    reads = function.find_all(strider.pattern.initial_var_for(mxcsr))
+    assert bool(reads) is not nearest
+
+
+#: msr cpsr_c, r0; bx lr: the mode comes from an argument, so only the claim
+#: keeps lr from re-banking.
+_ARM_ARG_MODE_RESTORE = b"".join(
+    w.to_bytes(4, "little") for w in (0xE121F000, 0xE12FFF1E)
+)
+
+
+@pytest.mark.parametrize("keeps", [True, False])
+def test_msr_register_keeps_mode_reaches_the_lift(keeps):
+    arch = strider.sleigh.SleighArch.arm()
+    lift = strider.lift.lifter(
+        arch, strider.reader.BufferReader(0x1000, _ARM_ARG_MODE_RESTORE)
+    )
+    claims = strider.lift.AssumptionOptions(msr_register_keeps_mode=keeps)
+    cfg, function, unresolved = lift.analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.arm_aapcs(),
+        strider.lift.LifterOptions(assumptions=claims),
+    )
+    assert function.assumptions.msr_register_keeps_mode is keeps
+    assert unresolved == ([] if keeps else [0x1004])
+
+
+@pytest.mark.parametrize("seq", [b"ab", bytearray(b"ab")])
+def test_bytes_is_no_list_of_ints(seq):
+    """PyO3 would read `bytes` as the list of its byte values."""
+    with pytest.raises(TypeError):
+        strider.cfg.CfgOptions(known_targets={0x1000: seq})
+    with pytest.raises(TypeError):
+        strider.pattern.int_const(seq)
+    with pytest.raises(TypeError):
+        strider.pattern.int_const_any_width(seq)
+    with pytest.raises(TypeError):
+        strider.cfg.CfgOptions(no_return_targets=seq)
+    with pytest.raises(TypeError):
+        strider.lift.AssumptionOptions(noalias_allocators=seq)

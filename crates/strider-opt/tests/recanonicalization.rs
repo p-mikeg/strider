@@ -22,20 +22,19 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
         .build_fn_single_region()
         .unwrap();
     let a = b.read_variable(&a_vn).unwrap();
-    let c1 = b.build_int_const(1u64, ValueType::I64).unwrap();
-    let c2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let c1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+    let c2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     let add1 = b
-        .build_int_binary_operation(a, c1, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(a, c1, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     let add2 = b
-        .build_int_binary_operation(a, c2, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(a, c2, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     // Keeps BOTH twins reachable from entry.
     let add3 = b
-        .build_int_binary_operation(add1, add2, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(add1, add2, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(add3), &[]).unwrap();
-    b.set_lift_addr(None);
     let mut fg = b.build().unwrap();
 
     let add1_node = fg.producer(add1);
@@ -49,7 +48,7 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
     {
         let mut ef = EditFunction::new(&mut fg);
         // add2 becomes Add(a, c1), a twin of add1.
-        ef.replace_all_uses(c2, c1).unwrap();
+        ef.replace_value(c2, c1);
         ef.clean(); // merges the twin
     }
 
@@ -81,19 +80,26 @@ fn clean_does_not_merge_when_output_type_differs() {
     let a = b.read_variable(&a_vn).unwrap();
     let bb = b.read_variable(&b_vn).unwrap();
     // Initially distinct inputs: Truncate(a):I32 and Truncate(bb):I16.
-    let t32 = b.truncate_if_needed(a, ValueType::I32).unwrap();
-    let t16 = b.truncate_if_needed(bb, ValueType::I16).unwrap();
+    let t32 = b.truncate_if_needed(a, ValueType::int(32)).unwrap();
+    let t16 = b.truncate_if_needed(bb, ValueType::int(16)).unwrap();
     let w32 = b
-        .extend_if_needed(t32, ValueType::I64, strider_ir::node::ExtendOp::ZeroExtend)
+        .extend_if_needed(
+            t32,
+            ValueType::int(64),
+            strider_ir::node::ExtendOp::ZeroExtend,
+        )
         .unwrap();
     let w16 = b
-        .extend_if_needed(t16, ValueType::I64, strider_ir::node::ExtendOp::ZeroExtend)
+        .extend_if_needed(
+            t16,
+            ValueType::int(64),
+            strider_ir::node::ExtendOp::ZeroExtend,
+        )
         .unwrap();
     let sum = b
-        .build_int_binary_operation(w32, w16, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(w32, w16, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
-    b.set_lift_addr(None);
     let mut fg = b.build().unwrap();
 
     let t32_node = fg.producer(t32);
@@ -109,7 +115,7 @@ fn clean_does_not_merge_when_output_type_differs() {
         let mut ef = EditFunction::new(&mut fg);
         // t16 becomes Truncate(a):I16: same input as t32 but a different
         // output width, so canonicalization must keep them separate.
-        ef.replace_all_uses(bb, a).unwrap();
+        ef.replace_value(bb, a);
         ef.clean();
     }
 
@@ -120,13 +126,27 @@ fn clean_does_not_merge_when_output_type_differs() {
     assert_eq!(truncs(&fg), 2, "both truncs survive");
 }
 
+/// Pins the order the passes' preconditions need (`FlagCmpCanonicalize` after
+/// `ConstantFold` and before `IfCondInversion`, `LoadForward` after
+/// `PhiCollapse`): a reorder still converges, on a less canonical shape.
 #[test]
-fn default_pipeline_has_ten_inloop_passes() {
+fn default_pipeline_runs_its_passes_in_the_documented_order() {
     let p = strider_opt::default_pipeline();
+    let main: Vec<&str> = p.passes().iter().map(|pass| pass.name()).collect();
     assert_eq!(
-        p.passes().len(),
-        10,
-        "DedupNodes removed -> 10 in-loop passes"
+        main,
+        [
+            "ConstantFold",
+            "LoadReadOnly",
+            "KnownBits",
+            "FlagCmpCanonicalize",
+            "IfCondInversion",
+            "PhiCollapse",
+            "RegionCollapse",
+            "DeadBranchElimination",
+            "LoadForward",
+        ]
     );
-    assert_eq!(p.post_passes().len(), 3);
+    let post: Vec<&str> = p.post_passes().iter().map(|pass| pass.name()).collect();
+    assert_eq!(post, ["CallStackArgCollect", "FunctionArgDetect"]);
 }

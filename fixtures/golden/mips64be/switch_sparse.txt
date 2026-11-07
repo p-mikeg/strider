@@ -1,0 +1,181 @@
+# mips64be/switch_sparse: Strider::analyze, default options
+endian big
+default_cc arg_passing_regs=[a0, a1, a2, a3, t0, t1, t2, t3] arg_passing_regs_float=[f12, f13, f14, f15, f16, f17, f18, f19] callee_saved_regs=[s0, s1, s2, s3, s4, s5, s6, s7, s8, gp, ra, f24, f25, f26, f27, f28, f29, f30, f31] ret_val_regs=[v0, v1] ret_val_regs_float=[f0, f2] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=ra preserves_memory=false preserves_all_registers=false entry_address_vn=t9 reg_args_adjoin_stack_args=true
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
+
+== main @0x120000860
+cfg
+  0x120000860 44 ops cbranch 0x120000908 -> [0x1200008bc, 0x120000908]
+  0x1200008bc 4 ops cbranch 0x120000930 -> [0x1200008c8, 0x120000930]
+  0x1200008c8 3 ops cbranch 0x1200008dc -> [0x1200008d0, 0x1200008dc]
+  0x1200008d0 5 ops cbranch 0x1200008dc -> [0x1200008d8.2, 0x1200008dc]
+  0x1200008d8.2 1 ops goto -> [0x1200008dc]
+  0x1200008dc 13 ops cbranch 0x120000920 -> [0x1200008f0, 0x120000920]
+  0x1200008f0 13 ops cbranch 0x1200008bc -> [0x1200008bc, 0x120000908]
+  0x120000908 15 ops cbranch 0x1200008f0 -> [0x1200008f0, 0x120000920]
+  0x120000920 12 ops return -> []
+  0x120000930 2 ops cbranch 0x120000940 -> [0x120000938, 0x120000940]
+  0x120000938 3 ops goto -> [0x1200008dc]
+  0x120000940 2 ops goto -> [0x1200008dc]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t4, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x3400:1, u:0x8100:4, u:0xbe00:1, u:0x1a900:1]
+%v0:ctrl = entry
+%v1:i64 = iconst[0x3]
+%v2:i64 = iconst[0x1]
+%v3:mem = initial_memory
+%v4:i64 = iconst[0xffffffffffffffe0]
+%v5:i64 = int.add %v65, %v4
+%v6:i32 = iconst[0x3]
+%v7:mem = store[r] %v3, %v5, %v6
+%v8:i64 = iconst[0xffffffffffffffe4]
+%v9:i64 = int.add %v65, %v8
+%v10:i32 = iconst[0x11]
+%v11:mem = store[r] %v7, %v9, %v10
+%v12:i64 = iconst[0xffffffffffffffe8]
+%v13:i64 = int.add %v65, %v12
+%v14:i32 = iconst[0x2a]
+%v15:mem = store[r] %v11, %v13, %v14
+%v16:i64 = iconst[0xffffffffffffffec]
+%v17:i64 = int.add %v65, %v16
+%v18:i32 = iconst[0x3e8]
+%v19:mem = store[r] %v15, %v17, %v18
+%v20:i64 = iconst[0xfffffffffffffff0]
+%v21:i64 = int.add %v65, %v20
+%v22:i32 = iconst[0x5]
+%v23:mem = store[r] %v19, %v21, %v22
+%v24:i32 = iconst[0x0]
+%v25:mem = store[r] %v23, %v67, %v24
+%v26:i64 = iconst[0x0]
+
+%v27:ctrl, %v28:token = region %v0, %v83
+%v29:i64<v0> = phi %v28, %v1, %v79
+%v30:i64<v1> = phi %v28, %v2, %v89
+%v31:i64<a0> = phi %v28, %v26, %v77
+%v32:i64<a1> = phi %v28, %v2, %v89
+%v33:mem = memphi %v28, %v25, %v75
+%v34:i64<a2> = phi %v28, %v9, %v85
+%v35:i64 = iconst[0x2b]
+%v36:i1 = icmp.sless %v29, %v35
+%v37:ctrl, %v38:ctrl = if %v27, %v36
+%v39:i1 = icmp.equal %v29, %v1
+%v40:ctrl, %v41:ctrl = if %v37, %v39
+%v42:i64 = iconst[0x11]
+%v43:i1 = icmp.equal %v29, %v42
+%v44:ctrl, %v45:ctrl = if %v41, %v43
+%v46:i32 = truncate %v31
+%v47:i32 = iconst[0x2]
+%v48:i32 = int.add %v46, %v47
+%v49:i64 = extend.sign %v48
+%v50:i64 = iconst[0xffffffffffffffff]
+%v51:i64 = iconst[0x3e8]
+%v52:i1 = icmp.equal %v29, %v51
+%v53:ctrl, %v54:ctrl = if %v38, %v52
+%v55:i32 = iconst[0x4]
+%v56:i32 = int.add %v46, %v55
+%v57:i64 = extend.sign %v56
+
+%v58:ctrl, %v59:token = region %v40, %v44, %v45, %v53, %v54
+%v60:i64<v1> = phi %v59, %v30, %v49, %v50, %v57, %v50
+%v61:i64 = iconst[0x5]
+%v62:i1 = icmp.equal %v61, %v32
+%v63:ctrl, %v64:ctrl = if %v58, %v62
+%v65:i64 = initial_var[sp]
+%v66:i64 = iconst[0xfffffffffffffff4]
+%v67:i64 = int.add %v65, %v66
+%v68:i32 = load[r] %v33, %v67
+%v69:i32 = truncate %v60
+%v70:i32 = int.add %v68, %v69
+%v71:mem = store[r] %v33, %v67, %v70
+%v72:i64 = extend.sign %v70
+
+%v73:ctrl, %v74:token = region %v64, %v92
+%v75:mem = memphi %v74, %v71, %v96
+%v76:i64<a2> = phi %v74, %v34, %v85
+%v77:i64<a1> = phi %v74, %v32, %v89
+%v78:i32 = load[r] %v75, %v76
+%v79:i64 = extend.sign %v78
+%v80:i64 = iconst[0x2a]
+%v81:i1 = icmp.equal %v79, %v80
+%v82:ctrl, %v83:ctrl = if %v73, %v81
+%v84:i64 = iconst[0x4]
+%v85:i64 = int.add %v76, %v84
+%v86:i32 = truncate %v77
+%v87:i32 = iconst[0x1]
+%v88:i32 = int.add %v86, %v87
+%v89:i64 = extend.sign %v88
+%v90:i1 = icmp.equal %v61, %v89
+%v91:ctrl, %v92:ctrl = if %v82, %v90
+%v93:i32 = load[r] %v75, %v67
+%v94:i32 = int.add %v86, %v6
+%v95:i32 = int.add %v93, %v94
+%v96:mem = store[r] %v75, %v67, %v95
+%v97:i64 = extend.sign %v95
+
+%v98:ctrl, %v99:token = region %v63, %v91
+%v100:mem = memphi %v99, %v71, %v96
+%v101:i64<v1> = phi %v99, %v72, %v97
+%v102:i32 = load[r] %v100, %v67
+%v103:i64 = extend.sign %v102
+%v104:i64 = initial_var[f0]
+%v105:i64 = initial_var[f2]
+return %v98, %v100, %v103, %v101, %v104, %v105
+
+== sparse_dispatch @0x120000b30
+cfg
+  0x120000b30 3 ops cbranch 0x120000b88 -> [0x120000b3c, 0x120000b88]
+  0x120000b3c 5 ops cbranch 0x120000b60 -> [0x120000b48, 0x120000b60]
+  0x120000b48 3 ops cbranch 0x120000b80 -> [0x120000b50, 0x120000b80]
+  0x120000b50 10 ops cbranch 0x120000b58.8 -> [0x120000b58.7, 0x120000b58.8]
+  0x120000b58.7 1 ops goto -> [0x120000b58.8]
+  0x120000b58.8 1 ops return -> []
+  0x120000b60 3 ops cbranch 0x120000b78 -> [0x120000b6c, 0x120000b78]
+  0x120000b6c 8 ops return -> []
+  0x120000b78 7 ops return -> []
+  0x120000b80 8 ops return -> []
+  0x120000b88 8 ops return -> []
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x3400:1, u:0xbe00:1, u:0x1a900:1]
+arg 0 [%v1]
+arg 1 [%v7]
+%v0:ctrl = entry
+%v1:i64 = initial_var[a0]
+%v2:i64 = iconst[0x2a]
+%v3:i1 = icmp.equal %v1, %v2
+%v4:ctrl, %v5:ctrl = if %v0, %v3
+%v6:mem = initial_memory
+%v7:i64 = initial_var[a1]
+%v8:i32 = truncate %v7
+%v9:i32 = iconst[0x3]
+%v10:i32 = int.add %v8, %v9
+%v11:i64 = extend.sign %v10
+%v12:i64 = initial_var[v1]
+%v13:i64 = initial_var[f0]
+%v14:i64 = initial_var[f2]
+return %v4, %v6, %v11, %v12, %v13, %v14
+%v15:i64 = iconst[0x2b]
+%v16:i1 = icmp.sless %v1, %v15
+%v17:ctrl, %v18:ctrl = if %v5, %v16
+%v19:i64 = iconst[0x3]
+%v20:i1 = icmp.equal %v1, %v19
+%v21:ctrl, %v22:ctrl = if %v17, %v20
+%v23:i32 = iconst[0x1]
+%v24:i32 = int.add %v8, %v23
+%v25:i64 = extend.sign %v24
+return %v21, %v6, %v25, %v12, %v13, %v14
+%v26:i64 = iconst[0x11]
+%v27:i1 = icmp.equal %v1, %v26
+%v28:ctrl, %v29:ctrl = if %v22, %v27
+%v30:i32 = iconst[0x2]
+%v31:i32 = int.add %v8, %v30
+%v32:i64 = extend.sign %v31
+
+%v33:ctrl, %v34:token = region %v28, %v29
+%v35:i64<v0> = phi %v34, %v32, %v36
+%v36:i64 = iconst[0xffffffffffffffff]
+return %v33, %v6, %v35, %v36, %v13, %v14
+%v37:i64 = iconst[0x3e8]
+%v38:i1 = icmp.equal %v1, %v37
+%v39:ctrl, %v40:ctrl = if %v18, %v38
+%v41:i32 = iconst[0x4]
+%v42:i32 = int.add %v8, %v41
+%v43:i64 = extend.sign %v42
+return %v39, %v6, %v43, %v12, %v13, %v14
+return %v40, %v6, %v36, %v12, %v13, %v14

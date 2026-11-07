@@ -3,16 +3,37 @@ use smallvec::SmallVec;
 
 use super::FunctionBuilder;
 use crate::IRViewer;
-use crate::builder::IRBuilderExt;
-use crate::error::Result;
+use crate::Result;
+use crate::builder::checks::{require_value_kind, validate_value_inputs};
+use crate::builder::{IRBuilder, IRBuilderExt};
 use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, VnTypeExt};
 
-use super::require_reg_or_unique;
+/// Errors unless `vn` is in REGISTER or UNIQUE space.
+fn require_reg_or_unique(vn: &rsleigh::Vn) -> Result<()> {
+    match vn.addr_space {
+        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
+        space => Err(anyhow!(
+            "call-class varnode {} is in space `{}`; only register and unique space can carry one",
+            crate::function::vn_str(vn),
+            crate::function::space_str(space),
+        )),
+    }
+}
+
+/// REGISTER / UNIQUE space, no duplicates. Does not check containers.
+fn validate_call_output_vns(output_vns: &[rsleigh::Vn]) -> Result<()> {
+    for (i, vn) in output_vns.iter().enumerate() {
+        require_reg_or_unique(vn)?;
+        if output_vns[..i].contains(vn) {
+            return Err(anyhow!("duplicate call output varnode {vn:?}"));
+        }
+    }
+    Ok(())
+}
 
 impl FunctionBuilder {
-    /// Outputs are `[Control, Memory]` then one `Typed` slot per output vn,
-    /// each tagged with its varnode. `inputs` must already be fully
-    /// assembled; the caller does all control/memory advancing.
+    /// Outputs `[Control, Memory]` then one value per output vn, tagged with
+    /// it. The caller advances control and memory.
     fn emit_call_node(
         &mut self,
         kind: NodeKind,
@@ -26,18 +47,17 @@ impl FunctionBuilder {
             output_kinds.push(ValueKind::Typed(vn.int_type()?));
         }
         let node = self.create_node(kind, inputs, output_kinds);
+        let head = kind.output_head_len();
         let outputs: Vec<ValueId> = self.function().node_outputs(node).to_vec();
 
-        for (value, vn) in core::iter::zip(&outputs[2..], output_vns) {
+        for (value, vn) in core::iter::zip(&outputs[head..], output_vns) {
             self.function_mut().set_vn_for_value(*value, *vn);
         }
         Ok((node, outputs))
     }
 
-    /// `output_vns` is ret-vals then clobbers; the returned values come back
-    /// in that same order. Writeback is the caller's job.
-    ///
-    /// Advances both control and memory, then rebinds SP to
+    /// `output_vns` is ret-vals then clobbers, returned in that order for the
+    /// caller to write back. Advances control and memory, then rebinds SP to
     /// `pre_call_SP + ret_stack_pop`.
     pub fn build_call(
         &mut self,
@@ -46,16 +66,15 @@ impl FunctionBuilder {
         output_vns: &[rsleigh::Vn],
         ret_stack_pop: i64,
     ) -> Result<(NodeId, Vec<ValueId>)> {
-        self.require_value_kind(call_address)?;
-        self.validate_value_inputs(args)?;
-        self.validate_call_output_vns(output_vns)?;
+        require_value_kind(self.function(), call_address)?;
+        validate_value_inputs(self.function(), args)?;
+        validate_call_output_vns(output_vns)?;
 
-        let sp_vn = self.function.stack_vn();
+        let sp_vn = self.function.default_cc().stack_ptr;
         let sp_value = self.read_variable(&sp_vn)?;
         // A callee can read a register its convention neither passes nor
-        // preserves (i386 `regparm`, a static chain, AArch64's indirect-result
-        // register), and the call node carries no such value.  A Sleigh
-        // temporary and an sla-internal register are scratch no callee sees.
+        // preserves (i386 `regparm`, a static chain); temporaries and
+        // sla-internal registers it cannot.
         let internal = &self.internal_registers;
         let reaches_callee = |vn: &&rsleigh::Vn| {
             vn.addr_space == rsleigh::VnSpace::REGISTER
@@ -73,12 +92,12 @@ impl FunctionBuilder {
         let inputs = [ctrl, memory, call_address, sp_value]
             .into_iter()
             .chain(args.iter().copied());
-        let (node, outputs) =
-            self.emit_call_node(NodeKind::Call { cc: None }, inputs, output_vns)?;
+        let kind = NodeKind::Call { cc: None };
+        let (node, outputs) = self.emit_call_node(kind, inputs, output_vns)?;
 
         // The region stays open.
-        self.advance_cur_region_ctrl(outputs[0])?;
-        self.advance_cur_region_memory(outputs[1])?;
+        self.advance_cur_region_ctrl(outputs[NodeKind::CTRL_OUT_SLOT])?;
+        self.advance_cur_region_memory(outputs[NodeKind::CTRL_MEM_OUT_SLOT])?;
 
         // A link-register ISA passes 0.
         if ret_stack_pop != 0 {
@@ -89,28 +108,12 @@ impl FunctionBuilder {
             self.write_variable(&sp_vn, adjusted)?;
         }
 
-        Ok((node, outputs[2..].to_vec()))
+        Ok((node, outputs[kind.output_head_len()..].to_vec()))
     }
 
-    /// Every varnode must be REGISTER / UNIQUE space, and none may appear
-    /// twice. Does NOT check that a vn is its own container.
-    fn validate_call_output_vns(&self, output_vns: &[rsleigh::Vn]) -> Result<()> {
-        for (i, vn) in output_vns.iter().enumerate() {
-            require_reg_or_unique(vn)?;
-            if output_vns[..i].contains(vn) {
-                return Err(anyhow!("duplicate call output varnode {vn:?}"));
-            }
-        }
-        Ok(())
-    }
-
-    /// Inputs are `[ctrl, mem]` then `args`: an intrinsic has no call target
-    /// and no SP anchor. Outputs are `[Control, Memory]`, then the optional
-    /// ret-val, then the clobbers, matching `output_vns` order.
-    ///
-    /// `terminate` closes the region here and ignores `advance_memory`;
-    /// otherwise control advances and the region stays open. The
-    /// caller stamps the user-op name and writes the outputs back.
+    /// Inputs `[ctrl, mem, args...]`; outputs `[Control, Memory]` then the
+    /// `output_vns`. `terminate` closes the region and ignores
+    /// `advance_memory`. The caller writes the outputs back.
     pub fn build_call_other(
         &mut self,
         user_op_id: u64,
@@ -119,37 +122,35 @@ impl FunctionBuilder {
         advance_memory: bool,
         terminate: bool,
     ) -> Result<(NodeId, Vec<ValueId>)> {
-        self.validate_call_output_vns(output_vns)?;
-        self.validate_value_inputs(args)?;
+        validate_call_output_vns(output_vns)?;
+        validate_value_inputs(self.function(), args)?;
 
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
         let inputs = [ctrl, memory].into_iter().chain(args.iter().copied());
-        let (node, outputs) =
-            self.emit_call_node(NodeKind::CallOther { user_op_id }, inputs, output_vns)?;
+        let kind = NodeKind::CallOther { user_op_id };
+        let (node, outputs) = self.emit_call_node(kind, inputs, output_vns)?;
 
-        // Sinking control into `Unreachable` leaves the memory edge dangling,
-        // so a terminating op advances neither: the region is closed and has no
-        // successor to read either edge. A memory-clobbering op that also never
-        // returns (a PowerPC `BUG()` trap) reaches exactly this.
+        // A terminating op (a PowerPC `BUG()` trap) ends in an `Unreachable`;
+        // the closed region's edges are never read.
         if terminate {
-            self.create_node(NodeKind::Unreachable, [outputs[0]], []);
-            self.terminate_cur_region().map(|_| ())?;
+            self.create_node(
+                NodeKind::Unreachable,
+                [outputs[NodeKind::CTRL_OUT_SLOT]],
+                [],
+            );
+            self.terminate_cur_region()?;
         } else {
-            self.advance_cur_region_ctrl(outputs[0])?;
+            self.advance_cur_region_ctrl(outputs[NodeKind::CTRL_OUT_SLOT])?;
             if advance_memory {
-                self.advance_cur_region_memory(outputs[1])?;
+                self.advance_cur_region_memory(outputs[NodeKind::CTRL_MEM_OUT_SLOT])?;
             }
         }
 
-        Ok((node, outputs[2..].to_vec()))
+        Ok((node, outputs[kind.output_head_len()..].to_vec()))
     }
 
-    /// Test-only: the CC-aware `Call` construction the lifter performs in
-    /// prod.
-    ///
-    /// # Errors
-    /// Propagates the variable reads and [`Self::build_call`] unchanged.
+    /// Test mirror of the lifter's CC-aware `Call` construction.
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_call_cc(
         &mut self,
@@ -162,26 +163,14 @@ impl FunctionBuilder {
         let (ret_val_vars, clobber_vars) = crate::cc_ret_and_clobber_vns(self.function(), cc);
 
         let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
-        // Float argument registers come from a register file the integer list
-        // never names, and are APPENDED so an integer argument keeps its slot.
-        // By ABI POSITION, truncated at the first untracked one, so float
-        // position `j` lands at `arg_vns.len() + j`; registers sharing a
-        // container (AAPCS-VFP `d0`/`d1` inside `q0`) each pass their own
-        // slice of it.
-        let float_arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc
-            .float_arg_slots(self.function().all_vns(), |v| {
-                vn_container::largest_container_in(self.function().all_vns(), v)
-            })
-            .into_iter()
-            .take_while(Option::is_some)
-            .flatten()
-            .collect();
+        // Float argument registers are appended (float position `j` at
+        // `arg_vns.len() + j`), truncated at the first untracked one; registers
+        // sharing a container (`d0`/`d1` in `q0`) each pass their own slice.
+        let float_arg_vns = cc.float_arg_prefix(self.function().all_vns(), |v| {
+            vn_container::largest_container_in(self.function().all_vns(), v)
+        });
         let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
-        for vn in &arg_vns {
-            let c = vn_container::largest_container_in(self.function().all_vns(), vn);
-            arg_passing.push(self.read_variable(&c)?);
-        }
-        for vn in &float_arg_vns {
+        for vn in arg_vns.iter().chain(&float_arg_vns) {
             let v = self.read_arg_slice(vn)?;
             arg_passing.push(v);
         }
@@ -205,22 +194,19 @@ impl FunctionBuilder {
         Ok(call)
     }
 
-    /// The lifter's sub-register read: shift the slice out of its container
-    /// and truncate. Register endianness, which differs from the data
-    /// endianness only on ARM BE8, is not reachable through a mock convention.
+    /// Test mirror of the lifter's sub-register read: shift out of the container, truncate.
     #[cfg(any(test, feature = "test-util"))]
     fn read_arg_slice(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let container = vn_container::largest_container_in(self.function().all_vns(), vn);
         if container == *vn {
             return self.read_variable(&container);
         }
-        let offset_bytes = vn.addr_off - container.addr_off;
-        let shift_bits = 8 * match self.function().endianness() {
-            strider_target::Endianness::Little => offset_bytes,
-            strider_target::Endianness::Big => {
-                u64::from(container.size) - u64::from(vn.size) - offset_bytes
-            }
-        };
+        let shift_bits = self
+            .function()
+            .byte_order()
+            .register
+            .slice_shift_bits(vn, &container)
+            .ok_or_else(|| anyhow!("{vn:?} is not inside {container:?}"))?;
         let container_ty = container.int_type()?;
         let whole = self.read_variable(&container)?;
         let shifted =
@@ -228,8 +214,8 @@ impl FunctionBuilder {
         self.truncate_if_needed(shifted, vn.int_type()?)
     }
 
-    /// Test-only: terminates the region with a `Return` reading exactly the
-    /// convention's return-value registers.
+    /// Terminates the region with a `Return` of the convention's return
+    /// registers.
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_function_return(&mut self) -> Result<()> {
         let ret_vars: SmallVec<[rsleigh::Vn; 4]> =

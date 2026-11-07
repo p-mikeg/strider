@@ -1,131 +1,139 @@
-//! For each `Call`, walks the memory-SSA chain to find the `Store` supplying
-//! each positional stack-arg slot and appends the stored data as extra Call
-//! inputs.
-
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 
-use crate::error::Result;
-use crate::mem_analysis::{ArgStoreScan, MemAnalyzer, MemExpr, MemOptions, SlotReach};
-use crate::pipeline::PostOptimizer;
+use crate::Result;
+use crate::mem_analysis::{ArgPrefix, MemQuery, merged_slots};
+use crate::pipeline::Optimizer;
 
 #[cfg(test)]
 mod tests;
 
-/// The contiguous prefix of stack-arg slots `0..k`, stopping at the first slot
-/// with no anchored store.  Offsets are relative to the CALL-TIME SP, and a
-/// store wider than one slot is ONE argument spanning several slots.
+/// The contiguous prefix of stack-arg slots the call's [`ArgPrefix`] anchors,
+/// stopping at the first slot no whole store of its own reaches. A store
+/// wider than one slot is one argument.
 ///
-/// The prefix over-collects: once lowered to memory, argument pushes are
-/// indistinguishable from incidental in-window stack writes, so every plausible
-/// store is collected.  A `Call` on the chain ends collection, since the callee
-/// may overwrite the frame.
-///
-/// The window is open above: `k` is discovered, not given, so the scan probes
-/// every slot from the first one upward.
+/// A slot holding the entry value of a register the function's own convention
+/// preserves (a prologue save) ends it, as does a `Call` on the chain. Slots
+/// past the prefix that every arm of a non-loop `MemPhi` stores whole continue
+/// it as a `Phi` of the stored values, and past those a slot stored whole
+/// before the branch continues it as its value.
 fn collect_stack_args(
-    function: &strider_ir::Function,
+    edit: &mut crate::EditFunction<'_>,
     call_id: NodeId,
-    stack_args: strider_target::StackArgs,
-    alias_cfg: &MemAnalyzer,
+    increment: i128,
+    query: &MemQuery,
+    saved: &[ValueId],
 ) -> Vec<ValueId> {
-    // Call inputs are [control, memory, target, sp, ...args].
-    let inputs = function.node_inputs(call_id);
-    let mem_value = function
-        .memory_input_of(call_id)
-        .expect("Call carries a memory input (slot 1)");
-    let sp_value = inputs[3];
-
-    // A slot's entry-relative probe offset is `call_sp_off + offset_of(slot)`.
-    // The probes below are stack-rooted, so a base in any other region is not
-    // a coordinate system they share.
-    let Some(MemExpr {
-        base,
-        offset: call_sp_off,
-        kind: crate::mem_analysis::MemKind::Stack,
-    }) = alias_cfg.decompose(function, sp_value)
-    else {
+    let function = edit.function();
+    let Some(prefix) = ArgPrefix::scan(function, query, call_id) else {
         return Vec::new();
     };
-
-    // A probe past the `i128` carrier names no slot.
-    let Some(first_off) = call_sp_off.checked_add(stack_args.offset_of(0)) else {
-        return Vec::new();
-    };
-    let mut scan = ArgStoreScan::new(
-        alias_cfg,
-        alias_cfg.options().clone(),
-        mem_value,
-        base,
-        first_off,
-        i128::MAX,
-    );
-    let mut args = Vec::new();
-    let mut cursor = 0usize;
-    loop {
-        let Some(slot_off) = call_sp_off.checked_add(stack_args.offset_of(cursor)) else {
-            break;
+    let big_endian = function.byte_order().data == strider_target::Endianness::Big;
+    // An anchor a nearer store patched in part holds no one value to collect,
+    // and a store inside the slot is its argument only right-justified on
+    // big-endian.
+    let mut args: Vec<ValueId> = prefix
+        .slots()
+        .iter()
+        .map_while(|slot| {
+            let data = slot.store.data(function);
+            (slot.whole
+                && !saved.contains(&data)
+                && (slot.span == slot.store.size(function)
+                    || (big_endian && slot.span == increment)))
+                .then_some(data)
+        })
+        .collect();
+    if args.len() < prefix.slots().len() {
+        return args;
+    }
+    for (mem_phi, stores) in merged_slots(function, query, call_id, &prefix) {
+        let function = edit.function();
+        let data: Vec<ValueId> = stores.iter().map(|hit| hit.data(function)).collect();
+        let Some(mem_phi) = mem_phi else {
+            if saved.contains(&data[0]) {
+                break;
+            }
+            args.push(data[0]);
+            continue;
         };
-        // A slot reached by anything but a whole store of its own ends the
-        // prefix: a covering store anchored earlier means the slot was never
-        // written as a slot, a def the scan cannot see through leaves nothing
-        // to collect, and an anchor a nearer store patched in part holds no
-        // one value to collect.
-        let SlotReach::Anchored { store, whole: true } = scan.reach_at(function, slot_off) else {
-            break;
+        let region = function.phi_region(mem_phi);
+        // A loop header's arms are a local's iterations, not one call's paths.
+        let header = {
+            let doms = edit.control_dominator_tree();
+            function
+                .node_inputs(region)
+                .into_iter()
+                .any(|edge| doms.dominates(region, function.producer(edge)))
         };
-        args.push(store.data(function));
-        cursor += stack_args.slots_spanned(store.size(function));
+        if header || data.iter().any(|v| saved.contains(v)) {
+            break;
+        }
+        let ty = function.value_type(data[0]).expect("store data is typed");
+        let token = function.node_inputs(mem_phi)[NodeKind::PHI_TOKEN_SLOT];
+        let phi = edit.create_node(
+            NodeKind::Phi,
+            std::iter::once(token).chain(data),
+            [ValueKind::Typed(ty)],
+        );
+        args.push(edit.function().node_outputs(phi)[0]);
     }
     args
 }
 
-/// The inputs a `Call` carries before any collection: `[control, memory,
-/// target, sp]` plus one per register-passed argument, integer then float, the
-/// layout the lifter builds.  Re-derived per run rather than remembered, so a
-/// second run over the same `Function` replaces the first run's tail instead of
-/// appending a duplicate of it.
+/// The entry values of the registers the function's own convention preserves.
+fn callee_saved_entry_values(function: &strider_ir::Function) -> Vec<ValueId> {
+    let tracked = function.all_vns();
+    function
+        .default_cc()
+        .callee_saved_regs
+        .iter()
+        .filter_map(|r| function.initial_var_value(&vn_container::largest_container_in(tracked, r)))
+        .collect()
+}
+
+/// The inputs a `Call` carries before any collection: the head plus one per
+/// register-passed argument, integer then float. A second run truncates to it.
 fn register_arity(
     function: &strider_ir::Function,
     cc: &strider_target::BuiltCallingConvention,
 ) -> usize {
-    const FIXED_INPUTS: usize = 4;
     let tracked = function.all_vns();
-    // A `None` slot means the function was not lifted against this convention;
-    // the lifter passes the prefix before the first one, so nothing after it is
-    // an input either.
     let float_args = cc
-        .float_arg_slots(tracked, |v| vn_container::largest_container_in(tracked, v))
-        .into_iter()
-        .take_while(Option::is_some)
-        .count();
-    FIXED_INPUTS + cc.arg_passing_regs.len() + float_args
+        .float_arg_prefix(tracked, |v| vn_container::largest_container_in(tracked, v))
+        .len();
+    NodeKind::Call { cc: None }.input_head_len() + cc.arg_passing_regs.len() + float_args
 }
 
-/// Wires positional stack args into each `Call`.  A per-`Call` CC override
-/// wins over the convention default.
-#[derive(Clone)]
+/// Wires positional stack args into each `Call`. A per-`Call` CC override wins
+/// over the convention default; a CC without `stack_args` collects none.
+/// Collection stops at the first unwritten slot, so arguments past a gap (an
+/// alignment hole, a ppc64 slot whose FP argument travels in an FPR) are
+/// missed, and a tail call whose leading arguments are the caller's own, left
+/// in place, collects none. Other writes to the slots past the last argument
+/// are collected too: a local, an alignment push (x86-64 clang's `push rax`,
+/// Thumb gcc's `push {r3, lr}`), or o32's `gp` save just above the outgoing
+/// arguments (`sp+16` when there are none), which the IR cannot tell from an
+/// argument without the call-time `gp`.
 pub struct CallStackArgCollect;
 
-impl PostOptimizer for CallStackArgCollect {
+impl Optimizer for CallStackArgCollect {
+    fn is_post_pass(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut crate::OptCtx<'_>,
+        _opt_ctx: &crate::OptCtx<'_>,
     ) -> Result<()> {
-        let assumptions = &opt_ctx.options.assumptions;
-        // The owned `Vec` lets the immutable borrow end before the mutation loop
-        // takes `edit` mutably.
         let calls: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Call { .. }))
             .collect();
-        let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(
-            assumptions.stack_global_disjoint,
-            &assumptions.noalias_allocators,
-        ));
-        // `float_arg_slots` scans the tracked set per float register, so the
-        // unoverridden calls share one scan.
+        let query = MemQuery::default();
+        // Shared by every call without an override.
         let default_arity = register_arity(edit.function(), edit.function().default_cc());
+        let saved = callee_saved_entry_values(edit.function());
         for call_id in calls {
             let (stack_args, arity) = {
                 let function = edit.function();
@@ -133,8 +141,6 @@ impl PostOptimizer for CallStackArgCollect {
                 let Some(stack_args) = cc.stack_args else {
                     continue;
                 };
-                // `get_cc` hands back the default itself when the call carries
-                // no override.
                 let arity = if std::ptr::eq(cc, function.default_cc()) {
                     default_arity
                 } else {
@@ -142,10 +148,10 @@ impl PostOptimizer for CallStackArgCollect {
                 };
                 (stack_args, arity)
             };
-            let args = collect_stack_args(edit.function(), call_id, stack_args, &alias_cfg);
+            let args = collect_stack_args(edit, call_id, stack_args.increment, &query, &saved);
             edit.truncate_node_inputs(call_id, arity);
             for arg_value in &args {
-                edit.add_node_input(call_id, *arg_value)?;
+                edit.add_node_input(call_id, *arg_value);
             }
         }
         Ok(())

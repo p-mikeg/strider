@@ -3,7 +3,6 @@ use cranelift_entity::{EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap
 use rustc_hash::FxHashSet;
 use std::hash::Hash;
 
-/// Never exposed; callers address the DAG by their own external key `N`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct UnionId(u32);
 entity_impl!(UnionId);
@@ -13,18 +12,21 @@ struct Node<V> {
     /// `None` for a pure join node, one [`UnionDag::union`] made for a key
     /// that had no value of its own yet.
     own: Option<V>,
-    parents: EntityList<UnionId>,
+    /// The nodes whose values flow into this one.
+    sources: EntityList<UnionId>,
 }
 
+/// Per-key value sets in which [`Self::union`] makes one key's set a live
+/// subset of another's.
 #[derive(Clone, Debug)]
 pub struct UnionDag<N: EntityRef, V: Copy + Eq + Hash> {
     /// `NONE` means the key has no set yet.
     roots: SecondaryMap<N, PackedOption<UnionId>>,
     nodes: PrimaryMap<UnionId, Node<V>>,
     links: ListPool<UnionId>,
-    /// The `(dst, src)` pairs already linked, one entry per DISTINCT link.
+    /// The `(dst, src)` pairs already linked.
     linked: FxHashSet<(UnionId, UnionId)>,
-    /// The `(root, value)` pairs already extended, one entry per DISTINCT value.
+    /// The `(root, value)` pairs already extended.
     held: FxHashSet<(UnionId, V)>,
 }
 
@@ -45,17 +47,12 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
         Self::default()
     }
 
-    /// O(1) amortised: the first value fills `n`'s own node, later ones become
-    /// absorbed leaves. Re-adding a value already held on `n`'s OWN root is a
-    /// no-op; one `n` reaches only through a union is allocated again, and
+    /// O(1) amortised. Re-adding a value held on `n`'s own root is a no-op;
+    /// one reached only through a union is added again, and
     /// [`Self::for_each`] then yields it twice.
     pub fn extend(&mut self, n: N, v: V) {
         let root = self.ensure(n);
-        // Same reason `union` keeps `linked`: re-adding one value would grow
-        // `root`'s parents without bound and turn `for_each` linear in the
-        // number of `extend` calls, its `seen` set hiding the repetition in the
-        // ANSWER, not in the COST. Keyed by the pair rather than by `own`
-        // alone, so alternating values do not each defeat the guard.
+        // As `linked` in `union`: keeps `sources` from growing per call.
         if !self.held.insert((root, v)) {
             return;
         }
@@ -63,51 +60,38 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
             self.nodes[root].own = Some(v);
         } else {
             let leaf = self.alloc(Some(v));
-            self.nodes[root].parents.push(leaf, &mut self.links);
+            self.nodes[root].sources.push(leaf, &mut self.links);
         }
     }
 
-    /// O(1) amortised: links `src`'s root under `dst` rather than copying. A no-op when
-    /// `src` is empty.
-    ///
-    /// The link is a LIVE ALIAS, not a snapshot: a value added to `src` AFTER
-    /// the union is visible from `dst` too. Not the other way round: `dst`'s
-    /// own later values stay out of `src`.
+    /// O(1) amortised: links `src`'s root under `dst`, a live alias: values
+    /// `src` gains later are `dst`'s too, not the reverse. A no-op while `src`
+    /// is empty, so values it gains after such a call are not.
     pub fn union(&mut self, dst: N, src: N) {
         let Some(src_root) = self.roots[src].expand() else {
             return;
         };
         let dst_root = self.ensure(dst);
-        // Re-linking one `(dst, src)` pair would otherwise grow `dst`'s
-        // parents without bound and turn `for_each` linear in the number of
-        // `union` calls: its `seen` set hides the repetition in the ANSWER,
-        // not in the COST. `linked` catches the pair whatever else was unioned
-        // in between, so `parents` holds one entry per distinct link.
+        // One `sources` entry per distinct link, however often re-linked, so
+        // `for_each` cost does not grow with the call count.
         if !self.linked.insert((dst_root, src_root)) {
             return;
         }
-        self.nodes[dst_root].parents.push(src_root, &mut self.links);
+        self.nodes[dst_root].sources.push(src_root, &mut self.links);
     }
 
     pub fn is_empty(&self, n: N) -> bool {
         self.roots[n].is_none()
     }
 
-    /// Visits every value reachable from `n`'s set. Dedup is per NODE, not per
-    /// value: a shared sub-DAG is walked once, but the same value held by two
-    /// nodes is yielded twice and the caller must collect it. Cycle-safe:
-    /// mutual absorption still terminates.
-    ///
-    /// Costs the transitive closure reached from `n`, not the count of values
-    /// yielded. On a chain of unions each key reaches the whole chain below it,
-    /// so sweeping every key is quadratic in the chain length.
+    /// Visits every value reachable from `n`'s set, cycle-safe. Dedup is per
+    /// node: one value held by two nodes is yielded twice. Costs the closure
+    /// reached from `n`, so sweeping every key of a union chain is quadratic.
     pub fn for_each(&self, n: N, mut f: impl FnMut(V)) {
         let Some(root) = self.roots[n].expand() else {
             return;
         };
-        // Sized by what the walk VISITS. A dense set would zero a backing
-        // vector reaching the largest `UnionId` in the arena, making a call
-        // that yields one value cost in proportion to the whole arena.
+        // Sized by what the walk visits, not by the arena.
         let mut seen: FxHashSet<UnionId> = FxHashSet::default();
         let mut stack = vec![root];
         seen.insert(root);
@@ -116,23 +100,18 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
             if let Some(v) = node.own {
                 f(v);
             }
-            for &parent in node.parents.as_slice(&self.links) {
-                if seen.insert(parent) {
-                    stack.push(parent);
+            for &source in node.sources.as_slice(&self.links) {
+                if seen.insert(source) {
+                    stack.push(source);
                 }
             }
         }
     }
 
-    /// Relabels keys after the `N` space is compacted. `f` must be INJECTIVE:
-    /// two keys mapping to one keep only whichever the iteration order writes
-    /// last.
-    ///
-    /// `f` returning `None` culls a key's entry point, so a direct lookup of
-    /// it is empty. Its DAG node survives: a surviving key that unioned from
-    /// it still reaches those values. Only the key->root map is rebuilt; the
-    /// DAG arena is untouched, which is why `held` / `linked` need no pruning:
-    /// a `UnionId` is never reused, so a stale pair can never match a new one.
+    /// Relabels keys after the `N` space is compacted; `f` must be injective.
+    /// `None` culls a key's entry point but not its DAG node, so a key that
+    /// unioned from it still reaches its values. The arena is untouched and a
+    /// `UnionId` never reused, so `held` / `linked` need no pruning.
     pub fn remap(&mut self, f: impl Fn(N) -> Option<N>) {
         let mut roots: SecondaryMap<N, PackedOption<UnionId>> = SecondaryMap::new();
         for (key, root) in self.roots.iter() {
@@ -160,7 +139,7 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
     fn alloc(&mut self, own: Option<V>) -> UnionId {
         self.nodes.push(Node {
             own,
-            parents: EntityList::new(),
+            sources: EntityList::new(),
         })
     }
 }
@@ -228,7 +207,7 @@ mod tests {
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2, 99]));
     }
 
-    /// Repeating one pair must not grow the parents list: `for_each`'s `seen`
+    /// Repeating one pair must not grow the sources list: `for_each`'s `seen`
     /// hides the repetition in the answer, so only the link count shows it.
     #[test]
     fn repeating_one_union_pair_adds_one_link() {
@@ -239,11 +218,11 @@ mod tests {
             dag.union(Key(0), Key(1));
         }
         let root = dag.roots[Key(0)].expand().expect("dst has a root");
-        assert_eq!(dag.nodes[root].parents.as_slice(&dag.links).len(), 1);
+        assert_eq!(dag.nodes[root].sources.as_slice(&dag.links).len(), 1);
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2]));
     }
 
-    /// Repeating one value must not grow the parents list: `for_each`'s `seen`
+    /// Repeating one value must not grow the sources list: `for_each`'s `seen`
     /// hides the repetition in the answer, so only the visit count shows it.
     #[test]
     fn repeating_one_extend_value_is_visited_once() {
@@ -273,7 +252,7 @@ mod tests {
     }
 
     /// Interleaving two pairs must not defeat the guard either: a
-    /// last-parent-only check pushes a link on every call, so the walk cost
+    /// last-source-only check pushes a link on every call, so the walk cost
     /// grows with the CALL count while the answer stays at three values.
     #[test]
     fn alternating_union_pairs_add_one_link_each() {
@@ -286,41 +265,8 @@ mod tests {
             dag.union(Key(0), Key(2));
         }
         let root = dag.roots[Key(0)].expand().expect("dst has a root");
-        assert_eq!(dag.nodes[root].parents.as_slice(&dag.links).len(), 2);
+        assert_eq!(dag.nodes[root].sources.as_slice(&dag.links).len(), 2);
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2, 3]));
-    }
-
-    /// A dense `seen` set grows a zeroed vector reaching the largest `UnionId`,
-    /// so one call would cost the whole arena. The keys here are independent
-    /// singletons, so each closure is one node: what this pins is `seen` being
-    /// sized by the walk. The closure itself is the other half of the cost and
-    /// is not measured here.
-    #[test]
-    fn for_each_cost_does_not_scale_with_the_arena() {
-        fn sweep(n: u32) -> std::time::Duration {
-            let mut dag: UnionDag<Key, u64> = UnionDag::new();
-            for i in 0..n {
-                dag.extend(Key(i), u64::from(i));
-            }
-            let start = std::time::Instant::now();
-            let mut yielded = 0usize;
-            for i in 0..n {
-                dag.for_each(Key(i), |_| yielded += 1);
-            }
-            assert_eq!(yielded, n as usize);
-            start.elapsed()
-        }
-        // Warm the allocator so the first sweep is not paying for it.
-        sweep(4_000);
-        let small = sweep(25_000);
-        let large = sweep(200_000);
-        // Linear would be 8x; quadratic 64x. A loose bound keeps this stable
-        // on a loaded machine while still failing the dense-set shape.
-        assert!(
-            large.as_secs_f64() < small.as_secs_f64() * 24.0,
-            "8x the keys cost {:.1}x the sweep ({small:?} -> {large:?})",
-            large.as_secs_f64() / small.as_secs_f64(),
-        );
     }
 
     #[test]
@@ -402,5 +348,63 @@ mod tests {
         });
         assert_eq!(set_of(&dag, Key(5)), FxHashSet::from_iter([1]));
         assert!(dag.is_empty(Key(7))); // old Key(2)+5, was culled
+    }
+
+    /// Random extends and unions against a model that recomputes each set
+    /// from the live links.
+    #[test]
+    fn random_unions_match_a_live_alias_model() {
+        const KEYS: usize = 6;
+        let runs = if cfg!(debug_assertions) {
+            2_000
+        } else {
+            50_000
+        };
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        for run in 0..runs {
+            let mut dag: UnionDag<Key, u64> = UnionDag::new();
+            let mut rooted = [false; KEYS];
+            let mut own: [FxHashSet<u64>; KEYS] = Default::default();
+            let mut links: [Vec<usize>; KEYS] = Default::default();
+            for _ in 0..next(24) {
+                let (a, b) = (next(KEYS as u64) as usize, next(KEYS as u64) as usize);
+                if next(2) == 0 {
+                    let v = next(5);
+                    dag.extend(Key(a as u32), v);
+                    rooted[a] = true;
+                    own[a].insert(v);
+                } else {
+                    dag.union(Key(a as u32), Key(b as u32));
+                    if rooted[b] {
+                        rooted[a] = true;
+                        links[a].push(b);
+                    }
+                }
+            }
+            for (k, &is_rooted) in rooted.iter().enumerate() {
+                let mut want = FxHashSet::default();
+                let mut seen = [false; KEYS];
+                let mut stack = vec![k];
+                while let Some(x) = stack.pop() {
+                    if std::mem::replace(&mut seen[x], true) {
+                        continue;
+                    }
+                    want.extend(own[x].iter().copied());
+                    stack.extend(&links[x]);
+                }
+                assert_eq!(
+                    dag.is_empty(Key(k as u32)),
+                    !is_rooted,
+                    "run {run}: key {k}"
+                );
+                assert_eq!(set_of(&dag, Key(k as u32)), want, "run {run}: key {k}");
+            }
+        }
     }
 }

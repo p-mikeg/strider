@@ -17,8 +17,8 @@ use strider_target::{CallingConvention, SleighArch};
 /// Inputs are `[control, memory, target_value]`. The optional fourth
 /// ISA-mode input only appears on an interworking arch, which none of these
 /// x86_64 fixtures is, so exactly three is asserted.
-pub(crate) fn target_value_input(function: &Function) -> Option<strider_ir::Value> {
-    let mut found: Option<strider_ir::Value> = None;
+pub(crate) fn target_value_input(function: &Function) -> Option<strider_ir::node::ValueId> {
+    let mut found: Option<strider_ir::node::ValueId> = None;
     for nid in function.walk() {
         if !matches!(function.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
@@ -49,23 +49,20 @@ pub(crate) fn target_value_input(function: &Function) -> Option<strider_ir::Valu
 /// module has exactly one indirect branch.
 pub(crate) fn run_pipeline_x86_64(
     bytes: Vec<u8>,
-) -> (Function, strider_ir::Value, Option<rsleigh::Vn>) {
+) -> (Function, strider_ir::node::ValueId, Option<rsleigh::Vn>) {
     let base = 0x1000u64;
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh =
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
 
-    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
+    let mut strider = Lifter::new(arch, reader).expect("Lifter::new");
     let cc = CallingConvention::x86_64_systemv()
         .build(strider.sleigh_regs())
         .expect("build cc");
-    let lr_vn = cc.link_register_vn;
+    let lr_vn = cc.link_register;
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(base),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg build");
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
@@ -75,19 +72,16 @@ pub(crate) fn run_pipeline_x86_64(
     // PhiCollapse simplifies the trivial Return shape so the classifier
     // sees the producer-shape it expects.
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-    )
-    .expect("optimizer pipeline");
+    p.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("optimizer pipeline");
 
     assert_eq!(
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
         1,
         "fixture must have exactly one IR-level placeholder",
     );
     // Resolve the *current* target after the optimiser ran: the original
-    // recorded ValueId may be orphaned if any pass `replace_all_uses`-rewrote
+    // recorded ValueId may be orphaned if any pass `replace_value`-rewrote
     // the placeholder's input slot (e.g. ConstantFold folding an
     // IntBinaryOp into an IntConst).
     let target = target_value_input(&function)

@@ -11,9 +11,8 @@ macro_rules! eval_binary {
             FloatBinaryOp::Mul => l * r,
             FloatBinaryOp::Div => l / r,
         };
-        // IEEE 754 does not fix a NaN's quiet bit, payload or sign, so folding
-        // one would bake in this host's encoding instead of the target's.
-        // Non-NaN results are bit-portable under default rounding.
+        // A NaN's encoding is host-specific; non-NaN results are portable
+        // under default rounding.
         if result.is_nan() {
             None
         } else {
@@ -63,12 +62,9 @@ pub(crate) fn eval_float_binary(
     ty: ValueType,
 ) -> Option<u64> {
     match ty {
-        ValueType::F32 => eval_binary!(f32, op, bits_l as u32, bits_r as u32),
-        ValueType::F64 => eval_binary!(f64, op, bits_l, bits_r),
-        // Only f32 / f64 have host arithmetic, so F16 / F80 / F128 never fold;
-        // the rule skips and the node survives for pattern queries, which care
-        // about graph shape rather than values.
-        _ => None,
+        ValueType::Float(32) => eval_binary!(f32, op, bits_l as u32, bits_r as u32),
+        ValueType::Float(64) => eval_binary!(f64, op, bits_l, bits_r),
+        ValueType::Int(_) | ValueType::Float(_) => None,
     }
 }
 
@@ -79,17 +75,17 @@ pub(crate) fn eval_float_cmp(
     ty: ValueType,
 ) -> Option<bool> {
     match ty {
-        ValueType::F32 => Some(eval_cmp!(f32, op, bits_l as u32, bits_r as u32)),
-        ValueType::F64 => Some(eval_cmp!(f64, op, bits_l, bits_r)),
-        _ => None,
+        ValueType::Float(32) => Some(eval_cmp!(f32, op, bits_l as u32, bits_r as u32)),
+        ValueType::Float(64) => Some(eval_cmp!(f64, op, bits_l, bits_r)),
+        ValueType::Int(_) | ValueType::Float(_) => None,
     }
 }
 
 pub(crate) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: ValueType) -> Option<u64> {
     match ty {
-        ValueType::F32 => eval_unary!(f32, op, bits as u32),
-        ValueType::F64 => eval_unary!(f64, op, bits),
-        _ => None,
+        ValueType::Float(32) => eval_unary!(f32, op, bits as u32),
+        ValueType::Float(64) => eval_unary!(f64, op, bits),
+        ValueType::Int(_) | ValueType::Float(_) => None,
     }
 }
 
@@ -102,30 +98,26 @@ mod tests {
     #[test]
     fn eval_f80_binary_returns_none() {
         let zero = 0u64;
-        for op in [FloatBinaryOp::Add, FloatBinaryOp::Mul, FloatBinaryOp::Div] {
-            assert_eq!(eval_float_binary(op, zero, zero, ValueType::F80), None);
+        for op in FloatBinaryOp::ALL {
+            assert_eq!(
+                eval_float_binary(op, zero, zero, ValueType::float(80)),
+                None
+            );
         }
     }
 
     #[test]
     fn eval_f80_cmp_returns_none() {
         let zero = 0u64;
-        for op in [FloatCmpOp::Equal, FloatCmpOp::Less] {
-            assert_eq!(eval_float_cmp(op, zero, zero, ValueType::F80), None);
+        for op in FloatCmpOp::ALL {
+            assert_eq!(eval_float_cmp(op, zero, zero, ValueType::float(80)), None);
         }
     }
 
     #[test]
     fn eval_f80_unary_returns_none() {
-        for op in [
-            FloatUnaryOp::Neg,
-            FloatUnaryOp::Abs,
-            FloatUnaryOp::Sqrt,
-            FloatUnaryOp::Ceil,
-            FloatUnaryOp::Floor,
-            FloatUnaryOp::Round,
-        ] {
-            assert_eq!(eval_float_unary(op, 0, ValueType::F80), None);
+        for op in FloatUnaryOp::ALL {
+            assert_eq!(eval_float_unary(op, 0, ValueType::float(80)), None);
         }
     }
 
@@ -133,18 +125,23 @@ mod tests {
     fn eval_binary_withholds_nan_result() {
         let zero = 0.0f64.to_bits();
         assert_eq!(
-            eval_float_binary(FloatBinaryOp::Div, zero, zero, ValueType::F64),
+            eval_float_binary(FloatBinaryOp::Div, zero, zero, ValueType::float(64)),
             None
         );
         let inf = f64::INFINITY.to_bits();
         let neg_inf = (f64::NEG_INFINITY).to_bits();
         assert_eq!(
-            eval_float_binary(FloatBinaryOp::Add, inf, neg_inf, ValueType::F64),
+            eval_float_binary(FloatBinaryOp::Add, inf, neg_inf, ValueType::float(64)),
             None
         );
         let nan = f64::NAN.to_bits();
         assert_eq!(
-            eval_float_binary(FloatBinaryOp::Mul, nan, 2.0f64.to_bits(), ValueType::F64),
+            eval_float_binary(
+                FloatBinaryOp::Mul,
+                nan,
+                2.0f64.to_bits(),
+                ValueType::float(64)
+            ),
             None
         );
         // A non-NaN result still folds.
@@ -152,7 +149,7 @@ mod tests {
             FloatBinaryOp::Add,
             1.0f64.to_bits(),
             2.0f64.to_bits(),
-            ValueType::F64,
+            ValueType::float(64),
         );
         assert_eq!(three.map(f64::from_bits), Some(3.0));
         assert_eq!(
@@ -160,7 +157,7 @@ mod tests {
                 FloatBinaryOp::Div,
                 0.0f32.to_bits() as u64,
                 0.0f32.to_bits() as u64,
-                ValueType::F32
+                ValueType::float(32)
             ),
             None
         );
@@ -169,10 +166,14 @@ mod tests {
     #[test]
     fn eval_unary_withholds_nan_result() {
         assert_eq!(
-            eval_float_unary(FloatUnaryOp::Sqrt, (-1.0f64).to_bits(), ValueType::F64),
+            eval_float_unary(
+                FloatUnaryOp::Sqrt,
+                (-1.0f64).to_bits(),
+                ValueType::float(64)
+            ),
             None
         );
-        let two = eval_float_unary(FloatUnaryOp::Sqrt, 4.0f64.to_bits(), ValueType::F64);
+        let two = eval_float_unary(FloatUnaryOp::Sqrt, 4.0f64.to_bits(), ValueType::float(64));
         assert_eq!(two.map(f64::from_bits), Some(2.0));
     }
 
@@ -182,11 +183,16 @@ mod tests {
     fn eval_cmp_folds_nan_operands() {
         let nan = f64::NAN.to_bits();
         assert_eq!(
-            eval_float_cmp(FloatCmpOp::Equal, nan, nan, ValueType::F64),
+            eval_float_cmp(FloatCmpOp::Equal, nan, nan, ValueType::float(64)),
             Some(false)
         );
         assert_eq!(
-            eval_float_cmp(FloatCmpOp::Less, nan, 1.0f64.to_bits(), ValueType::F64),
+            eval_float_cmp(
+                FloatCmpOp::Less,
+                nan,
+                1.0f64.to_bits(),
+                ValueType::float(64)
+            ),
             Some(false)
         );
     }

@@ -1,4 +1,4 @@
-"""Bytes that hold no instruction are reported, never decoded or raised.
+"""Bytes that hold no instruction are reported incomplete, never decoded.
 
 A branch to a word Sleigh rejects keeps the rest of the function, and a
 literal pool after a call to an unmarked no-return function is data the ELF's
@@ -26,17 +26,15 @@ def test_analyze_reports_a_branch_to_an_undecodable_word() -> None:
     mem = strider.reader.BufferReader(BASE, PPC_BRANCH_TO_ABORT_WORD)
     lifter = strider.lift.lifter(strider.sleigh.SleighArch.ppc32be(), mem)
     opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(function_max_size=len(PPC_BRANCH_TO_ABORT_WORD))
+        cfg=strider.cfg.CfgOptions(function_max_size=len(PPC_BRANCH_TO_ABORT_WORD)),
     )
     result = lifter.analyze(BASE, strider.sleigh.CallingConvention.powerpc_sysv32(), opts)
-    assert result.cfg.undecodable_branch_targets() == [BASE + 8]
-    assert not result.cfg.is_complete()
+    assert [a for a, r in result.cfg.incomplete if r == "undecodable_target"] == [BASE + 8]
 
 
 def test_data_ranges_round_trip_sorted_and_merged() -> None:
     opts = strider.cfg.CfgOptions(data_ranges=[(0x20, 0x28), (0x10, 0x18), (0x14, 0x1C)])
     assert opts.data_ranges == [(0x10, 0x1C), (0x20, 0x28)]
-    assert opts.with_data_ranges([]).data_ranges == []
 
 
 MID_POOL = """
@@ -81,6 +79,8 @@ def test_elf_mapping_symbols_keep_a_literal_pool_from_being_decoded(tmp_path: Pa
     lifter = strider.lift.load_elf(elf)
     sym = lifter.symbol("mid_pool")
     pool = sym.address + 0x10
-    result = lifter.analyze("mid_pool")
-    assert result.cfg.undecodable_branch_targets() == [pool]
+    result = lifter.analyze(
+        "mid_pool",
+    )
+    assert [a for a, r in result.cfg.incomplete if r == "undecodable_target"] == [pool]
     assert result.cfg.region_at(pool) is None

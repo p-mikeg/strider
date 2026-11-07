@@ -15,14 +15,14 @@ def _ensure_pyelftools():
     try:
         import elftools.elf.elffile  # noqa: F401
     except ImportError:
-        pytest.skip("pyelftools not installed (pip install pyelftools)")
+        pytest.fail("pyelftools is missing; run `uv sync --group dev`")
 
 
 def fixture_path(arch: str, case: str, ext: str = ".elf") -> pathlib.Path:
-    """fixtures/out/<arch>/<case><ext>; skips if the fixture is missing."""
+    """fixtures/out/<arch>/<case><ext>; a missing fixture fails the test."""
     p = FIXTURES_DIR / arch / f"{case}{ext}"
     if not p.exists():
-        pytest.skip(f"fixture missing: {p} (run `make` in fixtures/)")
+        pytest.fail(f"fixture missing: {p} (run `make` in fixtures/)")
     with p.open("rb") as f:
         if f.read(42) == b"version https://git-lfs.github.com/spec/v1":
             pytest.fail(f"{p} is a Git LFS pointer; run `git lfs pull`")
@@ -30,8 +30,7 @@ def fixture_path(arch: str, case: str, ext: str = ".elf") -> pathlib.Path:
 
 
 def symbol_addr(elf_path: pathlib.Path, name: str) -> int:
-    """Address of a function symbol; skips if the symbol or pyelftools is
-    missing."""
+    """Address of a function symbol; fails if the symbol is missing."""
     _ensure_pyelftools()
     import elftools.elf.elffile
     from elftools.elf.sections import SymbolTableSection
@@ -40,11 +39,11 @@ def symbol_addr(elf_path: pathlib.Path, name: str) -> int:
         ef = elftools.elf.elffile.ELFFile(f)
         symtab = ef.get_section_by_name(".symtab")
         if not isinstance(symtab, SymbolTableSection):
-            pytest.skip(f"{elf_path}: no .symtab section")
+            pytest.fail(f"{elf_path}: no .symtab section")
         for s in symtab.iter_symbols():
             if s.name == name and s["st_value"]:
                 return int(s["st_value"])
-    pytest.skip(f"{elf_path}: symbol {name!r} not found")
+    pytest.fail(f"{elf_path}: symbol {name!r} not found")
 
 
 # Keyed by the fixtures/out/<arch> directory name.
@@ -54,12 +53,19 @@ _ARCH_PRESETS = {
 }
 
 
-def lift_bytes(code: bytes, base: int = 0x1000):
-    """Lift raw `code` mapped at `base` as an x86-64 SysV function."""
+def lift_bytes(code: bytes, base: int = 0x1000, *, optimize: bool = True):
+    """Lift raw `code` mapped at `base` as an x86-64 SysV function.
+
+    `optimize=False` runs an empty optimizer pipeline.
+    """
     mem = strider.reader.BufferReader(base, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     _cfg, function, _unresolved = lift.analyze(
-        base, strider.sleigh.CallingConvention.x86_64_systemv()
+        base,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(
+            pipeline=None if optimize else strider.opt.OptimizerPipeline.empty(),
+        ),
     )
     return function
 
@@ -80,7 +86,7 @@ def built_lifter_and_function(
     mem = loaded.reader()
     addr = loaded.symbol(symbol).address
     lift = strider.lift.lifter(arch, mem, rom=mem)
-    _cfg, function, _unresolved = lift.analyze(
+    cfg, function, _unresolved = lift.analyze(
         addr,
         cc,
         opts=strider.lift.LifterOptions(
@@ -88,6 +94,8 @@ def built_lifter_and_function(
             pipeline=None if optimize else strider.opt.OptimizerPipeline.empty(),
         ),
     )
+    # An unoptimised lift proves no return.
+    assert not optimize or not cfg.incomplete, cfg.incomplete
     return lift, function
 
 

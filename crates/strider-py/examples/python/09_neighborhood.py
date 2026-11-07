@@ -11,10 +11,7 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 OUT_DIR = pathlib.Path(tempfile.gettempdir())
 
 prog = strider.lift.load_elf(str(FIXTURE))
-result = prog.analyze(
-    "array_sum",
-    opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
-)
+result = prog.analyze("array_sum")
 cfg = result.cfg
 function = result.function
 
@@ -32,4 +29,4 @@ print("render a .dot with:  dot -Tsvg <file>.dot -o out.svg")
 
 # The interactive explorer re-centers as you click; it blocks until Ctrl-C.
 if "--serve" in sys.argv:
-    prog.visualize(function)
+    strider.explore.visualize(function)

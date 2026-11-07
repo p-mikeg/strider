@@ -3,12 +3,8 @@
 
 use strider_target::{CallingConvention, SleighArch};
 
-fn regs_for(arch: SleighArch) -> rsleigh::SleighRegs {
-    arch.probe_regs().expect("probe_regs")
-}
-
 fn float_ret_names(cc: CallingConvention, arch: SleighArch) -> Vec<String> {
-    let regs = regs_for(arch);
+    let regs = arch.probe_regs();
     cc.build(&regs)
         .expect("build")
         .ret_val_regs_float
@@ -26,7 +22,7 @@ fn float_ret_names(cc: CallingConvention, arch: SleighArch) -> Vec<String> {
 /// to the callee, so a spill wrongly forwards across the call.
 #[test]
 fn preserves_regs_keeps_the_argument_registers() {
-    let regs = regs_for(SleighArch::x86_64());
+    let regs = SleighArch::x86_64().probe_regs();
     let base = CallingConvention::x86_64_systemv()
         .build(&regs)
         .expect("build");
@@ -48,7 +44,7 @@ fn preserves_regs_keeps_the_argument_registers() {
 /// `preserves_all` preserves memory too, so every escape is covered.
 #[test]
 fn preserves_all_still_drops_the_argument_registers() {
-    let regs = regs_for(SleighArch::x86_64());
+    let regs = SleighArch::x86_64().probe_regs();
     let cc = CallingConvention::x86_64_systemv()
         .preserves_all()
         .build(&regs)
@@ -61,7 +57,7 @@ fn preserves_all_still_drops_the_argument_registers() {
 /// wins over a populated return list and the `Call` emits no ret-val output.
 #[test]
 fn validate_rejects_preserve_all_alongside_return_registers() {
-    let regs = regs_for(SleighArch::x86_64());
+    let regs = SleighArch::x86_64().probe_regs();
     let mut cc = CallingConvention::x86_64_systemv()
         .build(&regs)
         .expect("build");
@@ -83,7 +79,7 @@ fn validate_rejects_preserve_all_alongside_return_registers() {
 #[test]
 fn mips_o32_double_return_covers_the_full_fpr_pair() {
     for arch in [SleighArch::mipsbe32(), SleighArch::mipsle32()] {
-        let regs = regs_for(arch);
+        let regs = arch.probe_regs();
         let built = CallingConvention::mips_o32().build(&regs).expect("build");
         assert_eq!(
             float_ret_names(CallingConvention::mips_o32(), arch),
@@ -100,7 +96,7 @@ fn mips_o32_double_return_covers_the_full_fpr_pair() {
 #[test]
 fn mips_n64_double_return_uses_the_plain_eight_byte_fprs() {
     for arch in [SleighArch::mipsbe64(), SleighArch::mipsle64()] {
-        let regs = regs_for(arch);
+        let regs = arch.probe_regs();
         let built = CallingConvention::mips_n64().build(&regs).expect("build");
         assert_eq!(
             float_ret_names(CallingConvention::mips_n64(), arch),
@@ -119,7 +115,7 @@ fn mips_n64_double_return_uses_the_plain_eight_byte_fprs() {
 #[test]
 fn mips_o32_double_arguments_project_to_distinct_full_width_pairs() {
     for arch in [SleighArch::mipsbe32(), SleighArch::mipsle32()] {
-        let regs = regs_for(arch);
+        let regs = arch.probe_regs();
         let built = CallingConvention::mips_o32().build(&regs).expect("build");
         let pair = |name: &str| regs.name_to_vn(name).expect(name);
         let (f12_13, f14_15) = (pair("f12_13"), pair("f14_15"));

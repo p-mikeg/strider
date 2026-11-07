@@ -1,103 +1,53 @@
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::hash::{BuildHasher, Hash};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// `Frontiers[x]` is the dominance frontier of `x`. An absent key means an
-/// empty frontier.
+/// `Frontiers[x]` is the dominance frontier of `x`; absent means empty.
+#[cfg(feature = "test-util")]
 pub type Frontiers<N> = FxHashMap<N, Vec<N>>;
 
-/// The immediate-dominator relation alone, which is all the tree walks below
-/// need; [`dominators`] computes one and satisfies this.
-///
-/// Split from [`DomTree`] because demanding `predecessors` of every consumer
-/// put this crate's own [`Dominators`] outside its own walks, which is why
-/// `strider-ir` used to hand-roll a second children-DFS.
-pub trait DomRelation {
-    type Node: Copy + Eq + Hash;
-
-    /// Each node exactly once. Order is unspecified; determinism is the
-    /// implementor's to provide.
-    fn nodes(&self) -> impl Iterator<Item = Self::Node> + '_;
-
-    /// `None` for the root and for any node unreachable from it.
-    fn immediate_dominator(&self, n: Self::Node) -> Option<Self::Node>;
-}
-
-/// [`DomRelation`] plus the predecessor edges, which only
-/// [`dominance_frontiers`] needs.
-pub trait DomTree: DomRelation {
-    fn predecessors(&self, n: Self::Node) -> impl Iterator<Item = Self::Node> + '_;
-}
-
-impl<N: Copy + Eq + Hash> DomRelation for Dominators<N> {
-    type Node = N;
-
-    fn nodes(&self) -> impl Iterator<Item = N> + '_ {
-        self.vertices().iter().copied()
-    }
-
-    fn immediate_dominator(&self, n: N) -> Option<N> {
-        Dominators::immediate_dominator(self, n)
-    }
-}
-
-/// Cytron dominance frontiers: `DF(x)` is the set of nodes `b` where `x`
+/// Cytron dominance frontiers: `DF(x)` is the set of vertices `b` where `x`
 /// dominates a predecessor of `b` but does not strictly dominate `b`.
+/// `preds` yields each vertex's predecessors, unreachable ones included.
 ///
-/// `root` is required because [`DomRelation::immediate_dominator`] returns `None`
-/// for both the root and unreachable nodes. The root's stop condition is the
-/// virtual node ABOVE it, so a climb from one of its predecessors passes
-/// through the root itself: a root with a predecessor REACHABLE from it is in
-/// its own frontier. An unreachable predecessor shares the `None` encoding, so
-/// its climb records the one pair `(p, b)` and then dies.
+/// A root with a predecessor reachable from it is in its own frontier. A
+/// climb from an unreachable predecessor records `(p, b)` and stops.
+#[cfg(feature = "test-util")]
 #[must_use]
-pub fn dominance_frontiers<G: DomTree>(g: &G, root: G::Node) -> Frontiers<G::Node> {
-    debug_assert!(
-        g.immediate_dominator(root).is_none(),
-        "root must have no immediate dominator: a root encoded as its own idom \
-         stops the climb below itself and silently drops it from its own frontier"
-    );
-    let mut frontiers: Frontiers<G::Node> = FxHashMap::default();
-    // Membership runs beside the `Vec`s, which keep discovery order: a wide
-    // join fans one frontier out to every join, so scanning one for the
-    // duplicate check is quadratic in its own length. Drained by `remove`
-    // rather than `clear`: the set never shrinks its allocation, so a `clear`
-    // after one long climb costs a memset over that capacity for every later
-    // node, which is quadratic in the node count on a graph with one deep
-    // chain.
-    let mut recorded: FxHashSet<(G::Node, G::Node)> = FxHashSet::default();
-    // The pairs `recorded` holds for the node being processed.
-    let mut climbed: Vec<(G::Node, G::Node)> = Vec::new();
-    for b in g.nodes() {
-        // Every pair recorded below carries this `b`, so an earlier `b`'s
-        // pairs are never probed again; dropping them caps the set at the
-        // pairs of one node's climb.
+pub fn dominance_frontiers<N, I>(
+    doms: &Dominators<N>,
+    mut preds: impl FnMut(N) -> I,
+) -> Frontiers<N>
+where
+    N: Copy + Eq + Hash,
+    I: IntoIterator<Item = N>,
+{
+    let mut frontiers: Frontiers<N> = FxHashMap::default();
+    // Membership beside the discovery-ordered `Vec`s. Drained by `remove`,
+    // not `clear`, which would memset its whole capacity per vertex.
+    let mut recorded: FxHashSet<(N, N)> = FxHashSet::default();
+    // The pairs `recorded` holds for the vertex being processed.
+    let mut climbed: Vec<(N, N)> = Vec::new();
+    for (at, &b) in doms.vertices.iter().enumerate() {
+        // An earlier `b`'s pairs are never probed again.
         for pair in climbed.drain(..) {
             recorded.remove(&pair);
         }
-        let idom_b = g.immediate_dominator(b);
-        if idom_b.is_none() && b != root {
-            // Unreachable from the root: contributes nothing.
-            continue;
-        }
-        for p in g.predecessors(b) {
+        let idom_b = (at != 0).then(|| doms.vertices[doms.idom[at] as usize]);
+        for p in preds(b) {
             let mut runner = p;
             while Some(runner) != idom_b {
-                // Already recorded means an earlier predecessor climbed from
-                // here up the same idom chain and stopped where this climb
-                // would: at `idom_b`, or at a node with no idom. Either way
-                // every pair above is in too. Re-walking a chain of joins is
-                // quadratic.
+                // An earlier predecessor climbed the same idom chain from
+                // here to the same stop, so every pair above is in.
                 if !recorded.insert((runner, b)) {
                     break;
                 }
                 climbed.push((runner, b));
                 frontiers.entry(runner).or_default().push(b);
-                match g.immediate_dominator(runner) {
+                match doms.immediate_dominator(runner) {
                     Some(next) => runner = next,
-                    // No idom: `runner` is the root (nothing above it), or is
-                    // unreachable and carries no live definition to reconcile.
+                    // The root, or unreachable.
                     None => break,
                 }
             }
@@ -106,93 +56,112 @@ pub fn dominance_frontiers<G: DomTree>(g: &G, root: G::Node) -> Frontiers<G::Nod
     frontiers
 }
 
-/// Dominator-tree preorder from `root`: every node appears after its immediate
-/// dominator. Nodes unreachable from `root` are excluded.
+/// Iterated dominance frontier / SSA phi placement: a phi for `V` lands at
+/// node `R` iff `R` is in `IDF(def-sites(V))`. `preds` yields each vertex's
+/// predecessors, unreachable ones included; an unreachable def's frontier is
+/// its reachable successors.
 ///
-/// Only the after-idom invariant is load-bearing. Sibling order happens to
-/// follow [`DomRelation::nodes`] order; don't depend on it.
+/// Sreedhar-Gao over the DJ graph: each def's dominator subtree is walked
+/// deepest def first, and a join edge into a node no deeper than the def is
+/// in the IDF. `O(N log N + E)` per variable; no frontier is built.
+///
+/// Returns, per node, the variables needing a phi there.
 #[must_use]
-pub fn dominator_tree_preorder<G: DomRelation>(g: &G, root: G::Node) -> Vec<G::Node> {
-    dominator_tree_walk(g, root).preorder
-}
-
-/// One walk of the dominator tree: the preorder and the enter/exit interval
-/// per node, from one children-adjacency build and one DFS.
-///
-/// The intervals make `enter[a] <= enter[b] && exit[b] <= exit[a]` an O(1)
-/// dominance test, which is what a consumer keeping its own numbering wants.
-/// Nodes unreachable from `root` appear in neither.
-///
-/// Numbering starts at 1, so `(0, 0)` is free to mean "absent" for a consumer
-/// copying these into a dense map that default-fills. At 0 the root's interval
-/// would be `(0, _)` and it would test as dominating every unfilled entry.
-pub struct DomTreeWalk<N> {
-    /// Every node after its immediate dominator.
-    pub preorder: Vec<N>,
-    /// `(enter, exit)` per node, absent for an unreachable one.
-    pub span: FxHashMap<N, (u32, u32)>,
-}
-
-/// See [`DomTreeWalk`]. The single owner of the children-adjacency DFS over an
-/// idom relation; `dominator_tree_preorder` and `strider-ir`'s interval tree
-/// both come through here.
-#[must_use]
-pub fn dominator_tree_walk<G: DomRelation>(g: &G, root: G::Node) -> DomTreeWalk<G::Node> {
-    debug_assert!(
-        g.immediate_dominator(root).is_none(),
-        "root must have no immediate dominator: a node inside the tree walks \
-         its own subtree and silently drops everything outside it"
-    );
-    let mut children: FxHashMap<G::Node, Vec<G::Node>> = FxHashMap::default();
-    for n in g.nodes() {
-        if let Some(idom) = g.immediate_dominator(n) {
-            children.entry(idom).or_default().push(n);
+pub fn phi_placement<Var, Node, C, H, I>(
+    doms: &Dominators<Node>,
+    mut preds: impl FnMut(Node) -> I,
+    def_sites: &HashMap<Var, C, H>,
+) -> FxHashMap<Node, FxHashSet<Var>>
+where
+    Var: Copy + Eq + Hash,
+    Node: Copy + Eq + Hash,
+    H: BuildHasher,
+    for<'a> &'a C: IntoIterator<Item = &'a Node>,
+    I: IntoIterator<Item = Node>,
+{
+    let n = doms.vertices.len();
+    let children = children(&doms.idom);
+    let mut level = vec![0u32; n];
+    for v in 1..n {
+        level[v] = level[doms.idom[v] as usize] + 1;
+    }
+    // Join edges `p -> b`, `p` not `b`'s idom, by position. One from an
+    // unreachable `p` is keyed by `p`: its frontier holds every such `b`.
+    let mut joins: Vec<Vec<u32>> = vec![Vec::new(); n];
+    let mut unreached_joins: FxHashMap<Node, Vec<u32>> = FxHashMap::default();
+    for (b, &node) in doms.vertices.iter().enumerate() {
+        for p in preds(node) {
+            match doms.number.get(&p) {
+                Some(&at) if b != 0 && doms.idom[b] == at => {}
+                Some(&at) => joins[at as usize].push(b as u32),
+                None => unreached_joins.entry(p).or_default().push(b as u32),
+            }
         }
     }
-    let mut preorder = Vec::new();
-    let mut span: FxHashMap<G::Node, (u32, u32)> = FxHashMap::default();
-    // A well-formed idom relation pushes every node once, so this only bites
-    // on a malformed one: a repeat in `nodes()`, or an idom cycle, which
-    // without the dedup grows `preorder` and `stack` without bound.
-    let mut seen: FxHashSet<G::Node> = FxHashSet::default();
-    seen.insert(root);
-    let mut clock = 1u32;
-    // `(node, entered)`: the second visit closes the interval, so one stack
-    // carries both directions of the DFS.
-    let mut stack = vec![(root, false)];
-    while let Some((n, entered)) = stack.pop() {
-        if entered {
-            span.entry(n).and_modify(|s| s.1 = clock);
-            clock += 1;
-            continue;
+
+    let mut placement: FxHashMap<Node, FxHashSet<Var>> = FxHashMap::default();
+    // Per-variable marks: equal to `stamp` means set for this variable.
+    let (mut is_def, mut visited, mut placed) = (vec![0u32; n], vec![0u32; n], vec![0u32; n]);
+    let mut roots: BinaryHeap<(u32, u32)> = BinaryHeap::new();
+    let mut stack: Vec<u32> = Vec::new();
+    // IDF candidates not yet placed.
+    let mut found: Vec<u32> = Vec::new();
+    for (stamp, (&var, defs)) in (1u32..).zip(def_sites) {
+        for d in defs {
+            if let Some(&at) = doms.number.get(d) {
+                is_def[at as usize] = stamp;
+                roots.push((level[at as usize], at));
+            } else if let Some(bs) = unreached_joins.get(d) {
+                found.extend(bs);
+            }
         }
-        preorder.push(n);
-        span.insert(n, (clock, clock));
-        clock += 1;
-        stack.push((n, true));
-        if let Some(ch) = children.get(&n) {
-            // Reverse so children come off the stack in `nodes()` order.
-            stack.extend(
-                ch.iter()
-                    .rev()
-                    .copied()
-                    .filter(|c| seen.insert(*c))
-                    .map(|c| (c, false)),
-            );
+        loop {
+            for b in found.drain(..) {
+                let b_ix = b as usize;
+                if placed[b_ix] != stamp {
+                    placed[b_ix] = stamp;
+                    placement
+                        .entry(doms.vertices[b_ix])
+                        .or_default()
+                        .insert(var);
+                    // The phi is itself a def of `V`.
+                    if is_def[b_ix] != stamp {
+                        roots.push((level[b_ix], b));
+                    }
+                }
+            }
+            let Some((root_level, root)) = roots.pop() else {
+                break;
+            };
+            if visited[root as usize] == stamp {
+                continue;
+            }
+            visited[root as usize] = stamp;
+            stack.push(root);
+            while let Some(y) = stack.pop() {
+                let y = y as usize;
+                found.extend(
+                    joins[y]
+                        .iter()
+                        .filter(|&&b| level[b as usize] <= root_level),
+                );
+                for &c in &children[y] {
+                    if visited[c as usize] != stamp {
+                        visited[c as usize] = stamp;
+                        stack.push(c);
+                    }
+                }
+            }
         }
     }
-    DomTreeWalk { preorder, span }
+    placement
 }
 
-/// Iterated dominance frontier / SSA phi placement (Cytron et al., Fig. 11):
-/// a phi for `V` lands at node `R` iff `R` ∈ `IDF(def-sites(V))`.
-///
-/// Returns, per node, the set of variables needing a phi there.
-///
-/// `def_sites` maps each variable to the nodes defining it; any collection of
-/// nodes serves as the value.
+/// [`phi_placement`] from materialised frontiers (Cytron et al., Fig. 11),
+/// quadratic where frontiers overlap.
+#[cfg(feature = "test-util")]
 #[must_use]
-pub fn phi_placement<Var, Node, C, H>(
+pub fn phi_placement_from_frontiers<Var, Node, C, H>(
     frontiers: &Frontiers<Node>,
     def_sites: &HashMap<Var, C, H>,
 ) -> FxHashMap<Node, FxHashSet<Var>>
@@ -205,8 +174,7 @@ where
     let mut placement: FxHashMap<Node, FxHashSet<Var>> = FxHashMap::default();
     for (&var, defs) in def_sites {
         let sites: FxHashSet<Node> = defs.into_iter().copied().collect();
-        // `placed` queues each node at most once, which is what terminates
-        // the iteration on a cyclic graph.
+        // Each node is queued at most once.
         let mut worklist: Vec<Node> = sites.iter().copied().collect();
         let mut placed: FxHashSet<Node> = FxHashSet::default();
         while let Some(x) = worklist.pop() {
@@ -216,9 +184,7 @@ where
             for &y in df {
                 if placed.insert(y) {
                     placement.entry(y).or_default().insert(var);
-                    // The placed phi is itself a definition of `V`, so explore
-                    // its frontier too, unless it was an original def-site
-                    // and is already seeded.
+                    // The phi is itself a def of `V`.
                     if !sites.contains(&y) {
                         worklist.push(y);
                     }
@@ -250,12 +216,48 @@ impl<N: Copy + Eq + Hash> Dominators<N> {
         let &at = self.number.get(&n)?;
         (at != 0).then(|| self.vertices[self.idom[at as usize] as usize])
     }
+
+    /// The interval numbering of this tree, over positions in
+    /// [`Self::vertices`], so siblings come in depth-first discovery order.
+    #[must_use]
+    pub fn intervals(&self) -> DomIntervals {
+        DomIntervals::new(&self.idom)
+    }
+
+    /// The tree in preorder, siblings ascending by `N`: a function of the idom
+    /// relation alone, not of the walk that found it.
+    #[must_use]
+    pub fn tree_preorder(&self) -> Vec<N>
+    where
+        N: Ord,
+    {
+        let mut children = children(&self.idom);
+        let mut order = Vec::with_capacity(self.vertices.len());
+        let mut stack = vec![0u32];
+        while let Some(v) = stack.pop() {
+            order.push(self.vertices[v as usize]);
+            let siblings = &mut children[v as usize];
+            siblings.sort_unstable_by_key(|&c| self.vertices[c as usize]);
+            stack.extend(siblings.iter().rev());
+        }
+        order
+    }
 }
 
 const UNLINKED: u32 = u32::MAX;
 
+/// Each vertex's dominator-tree children, ascending by index.
+fn children(idom: &[u32]) -> Vec<Vec<u32>> {
+    let mut children = vec![Vec::new(); idom.len()];
+    for (v, &d) in idom.iter().enumerate().skip(1) {
+        children[d as usize].push(v as u32);
+    }
+    children
+}
+
 /// Lengauer-Tarjan with path compression, O(m log n) over the `m` edges
-/// `successors` yields from the vertices `root` reaches.
+/// `successors` yields from the vertices `root` reaches. `successors` is
+/// called once per reached vertex.
 pub fn dominators<N, I>(root: N, mut successors: impl FnMut(N) -> I) -> Dominators<N>
 where
     N: Copy + Eq + Hash,
@@ -266,8 +268,8 @@ where
     number.insert(root, 0);
     let mut parent = vec![0u32];
     let mut preds: Vec<Vec<u32>> = vec![Vec::new()];
-    // Iterative DFS: each frame holds a vertex's successors and the next one
-    // to try, so `parent` is a true depth-first spanning tree.
+    // Each frame resumes its own successor list, so `parent` is a true DFS
+    // tree at any depth.
     let mut stack: Vec<(u32, Vec<N>, usize)> = vec![(0, successors(root).into_iter().collect(), 0)];
     while let Some((at, succs, next)) = stack.last_mut() {
         let Some(&succ) = succs.get(*next) else {
@@ -296,14 +298,10 @@ where
     }
 }
 
-/// Lengauer-Tarjan over a depth-first preorder numbering: `parent[w]` is `w`'s
-/// spanning-tree parent and `preds(w)` yields the preorder numbers of `w`'s
-/// predecessors, asked at most once for each `w` and never for the root, so a
-/// destructive closure (`std::mem::take`) is a valid one. The result is indexed
-/// by preorder number, the root at 0 and its own immediate dominator.
-///
-/// Every vertex must be numbered, i.e. reachable from the root, and every
-/// number `preds` yields must be in range.
+/// Lengauer-Tarjan over a DFS preorder numbering: `parent[w]` is `w`'s tree
+/// parent; `preds(w)` yields `w`'s predecessors' numbers, in range, and is asked
+/// at most once per `w`, never for the root. Indexed by preorder number; the
+/// root is 0 and its own immediate dominator. Every vertex must be reachable.
 #[must_use]
 pub fn immediate_dominators<I>(parent: &[u32], mut preds: impl FnMut(u32) -> I) -> Vec<u32>
 where
@@ -343,11 +341,12 @@ where
 }
 
 /// Enter/exit interval numbering of the dominator tree an
-/// [`immediate_dominators`] result describes, so [`DomIntervals::dominates`] is
-/// O(1).
+/// [`immediate_dominators`] result describes, so dominance is an O(1)
+/// [`DomIntervals::span`] comparison.
 pub struct DomIntervals {
     enter: Vec<u32>,
     exit: Vec<u32>,
+    preorder: Vec<u32>,
 }
 
 impl DomIntervals {
@@ -355,21 +354,21 @@ impl DomIntervals {
     #[must_use]
     pub fn new(idom: &[u32]) -> Self {
         let n = idom.len();
-        let mut children: Vec<Vec<u32>> = vec![Vec::new(); n];
-        for (v, &d) in idom.iter().enumerate().skip(1) {
-            children[d as usize].push(v as u32);
-        }
+        let children = children(idom);
         let mut enter = vec![0u32; n];
         let mut exit = vec![0u32; n];
         let mut clock = 0u32;
+        let mut preorder = Vec::with_capacity(n);
         let mut stack: Vec<(u32, usize)> = vec![(0, 0)];
         enter[0] = clock;
+        preorder.push(0);
         clock += 1;
         while let Some(top) = stack.last_mut() {
             let (v, next) = *top;
             if let Some(&c) = children[v as usize].get(next) {
                 top.1 += 1;
                 enter[c as usize] = clock;
+                preorder.push(c);
                 clock += 1;
                 stack.push((c, 0));
             } else {
@@ -378,14 +377,25 @@ impl DomIntervals {
                 stack.pop();
             }
         }
-        Self { enter, exit }
+        Self {
+            enter,
+            exit,
+            preorder,
+        }
     }
 
-    /// Reflexive: every vertex dominates itself.
+    /// `v`'s `(enter, exit)` clock, from 0: `a` dominates `b` iff `a`'s
+    /// interval encloses `b`'s.
     #[must_use]
-    pub fn dominates(&self, a: u32, b: u32) -> bool {
-        self.enter[a as usize] <= self.enter[b as usize]
-            && self.exit[b as usize] <= self.exit[a as usize]
+    pub fn span(&self, v: u32) -> (u32, u32) {
+        (self.enter[v as usize], self.exit[v as usize])
+    }
+
+    /// Every vertex in tree preorder, siblings in ascending discovery
+    /// position.
+    #[must_use]
+    pub fn preorder(&self) -> &[u32] {
+        &self.preorder
     }
 }
 
@@ -417,406 +427,59 @@ fn eval(v: u32, ancestor: &mut [u32], label: &mut [u32], semi: &[u32], path: &mu
 mod tests {
     use super::*;
 
-    /// Explicit preds + explicit idoms, so the DF/IDF/preorder logic is
-    /// exercised with no other graph algorithm in the loop.
-    struct Mock {
-        nodes: Vec<u32>,
-        preds: FxHashMap<u32, Vec<u32>>,
-        idom: FxHashMap<u32, u32>,
-    }
+    /// Successor lists by vertex; a vertex not listed has none.
+    type Edges = [(u32, &'static [u32])];
 
-    impl DomRelation for Mock {
-        type Node = u32;
-        fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
-            self.nodes.iter().copied()
-        }
-        fn immediate_dominator(&self, n: u32) -> Option<u32> {
-            self.idom.get(&n).copied()
-        }
-    }
-
-    impl DomTree for Mock {
-        fn predecessors(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
-            self.preds.get(&n).into_iter().flatten().copied()
-        }
-    }
-
-    fn mock(nodes: &[u32], preds: &[(u32, &[u32])], idom: &[(u32, u32)]) -> Mock {
-        Mock {
-            nodes: nodes.to_vec(),
-            preds: preds.iter().map(|(n, p)| (*n, p.to_vec())).collect(),
-            idom: idom.iter().copied().collect(),
-        }
-    }
-
-    fn df_sorted(fr: &Frontiers<u32>, n: u32) -> Vec<u32> {
-        let mut v = fr.get(&n).cloned().unwrap_or_default();
-        v.sort_unstable();
-        v
-    }
-
-    fn defs(pairs: &[(char, &[u32])]) -> FxHashMap<char, Vec<u32>> {
-        pairs
+    fn succs_of(edges: &Edges, v: u32) -> Vec<u32> {
+        edges
             .iter()
-            .map(|(v, sites)| (*v, sites.to_vec()))
-            .collect()
+            .find(|(n, _)| *n == v)
+            .map_or_else(Vec::new, |(_, s)| s.to_vec())
     }
 
-    /// Diamond: 0 -> {1,2} -> 3.
+    const DIAMOND: &Edges = &[(0, &[1, 2]), (1, &[3]), (2, &[3])];
+
+    /// `0 -> 2, 0 -> 1`: the DFS discovers 2 first. `tree_preorder` visits the
+    /// siblings by vertex, `intervals().preorder()` by discovery.
     #[test]
-    fn diamond_frontiers_and_placement() {
-        let g = mock(
-            &[0, 1, 2, 3],
-            &[(1, &[0]), (2, &[0]), (3, &[1, 2])],
-            &[(1, 0), (2, 0), (3, 0)],
-        );
-        let fr = dominance_frontiers(&g, 0);
-        assert_eq!(df_sorted(&fr, 1), vec![3]);
-        assert_eq!(df_sorted(&fr, 2), vec![3]);
-        assert!(df_sorted(&fr, 3).is_empty());
-        assert!(df_sorted(&fr, 0).is_empty());
-
-        // Defined in one arm only, but still needs a phi at the join.
-        let place = phi_placement(&fr, &defs(&[('a', &[1])]));
-        assert!(place[&3].contains(&'a'));
-        assert_eq!(place.len(), 1, "φ only at the join");
+    fn tree_preorder_orders_siblings_by_vertex_not_discovery() {
+        let doms = dominators(0u32, |v| match v {
+            0 => vec![2, 1],
+            _ => Vec::new(),
+        });
+        assert_eq!(doms.tree_preorder(), [0, 1, 2]);
+        let by_discovery: Vec<u32> = doms
+            .intervals()
+            .preorder()
+            .iter()
+            .map(|&at| doms.vertices()[at as usize])
+            .collect();
+        assert_eq!(by_discovery, [0, 2, 1]);
     }
 
-    /// Loop: 0 -> 1(head) -> 2(body) -> 1 (back-edge), 1 -> 3(exit).  The header is
-    /// its own frontier via the back-edge, so this pins the IDF fixed point.
+    /// The interval tree over `dominators`' own numbering: the root encloses
+    /// every vertex, siblings enclose neither each other nor the join.
     #[test]
-    fn loop_frontiers_and_iterated_placement() {
-        let g = mock(
-            &[0, 1, 2, 3],
-            &[(1, &[0, 2]), (2, &[1]), (3, &[1])],
-            &[(1, 0), (2, 1), (3, 1)],
-        );
-        let fr = dominance_frontiers(&g, 0);
-        assert_eq!(df_sorted(&fr, 2), vec![1]);
-        assert_eq!(df_sorted(&fr, 1), vec![1]);
-
-        // DF(2)={1} -> phi at head; head is then a fresh def, but DF(1)={1} is
-        // already placed -> fixed point at one phi.
-        let place = phi_placement(&fr, &defs(&[('v', &[2])]));
-        assert!(place[&1].contains(&'v'));
-        assert_eq!(place.len(), 1);
-    }
-
-    /// A self-loop on the root: `DF(root) = {root}` by the definition, since the
-    /// root dominates its own predecessor and does not STRICTLY dominate itself.
-    /// Strider's CFG keeps the entry's predecessors: a branch back to the
-    /// entry address is a self-edge on the entry region.
-    #[test]
-    fn self_loop_at_root_puts_root_in_its_own_frontier() {
-        let g = mock(&[0], &[(0, &[0])], &[]);
-        let fr = dominance_frontiers(&g, 0);
-        assert_eq!(df_sorted(&fr, 0), vec![0]);
-
-        // A variable defined in the loop body needs its phi AT the root.
-        let place = phi_placement(&fr, &defs(&[('v', &[0])]));
-        assert!(place[&0].contains(&'v'));
-    }
-
-    /// The root as a loop header reached from deeper in the loop: every node on
-    /// the back-edge path carries the root in its frontier.
-    #[test]
-    fn back_edge_to_root_frontiers() {
-        let g = mock(
-            &[0, 1, 2],
-            &[(1, &[0]), (2, &[1]), (0, &[2])],
-            &[(1, 0), (2, 1)],
-        );
-        let fr = dominance_frontiers(&g, 0);
-        assert_eq!(df_sorted(&fr, 0), vec![0]);
-        assert_eq!(df_sorted(&fr, 1), vec![0]);
-        assert_eq!(df_sorted(&fr, 2), vec![0]);
-    }
-
-    /// The root and an unreachable node share the `immediate_dominator == None`
-    /// encoding, so the root's frontier must not leak onto dead nodes: a
-    /// predecessor-free root still has an empty frontier, and the climb from a
-    /// dead predecessor still terminates.
-    #[test]
-    fn unreachable_node_is_not_treated_as_the_root() {
-        // 9 is unreachable and edges into the join 3.
-        let g = mock(
-            &[0, 1, 2, 3, 9],
-            &[(1, &[0]), (2, &[0]), (3, &[1, 2, 9])],
-            &[(1, 0), (2, 0), (3, 0)],
-        );
-        let fr = dominance_frontiers(&g, 0);
-        assert!(
-            df_sorted(&fr, 0).is_empty(),
-            "a predecessor-free root has an empty frontier"
-        );
-        // The dead node reaches the join, so it carries it; what matters is that
-        // the climb stops rather than looping or ascending into the root's.
-        assert_eq!(df_sorted(&fr, 9), vec![3]);
-    }
-
-    #[test]
-    fn preorder_respects_idom() {
-        let g = mock(
-            &[0, 1, 2, 3],
-            &[(1, &[0]), (2, &[0]), (3, &[1, 2])],
-            &[(1, 0), (2, 0), (3, 0)],
-        );
-        let order = dominator_tree_preorder(&g, 0);
-        assert_eq!(order.len(), 4);
-        assert_eq!(order[0], 0);
-        let pos: FxHashMap<u32, usize> = order.iter().enumerate().map(|(i, &n)| (n, i)).collect();
-        for (&n, &idom) in &g.idom {
-            assert!(pos[&idom] < pos[&n], "node {n} must follow its idom {idom}");
-        }
-    }
-
-    /// Node whose `PartialEq` counts calls, so the frontier build's work is
-    /// measurable without timing.
-    #[derive(Clone, Copy, Debug)]
-    struct Counted(u32);
-
-    thread_local! {
-        static EQ_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-
-    impl PartialEq for Counted {
-        fn eq(&self, other: &Self) -> bool {
-            EQ_CALLS.with(|c| c.set(c.get() + 1));
-            self.0 == other.0
-        }
-    }
-    impl Eq for Counted {}
-    impl Hash for Counted {
-        fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-            self.0.hash(h);
-        }
-    }
-
-    struct WideJoin {
-        joins: u32,
-    }
-
-    /// `0 -> {1, 2} ->` each of `joins` joins: both arms carry every join in
-    /// their frontier, so each arm's frontier grows to `joins` entries.
-    impl DomRelation for WideJoin {
-        type Node = Counted;
-        fn nodes(&self) -> impl Iterator<Item = Counted> + '_ {
-            (0..3 + self.joins).map(Counted)
-        }
-        fn immediate_dominator(&self, n: Counted) -> Option<Counted> {
-            (n.0 != 0).then_some(Counted(0))
-        }
-    }
-
-    impl DomTree for WideJoin {
-        fn predecessors(&self, n: Counted) -> impl Iterator<Item = Counted> + '_ {
-            let preds: &'static [u32] = match n.0 {
-                0 => &[],
-                1 | 2 => &[0],
-                _ => &[1, 2],
-            };
-            preds.iter().copied().map(Counted)
-        }
-    }
-
-    fn frontier_eq_calls(joins: u32) -> u64 {
-        EQ_CALLS.with(|c| c.set(0));
-        let fr = dominance_frontiers(&WideJoin { joins }, Counted(0));
-        assert_eq!(fr[&Counted(1)].len(), joins as usize);
-        EQ_CALLS.with(std::cell::Cell::get)
-    }
-
-    /// The duplicate check must be a set probe, not a linear scan of the
-    /// frontier built so far. Counting comparisons rather than timing keeps
-    /// this deterministic.
-    #[test]
-    fn wide_join_frontier_build_is_not_quadratic() {
-        let small = frontier_eq_calls(400);
-        let large = frontier_eq_calls(3200);
-        assert!(
-            large < small * 16,
-            "8x the joins cost {large} comparisons vs {small}: \
-             a linear duplicate scan, not an O(1) membership check"
-        );
-    }
-
-    thread_local! {
-        static IDOM_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-
-    /// Chain `0 -> 1 -> .. -> n-1` where every node also edges into the join
-    /// `n`: the `if (a) goto err; if (b) goto err;` ladder. `idom(n) = 0`, so
-    /// each of the n predecessors climbs the whole chain back to 0, while the
-    /// frontier output is only n entries.
-    struct ErrorLadder {
-        n: u32,
-    }
-
-    impl DomRelation for ErrorLadder {
-        type Node = u32;
-        fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
-            0..=self.n
-        }
-        fn immediate_dominator(&self, n: u32) -> Option<u32> {
-            IDOM_CALLS.with(|c| c.set(c.get() + 1));
-            if n == 0 {
-                None
-            } else if n == self.n {
-                Some(0)
-            } else {
-                Some(n - 1)
-            }
-        }
-    }
-
-    impl DomTree for ErrorLadder {
-        fn predecessors(&self, b: u32) -> impl Iterator<Item = u32> + '_ {
-            let preds: Vec<u32> = if b == self.n {
-                (0..self.n).collect()
-            } else if b == 0 {
-                vec![]
-            } else {
-                vec![b - 1]
-            };
-            preds.into_iter()
-        }
-    }
-
-    fn ladder_idom_calls(n: u32) -> u64 {
-        IDOM_CALLS.with(|c| c.set(0));
-        let fr = dominance_frontiers(&ErrorLadder { n }, 0);
-        let entries: usize = fr.values().map(Vec::len).sum();
-        assert_eq!(entries, n as usize - 1, "output is linear in n");
-        IDOM_CALLS.with(std::cell::Cell::get)
-    }
-
-    /// The climb must stop as soon as it reaches a pair an earlier predecessor
-    /// already recorded: that predecessor walked the identical idom chain to
-    /// the identical stop, so everything above is already in. Without the cut,
-    /// shared chain segments are re-walked once per predecessor.
-    #[test]
-    fn error_ladder_frontier_climb_is_not_quadratic() {
-        let small = ladder_idom_calls(200);
-        let large = ladder_idom_calls(800);
-        assert!(
-            large < small * 8,
-            "4x the nodes cost {large} idom calls vs {small} against linear output: \
-             the climb re-walks shared chain segments"
-        );
-    }
-
-    /// The frontier `Vec` keeps discovery order; the membership set must not
-    /// reorder or drop entries.
-    #[test]
-    fn frontier_preserves_discovery_order() {
-        let g = mock(
-            &[0, 1, 2, 3, 4],
-            &[(1, &[0]), (2, &[0]), (3, &[1, 2]), (4, &[1, 2])],
-            &[(1, 0), (2, 0), (3, 0), (4, 0)],
-        );
-        let fr = dominance_frontiers(&g, 0);
-        assert_eq!(fr[&1], vec![3, 4]);
-        assert_eq!(fr[&2], vec![3, 4]);
-    }
-
-    /// [`DomRelation::nodes`] must yield each node once: the climb's dedup is
-    /// per-`b`, so a repeated `b` is walked again and its frontier entries
-    /// appear twice.
-    #[test]
-    fn duplicate_nodes_duplicate_frontier_entries() {
-        let g = mock(
-            &[0, 1, 2, 3, 3],
-            &[(1, &[0]), (2, &[0]), (3, &[1, 2])],
-            &[(1, 0), (2, 0), (3, 0)],
-        );
-        let fr = dominance_frontiers(&g, 0);
-        assert_eq!(fr[&1], vec![3, 3]);
-        assert_eq!(fr[&2], vec![3, 3]);
-    }
-
-    #[test]
-    fn multiple_variables_share_a_join() {
-        let g = mock(
-            &[0, 1, 2, 3],
-            &[(1, &[0]), (2, &[0]), (3, &[1, 2])],
-            &[(1, 0), (2, 0), (3, 0)],
-        );
-        let fr = dominance_frontiers(&g, 0);
-        let place = phi_placement(&fr, &defs(&[('a', &[1]), ('b', &[2])]));
-        assert_eq!(place[&3].len(), 2);
-        assert!(place[&3].contains(&'a') && place[&3].contains(&'b'));
-        assert_eq!(place.len(), 1, "both φs land only at the join");
-    }
-}
-
-#[cfg(test)]
-mod walk_tests {
-    use super::{DomRelation, dominator_tree_walk};
-    use rustc_hash::FxHashMap;
-
-    struct Rel {
-        nodes: Vec<u32>,
-        idom: FxHashMap<u32, u32>,
-    }
-
-    impl DomRelation for Rel {
-        type Node = u32;
-        fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
-            self.nodes.iter().copied()
-        }
-        fn immediate_dominator(&self, n: u32) -> Option<u32> {
-            self.idom.get(&n).copied()
-        }
-    }
-
-    /// `(0, 0)` has to stay free: a consumer copies these into a dense map
-    /// that default-fills, and at a zero-based clock the root's interval would
-    /// test as dominating every unfilled entry.
-    #[test]
-    fn numbering_starts_at_one_so_zero_can_mean_absent() {
-        // 0 -> 1 -> 2, plus 9 unreachable.
-        let rel = Rel {
-            nodes: vec![0, 1, 2],
-            idom: [(1u32, 0u32), (2, 1)].into_iter().collect(),
+    fn intervals_number_the_dominator_tree() {
+        let doms = dominators(0u32, |v| succs_of(DIAMOND, v));
+        let iv = doms.intervals();
+        let at = |v: u32| {
+            doms.vertices()
+                .iter()
+                .position(|&x| x == v)
+                .expect("reachable") as u32
         };
-        let walk = dominator_tree_walk(&rel, 0);
-        assert_eq!(walk.preorder, vec![0, 1, 2]);
-        for n in [0u32, 1, 2] {
-            let (enter, exit) = walk.span[&n];
-            assert!(enter >= 1, "node {n} enters at {enter}, 0 is the sentinel");
-            assert!(exit >= enter);
-        }
-        assert!(
-            !walk.span.contains_key(&9),
-            "an unreachable node has no span"
-        );
-
-        let dominates = |a: u32, b: u32| {
-            let (ae, ax) = walk.span[&a];
-            let (be, bx) = walk.span[&b];
-            ae <= be && bx <= ax
+        let dominates = |a, b| {
+            let ((a_in, a_out), (b_in, b_out)) = (iv.span(at(a)), iv.span(at(b)));
+            a_in <= b_in && b_out <= a_out
         };
-        assert!(dominates(0, 2) && dominates(1, 2) && dominates(0, 0));
-        assert!(!dominates(2, 1) && !dominates(2, 0));
-    }
-
-    /// `dominators` is this crate's own idom source, and the old `DomTree`
-    /// bound excluded it from its own walks by demanding `predecessors`.
-    #[test]
-    fn the_crates_own_dominators_satisfies_the_walk() {
-        let succs = |n: u32| match n {
-            0 => vec![1, 2],
-            1 | 2 => vec![3],
-            _ => vec![],
-        };
-        let doms = super::dominators(0u32, succs);
-        let walk = dominator_tree_walk(&doms, 0);
-        assert_eq!(walk.preorder.len(), 4);
-        assert_eq!(walk.preorder[0], 0);
-        let (re, rx) = walk.span[&0];
-        for n in [1u32, 2, 3] {
-            let (e, x) = walk.span[&n];
-            assert!(re <= e && x <= rx, "the root dominates {n}");
+        assert_eq!(iv.preorder().len(), 4);
+        for v in [1, 2, 3] {
+            assert!(dominates(0, v), "the root dominates {v}");
         }
+        assert!(!dominates(1, 3) && !dominates(1, 2));
+        let (enter, exit) = iv.span(at(0));
+        assert_eq!(enter, 0, "the clock starts at 0");
+        assert!(exit > enter);
     }
 }

@@ -3,8 +3,7 @@
 //! `gcc -O2` leaves `.text`, `.text.startup` and `.rodata` all at `sh_addr == 0`
 //! in a `.o`. The loader rebases the colliding ones so each is reachable at its
 //! own address, serving its own bytes; a LINKED image, whose `sh_addr`s are
-//! real, passes through untouched and must load byte-identically to its
-//! recorded fingerprint.
+//! real, passes through untouched. `read_digest.rs` pins the bytes both serve.
 
 #[path = "common/mod.rs"]
 mod common;
@@ -16,115 +15,26 @@ use common::elf_fixture::{
 };
 use object::{Object, ObjectSection, ObjectSymbol};
 use strider_reader::elf::{self, ElfSectionLayout};
-use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
+use strider_reader::{MemRegionsLookupTable, ReadOnlyMemory};
 
 fn fixture(arch: &str, name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out")
-        .join(arch)
-        .join(name)
+    common::fixtures_out().join(arch).join(name)
 }
 
-/// FNV-1a over every region's `(start, len, bytes)`, so one number pins a whole
-/// loaded image.
-fn digest(regions: &[MemRegion]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut eat = |b: u8| {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    };
-    for r in regions {
-        for b in r.start_addr().to_le_bytes() {
-            eat(b);
-        }
-        let bytes = common::region_bytes(r);
-        for b in (bytes.len() as u64).to_le_bytes() {
-            eat(b);
-        }
-        for b in bytes {
-            eat(b);
-        }
-    }
-    h
-}
-
-fn all_loader_digests(owned: &strider_reader::OwnedElf) -> Vec<u64> {
-    use elf::LoadFilter::{AllAllocatable, CodeAndReadOnly, ImmutableOnly};
-    use elf::RegionSource::{Auto, Sections};
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let regions = |source, filter, relocate| owned.regions(source, filter, relocate).unwrap();
-    vec![
-        digest(&elf::elf_get_loadable_regions(&obj).unwrap()),
-        digest(&regions(Auto, ImmutableOnly, false)),
-        digest(&regions(Auto, AllAllocatable, false)),
-        digest(&regions(Sections, CodeAndReadOnly, false)),
-        digest(&regions(Sections, AllAllocatable, false)),
-        digest(&regions(Sections, ImmutableOnly, false)),
-        digest(&regions(Auto, AllAllocatable, true)),
-        digest(&regions(Auto, ImmutableOnly, true)),
-    ]
-}
-
-/// Golden fingerprints for every entry point over three linked fixtures,
-/// including the three that force the section walk on an image that has
-/// PT_LOAD segments.
+/// A linked image keeps every section at its `sh_addr`.
 #[test]
-fn linked_images_load_identically_to_before_the_et_rel_rebase() {
-    let golden: [(&str, &str, [u64; 8]); 3] = [
-        (
-            "x64",
-            "switch.elf",
-            [
-                15379296049503614269,
-                15379296049503614269,
-                1759349359742348395,
-                13567922309565440120,
-                11001421298295061515,
-                13567922309565440120,
-                1759349359742348395,
-                15379296049503614269,
-            ],
-        ),
-        (
-            "aarch64",
-            "arithmetic.elf",
-            [
-                2886907034106557727,
-                2886907034106557727,
-                7886025370851864316,
-                908230149637798672,
-                7537148421931574303,
-                908230149637798672,
-                7886025370851864316,
-                2886907034106557727,
-            ],
-        ),
-        (
-            "mips64le",
-            "switch.elf",
-            [
-                11072776634073155066,
-                11072776634073155066,
-                9598661585797864237,
-                9270942079008536722,
-                6504926835391262960,
-                9270942079008536722,
-                9598661585797864237,
-                11072776634073155066,
-            ],
-        ),
-    ];
-    for (arch, name, expected) in golden {
+fn linked_images_keep_every_section_at_its_sh_addr() {
+    for (arch, name) in [
+        ("x64", "switch.elf"),
+        ("aarch64", "arithmetic.elf"),
+        ("mips64le", "switch.elf"),
+    ] {
         let path = fixture(arch, name);
-        if !path.exists() {
-            // A missing fixture must be VISIBLE: a silent return reports as a pass.
-            eprintln!(
-                "SKIP {}: {} is not built; run `make -C fixtures`",
-                module_path!(),
-                path.display()
-            );
-            continue;
-        }
+        assert!(
+            path.exists(),
+            "{} is not built; run `make -C fixtures`",
+            path.display()
+        );
         let owned = strider_reader::load_elf(&path).unwrap();
         let obj = owned.checked_file().expect("the mapped file is unchanged");
         let layout = ElfSectionLayout::new(&obj);
@@ -135,11 +45,6 @@ fn linked_images_load_identically_to_before_the_et_rel_rebase() {
                 "{arch}/{name}: a linked image must keep every section at its sh_addr"
             );
         }
-        assert_eq!(
-            all_loader_digests(&owned),
-            expected.to_vec(),
-            "{arch}/{name}: linked image bytes changed"
-        );
     }
 }
 
@@ -167,15 +72,11 @@ fn every_allocatable_section_of_an_object_file_serves_its_own_bytes() {
     for arch in ["x64", "x86", "aarch64", "arm", "mips64le", "ppc64le"] {
         for case in ["tzcount", "switch", "globals", "elf_relocs"] {
             let path = fixture(arch, &format!("{case}.o"));
-            if !path.exists() {
-                // A missing fixture must be VISIBLE: a silent return reports as a pass.
-                eprintln!(
-                    "SKIP {}: {} is not built; run `make -C fixtures`",
-                    module_path!(),
-                    path.display()
-                );
-                continue;
-            }
+            assert!(
+                path.exists(),
+                "{} is not built; run `make -C fixtures`",
+                path.display()
+            );
             let owned = strider_reader::load_elf(&path).unwrap();
             let obj = owned.checked_file().expect("the mapped file is unchanged");
             let layout = ElfSectionLayout::new(&obj);
@@ -215,19 +116,23 @@ fn every_allocatable_section_of_an_object_file_serves_its_own_bytes() {
 #[test]
 fn object_file_symbols_resolve_into_their_own_section() {
     let path = fixture("x64", "tzcount.o");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
-    let table = MemRegionsLookupTable::new(elf::elf_get_loadable_regions(&obj).unwrap());
+    let table = MemRegionsLookupTable::new(
+        owned
+            .regions(
+                elf::RegionSource::Auto,
+                elf::LoadFilter::CodeAndReadOnly,
+                false,
+            )
+            .unwrap(),
+    );
 
     let mut addrs = Vec::new();
     for name in ["tzcount", "main"] {
@@ -260,15 +165,11 @@ fn object_file_symbols_resolve_into_their_own_section() {
 #[test]
 fn object_file_jump_table_is_mapped_and_relocated() {
     let path = fixture("x64", "switch.o");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
@@ -334,19 +235,15 @@ fn object_file_jump_table_is_mapped_and_relocated() {
 #[test]
 fn a_rebased_writable_section_is_still_not_read_only_memory() {
     let path = fixture("x64", "elf_relocs.o");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
-    let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
+    let reader = elf::ElfFileMemReader::new(&owned, elf::RelocationMode::Unapplied).unwrap();
 
     let data = obj
         .section_by_name(".data.rel.ro.local")
@@ -496,7 +393,7 @@ fn an_unmapped_bss_address_answers_no_read() {
         "NOBITS at {bss:#x} must not be mapped"
     );
 
-    let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
+    let reader = elf::ElfFileMemReader::new(&owned, elf::RelocationMode::Unapplied).unwrap();
     assert!(
         ReadOnlyMemory::read(&reader, bss, &mut [0u8; 8]).is_err(),
         "NOBITS at {bss:#x} must never answer a ROM read"
@@ -538,15 +435,11 @@ fn an_et_rel_symbol_address_includes_its_sections_sh_addr() {
 #[test]
 fn a_linked_image_symbol_address_is_its_st_value() {
     let path = fixture("x64", "switch.elf");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
@@ -590,7 +483,8 @@ fn a_nobits_section_overrunning_the_address_space_does_not_move_the_watermark() 
         "a section the address space cannot hold addresses nothing"
     );
 
-    let regions = elf::elf_get_loadable_regions(&obj).expect("the load must survive the .bss");
+    let regions = common::try_regions(&bytes, elf::LoadFilter::CodeAndReadOnly)
+        .expect("the load must survive the .bss");
     assert_eq!(regions.len(), 1, "only `.text` has bytes to load");
     assert_eq!(common::region_bytes(&regions[0]), vec![0x90; 4]);
     assert_eq!(
@@ -612,22 +506,21 @@ fn an_object_file_leaves_address_zero_unmapped() {
     ]);
     let fixture_bytes = {
         let path = fixture("x64", "memory.o");
-        if path.exists() {
-            Some(std::fs::read(&path).unwrap())
-        } else {
-            // A missing fixture must be VISIBLE: a silent skip reports as a pass.
-            eprintln!(
-                "SKIP {}: {} is not built; run `make -C fixtures`",
-                module_path!(),
-                path.display()
-            );
-            None
-        }
+        assert!(
+            path.exists(),
+            "{} is not built; run `make -C fixtures`",
+            path.display()
+        );
+        std::fs::read(&path).unwrap()
     };
-    for bytes in [Some(synthetic), fixture_bytes].into_iter().flatten() {
+    for bytes in [synthetic, fixture_bytes] {
         let obj = object::File::parse(&bytes[..]).unwrap();
         assert_eq!(obj.kind(), object::ObjectKind::Relocatable);
-        let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
+        let reader = elf::ElfFileMemReader::new(
+            &strider_reader::OwnedElf::parse(bytes.clone()).unwrap(),
+            elf::RelocationMode::Unapplied,
+        )
+        .unwrap();
         assert!(
             ReadOnlyMemory::read(&reader, 0, &mut [0u8; 1]).is_err(),
             "address 0 must answer no ROM read"
@@ -684,11 +577,92 @@ fn a_section_overrunning_the_address_space_seats_none_of_its_symbols() {
         "a symbol of a section seated nowhere has no address"
     );
 
-    let regions = elf::elf_get_loadable_regions(&obj).expect("the .text still loads");
+    let regions = common::try_regions(&bytes, elf::LoadFilter::CodeAndReadOnly)
+        .expect("the .text still loads");
     let table = MemRegionsLookupTable::new(regions);
     assert_eq!(
         table.read(layout.symbol_address(&bssvar), &mut [0u8; 4]),
         None,
         "a writable .bss symbol must not read back the .text"
     );
+}
+
+/// A symbol in an empty allocated section is seated at the watermark, as
+/// `ld` seats it, so a pointer to it is not null.
+#[test]
+fn a_symbol_in_an_empty_section_is_not_null() {
+    use object::write::{Object as WObject, Relocation, StandardSegment, Symbol, SymbolSection};
+    use object::{
+        Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
+    };
+    let mut obj = WObject::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let data = obj.segment_name(StandardSegment::Data).to_vec();
+    let ro = obj.add_section(
+        data.clone(),
+        b".rodata.tab".to_vec(),
+        SectionKind::ReadOnlyData,
+    );
+    obj.append_section_data(ro, &[0u8; 8], 8);
+    let bss = obj.add_section(data, b".bss.e_obj".to_vec(), SectionKind::UninitializedData);
+    obj.append_section_bss(bss, 0, 1);
+    let sym = obj.add_symbol(Symbol {
+        name: b"e_obj".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Data,
+        scope: SymbolScope::Dynamic,
+        weak: false,
+        section: SymbolSection::Section(bss),
+        flags: SymbolFlags::None,
+    });
+    obj.add_relocation(
+        ro,
+        Relocation {
+            offset: 0,
+            symbol: sym,
+            addend: 0,
+            flags: object::RelocationFlags::Elf {
+                r_type: object::elf::R_X86_64_64,
+            },
+        },
+    )
+    .unwrap();
+    let elf = strider_reader::OwnedElf::parse(obj.write().unwrap()).unwrap();
+    let reader = strider_reader::ElfFileMemReader::new(
+        &elf,
+        elf::RelocationMode::Applied { got_is_rom: false },
+    )
+    .unwrap();
+    // `.rodata.tab` is the first rebased section.
+    let mut word = [0u8; 8];
+    reader.read(0x1000_0000, &mut word).unwrap();
+    assert_eq!(u64::from_le_bytes(word), 0x1000_0008, "&e_obj");
+}
+
+/// An empty section's alignment moves the watermark, as `ld` advances `.`
+/// past it, so a later less-aligned section starts at or above it and its
+/// symbols alias no other section's bytes.
+#[test]
+fn an_over_aligned_empty_section_moves_the_watermark() {
+    use object::write::{Object as WObject, StandardSegment};
+    use object::{Architecture, BinaryFormat, Endianness, SectionKind};
+    let mut obj = WObject::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let data = obj.segment_name(StandardSegment::Data).to_vec();
+    let d = obj.add_section(data.clone(), b".data.d".to_vec(), SectionKind::Data);
+    obj.append_section_data(d, &[2u8; 8], 8);
+    let e = obj.add_section(
+        data.clone(),
+        b".bss.e_obj".to_vec(),
+        SectionKind::UninitializedData,
+    );
+    obj.append_section_bss(e, 0, 64);
+    let a = obj.add_section(data, b".data.a".to_vec(), SectionKind::Data);
+    obj.append_section_data(a, &[1u8; 8], 8);
+    let bytes = obj.write().unwrap();
+    let file = object::File::parse(&*bytes).unwrap();
+    let layout = ElfSectionLayout::new(&file);
+    let base = |name: &str| layout.section_base(&file.section_by_name(name).expect(name));
+    assert_eq!(base(".data.d"), 0x1000_0000);
+    assert_eq!(base(".bss.e_obj"), 0x1000_0040);
+    assert_eq!(base(".data.a"), 0x1000_0040, ".data.a starts past e_obj");
 }

@@ -1,242 +1,270 @@
-//! Store-to-load forwarding.
-//!
-//! Forwards a store's value to a later load only when the nearest
-//! may-aliasing memory definition is an exact-match store: same address
-//! class, base and offset, with stored bytes fully covering the load's
-//! range (a wider store is reshaped via `Truncate` / `ShiftRight`).
-//! Anything else blocks: a non-exact overlapping store, a `MemPhi` whose arms
-//! reach different definitions, or `InitialMemory`.  A `MemPhi` whose arms
-//! agree is transparent.
-//!
-//! A `Call` blocks unless its convention declares `preserves_memory`; a
-//! `CallOther` always blocks, since only a user-op its ABI row declares
-//! `clobbers_memory` reaches the chain.  A `Call` also steps through when
-//! `escape_analysis`
-//! proves the frame private and the slot is outside the call's
-//! outgoing-argument window, and when it is a listed `noalias_allocators`
-//! callee and the probed location is a PRIVATE-frame stack slot outside that
-//! same window, or a different allocation.
-//!
-//! The pass never synthesizes a value-`Phi`, so no merge of two stored values
-//! forwards.  A stack address decomposes only once `PhiCollapse` has folded the
-//! region phis over SP.
+use std::cell::Cell;
 
-use std::cell::RefCell;
+use rustc_hash::FxHashMap;
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::{Function, IRBuilderExt, IRViewer, UBig};
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
-use strider_ir::{IRBuilderExt, IRViewer};
-use strider_target::Endianness;
+use crate::Result;
+use crate::const_eval::LoadSlice;
+use crate::mem_analysis::{Loc, MemQuery, Policy, ReachingDef, narrow_load_to};
 
-use crate::error::Result;
-use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions};
-use crate::pipeline::OptimizationResult;
+/// Store-to-load forwarding. Moves each load's memory edge onto its nearest
+/// clobber under `Policy::strict`. A load whose nearest clobber under
+/// `Policy::forward` is a store at its address covering its bytes takes the
+/// stored value, a wider store sliced. A `MemPhi` whose arms agree once a
+/// constant `If`'s untaken arms are dropped reads as that arm. No value
+/// `Phi` is synthesized.
+pub struct LoadForward;
 
+/// One sweep's memory query and [`settle`] memo.
 #[derive(Default)]
-pub struct LoadForward {
-    /// Shared by every root in one sweep, for their memory index, answers and
-    /// outgoing-argument-window memo.
-    ///
-    /// The pass only rewires `Load` memory edges and redirects `Load` outputs,
-    /// so every memory def keeps its inputs and the index stands.  A store
-    /// address a forward can still change was an `Anchor`, which the index
-    /// offers every location, and a forward that reaches an address drops the
-    /// answers.  A forwarded value only makes an address the window scan could
-    /// not place placeable, which ends a prefix sooner than the memo says.
-    analyzers: RefCell<Option<Analyzers>>,
+pub(crate) struct Sweep {
+    query: MemQuery,
+    /// A memory value to the earliest one it equals.
+    settled: FxHashMap<ValueId, ValueId>,
+    /// A load's memory edge and location to where the settle loop leaves it.
+    ends: FxHashMap<(ValueId, Loc), ValueId>,
 }
 
-/// `alias` carries the run's claims and decides whether to forward; `narrow`
-/// carries none, and is the only one a permanent rewire may name.
-struct Analyzers {
-    alias: MemAnalyzer,
-    narrow: MemAnalyzer,
-}
-
-impl Clone for LoadForward {
-    /// The memo belongs to one sweep of one graph, so a clone starts empty.
-    fn clone(&self) -> Self {
-        Self::default()
-    }
-}
-
+// Not `PROPAGATE`: a forward reaches a consumer only through an address
+// edge, which the next pipeline iteration picks up. One query per sweep: the
+// pass changes only `Load` edges and outputs, so every memory def stands.
 impl crate::peephole::PeepholePass for LoadForward {
+    type Sweep = Sweep;
+
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Load(_))
     }
 
-    fn start_sweep(&self) {
-        *self.analyzers.borrow_mut() = None;
-    }
-
-    // A fresh forward reaches a consumer only through an address edge, which
-    // the next pipeline iteration picks up; re-enqueueing every consumer to
-    // catch it costs more than the deferral.
-    fn propagate_to_consumers(&self) -> bool {
-        false
-    }
-
     fn try_rewrite(
         &self,
+        sweep: &mut Sweep,
         edit: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+        _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
-    ) -> Result<crate::peephole::PeepholeRewrite> {
-        let mut analyzers = self.analyzers.borrow_mut();
-        let cfgs = analyzers.get_or_insert_with(|| {
-            let assumptions = &opt_ctx.options.assumptions;
-            // `call_blocking`: a store at another SP base may still alias.
-            let relaxed = MemOptions::call_blocking(
-                assumptions.stack_global_disjoint,
-                &assumptions.noalias_allocators,
-            )
-            .with_escape_analysis(assumptions.escape_analysis)
-            .with_callee_preserves_stack_args(assumptions.callee_preserves_stack_args);
-            Analyzers {
-                alias: MemAnalyzer::new(relaxed),
-                // `narrow_load_to` rewires for good, so every claim is off:
-                // the edge outlives the run that made it.
-                narrow: MemAnalyzer::new(MemOptions::structural()),
-            }
-        });
-        Ok(crate::peephole::PeepholeRewrite::from_changed(
-            try_forward_load(edit, root, &cfgs.alias, &cfgs.narrow)?.changed(),
-        ))
+    ) -> Result<Option<ValueId>> {
+        try_forward_load(edit, root, sweep)?;
+        Ok(None)
     }
 }
 
-/// Two nearest-clobber queries per load, each a climb of the memory dominator
-/// tree over the analyzers' index, or a path walk where the memory graph is
-/// irreducible and has none.  `narrow_load_to` moves the load's edge onto the
-/// structural clobber, which later sweeps start from.
+#[cfg(test)]
+thread_local! {
+    /// Rounds of [`try_forward_load`]'s settle loop.
+    pub(crate) static SETTLE_ROUNDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Narrows `load`'s memory edge, then forwards the store at its address.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,
-    alias_cfg: &MemAnalyzer,
-    narrow_cfg: &MemAnalyzer,
-) -> Result<OptimizationResult> {
-    let mem = edit
-        .memory_input_of(load)
-        .expect("a Load has a memory input (slot 0)");
+    sweep: &mut Sweep,
+) -> Result<()> {
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
-    // First: the configured analyzer decomposes every address before
-    // `narrow_cfg`'s empty set can commit a `NotMemory` for one (see
-    // `decompose`).
-    let clobber_node = alias_cfg.nearest_clobber(edit.function(), load, mem);
-    // Shorten the load's memory edge onto the clobber `narrow_cfg` proves so
-    // future walks skip the proven-disjoint run.  Never `alias_cfg`'s: the
-    // rewire outlives this run, and a later run with the relaxations off would
-    // inherit an edge that only holds with them on.
-    let sound_clobber = narrow_cfg.nearest_clobber(edit.function(), load, mem);
-    // A moved edge is a change: the load may now be a structural twin of
-    // another, and the fixed point must not exit before that merge is seen.
-    let narrowed = crate::mem_ssa::narrow_load_to(edit, load, sound_clobber);
-    let unforwarded = OptimizationResult::from_changed(narrowed);
-
-    if !matches!(edit.node_kind(clobber_node), NodeKind::Store(_)) {
-        return Ok(unforwarded);
+    let query = &sweep.query;
+    let policy = Policy::forward(edit.function());
+    let loc = Loc::read_by(edit.function(), load);
+    let mut reaching = query.reach_and_narrow(edit, load, policy);
+    let mut path = Vec::new();
+    // Each round lifts the edge onto a strict dominator.
+    while !matches!(reaching, ReachingDef::Match(_)) {
+        #[cfg(test)]
+        SETTLE_ROUNDS.with(|c| c.set(c.get() + 1));
+        let mem = edit.load_mem(load);
+        // Outside the reach no arm is known to dominate its merge.
+        if !query.reaches(edit.function(), edit.producer(mem)) {
+            break;
+        }
+        if let Some(&end) = sweep.ends.get(&(mem, loc)) {
+            if end != mem {
+                narrow_load_to(edit, load, edit.producer(end));
+                reaching = query.reach_and_narrow(edit, load, policy);
+            }
+            break;
+        }
+        path.push(mem);
+        let earlier = settle(&mut sweep.settled, edit.function(), mem);
+        if earlier == mem {
+            break;
+        }
+        narrow_load_to(edit, load, edit.producer(earlier));
+        reaching = query.reach_and_narrow(edit, load, policy);
+    }
+    let end = edit.load_mem(load);
+    for mem in path {
+        sweep.ends.insert((mem, loc), end);
     }
 
-    // Exact match: same location, stored bytes covering the load's range.
-    if alias_cfg.verdict(edit.function(), load, clobber_node) != AliasVerdict::Match {
-        return Ok(unforwarded);
-    }
+    let ReachingDef::Match(clobber_node) = reaching else {
+        return Ok(());
+    };
 
     let store_data = edit.store_data(clobber_node);
     let store_data_ty = edit
         .value_type_opt(store_data)
         .expect("Store data input is a value");
-    let forwarded = if store_data_ty == load_ty {
-        store_data
-    } else if store_data_ty.is_integer()
-        && load_ty.is_integer()
-        && load_ty.byte_size() < store_data_ty.byte_size()
-        // The BE reshape mints a shift const via `build_int_const`, which only
-        // materialises up to I128.  Bail on wider stores rather than fail; a
-        // wide-store-to-narrow-load forward is exotic.
-        && store_data_ty.byte_size() <= 16
-        // `narrow` reshapes by the FUNCTION's byte order, which is the data
-        // order.  The REGISTER space has its own: they differ on ARM BE8,
-        // where the sla's register block is little-endian under big-endian
-        // data (`SleighArch::register_endianness`).  Reshaping a mirrored
-        // register slot there would take the wrong half, so the opaque
-        // register path -- already the imprecise fallback -- does not reshape.
-        && !matches!(
-            edit.node_kind(load),
-            NodeKind::Load(rsleigh::VnSpace::REGISTER)
-        )
-    {
-        narrow(edit, store_data, load)?
-    } else {
-        return Ok(unforwarded);
+    let NodeKind::Load(space) = *edit.node_kind(load) else {
+        unreachable!("LoadForward rewrites a load");
+    };
+    let order = edit.function().byte_order();
+    let forwarded = match crate::const_eval::load_slice(order, space, store_data_ty, load_ty) {
+        Some(LoadSlice::Same) => store_data,
+        Some(LoadSlice::Narrow(shift)) => {
+            slice_to_load(edit, store_data, store_data_ty, load, load_ty, shift)?
+        }
+        None => return Ok(()),
     };
 
-    // A forwarded address can turn an `Anchor` store into a located one,
-    // which moves verdicts the analyzers memoised.
-    if feeds_an_address(edit.function(), load_value) {
-        alias_cfg.forget_answers();
-        narrow_cfg.forget_answers();
+    // A store address redirected onto a new value has a class no memoised
+    // answer has seen.
+    if edit
+        .function()
+        .graph()
+        .value_uses(load_value)
+        .any(|(user, slot)| {
+            matches!(edit.node_kind(user), NodeKind::Store(_))
+                && slot as usize == NodeKind::ACCESS_ADDR_SLOT
+        })
+    {
+        query.forget_answers();
+        sweep.ends.clear();
     }
-    // Redirecting the sole output leaves the Load dead; the automatic cull
-    // removes it and its address cone.
-    let changed = edit.replace_value(load_value, forwarded)?;
-    Ok(OptimizationResult::from_changed(changed || narrowed))
+    // The store and the load's address are the forward's proof.
+    let forwarded_node = edit.producer(forwarded);
+    edit.absorb_node_fingerprint(forwarded_node, clobber_node);
+    let addr = edit.load_addr(load);
+    edit.absorb_fingerprint(forwarded, addr);
+    edit.replace_value(load_value, forwarded);
+    Ok(())
 }
 
-/// Whether `value` reaches a store's address or a call's SP through `Add` and
-/// `And` steps, the shapes `decompose` follows.
-fn feeds_an_address(function: &strider_ir::Function, value: ValueId) -> bool {
-    let mut work = vec![value];
-    let mut seen = rustc_hash::FxHashSet::default();
-    while let Some(v) = work.pop() {
-        for (user, slot) in function.graph().value_uses(v) {
-            match function.node_kind(user) {
-                NodeKind::Store(_) if slot == 1 => return true,
-                NodeKind::Call { .. } if slot == 3 => return true,
-                NodeKind::IntBinaryOp(
-                    strider_ir::IntBinaryOp::Add | strider_ir::IntBinaryOp::And,
-                ) if seen.insert(user) => {
-                    work.extend(function.node_outputs(user).iter().copied());
-                }
-                _ => {}
+/// The earliest memory value `mem` equals through [`settle_one`] steps,
+/// memoised in `settled`.
+fn settle(settled: &mut FxHashMap<ValueId, ValueId>, f: &Function, mem: ValueId) -> ValueId {
+    let mut path = Vec::new();
+    let mut cur = mem;
+    let end = loop {
+        if let Some(&done) = settled.get(&cur) {
+            break done;
+        }
+        match settle_one(f, cur) {
+            Some(next) => {
+                path.push(cur);
+                cur = next;
             }
+            None => {
+                settled.insert(cur, cur);
+                break cur;
+            }
+        }
+    };
+    for v in path {
+        settled.insert(v, end);
+    }
+    end
+}
+
+/// The arm a `MemPhi` output equals: every arm on an edge some constant `If`
+/// can take carries it, and every other arm is derived from it through
+/// `Store` / `Call` / `CallOther`, so its def dominates the phi's region.
+fn settle_one(f: &Function, mem: ValueId) -> Option<ValueId> {
+    const ARM_STEPS: usize = 16;
+    let phi = f.producer(mem);
+    if !matches!(f.node_kind(phi), NodeKind::MemPhi) {
+        return None;
+    }
+    let mut live = None;
+    let mut dead = smallvec::SmallVec::<[ValueId; 2]>::new();
+    for (edge, arm) in f.phi_arms(phi) {
+        if never_taken(f, edge) {
+            dead.push(arm);
+        } else if *live.get_or_insert(arm) != arm {
+            return None;
+        }
+    }
+    let live = live.filter(|&m| m != mem)?;
+    for mut arm in dead {
+        let mut steps = 0;
+        while arm != live {
+            let def = f.producer(arm);
+            if steps == ARM_STEPS
+                || !matches!(
+                    f.node_kind(def),
+                    NodeKind::Store(_) | NodeKind::Call { .. } | NodeKind::CallOther { .. }
+                )
+            {
+                return None;
+            }
+            arm = f.memory_input_of(def)?;
+            steps += 1;
+        }
+    }
+    Some(live)
+}
+
+/// Whether control edge `edge` leaves, through single-predecessor regions
+/// and calls, the arm of an `If` its constant condition never takes.
+fn never_taken(f: &Function, mut edge: ValueId) -> bool {
+    const CTRL_STEPS: usize = 16;
+    for _ in 0..CTRL_STEPS {
+        let node = f.producer(edge);
+        match f.node_kind(node) {
+            NodeKind::If => {
+                let budget = Cell::new(32);
+                let Some(cond) = cone_const(f, f.if_cond(node), &budget) else {
+                    return false;
+                };
+                let taken = f.node_outputs(node)[if cond == UBig::ZERO {
+                    NodeKind::IF_FALSE_OUT_SLOT
+                } else {
+                    NodeKind::IF_TRUE_OUT_SLOT
+                }];
+                return edge != taken;
+            }
+            NodeKind::Region if f.node_inputs(node).len() == 1 => {
+                edge = f.node_inputs(node)[0];
+            }
+            NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
+                edge = f.node_inputs(node)[NodeKind::CTRL_SLOT];
+            }
+            _ => return false,
         }
     }
     false
 }
 
-/// Reshapes a wider store's value down to the load width.  On BE the load's
-/// bytes are the high ones, so a `(store_size - load_size) * 8` shift precedes
-/// the truncate.
-fn narrow(
+/// `value` evaluated over constant leaves, visiting at most `budget` nodes.
+fn cone_const(f: &Function, value: ValueId, budget: &Cell<u32>) -> Option<UBig> {
+    budget.set(budget.get().checked_sub(1)?);
+    crate::const_eval::eval_node_const(f, value, &|v| cone_const(f, v, budget), None)
+}
+
+/// A wider store's value shifted right `shift` bits and truncated to the
+/// load.
+fn slice_to_load(
     edit: &mut crate::EditFunction<'_>,
     store_data: ValueId,
+    store_data_ty: ValueType,
     load: NodeId,
+    load_ty: ValueType,
+    shift: u32,
 ) -> Result<ValueId> {
-    let store_data_ty = edit.value_type(store_data)?;
-    let (_, load_ty) = edit.single_value_output(load)?;
-    let endianness = edit.function().endianness();
-    let shifted = match endianness {
-        Endianness::Little => store_data,
-        Endianness::Big => {
-            let shift_bits =
-                crate::mem_analysis::high_low_shift_bits(store_data_ty, load_ty, endianness);
-            let shift_const = edit.build_int_const(u128::from(shift_bits), store_data_ty)?;
-            // `build_int_const` carries no contributor stamp, so attribute the
-            // const by hand; every reachable node needs a fingerprint.
-            let shift_const_node = edit.producer(shift_const);
-            edit.function_mut()
-                .side_tables_mut()
-                .extend_asm_fingerprint_from(shift_const_node, load);
-            let shr = edit.create_node_attributed(
-                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
-                [store_data, shift_const],
-                [ValueKind::Typed(store_data_ty)],
-                &[load],
-            );
-            let [value] = edit.node_outputs_exact::<1>(shr)?;
-            value
-        }
+    let shifted = if shift == 0 {
+        store_data
+    } else {
+        let shift_const = edit.build_int_const(u128::from(shift), store_data_ty)?;
+        // `build_int_const` stamps no fingerprint.
+        let shift_const_node = edit.producer(shift_const);
+        edit.absorb_node_fingerprint(shift_const_node, load);
+        let shr = edit.create_node_attributed(
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
+            [store_data, shift_const],
+            [ValueKind::Typed(store_data_ty)],
+            &[load],
+        );
+        let [value] = edit.node_outputs_exact::<1>(shr)?;
+        value
     };
     let trunc = edit.create_node_attributed(
         NodeKind::Truncate,

@@ -44,7 +44,7 @@ class DictRom(strider.reader.ReadOnlyMemory):
         self.calls = 0
 
     def read(self, addr: int, size: int) -> bytes | None:
-        # Return exactly size RAW bytes; no byte-swap (the optimizer decodes per endianness).
+        # Exactly `size` raw bytes, not byte-swapped (decoded per endianness downstream).
         self.calls += 1
         if addr < self.base or addr + size > self.base + len(self.blob):
             return None
@@ -59,7 +59,6 @@ lft = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem, rom)
 _cfg, fn, _unresolved = lft.analyze(
     CODE_ADDR,
     strider.sleigh.CallingConvention.x86_64_systemv(),
-    opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
 )
 
 print(f"DictMem.read (code)   fired {mem.calls} time(s)")
@@ -90,7 +89,7 @@ n = edited.rewrite(
 )
 print(f"rewrote {n} site(s)")
 
-lft.optimize(edited)
+edited.optimize()
 orig_shapes = len(fn.find_all(int_add(function_arg(0), var(k)), ignore_casts=True))
 edited_shapes = len(edited.find_all(int_add(function_arg(0), var(k)), ignore_casts=True))
 print(f"`arg0 + <captured>` shapes, original: {orig_shapes}, clone after rewrite: {edited_shapes}")

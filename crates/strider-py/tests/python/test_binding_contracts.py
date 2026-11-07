@@ -2,9 +2,9 @@
 
 The options views hand out immutable values, `build_cfg` reports only the seeds
 it seated, `pcode_at` answers the same whatever order the calls came in,
-merging an image does nothing when it is already loaded and nothing when the
-handle cannot rebuild, `build_cfg` and `analyze` answer the same for a bad
-`entry`, a rewrite does not burn a one-shot pattern on a bad replacement,
+merging an image does nothing when it is already loaded and reaches every view
+from any thread, `build_cfg` and `analyze` answer the same for a bad
+`entry`, a refused rewrite leaves its `into_pat()` pattern usable,
 importing strider exports nothing to a child process, a custom convention is
 checked against the register table rather than the preset name, and a pattern
 shared into an exponential tree is refused rather than compiled.
@@ -20,8 +20,9 @@ import time
 import pytest
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, anything, int_add, ret, var
-from strider.sleigh import CallingConvention, Sleigh, SleighArch
+from strider.sleigh import CallingConvention, SleighArch
 
 from .conftest import fixture_path
 
@@ -70,30 +71,33 @@ def test_per_address_ccs_is_one_memoised_view():
     assert strider.lift.LifterOptions().per_address_ccs is None
 
 
-# --- build_cfg's seeded channel ---------------------------------------------
+# --- build_cfg's seeded sites -----------------------------------------------
 
 
 def test_a_seed_the_build_seated_nowhere_is_not_reported():
     """`build_cfg` reports only the seeds it seated, so a whole-binary answer
-    table leaves `is_complete()` True and names no address the function does
-    not dispatch from."""
+    table leaves `incomplete` empty and names no address the function does not
+    dispatch from."""
     opts = strider.cfg.CfgOptions(known_targets={0xDEAD0000: [0xDEAD1000]})
     cfg = _x86_64(_STRAIGHT).build_cfg(_BASE, opts)
-    assert cfg.unverified_seeded_sites() == []
-    assert cfg.is_complete()
+    assert cfg.incomplete == []
     # `analyze` over the same options says the same.
     result = _x86_64(_STRAIGHT).analyze(
         _BASE,
         CallingConvention.x86_64_systemv(),
         strider.lift.LifterOptions(cfg=opts),
     )
-    assert result.cfg.is_complete()
+    assert result.cfg.incomplete == []
 
 
 def test_a_seed_the_build_did_seat_is_still_reported():
     opts = strider.cfg.CfgOptions(known_targets={_DISPATCH: [0x1100]})
-    cfg = _x86_64(_INDIRECT + bytes(0x100) + _STRAIGHT).build_cfg(_BASE, opts)
-    assert cfg.unverified_seeded_sites() == [_DISPATCH]
+    # The arm is `_STRAIGHT`, at 0x1100.
+    cfg = _x86_64(_INDIRECT + bytes(0xFB) + _STRAIGHT).build_cfg(
+        _BASE,
+        opts,
+    )
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [_DISPATCH]
 
 
 # --- pcode_at is history-independent ----------------------------------------
@@ -108,6 +112,34 @@ def _arm():
     )
 
 
+@pytest.mark.parametrize(
+    ("entry", "says"),
+    [(-1, "out of range"), (2**64, "out of range")],
+)
+def test_pcode_at_names_a_bad_entry_as_analyze_does(entry, says):
+    """`pcode_at` takes its `entry` as `analyze` and `build_cfg` do."""
+    with pytest.raises(strider.StriderError, match=says):
+        _arm().pcode_at(entry, _BASE)
+
+
+def test_pcode_at_takes_a_thumb_address_with_its_mode_bit():
+    """A Thumb symbol address names the instruction one byte below it."""
+    prog = strider.lift.load_elf(fixture_path("arm_thumb", "memory"))
+    entry = next(s for s in prog.functions() if s.is_thumb).address
+    assert entry & 1
+    assert prog.pcode_at(entry, entry) == prog.pcode_at(entry, entry & ~1)
+
+
+def test_cfg_pcode_at_takes_a_thumb_address_with_its_mode_bit():
+    """`Cfg.pcode_at` reads a Thumb symbol address as `Lifter.pcode_at` does."""
+    prog = strider.lift.load_elf(fixture_path("arm_thumb", "arithmetic"))
+    entry = next(s for s in prog.functions() if s.is_thumb).address
+    cfg = prog.build_cfg(entry)
+    assert cfg.pcode_at(entry & ~1)
+    assert cfg.pcode_at(entry) == cfg.pcode_at(entry & ~1)
+    assert cfg.pcode_at(entry) == prog.pcode_at(entry, entry)
+
+
 @pytest.mark.parametrize("addr", [0x1000, 0x1004, 0x1008, 0x100C])
 def test_pcode_at_does_not_depend_on_earlier_calls(addr):
     """`pcode_at` answers the same whatever order the calls came in, a
@@ -119,58 +151,74 @@ def test_pcode_at_does_not_depend_on_earlier_calls(addr):
     assert walked.pcode_at(_BASE, addr) == expected
 
 
+class _CountingReader(strider.reader.MemReader):
+    """A `BufferReader` at `_BASE` that counts the reads the decoder makes."""
+
+    def __init__(self, code: bytes):
+        super().__init__()
+        self.inner = strider.reader.BufferReader(_BASE, code)
+        self.reads = 0
+
+    def read(self, addr: int, size: int):
+        self.reads += 1
+        return self.inner.read(addr, size)
+
+
+def _counted_x86_64(code: bytes):
+    reader = _CountingReader(code)
+    return strider.lift.lifter(SleighArch.x86_64(), reader), reader
+
+
 def test_walking_a_stream_decodes_it_once():
-    """One sweep serves a whole function's instructions, so a per-address walk
-    is linear rather than a decode from the entry per call."""
+    """One sweep serves a whole function's instructions: walking every address
+    reads what one sweep to the last address reads, and asking again reads
+    nothing."""
     count = 4000
-    lifter = _x86_64(bytes([0x48, 0x83, 0xC0, 0x01]) * count)  # add rax,1
+    code = bytes([0x48, 0x83, 0xC0, 0x01]) * count  # add rax,1
     addrs = [_BASE + 4 * i for i in range(count)]
 
-    t = time.perf_counter()
-    for addr in addrs:
-        lifter.pcode_at(_BASE, addr)
-    walk = time.perf_counter() - t
+    swept, swept_reader = _counted_x86_64(code)
+    swept.pcode_at(_BASE, addrs[-1])
+    sweep = swept_reader.reads
+    swept.pcode_at(_BASE, addrs[-1])
+    assert swept_reader.reads == sweep, "an address already answered reads nothing"
 
-    t = time.perf_counter()
-    lifter.pcode_at(_BASE, addrs[-1])
-    last = time.perf_counter() - t
-    # Linear: the whole walk costs about one sweep, not one per address. The
-    # cached call reads a dict, so the comparison is against a fresh sweep.
-    one_sweep = _x86_64(bytes([0x48, 0x83, 0xC0, 0x01]) * count)
-    t = time.perf_counter()
-    one_sweep.pcode_at(_BASE, addrs[-1])
-    sweep = time.perf_counter() - t
-    assert last < sweep
-    assert walk < 20 * sweep, f"walk {walk:.3f}s against one sweep {sweep:.3f}s"
+    walked, walked_reader = _counted_x86_64(code)
+    for addr in addrs:
+        walked.pcode_at(_BASE, addr)
+    assert walked_reader.reads == sweep > 0
 
 
 # --- add_elf ----------------------------------------------------------------
 
 
-def test_an_add_elf_that_cannot_rebuild_merges_nothing():
-    """A `_rebuild` that raises leaves the handle whole: `symbol`, `read` and
-    the decoder all see the pre-merge ELF."""
+def test_an_add_elf_off_thread_merges_into_every_view():
+    """`add_elf` from a thread that did not build the handle merges, and
+    `symbol`, `read` and the decoder all see the new ELF, as an on-thread
+    merge does."""
     import threading
 
-    prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
-    other = str(fixture_path("x86", "elf_relocs"))
-    before = _image_state(prog)
+    path, other = str(fixture_path("x86", "memory")), str(fixture_path("x86", "elf_relocs"))
+    prog, expected = strider.lift.load_elf(path), strider.lift.load_elf(path)
+    expected.add_elf(other)
     failure: list[str] = []
 
     def off_thread():
         try:
             prog.add_elf(other)
-        except strider.StriderError:
-            failure.append("raised")
+        except Exception as e:
+            failure.append(repr(e))
 
-    t = threading.Thread(target=off_thread)
+    t = threading.Thread(target=off_thread, daemon=True)
     t.start()
-    t.join()
-    assert failure == ["raised"]
-    assert _image_state(prog) == before
-    # Still mergeable on the owning thread.
-    prog.add_elf(other)
-    assert "helper_a" in prog.symbols()
+    t.join(60)
+    assert not t.is_alive(), "add_elf hung"
+    assert failure == []
+    assert _image_state(prog) == _image_state(expected)
+    assert (
+        prog.analyze("helper_a").function.to_text()
+        == expected.analyze("helper_a").function.to_text()
+    )
 
 
 def test_re_merging_a_loaded_image_does_nothing():
@@ -186,7 +234,7 @@ def test_re_merging_a_loaded_image_does_nothing():
 # --- the exception contract -------------------------------------------------
 
 
-@pytest.mark.parametrize("entry", [-1, 2**64, "add"])
+@pytest.mark.parametrize("entry", [-1, 2**64])
 def test_analyze_and_build_cfg_answer_the_same_for_a_bad_entry(entry):
     """Both raise the `StriderError` naming the real cause, not a bare
     `OverflowError`."""
@@ -198,7 +246,99 @@ def test_analyze_and_build_cfg_answer_the_same_for_a_bad_entry(entry):
     assert str(built.value) == str(analyzed.value)
 
 
-# --- rewrite does not burn a one-shot pattern -------------------------------
+@pytest.mark.parametrize("entry", ["add", 1.0, None], ids=["str", "float", "none"])
+def test_a_wrong_typed_entry_raises_type_error_everywhere(entry):
+    """Every entry point takes `entry` alike; only `ElfLifter.analyze` takes a
+    symbol name, and no message sends an `ElfLifter` to `load_elf`."""
+    lifter = _x86_64(_STRAIGHT)
+    prog = strider.lift.load_elf(fixture_path("x64", "memory"))
+    calls = [
+        lambda: lifter.analyze(entry, CallingConvention.x86_64_systemv()),
+        lambda: lifter.build_cfg(entry),
+        lambda: lifter.pcode_at(entry, _BASE),
+        lambda: prog.build_cfg(entry),
+        lambda: prog.pcode_at(entry, _BASE),
+    ]
+    if not isinstance(entry, str):
+        calls.append(lambda: prog.analyze(entry))
+    for call in calls:
+        with pytest.raises(TypeError, match="`entry`") as raised:
+            call()
+        assert not isinstance(raised.value, strider.StriderError)
+        assert "load_elf" not in str(raised.value)
+        if isinstance(entry, str):
+            assert "ElfLifter.analyze" in str(raised.value)
+
+
+class _IndexFails(Exception):
+    pass
+
+
+class _BadIndex:
+    def __index__(self) -> int:
+        raise _IndexFails("from __index__")
+
+
+def test_an_entry_index_error_propagates_as_raised():
+    """Only a wrong type or an out-of-range int is `entry`'s own error."""
+    lifter = _x86_64(_STRAIGHT)
+    prog = strider.lift.load_elf(fixture_path("x64", "memory"))
+    calls = [
+        lambda: lifter.analyze(
+            _BadIndex(),  # type: ignore[arg-type]
+            CallingConvention.x86_64_systemv(),
+        ),
+        lambda: lifter.build_cfg(_BadIndex()),  # type: ignore[arg-type]
+        lambda: prog.build_cfg(_BadIndex()),  # type: ignore[arg-type]
+        lambda: prog.analyze(_BadIndex()),  # type: ignore[arg-type]
+    ]
+    for call in calls:
+        with pytest.raises(_IndexFails):
+            call()
+
+
+class _Index:
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __index__(self) -> int:
+        return self.value
+
+
+@pytest.mark.parametrize("entry", [-1, 2**64])
+def test_an_out_of_range_index_entry_raises_as_the_int_does(entry):
+    """An `__index__` entry out of range is `entry`'s own `StriderError`,
+    worded as for the int it gives."""
+    lifter = _x86_64(_STRAIGHT)
+    prog = strider.lift.load_elf(fixture_path("x64", "memory"))
+    with pytest.raises(strider.StriderError, match="`entry`") as as_int:
+        lifter.build_cfg(entry)
+    calls = [
+        lambda: lifter.analyze(
+            _Index(entry),  # type: ignore[arg-type]
+            CallingConvention.x86_64_systemv(),
+        ),
+        lambda: lifter.build_cfg(_Index(entry)),  # type: ignore[arg-type]
+        lambda: prog.build_cfg(_Index(entry)),  # type: ignore[arg-type]
+        lambda: prog.analyze(_Index(entry)),  # type: ignore[arg-type]
+    ]
+    for call in calls:
+        with pytest.raises(strider.StriderError) as raised:
+            call()
+        assert str(raised.value) == str(as_int.value)
+    with pytest.raises(strider.StriderError, match="out of range"):
+        prog.pcode_at(_BASE, _Index(entry))  # type: ignore[arg-type]
+
+
+def test_elf_lifter_analyze_takes_an_index_entry_as_an_address():
+    prog = strider.lift.load_elf(fixture_path("x64", "memory"))
+    main = prog.symbol("main").address
+    assert (
+        prog.analyze(_Index(main)).function.to_text()  # type: ignore[arg-type]
+        == prog.analyze(main).function.to_text()
+    )
+    with pytest.raises(TypeError, match="`entry`"):
+        prog.analyze(True)
 
 
 def _analyzed_function():
@@ -210,7 +350,7 @@ def test_a_bad_replacement_leaves_the_find_pattern_usable():
     fn = _analyzed_function()
     lhs = ret().into_pat()
     with pytest.raises(strider.StriderError):
-        fn.rewrite(lhs, anything())
+        fn.rewrite(lhs, tpl.int_add(anything(), 1))  # type: ignore[arg-type]
     assert len(fn.find_all(lhs)) == 1
 
 
@@ -218,8 +358,27 @@ def test_a_bad_replacement_in_rewrite_all_leaves_them_usable():
     fn = _analyzed_function()
     lhs = ret().into_pat()
     with pytest.raises(strider.StriderError):
-        fn.rewrite_all([(lhs, anything())])
+        fn.rewrite_all([(lhs, tpl.int_add(anything(), 1))])  # type: ignore[arg-type]
     assert len(fn.find_all(lhs)) == 1
+
+
+def test_a_refused_rule_leaves_the_find_pattern_usable():
+    """The rule itself is refused (the RHS names a capture the LHS never
+    binds), after both sides were built."""
+    fn = _analyzed_function()
+    lhs = ret().into_pat()
+    with pytest.raises(strider.StriderError):
+        fn.rewrite(lhs, tpl.var(Capture()))
+    assert len(fn.find_all(lhs)) == 1
+
+
+def test_a_refused_second_rule_leaves_the_first_find_pattern_usable():
+    fn = _analyzed_function()
+    c = Capture()
+    first = ret().capture(c).into_pat()
+    with pytest.raises(strider.StriderError):
+        fn.rewrite_all([(first, tpl.var(c)), (ret().into_pat(), tpl.var(Capture()))])
+    assert len(fn.find_all(first)) == 1
 
 
 # --- importing strider exports nothing --------------------------------------
@@ -257,13 +416,77 @@ def test_errors_still_carry_a_backtrace():
         pytest.fail("expected a StriderError")
 
 
+def test_an_error_pickles_with_its_backtrace():
+    """`.backtrace` renders when read, so a pickled error carries it as text."""
+    import pickle
+
+    try:
+        _x86_64(_STRAIGHT).analyze(0x9999, CallingConvention.x86_64_systemv())
+    except strider.StriderError as e:
+        copy = pickle.loads(pickle.dumps(e))
+        assert type(copy) is strider.StriderError
+        assert str(copy) == str(e)
+        assert copy.backtrace == e.backtrace
+        assert "stack backtrace" in copy.backtrace.lower()
+    else:
+        pytest.fail("expected a StriderError")
+
+
+def test_an_error_raised_from_python_has_an_empty_backtrace():
+    assert strider.StriderError("mine").backtrace == ""
+
+
+def test_backtrace_stays_assignable():
+    try:
+        _x86_64(_STRAIGHT).analyze(0x9999, CallingConvention.x86_64_systemv())
+    except strider.StriderError as e:
+        e.backtrace = "mine"
+        assert e.backtrace == "mine"
+        setattr(e, "backtrace", None)  # the stub types it `str`
+        assert e.backtrace is None
+        del e.backtrace
+        assert e.backtrace == ""
+    else:
+        pytest.fail("expected a StriderError")
+
+
+def test_backtrace_has_a_docstring():
+    doc = strider.StriderError.backtrace.__doc__
+    assert doc and "Rust backtrace" in doc, doc
+
+
+def test_a_per_address_cc_refusal_keeps_the_backtrace_out_of_its_message():
+    """The refusal names the address and the cause; the frames stay on
+    `.backtrace`, as for every other error."""
+    opts = strider.lift.LifterOptions(
+        per_address_ccs={0x2000: CallingConvention.aarch64_aapcs64()}
+    )
+    try:
+        _x86_64(_STRAIGHT).analyze(_BASE, CallingConvention.x86_64_systemv(), opts=opts)
+    except strider.StriderError as e:
+        assert str(e) == (
+            'per-address CC at 0x2000 unresolved: unknown sleigh register name "x0"'
+        ), str(e)
+        assert "stack backtrace" in e.backtrace.lower()
+    else:
+        pytest.fail("expected a StriderError")
+
+
+
+def test_a_preset_cc_of_another_arch_is_named_with_the_arch():
+    with pytest.raises(strider.StriderError) as raised:
+        _x86_64(_STRAIGHT).analyze(_BASE, CallingConvention.arm_aapcs())
+    assert str(raised.value) == (
+        "calling convention arm_aapcs does not fit the x86_64 register table: "
+        'unknown sleigh register name "r0"'
+    )
+
 # --- the custom-convention arch check ---------------------------------------
 
 
 def _custom_cc(arch) -> CallingConvention:
-    sleigh = Sleigh(arch, strider.reader.BufferReader(_BASE, b"\x00" * 4))
     return CallingConvention.custom(
-        sleigh=sleigh,
+        sleigh=arch,
         arg_passing_regs=["r0", "r1"],
         callee_saved_regs=["r4", "lr"],
         ret_val_regs=["r0"],

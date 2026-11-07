@@ -10,9 +10,6 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 ARCH = strider.sleigh.SleighArch.x86()
 CC = strider.sleigh.CallingConvention.x86_cdecl()
-OPTS = strider.lift.LifterOptions(
-    cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-)
 
 # Real ELF for the code bytes; the ROM comes from Python. `main` reads four
 # 32-bit globals from absolute addresses, which is the shape LoadReadOnly folds.
@@ -43,7 +40,7 @@ class CallbackRom(strider.reader.ReadOnlyMemory):
         self.calls = 0
 
     def read(self, addr: int, size: int) -> bytes | None:
-        # Return exactly size RAW bytes; no byte-swap (the optimizer decodes per endianness).
+        # Exactly `size` raw bytes, not byte-swapped (decoded per endianness downstream).
         self.calls += 1
         if addr < self.base or addr + size > self.base + len(self.blob):
             return None
@@ -55,7 +52,7 @@ class CallbackRom(strider.reader.ReadOnlyMemory):
 # call log is the address window the next rom has to cover.
 probe = ProbeRom()
 lft = strider.lift.lifter(ARCH, mem, probe)
-_cfg, unfolded, _unresolved = lft.analyze(addr, CC, opts=OPTS)
+_cfg, unfolded, _unresolved = lft.analyze(addr, CC)
 print(f"probed addresses: {sorted({hex(a) for a, _ in probe.seen})}")
 print(f"loads with a rom that answers nothing: {len(unfolded.find_all(load()))}")
 
@@ -68,7 +65,7 @@ blob = b"".join(v.to_bytes(4, "little") for v in VALUES)[: end - base]
 # feeds instruction fetch. The constants below come from Python, not the ELF.
 rom = CallbackRom(base=base, blob=blob)
 lft = strider.lift.lifter(ARCH, mem, rom)
-_cfg, function, _unresolved = lft.analyze(addr, CC, opts=OPTS)
+_cfg, function, _unresolved = lft.analyze(addr, CC)
 
 print(f"\nloads after optimize: {len(function.find_all(load()))}")
 print(f"CallbackRom.read invoked {rom.calls} time(s) by LoadReadOnly")

@@ -1,77 +1,64 @@
 # strider-target
 
-Pure target-description data: architecture presets, calling conventions, and the
-CallOther ABI table, the descriptors the lifting and optimizing layers read. It
-sits at the bottom of the dependency graph so every layer names the same ABI
-types.
+Target-description data: architecture presets, calling conventions, and the
+CallOther ABI table.
 
-## What's here
+## API
 
-- `SleighArch`: an architecture (SLA spec, PSPEC, endianness), with a constructor
-  per supported target (`x86_64()`, `aarch64()`, `arm_thumb()`, `mipsle32()`, ...).
-  `entry_mode_context(entry_addr)` gives the context variable and value a cold
-  entry decodes in, keyed off the address low bit, on the two families whose
-  ISA mode the entry address carries (ARM Thumb, MIPS16e); it is `None`
-  elsewhere. The two MIPS pspecs (`PSPEC_MIPS32`, `PSPEC_MIPS64`, shared by the
-  four MIPS presets) pin `RELP=1`, so the alternate ISA is MIPS16e and a
-  microMIPS image decodes its odd-addressed functions against MIPS16e tables.
-- `CallingConvention`: a register-name description of how arguments are passed
-  and results returned, with a preset per userland ABI plus four
-  kernel-internal ones: `x86_linux_kernel` and the three PowerPC
-  `*_linux_kernel` flavours. `build(&regs)` resolves the names to varnodes.
-  Every other architecture's kernel ABI has its userland preset's register
-  SET, so a caller picks that directly. A role can still differ without the
-  set doing so, which is why PowerPC has presets of its own: ppc64 `r13` is the
-  per-CPU `paca` pointer there rather than the userland TLS pointer. Float and
-  vector arguments have their own positional list,
-  `arg_passing_regs_float`, drawn from a register file the integer list never
-  names; where the float and vector banks are physically distinct, as on
-  PowerPC, the vector window (`v2`-`v13`) follows the floats, and the PowerPC
-  kernel presets name no part of it, Linux there being built with
-  `-mno-altivec -mno-vsx`. ARM32 splits over the float variant the ELF header
-  does not pin down: `arm_aapcs` is hard-float (VFP), `arm_aapcs_soft` is
-  `-mfloat-abi=soft` / `softfp`.
-- `StackArgs`: the stack-slot geometry (offsets and slot indices) that the
-  stack-argument passes read, so every pass agrees on slot order.
-- `call_other_abi`: the CallOther ABI table below and the `classify` /
-  `classify_with` lookups over it.
+- `SleighArch`: an architecture preset (`x86_64()`, `aarch64()`,
+  `arm_thumb()`, `mipsle32()`, ...). `entry_mode_context(entry_addr)` gives the
+  ISA mode a cold entry decodes in (Thumb, MIPS16e).
+- `ArchNames` (`SleighArch::names()`): register and space names for rendering.
+- `DecodeTables` (`SleighArch::decode_tables()`): what the sla says about
+  decoding (user-op names, context vars and their defaults, volatile and
+  internal registers).
+- `CallingConvention`: register names for arguments, results and preserved
+  state, one preset per userland ABI plus the `*_linux_kernel` ones (x86,
+  PowerPC); `build(&regs)` resolves them to varnodes. `CcPreset` /
+  `CallingConvention::presets()` list them with their arches and Ghidra
+  prototypes.
+- `ArchPreset`: the preset roster (`arch_presets!` in `src/arch/mod.rs`).
+- `call_other_abi`: the CallOther table and its `classify` / `classify_with`
+  lookups.
 
-## What the CallOther ABI is
+Each family is a `Family` in `src/family/<name>.rs`: ldefs path, decode
+facts, CallOther rows and calling conventions. `call_other_abi/common.rs`
+holds rows matched by op name on any family that emits the op. Tests check the
+data against the vendored sla and Ghidra.
 
-Sleigh lifts most instructions into explicit p-code operations. A few it cannot:
-special instructions like `cpuid`, `rdtsc`, `syscall`, cache flushes, memory
-barriers, and coprocessor accesses. For those it emits a placeholder,
-`CALLOTHER(user_op_id, args)` with an optional output, and leaves the meaning to
-the consumer.
+## CallOther ABI
 
-The catch is that such an instruction usually reads or writes registers, or
-touches memory, that the p-code around it never mentions. Ignore that and the IR
-becomes unsound: a later read of a register the instruction clobbered would see a
-stale value.
+Sleigh lifts what it cannot express (`cpuid`, `syscall`, barriers) to
+`CALLOTHER(user_op_id, args)`, which may touch registers and memory its p-code
+never names. The table gives that footprint per arch and user-op name:
+`implicit_reads` / `implicit_writes`, `clobbers_memory` and `no_return`.
+`classify` answers `NoOp` or `Call(abi)`; an unclassified name fails the lift.
+`classify_with` lets a caller's overrides answer first.
 
-So this crate keeps a table, keyed by architecture and user-op name, describing
-that implicit footprint:
+## Adding to strider-target
 
-- `implicit_reads` / `implicit_writes`: registers the instruction reads or writes
-  beyond the p-code operands.
-- `clobbers_memory`: whether it advances the IR's memory edge (true for atomics,
-  barriers, port I/O, syscalls; false for pure compute like `rdtsc`).
-- `no_return`: whether control never comes back (true for `sysret`, an ERET, or
-  a trap that cannot fall through). The PowerPC `tw`/`td` family is conditional,
-  so the table row keeps it returning, but `trap_is_unconditional` reads the
-  `TO` mask and ends the region for the 7 of 32 masks that cover a trichotomy.
+Each step is checked: leaving one out fails a test.
 
-`classify(preset, name)` says how to lift a given user-op: `NoOp` emits nothing (a
-hint with no effect on the model), and `Call(abi)` emits a CallOther node
-carrying that footprint. An unclassified name is a lift error, so the table
-grows from real binaries instead of guessing a wrong footprint.
-`classify_with(overrides, preset, name)` lets a caller answer first, which is
-what `CfgOptions::call_other_overrides` (`CfgOptions(call_other_abis=...)` from
-Python) feeds. An override is either a `CallOtherClass` shaped like a table row
-or a `BuiltCallOtherAbi` the caller resolved against a `SleighRegs` itself,
-which is how a footprint whose register names are not `&'static str` gets in.
-Overrides are per-analysis, the way a calling convention is: the table states
-what the architecture does, an override states what one binary's build of the
-op does.
-
-Depends only on `rsleigh`, `anyhow` and `rustc-hash`.
+- **CallOther row**: a `Row` in the family's `call_other` (or `common.rs`),
+  then `UPDATE_EXPECT=1 cargo test -p strider-target --test call_other_snapshot`
+  and review `git diff`. `UNCLASSIFIED` snapshot lines are the ops still
+  unanswered.
+- **Calling convention**: a constructor and a `CcPreset` in the family's
+  `CALLING_CONVENTIONS` with its `ghidra` pairing
+  (`every_calling_convention_preset_agrees_with_its_ghidra_cspec`); a line in
+  `named()` in `tests/cc_roster.rs`; a line in `forall_preset!` in
+  `crates/strider-py/src/cc.rs` and in
+  `crates/strider-py/strider/sleigh.pyi`. Draft one from a cspec with
+  `CSPEC=RISCV/data/languages/riscv64-fp.cspec cargo test -p strider-target
+  --test ghidra_oracle -- --ignored draft_preset_from_cspec --nocapture`.
+- **Preset in an existing family**: an `arch_presets!` row with its Ghidra id;
+  its line in the tables of `src/arch/tests.rs`, `tests/arch_smoke.rs` and
+  `src/arch/names.rs`; new sla / pspec files in `tests/ghidra_oracle.rs`; a
+  `tests/snapshots/call_other/<name>.txt`, blessed as above; an `arches` entry
+  in a `CcPreset`; its constructor in `crates/strider-py/src/arch.rs` and
+  `crates/strider-py/strider/sleigh.pyi`.
+- **Family**: `family/<name>.rs` exporting a `Family`, registered in
+  `FAMILIES` in `family/mod.rs`; its `arch_presets!` rows; its name, ldefs,
+  volatile registers and ISA mode in `src/arch/tests.rs`; its committed
+  context vars in `expected()` in
+  `tests/every_committed_context_var_is_covered.rs`.

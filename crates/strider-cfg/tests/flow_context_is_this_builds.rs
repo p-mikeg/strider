@@ -7,95 +7,84 @@
 //! decodes in, and its IT block is the shape that makes it observable:
 //! `condit` decides whether the bytes after an `IT` are predicated.
 //!
-//! `SleighArch::flow_commit_vars` names what is re-derived, each with the
-//! flow class that decides what it is erased TO: the pspec default for
-//! `noflow` `condit`, the predecessor's value for flowing `TEEMode`. The
-//! cross-build half of that is pinned through the production `Lifter` by
-//! `reused_lifter_rederives_flow_context`.
+//! `SleighArch::flow_commit_vars` names what is re-derived; the sla's flow
+//! class decides what each is erased TO: the pspec default for `noflow`
+//! `condit`, the predecessor's value for flowing `TEEMode`. The same through
+//! `Lifter` is pinned by strider-lift's
+//! `tests/reused_lifter_rederives_flow_context.rs`.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, Cfg, CfgOptions, FlowVars};
+use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 const BASE: u64 = 0x1000;
 
-/// One Sleigh engine, so successive builds share the context database exactly
-/// as a caller sweeping many functions from one handle does.
-struct Engine {
-    sleigh: rsleigh::Sleigh<BufMemReader<Vec<u8>>>,
-    arch: SleighArch,
-    flow: FlowVars,
-    transients: Vec<(&'static str, u32)>,
-    /// The pspec defaults, captured before any build committed anything.
-    defaults: strider_cfg::FlowContext,
-    /// What `Lifter::build_cfg` lends the builder so it can re-derive a
-    /// committed per-address context from this build's own decode.
-    flow_commit_defaults: Vec<(&'static str, strider_target::FlowCommit, u32)>,
+type Engine = DecodeEngine<BufMemReader<Vec<u8>>>;
+
+/// One engine, so successive builds share the context database exactly as a
+/// caller sweeping many functions from one handle does.
+fn thumb(bytes: Vec<u8>) -> Engine {
+    let arch = SleighArch::arm_thumb();
+    DecodeEngine::new(arch, BufMemReader::new(bytes, BASE)).expect("decode engine")
 }
 
-impl Engine {
-    fn thumb(bytes: Vec<u8>) -> Self {
-        let arch = SleighArch::arm_thumb();
-        let sleigh = rsleigh::Sleigh::new(
-            arch.sla_spec(),
-            arch.pspec(),
-            BufMemReader::new(bytes, BASE),
-        )
-        .expect("create Sleigh");
-        let flow = FlowVars::discover(&sleigh).expect("flow vars");
-        let transients: Vec<(&'static str, u32)> = arch
-            .transient_decode_vars()
-            .iter()
-            .map(|name| (*name, sleigh.get_context_at(0, name).expect("default")))
-            .collect();
-        let defaults = flow.snapshot(&sleigh, BASE);
-        let flow_commit_defaults: Vec<(&'static str, strider_target::FlowCommit, u32)> = arch
-            .flow_commit_vars()
-            .iter()
-            .map(|&(name, flow)| (name, flow, sleigh.get_context_at(0, name).expect("default")))
-            .collect();
-        Self {
-            sleigh,
-            arch,
-            flow,
-            transients,
-            defaults,
-            flow_commit_defaults,
-        }
-    }
+/// The Thumb function at `addr`, entered as production enters one: with the
+/// Thumb bit set.
+fn build(eng: &mut Engine, addr: u64, size: u64) -> Cfg {
+    build_with(eng, addr, size, &CfgOptions::default())
+}
 
-    fn build(&mut self, entry: u64, size: u64) -> Cfg {
-        // The part of `Lifter::build_cfg` these tests need: without the entry
-        // pin the baseline is whatever an earlier build committed there, and
-        // every decode downstream inherits it.
-        //
-        // NOT the whole of it. Production also masks the Thumb bit off the
-        // entry and force-writes the ISA-mode var from `entry_mode_context`,
-        // which would decode these even entry addresses as ARM. They decode
-        // as Thumb because `ARMCortex.pspec` pins `TMode=1`. Production's
-        // entry contract is covered by `Lifter`'s own tests instead.
-        self.flow
-            .pin_at(&mut self.sleigh, entry, &self.defaults)
-            .expect("pin entry defaults");
-        let mode = self.flow.snapshot(&self.sleigh, entry);
-        let opts = CfgOptions {
-            fn_max_size: Some(size),
+/// [`build`] with the rest of `base`'s options.
+fn build_with(eng: &mut Engine, addr: u64, size: u64, base: &CfgOptions) -> Cfg {
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(size),
+        ..base.clone()
+    };
+    eng.build_cfg((addr | 1).into(), &opts).expect("build")
+}
+
+/// [`build`] with `site` seated as a jump table over `arms`, through
+/// `known_targets` (seated as `derived_targets` would be).
+fn build_resolved(eng: &mut Engine, addr: u64, size: u64, site: u64, arms: &[u64]) -> Cfg {
+    let known = rustc_hash::FxHashMap::from_iter([(
+        strider_cfg::PcodeInsnAddr::at_machine_start(site),
+        strider_cfg::ResolvedTargets::table(
+            arms.iter().map(|&a| strider_cfg::ResolvedTarget::from(a)),
+        ),
+    )]);
+    let cfg = build_with(
+        eng,
+        addr,
+        size,
+        &CfgOptions {
+            known_targets: &known,
             ..CfgOptions::default()
-        };
-        Builder::for_arch(&self.arch, &mut self.sleigh, entry, &opts)
-            .with_flow_context(&self.flow, mode)
-            .with_transient_defaults(&self.transients)
-            .with_flow_commit_defaults(&self.flow_commit_defaults)
-            .build()
-            .expect("build")
-    }
+        },
+    );
+    assert!(
+        cfg.regions().any(|r| matches!(
+            r.terminator,
+            strider_cfg::RegionTerminator::Switch { addr, .. }
+                if addr.machine() == site
+        )),
+        "premise: {site:#x} seated as a Switch, so its arms went through \
+         `enqueue_resolved`",
+    );
+    cfg
+}
+
+/// The region starting exactly at `addr`.
+fn region_at(cfg: &Cfg, addr: u64) -> &strider_cfg::Region {
+    cfg.regions()
+        .find(|r| r.start_addr.machine() == addr)
+        .unwrap_or_else(|| panic!("a region starts at {addr:#x}"))
 }
 
 /// Every p-code opcode any region decoded at `addr`.
 fn opcodes_at(cfg: &Cfg, addr: u64) -> Vec<rsleigh::Opcode> {
     cfg.regions()
         .flat_map(|r| r.insns.iter())
-        .filter(|i| i.addr.machine_addr.addr == addr)
+        .filter(|i| i.addr.machine() == addr)
         .map(|i| i.insn.opcode)
         .collect()
 }
@@ -108,23 +97,23 @@ const IT_BLOCK: [u8; 8] = [0x04, 0xbf, 0x00, 0x20, 0x00, 0x20, 0x70, 0x47];
 /// A build that never decodes the `IT` must not inherit its commits. Before
 /// the per-instruction verification, the second build read the first's
 /// `condit` at 0x1004 and decoded a bare `movs` as a predicated one, inventing
-/// a CBRANCH and dropping the flag writes, with every report channel empty.
+/// a CBRANCH and dropping the flag writes, with nothing reported incomplete.
 #[test]
 fn an_earlier_builds_commit_does_not_change_this_builds_decode() {
-    let mut eng = Engine::thumb(IT_BLOCK.to_vec());
+    let mut eng = thumb(IT_BLOCK.to_vec());
 
     // Entered at 0x1002, so 0x1000's `IT` is never decoded by this build.
-    let fresh = eng.build(0x1002, 6);
+    let fresh = build(&mut eng, 0x1002, 6);
     let want = opcodes_at(&fresh, 0x1004);
 
     // Now prime the engine by building from the `IT` itself, then repeat.
-    let mut eng = Engine::thumb(IT_BLOCK.to_vec());
-    let primed = eng.build(0x1000, 8);
+    let mut eng = thumb(IT_BLOCK.to_vec());
+    let primed = build(&mut eng, 0x1000, 8);
     assert!(
         !opcodes_at(&primed, 0x1004).is_empty(),
         "the priming build must actually decode 0x1004",
     );
-    let after = eng.build(0x1002, 6);
+    let after = build(&mut eng, 0x1002, 6);
 
     assert_eq!(
         opcodes_at(&after, 0x1004),
@@ -134,25 +123,21 @@ fn an_earlier_builds_commit_does_not_change_this_builds_decode() {
     );
 }
 
-/// The converse: this build's OWN commit must survive. A zero-p-code-op
-/// instruction never reaches the per-op loop, so recording `inst_next` there
-/// missed `enterx`, and the fallback then overwrote its `TEEMode` commit.
+/// The converse: this build's own commit survives, also at the `inst_next`
+/// of a zero-p-code-op instruction.
 ///
 /// `enterx` (0xf3bf 0x8f1f) commits `TEEMode=1` at 0x1004, under which
 /// 0xc201 is the zero-op ThumbEE `hb #1` rather than a `stmia` with a STORE.
 #[test]
 fn a_zero_pcode_op_instructions_own_commit_is_not_overwritten() {
     let code = vec![0xbf, 0xf3, 0x1f, 0x8f, 0x01, 0xc2, 0x70, 0x47];
-    let mut eng = Engine::thumb(code);
-    let cfg = eng.build(0x1000, 8);
+    let mut eng = thumb(code);
+    let cfg = build(&mut eng, 0x1000, 8);
     // Positively: a region owns 0x1004 and spans its two bytes while
     // recording no p-code op, which is what a zero-op ThumbEE `hb` looks
     // like. Asserting only the absence of a STORE would also pass if 0x1004
     // stopped being decoded at all.
-    let at = cfg
-        .regions()
-        .find(|r| r.start_addr.machine_addr.addr == 0x1004)
-        .expect("a region starts at 0x1004");
+    let at = region_at(&cfg, 0x1004);
     assert_eq!(
         (at.insns.len(), at.empty_span_len),
         (0, 2),
@@ -189,16 +174,228 @@ fn an_edge_into_an_it_block_is_reported_not_silently_decided() {
     code[0x10..0x12].copy_from_slice(&[0x00, 0x20]);
     code[0x12..0x14].copy_from_slice(&[0x70, 0x47]);
 
-    let mut eng = Engine::thumb(code);
-    let cfg = eng.build(0x1000, 0x14);
+    let mut eng = thumb(code);
+    let cfg = build(&mut eng, 0x1000, 0x14);
     let clashes: Vec<u64> = cfg
-        .isa_mode_conflicts()
-        .iter()
-        .map(|a| a.machine_addr.addr)
+        .incomplete()
+        .of(strider_cfg::Reason::IsaModeConflict)
+        .map(|a| a.machine())
         .collect();
     assert!(
         clashes.contains(&0x1010),
         "the external edge into the IT block decodes in a context the \
          in-block path disagrees with, so it must be reported; got {clashes:?}",
+    );
+}
+
+/// A direct edge whose target is no `inst_next` this build recorded: every
+/// forward `b`, and every conditional whose fall-through terminates first.
+/// `enqueue` cannot snapshot such an address, so it rebuilds the context from
+/// the function mode and the parent's ISA-mode bit.
+///
+/// `TEEMode` is FLOWING, so the live ThumbEE paint comes with it; the entry
+/// default would decode 0xc201 as a plain-Thumb `stmia r2!,{r0}`.
+///
+/// `enterx` commits `TEEMode=1` at 0x1004, so the `b.n` region decodes in
+/// ThumbEE; 0x1008 is no `inst_next` (0x1004 and 0x1006 are), so it takes the
+/// fallback arm.
+#[test]
+fn a_forward_branch_carries_the_live_thumbee_mode() {
+    let code = vec![
+        0xbf, 0xf3, 0x1f, 0x8f, // 0x1000: enterx -> TEEMode=1 at 0x1004
+        0x00, 0xe0, // 0x1004: b.n 0x1008
+        0x00, 0x00, // 0x1006: never decoded
+        0x01, 0xc2, // 0x1008: ThumbEE `hb #1`, zero-op
+        0x70, 0x47, // 0x100a: bx lr
+    ];
+    let mut eng = thumb(code);
+    let cfg = build(&mut eng, 0x1000, 12);
+
+    // Silent: the wrong decode is a clean answer, so only the shape says so.
+    assert!(
+        cfg.incomplete().is_empty(),
+        "premise: nothing here is reported incomplete; got {:?}",
+        cfg.incomplete(),
+    );
+    let at = region_at(&cfg, 0x1008);
+    assert_eq!(
+        (at.insns.len(), at.empty_span_len),
+        (0, 2),
+        "0x1008 is not the zero-op ThumbEE `hb`: {:?}",
+        opcodes_at(&cfg, 0x1008),
+    );
+    assert!(
+        !opcodes_at(&cfg, 0x1008).contains(&rsleigh::Opcode::Store),
+        "the branch target decoded as a plain-Thumb store, so the live \
+         ThumbEE mode did not cross the forward edge: {:?}",
+        opcodes_at(&cfg, 0x1008),
+    );
+}
+
+/// The mirror: a plain-Thumb region must not hand its target a mode it is not
+/// in. Entered at 0x1004 the `enterx` is never decoded, so 0x1008 is the
+/// `stmia` with its `Store` -- on an engine whose earlier build painted
+/// `TEEMode=1` across those very bytes.
+#[test]
+fn a_plain_thumb_forward_branch_does_not_acquire_thumbee() {
+    let code = vec![
+        0xbf, 0xf3, 0x1f, 0x8f, // 0x1000: enterx -> TEEMode=1 at 0x1004
+        0x00, 0xe0, // 0x1004: b.n 0x1008
+        0x00, 0x00, // 0x1006: never decoded
+        0x01, 0xc2, // 0x1008: plain-Thumb `stmia r2!,{r0}`
+        0x70, 0x47, // 0x100a: bx lr
+    ];
+    let mut eng = thumb(code);
+    let thumbee = build(&mut eng, 0x1000, 12);
+    assert!(
+        !opcodes_at(&thumbee, 0x1008).contains(&rsleigh::Opcode::Store),
+        "premise: under ThumbEE the same bytes carry no store",
+    );
+
+    let plain = build(&mut eng, 0x1004, 8);
+    assert!(
+        opcodes_at(&plain, 0x1008).contains(&rsleigh::Opcode::Store),
+        "the branch target lost its store, so a ThumbEE mode this build is \
+         not in reached it: {:?}",
+        opcodes_at(&plain, 0x1008),
+    );
+}
+
+/// The IT-block state must keep degrading. `condit` is `noflow`: carrying the
+/// value live at the branch would predicate the target, which ARM calls
+/// UNPREDICTABLE, and a `cond_shft` the next instruction shifts again can land
+/// on a `cond_full` no constructor covers and fail the decode outright.
+///
+/// `itt eq` predicates 0x1002, whose `b.n` lowers to a skip-CBRANCH plus the
+/// branch itself: the branch's own region re-lifts 0x1002, so the live IT state
+/// is what sits at its last decoded instruction.
+#[test]
+fn a_forward_branch_does_not_carry_the_it_state() {
+    let code = vec![
+        0x04, 0xbf, // 0x1000: itt eq
+        0x02, 0xe0, // 0x1002: beq 0x100a
+        0x70, 0x47, // 0x1004: bxeq lr
+        0x70, 0x47, // 0x1006: bx lr
+        0x00, 0x00, // 0x1008: never decoded
+        0x00, 0x20, // 0x100a: movs r0, #0
+        0x70, 0x47, // 0x100c: bx lr
+    ];
+    let mut eng = thumb(code.clone());
+    let reached = build(&mut eng, 0x1000, 14);
+
+    // The same instruction decoded with no IT block in front of it.
+    let mut eng = thumb(code);
+    let bare = build(&mut eng, 0x100a, 4);
+    assert!(
+        !opcodes_at(&bare, 0x100a).is_empty(),
+        "premise: 0x100a decodes on its own",
+    );
+    assert_eq!(
+        opcodes_at(&reached, 0x100a),
+        opcodes_at(&bare, 0x100a),
+        "the branch target was predicated by the IT state live at the branch",
+    );
+}
+
+/// A resolved arm carries the flowing `TEEMode` live at the dispatch, not the
+/// function mode's default.
+///
+/// `enterx` commits `TEEMode=1` at 0x1004, so the `bx r0` dispatch decodes in
+/// ThumbEE; its arm 0x1008 holds 0xc201, the zero-op ThumbEE `hb #1` rather
+/// than a `stmia r2!,{r0}` with a STORE.
+#[test]
+fn a_resolved_arm_carries_the_live_thumbee_mode() {
+    let code = vec![
+        0xbf, 0xf3, 0x1f, 0x8f, // 0x1000: enterx -> TEEMode=1 at 0x1004
+        0x00, 0x47, // 0x1004: bx r0, resolved to 0x1008
+        0x00, 0x00, // 0x1006: never decoded
+        0x01, 0xc2, // 0x1008: ThumbEE `hb #1`, zero-op
+        0x70, 0x47, // 0x100a: bx lr
+    ];
+    let mut eng = thumb(code);
+    let cfg = build_resolved(&mut eng, 0x1000, 12, 0x1004, &[0x1008]);
+
+    let at = region_at(&cfg, 0x1008);
+    assert_eq!(
+        (at.insns.len(), at.empty_span_len),
+        (0, 2),
+        "0x1008 is not the zero-op ThumbEE `hb`: {:?}",
+        opcodes_at(&cfg, 0x1008),
+    );
+    assert!(
+        !opcodes_at(&cfg, 0x1008).contains(&rsleigh::Opcode::Store),
+        "the arm decoded as a plain-Thumb store, so the mode live at the \
+         dispatch did not reach it: {:?}",
+        opcodes_at(&cfg, 0x1008),
+    );
+}
+
+/// The mirror, and the timing constraint: the value carried is the one live
+/// at the DISPATCH, never a read of the arm, which answers with whatever an
+/// earlier build committed there.
+///
+/// The first build is the function at 0x1004, whose `enterx` commits
+/// `TEEMode=1` at 0x1008 and leaves that commit in the engine. The second is
+/// the function at 0x1000, in plain Thumb throughout, dispatching to those
+/// same bytes: 0x1008 is its `stmia r2!,{r0}` with a STORE, and the engine
+/// still saying ThumbEE there must not make it an `hb`.
+#[test]
+fn a_resolved_arm_reads_the_dispatch_not_itself() {
+    let code = vec![
+        0x00, 0x47, // 0x1000: bx r0, resolved to 0x1008
+        0x00, 0x00, // 0x1002: never decoded
+        0xbf, 0xf3, 0x1f, 0x8f, // 0x1004: enterx -> TEEMode=1 at 0x1008
+        0x01, 0xc2, // 0x1008: ThumbEE `hb #1` / plain-Thumb `stmia r2!,{r0}`
+        0x70, 0x47, // 0x100a: bx lr
+    ];
+    let mut eng = thumb(code);
+    let thumbee = build(&mut eng, 0x1004, 8);
+    assert!(
+        !opcodes_at(&thumbee, 0x1008).contains(&rsleigh::Opcode::Store),
+        "premise: the first build leaves 0x1008 committed to ThumbEE",
+    );
+
+    let plain = build_resolved(&mut eng, 0x1000, 12, 0x1000, &[0x1008]);
+    assert!(
+        opcodes_at(&plain, 0x1008).contains(&rsleigh::Opcode::Store),
+        "the arm lost its store, so its context was read at the arm, where \
+         the earlier build committed, and not at the dispatch: {:?}",
+        opcodes_at(&plain, 0x1008),
+    );
+}
+
+/// A resolved arm must not inherit the IT state either. `condit` is `noflow`,
+/// so it keeps degrading to the pspec default, and the sub-views that spell
+/// the state out must not come along in its place: predicating an arm the
+/// `IT` never covered invents a CBRANCH and drops the flag writes.
+///
+/// `itt eq` covers 0x1002 and 0x1004, so the dispatch at 0x1002 is in-block
+/// with one instruction still to go, which is the state that would predicate
+/// its arm. 0x100a is outside the block.
+#[test]
+fn a_resolved_arm_does_not_carry_the_it_state() {
+    let code = vec![
+        0x04, 0xbf, // 0x1000: itt eq
+        0x00, 0x47, // 0x1002: bxeq r0, resolved to 0x100a
+        0x70, 0x47, // 0x1004: bxeq lr
+        0x70, 0x47, // 0x1006: bx lr
+        0x00, 0x00, // 0x1008: never decoded
+        0x00, 0x20, // 0x100a: movs r0, #0
+        0x70, 0x47, // 0x100c: bx lr
+    ];
+    let mut eng = thumb(code.clone());
+    let reached = build_resolved(&mut eng, 0x1000, 14, 0x1002, &[0x100a]);
+
+    // The same instruction decoded with no IT block in front of it.
+    let mut eng = thumb(code);
+    let bare = build(&mut eng, 0x100a, 4);
+    assert!(
+        !opcodes_at(&bare, 0x100a).is_empty(),
+        "premise: 0x100a decodes on its own",
+    );
+    assert_eq!(
+        opcodes_at(&reached, 0x100a),
+        opcodes_at(&bare, 0x100a),
+        "the arm was predicated by the IT state live at the dispatch",
     );
 }

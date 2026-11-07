@@ -1,10 +1,9 @@
 # Getting started with Strider
 
-Strider answers precise questions about a compiled function with no source and
-no debug symbols: you write the question as a small pattern in Python and get
-back every place in the function that matches. The
-[README](../README.md#quickstart) has that end to end; this page is the map of
-the pipeline behind it.
+Strider answers questions about a compiled function without source or debug
+symbols: write a pattern in Python, get back every place it matches. The
+[README](../README.md#quickstart) shows this end to end; this page maps the
+pipeline. New since 0.1.0: [README](../README.md#whats-new-since-010).
 
 ## How it works
 
@@ -12,110 +11,33 @@ the pipeline behind it.
 binary -> CFG -> IR -> optimizations -> pattern queries
 ```
 
-1. **Read** the bytes of a function out of the binary. An executable, a shared
-   library, or an unlinked object file all load, mapped rather than copied,
-   with relocations applied as the bytes are read; an object file's undefined
-   symbols get addresses of their own.
-   [python-api.md](python-api.md#1-loading-a-binary) has the loaders, the
-   symbol sources for a stripped image (`add_symbol_file`, `add_symbols`), and
-   the knobs over the mapping, `relocated_got_is_rom` among them.
-2. **Lift** each machine instruction into p-code, GHIDRA's Sleigh engine's
-   CPU-independent form. An instruction Sleigh leaves opaque, like a syscall or
-   a trap, is classified by a built-in ABI table saying whether it returns and
-   what it clobbers; `CfgOptions(call_other_abis=...)` overrides an entry, and
-   `CallOtherAbi.custom(sleigh, ...)` names the registers one reads and writes.
-   A callee's own convention comes from the ELF header unless
-   `LifterOptions(per_address_ccs=...)` names one for its address.
-3. Build a **CFG**, the map of which regions (straight runs of instructions)
-   can jump to which. Each address decodes once, in the ISA mode carried by the
-   edge that reached it, so ARM and Thumb code in one binary each decode
-   correctly. Bytes that hold no instruction, such as a literal pool an ARM or
-   AArch64 ELF's `$d` mapping symbols mark, are not decoded;
-   `CfgOptions(data_ranges=...)` names ranges the symbols miss.
-4. Build the **IR**, a graph where every value the function computes is a node
-   and every dependency is an edge. Values carry their exact width, from the
-   1-bit `I1` up to `I512`, so the odd widths SIMD and long-double code produce
-   get their own types instead of being rounded to a machine word. This is the
-   thing you query; `function.to_text()` prints a header and then one line per
-   node, and `function.validate()` checks its invariants. A call is modelled by
-   its calling convention, never by reading the callee.
-5. **Optimize** the IR so that equivalent code reaches a query in fewer shapes.
-   Constants fold, `x + (x << 1)` becomes `x * 3`, and a phi or a cycle of phis
-   carrying one value collapses, so a pattern written against the source shape
-   often will not match. [optimizations.md](optimizations.md) lists what each
-   pass reshapes; [python-api.md](python-api.md#2-analyzing-a-function) says
-   what `LifterOptions(assumptions=...)` buys and what it costs, and
-   `AssumptionOptions.none()` makes no unchecked claim.
-   `LifterOptions(pipeline=...)` replaces the pass list outright.
-6. **Resolve** the indirect branches: classify each one against the optimized
-   IR, feed the targets back, re-lift, and repeat until the edge set stops
-   changing. What is left over is reported, never raised, and so is a return
-   whose target is not provably the caller's. `cfg.is_complete()` is the
-   one-call question; [python-api.md](python-api.md#12-the-cfg-stridercfg)
-   describes the six channels it reads.
-7. **Query** it, or **rewrite** it if you want the graph changed rather than
-   read. `field`, `code_ptr`, `first_of` and `PhiPat.input_from` cover common
-   shapes, and `JoinPredicate` relates matches by your own rule.
-   [python-api.md](python-api.md#4-patterns) is the reference for both sides
-   and [python-guide.md](python-guide.md) the walkthrough.
+1. **Read** the function's bytes from an ELF (executable, shared library or
+   `.o`) or a raw buffer ([loading](python-api.md#1-loading-a-binary)).
+2. **Lift** each instruction into p-code, the CPU-independent form of GHIDRA's
+   Sleigh. An instruction Sleigh leaves opaque (a syscall, a trap) is
+   classified by a built-in ABI table; a call is modelled by its calling
+   convention, never by reading the callee
+   ([options](python-api.md#liftlifteroptions-per-call-tuning)).
+3. Build a **CFG**: which regions (straight runs of instructions) jump to
+   which. ARM/Thumb and MIPS16 code decodes in the mode its edge carries.
+   From an ELF, GCC `.cold` fragments are followed as part of their function.
+4. Build the **IR**, a graph with one node per computed value and one edge per
+   dependency. Values carry their exact width, from the 1-bit `I1` up to
+   `I512`. This is what you query; `function.to_text()` prints one line per
+   node and `function.validate()` checks its invariants.
+5. **Optimize** so equivalent code reaches a query in fewer shapes: constants
+   fold, `x + (x << 1)` becomes `x * 3`, a phi carrying one value collapses
+   ([optimizations.md](optimizations.md)). `function.optimizer_converged` is
+   false when a run stopped at its iteration cap.
+6. **Resolve** indirect branches: classify each against the optimized IR, feed
+   the targets back, re-lift, repeat until the edges stop changing.
+   `cfg.incomplete` lists what is left
+   ([reasons](python-api.md#12-the-cfg-stridercfg)); `analyze` reports it
+   rather than raising, so check it before trusting an absence. The answer
+   rests on `AssumptionOptions`, claims the analysis cannot check;
+   `function.assumptions` holds those in force.
+7. **Query** it with patterns, or **rewrite** it with `strider.template`.
+   [python-api.md](python-api.md#4-patterns) is the reference.
 
-## Where the API lives
-
-Everything is under a submodule named for what it does, and importing from the
-home submodule is the supported spelling:
-
-```python
-strider.lift      # the entry point: load_elf and lifter, plus LifterOptions,
-                  # AssumptionOptions and the AnalyzeResult they produce
-strider.ir        # Function and Node: the graph you query
-strider.cfg       # Cfg, CfgOptions, and five of the six incompleteness
-                  # channels; the sixth, unresolved, rides on AnalyzeResult
-strider.pattern   # the query DSL, plus .pattern.constraints for joins
-strider.template  # the build side of a rewrite
-strider.opt       # OptimizerPipeline and the passes it runs
-strider.reader    # BufferReader, Symbol, and the memory interfaces
-strider.sleigh    # SleighArch, Sleigh, CallingConvention, CallOtherAbi, Vn,
-                  # VnSpace; CallingConvention.custom(sleigh, ...) builds an
-                  # ABI of your own out of register names
-strider.StriderError    # the one top-level name
-```
-
-`prog.visualize(fn)` serves the graph as an interactive explorer in a browser
-and is the quickest way to see the shape a pattern has to match;
-[python-api.md](python-api.md#10-visualizing) has the view it opens on, the
-keys and the toolbar.
-
-A lift handle decodes only on the thread that built it; a worker thread builds
-its own over the same `arch` / `reader()` / `rom()` and calls
-`analyze(addr, cc)`, since a plain handle stores no default convention and
-carries no symbols. `analyze` releases the GIL, so the two run in parallel.
-
-An analysis failure is a `strider.StriderError`, and its `.backtrace` carries
-the message followed by the Rust backtrace; `STRIDER_BACKTRACE=1` folds that
-backtrace into the message too.
-
-## Where to go next
-
-- **[vocabulary.md](vocabulary.md)** defines the terms (region, phi, dominator,
-  varnode, ...). Start here if any of them are new.
-- **[python-guide.md](python-guide.md)** is the practical walkthrough: analyzing
-  many functions, writing patterns, constraints, rewrites, drawing the graph,
-  and what to check when a pattern does not match.
-- The [quickstart](../README.md#quickstart) is this pipeline end to end in
-  Python, and the [README](../README.md) indexes the rest of the guides and the
-  runnable examples.
-
-## Coming from 0.1.0
-
-[What's new in 0.2.0](../README.md#whats-new-in-020) is the summary and
-[CHANGELOG.md](../CHANGELOG.md) the full list, breaking entries first. The four
-that change what existing code sees, rather than adding to it:
-
-- Every `AssumptionOptions` claim is a premise the analysis cannot check, and
-  three of them default on. `AssumptionOptions.none()` is the floor.
-- A `Call`'s output slots are numbered per clobbered register now, so a query
-  reading `.output(slot)` positionally has to follow.
-- `cfg.is_complete()` reads six channels; an empty `unresolved` is not a
-  complete answer on its own.
-- A `Match`/`Node` constant reads back as `uint` / `sint` / `boolean`, where
-  0.1.0 spelled them `const_uint` / `const_int` / `const_bool`.
+Next: [python-guide.md](python-guide.md), the walkthrough;
+[vocabulary.md](vocabulary.md) defines the terms.

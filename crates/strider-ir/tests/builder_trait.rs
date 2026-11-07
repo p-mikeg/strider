@@ -10,12 +10,12 @@ use strider_ir_test_utils::empty_builder;
 fn lift_builder_trait_stamps_lift_addr() {
     let mut b = empty_builder().unwrap();
     b.set_lift_addr(Some(0x4000));
-    let id = b.function_mut().intern_int_const(3, ValueType::I64);
+    let id = b.function_mut().intern_int_const(3u64, ValueType::int(64));
     let n = <strider_ir::FunctionBuilder as IRBuilder>::create_node(
         &mut b,
         NodeKind::IntConst(id),
         [],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let fp = IRViewer::function(&b).side_tables().asm_fingerprint(n);
     assert!(

@@ -1,0 +1,311 @@
+AESInvMixColumns UNCLASSIFIED
+AESInvShiftRows UNCLASSIFIED
+AESInvSubBytes UNCLASSIFIED
+AESMixColumns UNCLASSIFIED
+AESShiftRows UNCLASSIFIED
+AESSubBytes UNCLASSIFIED
+Absolute UNCLASSIFIED
+BfloatMultiplyAccumulate UNCLASSIFIED
+ClearExclusiveLocal call reads=[] writes=[] mem=false noret=false
+Crc32Calc UNCLASSIFIED
+CryptOp UNCLASSIFIED
+DCPSInstruction UNCLASSIFIED
+DataMemoryBarrier call reads=[] writes=[] mem=true noret=false
+DataSynchronizationBarrier call reads=[] writes=[] mem=true noret=false
+ExclusiveAccess call reads=[] writes=[] mem=false noret=false
+FPConvert UNCLASSIFIED
+FPConvertInexact UNCLASSIFIED
+FPMaxNum UNCLASSIFIED
+FPMinNum UNCLASSIFIED
+FPRoundInt UNCLASSIFIED
+FPToFixed call reads=[] writes=[] mem=false noret=false
+FixedToFP call reads=[] writes=[] mem=false noret=false
+FloatCompareGE call reads=[] writes=[] mem=false noret=false
+FloatCompareGT call reads=[] writes=[] mem=false noret=false
+FloatVectorAbsolute call reads=[] writes=[] mem=false noret=false
+FloatVectorAbsoluteDifference call reads=[] writes=[] mem=false noret=false
+FloatVectorAdd call reads=[] writes=[] mem=false noret=false
+FloatVectorCompareEqual call reads=[] writes=[] mem=false noret=false
+FloatVectorCompareGreaterThan call reads=[] writes=[] mem=false noret=false
+FloatVectorCompareGreaterThanOrEqual call reads=[] writes=[] mem=false noret=false
+FloatVectorMax call reads=[] writes=[] mem=false noret=false
+FloatVectorMin call reads=[] writes=[] mem=false noret=false
+FloatVectorMult call reads=[] writes=[] mem=false noret=false
+FloatVectorMultiplyAccumulate call reads=[] writes=[] mem=false noret=false
+FloatVectorMultiplySubtract call reads=[] writes=[] mem=false noret=false
+FloatVectorNeg call reads=[] writes=[] mem=false noret=false
+FloatVectorPairwiseAdd call reads=[] writes=[] mem=false noret=false
+FloatVectorPairwiseMax call reads=[] writes=[] mem=false noret=false
+FloatVectorPairwiseMin call reads=[] writes=[] mem=false noret=false
+FloatVectorSub call reads=[] writes=[] mem=false noret=false
+HintDebug UNCLASSIFIED
+HintPreloadData call reads=[] writes=[] mem=false noret=false
+HintPreloadDataForWrite call reads=[] writes=[] mem=false noret=false
+HintPreloadInstruction call reads=[] writes=[] mem=false noret=false
+HintYield call reads=[] writes=[] mem=false noret=false
+IndexCheck UNCLASSIFIED
+InstructionSynchronizationBarrier call reads=[] writes=[] mem=true noret=false
+PolynomialMult UNCLASSIFIED
+PolynomialMultiply call reads=[] writes=[] mem=false noret=false
+ReverseBitOrder UNCLASSIFIED
+SG UNCLASSIFIED
+SHA1HashUpdateChoose UNCLASSIFIED
+SHA1HashUpdateMajority UNCLASSIFIED
+SHA1HashUpdateParity UNCLASSIFIED
+SHA256ScheduleUpdate0 call reads=[] writes=[] mem=false noret=false
+SHA256ScheduleUpdate1 call reads=[] writes=[] mem=false noret=false
+SHA256hash UNCLASSIFIED
+SIMDExpandImmediate UNCLASSIFIED
+SatQ call reads=["fpscr"] writes=["fpscr"] mem=false noret=false
+SendEvent call reads=[] writes=[] mem=false noret=false
+SignedDoesSaturate call reads=[] writes=[] mem=false noret=false
+SignedSatQ call reads=["fpscr"] writes=["fpscr"] mem=false noret=false
+SignedSaturate call reads=[] writes=[] mem=false noret=false
+TT UNCLASSIFIED
+TTA UNCLASSIFIED
+TTAT UNCLASSIFIED
+TTT UNCLASSIFIED
+UnsignedDoesSaturate call reads=[] writes=[] mem=false noret=false
+UnsignedSaturate call reads=[] writes=[] mem=false noret=false
+VFPExpandImmediate UNCLASSIFIED
+VectorAbs call reads=[] writes=[] mem=false noret=false
+VectorAbsolute call reads=[] writes=[] mem=false noret=false
+VectorAbsoluteDifference call reads=[] writes=[] mem=false noret=false
+VectorAbsoluteDifferenceAndAccumulate call reads=[] writes=[] mem=false noret=false
+VectorAdd call reads=[] writes=[] mem=false noret=false
+VectorAddReturnHigh call reads=[] writes=[] mem=false noret=false
+VectorBitwiseInsertIfFalse call reads=[] writes=[] mem=false noret=false
+VectorBitwiseInsertIfTrue call reads=[] writes=[] mem=false noret=false
+VectorBitwiseSelect call reads=[] writes=[] mem=false noret=false
+VectorCompareEqual call reads=[] writes=[] mem=false noret=false
+VectorCompareGreaterThan call reads=[] writes=[] mem=false noret=false
+VectorCompareGreaterThanOrEqual call reads=[] writes=[] mem=false noret=false
+VectorComplexAdd call reads=[] writes=[] mem=false noret=false
+VectorComplexMultiplyAccumulate call reads=[] writes=[] mem=false noret=false
+VectorComplexMultiplyAccumulateByElement call reads=[] writes=[] mem=false noret=false
+VectorCopyLong call reads=[] writes=[] mem=false noret=false
+VectorCopyNarrow call reads=[] writes=[] mem=false noret=false
+VectorCountLeadingSignBits call reads=[] writes=[] mem=false noret=false
+VectorCountLeadingZeros call reads=[] writes=[] mem=false noret=false
+VectorCountOneBits call reads=[] writes=[] mem=false noret=false
+VectorDotProduct call reads=[] writes=[] mem=false noret=false
+VectorDoubleMultiplyAccumulateLong call reads=[] writes=[] mem=false noret=false
+VectorDoubleMultiplyHighHalf call reads=[] writes=[] mem=false noret=false
+VectorDoubleMultiplyLong call reads=[] writes=[] mem=false noret=false
+VectorDoubleMultiplySubtractLong call reads=[] writes=[] mem=false noret=false
+VectorFloatDoubleToSingle call reads=[] writes=[] mem=false noret=false
+VectorFloatSingleToDouble call reads=[] writes=[] mem=false noret=false
+VectorGetElement call reads=[] writes=[] mem=false noret=false
+VectorHalvingAdd call reads=[] writes=[] mem=false noret=false
+VectorHalvingSubtract call reads=[] writes=[] mem=false noret=false
+VectorMax call reads=[] writes=[] mem=false noret=false
+VectorMin call reads=[] writes=[] mem=false noret=false
+VectorMultiply call reads=[] writes=[] mem=false noret=false
+VectorMultiplyAccumulate call reads=[] writes=[] mem=false noret=false
+VectorMultiplyAddLongScalar call reads=[] writes=[] mem=false noret=false
+VectorMultiplyAddLongVector call reads=[] writes=[] mem=false noret=false
+VectorMultiplySubtract call reads=[] writes=[] mem=false noret=false
+VectorMultiplySubtractLong call reads=[] writes=[] mem=false noret=false
+VectorPairwiseAdd call reads=[] writes=[] mem=false noret=false
+VectorPairwiseAddAccumulateLong call reads=[] writes=[] mem=false noret=false
+VectorPairwiseAddLong call reads=[] writes=[] mem=false noret=false
+VectorPairwiseMax call reads=[] writes=[] mem=false noret=false
+VectorPairwiseMin call reads=[] writes=[] mem=false noret=false
+VectorReciprocalEstimate call reads=[] writes=[] mem=false noret=false
+VectorReciprocalSquareRootEstimate call reads=[] writes=[] mem=false noret=false
+VectorReciprocalSquareRootStep call reads=[] writes=[] mem=false noret=false
+VectorReciprocalStep call reads=[] writes=[] mem=false noret=false
+VectorRoundAddAndNarrow call reads=[] writes=[] mem=false noret=false
+VectorRoundDoubleMultiplyHighHalf call reads=[] writes=[] mem=false noret=false
+VectorRoundHalvingAdd call reads=[] writes=[] mem=false noret=false
+VectorRoundShiftLeft call reads=[] writes=[] mem=false noret=false
+VectorRoundShiftRight call reads=[] writes=[] mem=false noret=false
+VectorRoundShiftRightAccumulate call reads=[] writes=[] mem=false noret=false
+VectorRoundShiftRightNarrow call reads=[] writes=[] mem=false noret=false
+VectorSetElement call reads=[] writes=[] mem=false noret=false
+VectorShiftLeft call reads=[] writes=[] mem=false noret=false
+VectorShiftLeftInsert call reads=[] writes=[] mem=false noret=false
+VectorShiftLongLeft call reads=[] writes=[] mem=false noret=false
+VectorShiftNarrowRight call reads=[] writes=[] mem=false noret=false
+VectorShiftRight call reads=[] writes=[] mem=false noret=false
+VectorShiftRightAccumulate call reads=[] writes=[] mem=false noret=false
+VectorShiftRightInsert call reads=[] writes=[] mem=false noret=false
+VectorShiftRightNarrow call reads=[] writes=[] mem=false noret=false
+VectorSignedDotProduct call reads=[] writes=[] mem=false noret=false
+VectorSignedUnsignedDotProduct call reads=[] writes=[] mem=false noret=false
+VectorSub call reads=[] writes=[] mem=false noret=false
+VectorSubAndNarrow call reads=[] writes=[] mem=false noret=false
+VectorTableLookup call reads=[] writes=[] mem=false noret=false
+VectorTest call reads=[] writes=[] mem=false noret=false
+VectorTranspose call reads=[] writes=[] mem=false noret=false
+VectorUnsignedDotProduct call reads=[] writes=[] mem=false noret=false
+VectorUnsignedSignedDotProduct call reads=[] writes=[] mem=false noret=false
+VectorUnzip call reads=[] writes=[] mem=false noret=false
+VectorWidenMultipyAccumulate call reads=[] writes=[] mem=false noret=false
+VectorZip call reads=[] writes=[] mem=false noret=false
+WaitForEvent call reads=[] writes=[] mem=true noret=false
+WaitForInterrupt call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Auxiliary_Control call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Cache_Type call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Clean_Data_Cache_by_Index call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Clean_Data_Cache_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Clean_Entire_Data_Cache call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Context_ID call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Control call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Control_registers call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Coprocessor_Access_Control call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Data_Fault_Status call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Data_Memory_Barrier call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Data_Synchronization call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Data_cache_operations call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Domain_Access_Control call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_FCSE_PID call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Fault_Address call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Feature_Identification call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Flush_Prefetch_Buffer call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_ISA_Feature_Identification call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Identification_registers call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Instruction_Fault call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Instruction_Fault_Address call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Instruction_Fault_Status call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Instruction_cache call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_Data_Cache_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_Entire_Data_Cache call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_Entire_Data_by_Index call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_Entire_Data_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_Entire_Data_cache call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_Entire_Instruction call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_Instruction_Cache_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_unified_TLB_by_ASID_match call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_unified_TLB_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Invalidate_unified_TLB_unlocked call reads=[] writes=[] mem=true noret=false
+coproc_movefrom_Main_ID call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_NonSecure_Access_Control call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Peripheral_Port_Memory_Remap call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Peripheral_System call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Peripherial_Port_Memory_Remap call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Privileged_only_Thread_and_Process_ID call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Secure_Configuration call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Secure_Debug_Enable call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Security_world_control call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_TCM_Status call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_TLB_Type call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Translation_table call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Translation_table_base_0 call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Translation_table_base_1 call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Translation_table_control call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_User_RW_Thread_and_Process_ID call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_User_R_Thread_and_Process_ID call reads=[] writes=[] mem=false noret=false
+coproc_movefrom_Wait_for_interrupt call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Auxiliary_Control call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Cache_Type call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Clean_Data_Cache_by_Index call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Clean_Data_Cache_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Clean_Entire_Data_Cache call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Context_ID call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Control call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Control_registers call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Coprocessor_Access_Control call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Data_Fault_Status call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Data_Memory_Barrier call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Data_Synchronization call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Data_cache_operations call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Domain_Access_Control call reads=[] writes=[] mem=true noret=false
+coproc_moveto_FCSE_PID call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Fault_Address call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Feature_Identification call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Flush_Prefetch_Buffer call reads=[] writes=[] mem=true noret=false
+coproc_moveto_ISA_Feature_Identification call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Identification_registers call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Instruction_Fault call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Instruction_Fault_Address call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Instruction_Fault_Status call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Instruction_cache call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_Data_Cache_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_Entire_Data_Cache call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_Entire_Data_by_Index call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_Entire_Data_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_Entire_Data_cache call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_Entire_Instruction call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_Instruction_Cache_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_unified_TLB_by_ASID_match call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_unified_TLB_by_MVA call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Invalidate_unified_TLB_unlocked call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Main_ID call reads=[] writes=[] mem=false noret=false
+coproc_moveto_NonSecure_Access_Control call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Peripheral_Port_Memory_Remap call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Peripheral_System call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Peripherial_Port_Memory_Remap call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Privileged_only_Thread_and_Process_ID call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Secure_Configuration call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Secure_Debug_Enable call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Security_world_control call reads=[] writes=[] mem=true noret=false
+coproc_moveto_TCM_Status call reads=[] writes=[] mem=false noret=false
+coproc_moveto_TLB_Type call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Translation_table call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Translation_table_base_0 call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Translation_table_base_1 call reads=[] writes=[] mem=true noret=false
+coproc_moveto_Translation_table_control call reads=[] writes=[] mem=true noret=false
+coproc_moveto_User_RW_Thread_and_Process_ID call reads=[] writes=[] mem=false noret=false
+coproc_moveto_User_R_Thread_and_Process_ID call reads=[] writes=[] mem=false noret=false
+coproc_moveto_Wait_for_interrupt call reads=[] writes=[] mem=true noret=false
+coprocessor_function call reads=[] writes=[] mem=true noret=false
+coprocessor_function2 call reads=[] writes=[] mem=true noret=false
+coprocessor_load call reads=[] writes=[] mem=true noret=false
+coprocessor_load2 call reads=[] writes=[] mem=true noret=false
+coprocessor_loadlong call reads=[] writes=[] mem=true noret=false
+coprocessor_loadlong2 call reads=[] writes=[] mem=true noret=false
+coprocessor_movefrom2 call reads=[] writes=[] mem=false noret=false
+coprocessor_movefromRt call reads=[] writes=[] mem=false noret=false
+coprocessor_movefromRt2 call reads=[] writes=[] mem=false noret=false
+coprocessor_moveto call reads=[] writes=[] mem=true noret=false
+coprocessor_moveto2 call reads=[] writes=[] mem=true noret=false
+coprocessor_store call reads=[] writes=[] mem=true noret=false
+coprocessor_store2 call reads=[] writes=[] mem=true noret=false
+coprocessor_storelong call reads=[] writes=[] mem=true noret=false
+coprocessor_storelong2 call reads=[] writes=[] mem=true noret=false
+disableDataAbortInterrupts call reads=[] writes=[] mem=false noret=false
+disableFIQinterrupts call reads=[] writes=[] mem=false noret=false
+disableIRQinterrupts call reads=[] writes=[] mem=false noret=false
+enableDataAbortInterrupts call reads=[] writes=[] mem=false noret=false
+enableFIQinterrupts call reads=[] writes=[] mem=false noret=false
+enableIRQinterrupts call reads=[] writes=[] mem=false noret=false
+fpscrRoundingControl lowered:rounding
+getBasePriority UNCLASSIFIED
+getCurrentExceptionNumber UNCLASSIFIED
+getMainStackPointer UNCLASSIFIED
+getProcessStackPointer UNCLASSIFIED
+hasExclusiveAccess call reads=[] writes=[] mem=false noret=false
+isCurrentModePrivileged call reads=[] writes=[] mem=false noret=false
+isFIQinterruptsEnabled call reads=[] writes=[] mem=false noret=false
+isIRQinterruptsEnabled call reads=[] writes=[] mem=false noret=false
+isThreadMode call reads=[] writes=[] mem=false noret=false
+isThreadModePrivileged call reads=[] writes=[] mem=false noret=false
+isUsingMainStack call reads=[] writes=[] mem=false noret=false
+jazelle_branch UNCLASSIFIED
+msrRegisterMode lowered:msr_mode
+secureMonitorCall UNCLASSIFIED
+setAbortMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+setBasePriority UNCLASSIFIED
+setEndianState call reads=[] writes=[] mem=true noret=false
+setFIQMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+setIRQMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+setISAMode noop
+setMainStackPointer UNCLASSIFIED
+setMonitorMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+setProcessStackPointer UNCLASSIFIED
+setProcessorMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+setStackMode call reads=[] writes=["sp"] mem=false noret=false
+setSupervisorMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+setSystemMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+setThreadModePrivileged call reads=[] writes=[] mem=false noret=false
+setUndefinedMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+setUserMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
+software_bkpt call reads=[] writes=[] mem=true noret=false
+software_hlt call reads=[] writes=[] mem=true noret=false
+software_hvc call reads=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] writes=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] mem=true noret=false
+software_interrupt call reads=["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"] writes=["r0"] mem=true noret=false
+software_smc call reads=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] writes=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] mem=true noret=false
+software_udf call reads=[] writes=[] mem=false noret=true
+vectorFusedMultiplyAccumulate UNCLASSIFIED
+vrev call reads=[] writes=[] mem=false noret=false

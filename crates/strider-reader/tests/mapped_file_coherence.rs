@@ -108,8 +108,7 @@ fn replacing_the_path_leaves_the_mapping_coherent() {
 }
 
 /// Unlinking the path does not disturb the mapping: the inode outlives the
-/// name. Analysing a build-system temp file that is cleaned up mid-run used to
-/// fail here.
+/// name.
 #[test]
 fn unlinking_the_path_leaves_the_mapping_coherent() {
     if mapping_disabled() {
@@ -251,4 +250,23 @@ fn a_table_over_two_mappings_checks_both_of_them() {
             "the changed mapping must be the one reported, got: {err}"
         );
     }
+}
+
+/// The reader windows the mapping, so it outlives the `OwnedElf` it came
+/// from and answers for a file rebuilt under it.
+#[test]
+fn a_reader_over_a_changed_file_is_an_error() {
+    if mapping_disabled() {
+        return;
+    }
+    let f = elf_tempfile();
+    let reader = {
+        let elf = strider_reader::load_elf(f.path()).unwrap();
+        strider_reader::ElfFileMemReader::new(&elf, strider_reader::elf::RelocationMode::Unapplied)
+            .unwrap()
+    };
+    reader.check_unchanged().expect("the mapping is untouched");
+    append_junk(&f);
+    let err = reader.check_unchanged().unwrap_err().to_string();
+    assert!(err.contains("changed on disk"), "got: {err}");
 }

@@ -1,15 +1,9 @@
 //! Every context var a preset's sla can `globalset` is covered by one of the
-//! three per-preset lists, by the mechanism that var's FLOW CLASS admits, or is
-//! a justified exception.
+//! three per-preset lists, or is a justified exception.
 //!
-//! Those lists are the whole defence against a value one function commits
-//! changing how a later one decodes on a reused engine, and nothing checked
-//! them against the sla they describe. Both bugs this mechanism has had were a
-//! var in the wrong place: ARM `TEEMode` tagged `NoFlow` when the sla declares
-//! it flowing (erased to the pspec default, destroying a ThumbEE region), and
-//! then `TEEMode` dropped altogether (an earlier build's mode believed). A
-//! name-membership check catches only the second. This checks the partition:
-//! which list, with which flow class.
+//! Those lists keep a value one function commits from changing how a later
+//! one decodes on a reused engine. The decoder reads each re-derived var's
+//! flow class off the sla; this checks the partition.
 //!
 //! Over-approximates on purpose: it scans every `.sinc` / `.slaspec` under the
 //! preset's language directory rather than following `@include`, so it can
@@ -18,25 +12,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use strider_target::{ArchPreset, FlowCommit};
+use strider_target::ArchPreset;
 
 /// The language directory under `externals/rsleigh/sleigh/processors` whose
 /// files back each preset.
 fn language_dir(preset: ArchPreset) -> &'static str {
-    match preset {
-        ArchPreset::X86 | ArchPreset::X86_64 => "x86",
-        ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb => {
-            "ARM"
-        }
-        ArchPreset::Aarch64 | ArchPreset::Aarch64Be => "AARCH64",
-        ArchPreset::MipsBe32
-        | ArchPreset::MipsLe32
-        | ArchPreset::MipsBe64
-        | ArchPreset::MipsLe64 => "MIPS",
-        ArchPreset::Ppc32Be | ArchPreset::Ppc32Le | ArchPreset::Ppc64Be | ArchPreset::Ppc64Le => {
-            "PowerPC"
-        }
-    }
+    let ldefs = preset.ghidra_ldefs();
+    ldefs.split_once('/').map_or(ldefs, |(dir, _)| dir)
 }
 
 /// What each directory commits today. Pinned so an extractor that stops
@@ -180,17 +162,20 @@ fn every_committed_context_var_is_covered_by_the_right_mechanism() {
              or the parser stopped seeing a form it used to see",
         );
 
-        let flow_commit: BTreeMap<&str, FlowCommit> =
-            arch.flow_commit_vars().iter().copied().collect();
+        let flow_commit: BTreeSet<&str> = arch.flow_commit_vars().iter().copied().collect();
         let transient: BTreeSet<&str> = arch.transient_decode_vars().iter().copied().collect();
         let mode = arch.isa_mode_var();
 
         // One mechanism per var, or the next reader cannot tell which one is
         // responsible.
-        for name in flow_commit.keys() {
+        for name in &flow_commit {
             assert!(
                 !transient.contains(name) && Some(*name) != mode,
                 "{preset:?}: `{name}` is in more than one list",
+            );
+            assert!(
+                committed.contains(*name),
+                "{preset:?}: `{name}` is re-derived but the sla never commits it",
             );
         }
         for name in &transient {
@@ -199,33 +184,20 @@ fn every_committed_context_var_is_covered_by_the_right_mechanism() {
 
         let noflow = noflow_by_var(dir);
         for var in &committed {
-            let flows = match noflow.get(var.as_str()) {
-                Some(is_noflow) => !is_noflow,
-                None => panic!("{dir}: `{var}` is committed but never declared"),
+            let Some(&is_noflow) = noflow.get(var.as_str()) else {
+                panic!("{dir}: `{var}` is committed but never declared");
             };
-
-            if let Some(class) = flow_commit.get(var.as_str()) {
-                // `rederive_flow` erases a `NoFlow` var to the pspec default
-                // and a `Flowing` one to the predecessor's value. Either tag on
-                // the wrong var is a miscompile, in opposite directions.
-                let want = if flows {
-                    FlowCommit::Flowing
-                } else {
-                    FlowCommit::NoFlow
-                };
-                assert_eq!(
-                    *class,
-                    want,
-                    "{preset:?}: `{var}` is declared {} in the sla but tagged \
-                     {class:?} in flow_commit_vars",
-                    if flows { "flowing" } else { "noflow" },
-                );
-            } else if transient.contains(var.as_str()) {
+            // Re-derived under the class the sla declares, which the decoder
+            // reads off the engine.
+            if flow_commit.contains(var.as_str()) {
+                continue;
+            }
+            if transient.contains(var.as_str()) {
                 // `hold_transients` clears to the pspec default with NO
                 // re-lift, including at a region start, which would destroy a
                 // flowing value the predecessor legitimately committed.
                 assert!(
-                    !flows,
+                    is_noflow,
                     "{preset:?}: `{var}` is declared FLOWING in the sla but sits \
                      in transient_decode_vars, which clears it without a \
                      re-lift",

@@ -5,26 +5,22 @@ use smallvec::SmallVec;
 use crate::ids::{NodeId, ValueId};
 use crate::storage::RawStore;
 
-/// The node-creation policy: three stateless hooks deciding dedup-or-create.
-/// A caching impl's `Hash`/`PartialEq` bounds live inside its own method
-/// bodies, never on the trait or on `Graph`.
+/// The node-creation policy: stateless hooks deciding dedup-or-create.
 ///
-/// [`should_cache`](Self::should_cache) defaults to `false`, which gates
-/// [`hash`](Self::hash)/[`eq`](Self::eq) so their `unreachable!` defaults are
-/// never reached: a non-caching policy is a single empty `impl` block.
+/// [`hash`](Self::hash) and [`eq`](Self::eq) are only called when
+/// [`should_cache`](Self::should_cache) (default `false`) is true, so a
+/// non-caching policy is an empty `impl` block.
 pub trait NodeCacheable<N, V> {
     fn should_cache(_kind: &N) -> bool {
         false
     }
 
-    /// Structural hash of a `(kind, inputs, output-kinds)` key. May return any
-    /// `u64` including `u64::MAX`; sentinel avoidance is the cache's concern.
+    /// Structural hash of a `(kind, inputs, output-kinds)` key; any `u64`.
     fn hash(_kind: &N, _inputs: &[ValueId], _outputs: &[V]) -> u64 {
         unreachable!("hash() called on a policy whose should_cache() returned false")
     }
 
-    /// Whether `cand` equals the `(kind, inputs, outputs)` key, resolved by
-    /// re-reading `cand`'s current structure out of the store.
+    /// Whether `cand`'s current structure in `store` equals the key.
     fn eq(
         _store: &RawStore<N, V>,
         _cand: NodeId,
@@ -56,18 +52,14 @@ impl Default for NodeCache {
     fn default() -> Self {
         Self {
             table: HashTable::new(),
-            // `SecondaryMap::clear` preserves this default, so a cleared map
-            // still reports `HASH_NONE` for every (re-)defaulted slot.
+            // `SecondaryMap::clear` keeps this default.
             node_hashes: SecondaryMap::with_default(HASH_NONE),
         }
     }
 }
 
 impl NodeCache {
-    /// Remaps a real hash that collides with [`HASH_NONE`] to `0`, so it can
-    /// never be read back as "absent". Stays deterministic (equal keys still
-    /// hash equal) at the cost of one extra collision, which the re-read eq
-    /// absorbs.
+    /// Remaps a real hash equal to [`HASH_NONE`] to `0`.
     #[inline]
     fn avoid_sentinel(h: u64) -> u64 {
         if h == HASH_NONE { 0 } else { h }
@@ -91,10 +83,7 @@ impl NodeCache {
             return store.alloc_node(kind, inputs, outputs);
         }
 
-        // Probe by hash, then re-read each candidate from the store for an
-        // exact structural compare, so no owned key payloads are ever stored.
-        // The sentinel is remapped here, inside the mechanism: the policy's
-        // `hash` knows nothing about it.
+        // Candidates are compared by re-reading the store, so no key is stored.
         let h = Self::avoid_sentinel(C::hash(&kind, &inputs, &outputs));
         if let Some(&cand) = self
             .table
@@ -108,12 +97,10 @@ impl NodeCache {
         node
     }
 
-    /// Re-canonicalize an existing node whose inputs may have changed.
-    ///
-    /// `Some(twin)` means a structurally-equal other cacheable node is already
-    /// cached and the caller should merge `node` into it. `None` means the node
-    /// is not cacheable, or has no twin and was (re-)inserted as its own
-    /// canonical representative. Touches no edges; the merge is the caller's.
+    /// Re-canonicalizes a node whose inputs may have changed: `Some(twin)` is a
+    /// cached structurally-equal node for the caller to merge `node` into;
+    /// `None` means not cacheable, or `node` is now its own canonical entry.
+    /// Touches no edges.
     pub(crate) fn canonicalize<N, V, C: NodeCacheable<N, V>>(
         &mut self,
         store: &RawStore<N, V>,
@@ -134,27 +121,24 @@ impl NodeCache {
         }) {
             return Some(twin);
         }
-        // No twin: `node` becomes its own canonical entry. Changing its inputs
-        // evicted it (hash == HASH_NONE), so re-insert. A stored hash instead
-        // means the structure is unchanged since it was last cached, because
-        // every mutation verb invalidates first; one that did not would
-        // mislocate the node here and only blow up later in `invalidate`.
+        // Every edge or output edit invalidates first; a payload rewrite needs
+        // `rebuild_cache`.
         debug_assert!(
             self.node_hashes[node] == HASH_NONE || self.node_hashes[node] == h,
             "canonicalize: node {node:?} has a stale stored hash \
              (a mutation verb changed its structure without invalidating)"
         );
-        if self.node_hashes[node] == HASH_NONE {
-            self.insert_hashed(node, h);
-        } else if self.node_hashes[node] != h {
-            // Release-only path: the `debug_assert` above names the bug, but
-            // skipping the re-key left the node filed under its OLD hash, so
-            // a lookup under either hash misses it and it stays un-dedupable
-            // until the next `rebuild_cache`. Re-key instead.
+        // Release builds re-key a stale hash.
+        if self.node_hashes[node] != h {
             self.invalidate(node);
             self.insert_hashed(node, h);
         }
         None
+    }
+
+    #[cfg(any(test, feature = "test-injectors"))]
+    pub(crate) fn contains(&self, node: NodeId) -> bool {
+        self.node_hashes[node] != HASH_NONE
     }
 
     /// Drops the dedup entry for a node whose structure is about to change.
@@ -163,10 +147,7 @@ impl NodeCache {
         if hash == HASH_NONE {
             return;
         }
-        // The stored hash is the SSoT for membership: non-sentinel means `node`
-        // is in `table` under exactly that hash (every insert sets it, and the
-        // only other place it is cleared is `rebuild`, which drops the table
-        // with it), so the bucket walk cannot miss.
+        // A non-sentinel stored hash means `node` is in `table` under it.
         self.table
             .find_entry(hash, |&n| n == node)
             .expect("node_hashes records a hash ⇒ the node is in the dedup table")
@@ -174,17 +155,14 @@ impl NodeCache {
         self.node_hashes[node] = HASH_NONE;
     }
 
-    /// Re-keys the whole cache over the surviving nodes after ids are
-    /// renumbered (compaction) or cacheable payloads are rewritten.
+    /// Re-keys the whole cache, after compaction or a payload rewrite.
     pub(crate) fn rebuild<N, V, C: NodeCacheable<N, V>>(&mut self, store: &RawStore<N, V>)
     where
         V: Clone,
     {
         self.table.clear();
-        // `clear` preserves the `HASH_NONE` default: every slot reverts to
-        // "absent" until re-inserted below.
         self.node_hashes.clear();
-        for node in store.node_ids() {
+        for node in store.nodes.keys() {
             let kind = store.kind_of(node);
             if !C::should_cache(kind) {
                 continue;
@@ -194,15 +172,8 @@ impl NodeCache {
                 &store.input_values(node),
                 &store.output_kinds(node),
             ));
-            // Inserted unconditionally: "at most one node per structural key"
-            // is NOT an invariant of the table. Both multi-occupancy cases are
-            // sound:
-            //   * distinct nodes colliding on one hash. The bucket holds each
-            //     and lookup re-reads structure.
-            //   * structurally equal twins, which rewiring a live node's inputs
-            //     creates until the next canonicalize. A lookup resolves to
-            //     whichever the walk hits first, and twins compute the same
-            //     value.
+            // Unconditional: structurally equal twins (left by rewiring until
+            // the next canonicalize) may share a key; a lookup takes either.
             self.insert_hashed(node, hash);
         }
     }

@@ -51,6 +51,12 @@ pub(crate) struct RelPlacement {
     pub slot_exec: bool,
     /// The encoding of `.rel.dyn`.
     pub table: RelTable,
+    /// `Some(v)`: symbol 1 is an undefined `STB_WEAK` one with `st_value` v
+    /// rather than the defined `func`.
+    pub undefined_weak: Option<u64>,
+    /// An empty `SHT_CREL` section beside `.rel.dyn`, linked to no symbol
+    /// table, so the image holds a CREL table that relocates nothing.
+    pub empty_crel: bool,
 }
 
 impl Default for RelPlacement {
@@ -60,6 +66,8 @@ impl Default for RelPlacement {
             outer_load: false,
             slot_exec: false,
             table: RelTable::Rel,
+            undefined_weak: None,
+            empty_crel: false,
         }
     }
 }
@@ -201,21 +209,24 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
     let sym_index: u32 = 1;
     let text_shndx: u16 = 1; // `.text` is section index 1 (see below)
     let sym_entsize = if is_64 { 24 } else { 16 };
-    let st_info = (elf::STB_GLOBAL << 4) | elf::STT_FUNC;
+    let (st_info, sym_shndx, sym_value) = match place.undefined_weak {
+        Some(value) => ((elf::STB_WEAK << 4) | elf::STT_FUNC, elf::SHN_UNDEF, value),
+        None => ((elf::STB_GLOBAL << 4) | elf::STT_FUNC, text_shndx, sym_addr),
+    };
     let mut dynsym = vec![0u8; sym_entsize]; // null symbol
     dynsym.extend_from_slice(&u32b(func_name_off));
     if is_64 {
         dynsym.push(st_info);
         dynsym.push(0); // st_other
-        dynsym.extend_from_slice(&u16b(text_shndx));
-        dynsym.extend_from_slice(&u64b(sym_addr));
+        dynsym.extend_from_slice(&u16b(sym_shndx));
+        dynsym.extend_from_slice(&u64b(sym_value));
         dynsym.extend_from_slice(&u64b(0)); // st_size
     } else {
-        dynsym.extend_from_slice(&u32b(sym_addr as u32));
+        dynsym.extend_from_slice(&u32b(sym_value as u32));
         dynsym.extend_from_slice(&u32b(0)); // st_size
         dynsym.push(st_info);
         dynsym.push(0); // st_other
-        dynsym.extend_from_slice(&u16b(text_shndx));
+        dynsym.extend_from_slice(&u16b(sym_shndx));
     }
 
     // One Elf32_Rel (8 bytes) or Elf64_Rel (16), where r_info is
@@ -261,6 +272,11 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
         let dynstr_idx = w.reserve_section_index();
         let reldyn_name = w.add_section_name(b".rel.dyn");
         let _reldyn_idx = w.reserve_section_index();
+        let crel_name = place.empty_crel.then(|| {
+            let name = w.add_section_name(b".crel.empty");
+            w.reserve_section_index();
+            name
+        });
         let _shstr = w.reserve_shstrtab_section_index();
 
         assert_eq!(text_idx.0, u32::from(text_shndx));
@@ -418,6 +434,20 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
                 RelTable::Crel(_) => 1,
             },
         });
+        if let Some(name) = crel_name {
+            w.write_section_header(&SectionHeader {
+                name: Some(name),
+                sh_type: elf::SHT_CREL,
+                sh_flags: 0,
+                sh_addr: 0,
+                sh_offset: 0,
+                sh_size: 0,
+                sh_link: 0,
+                sh_info: 0,
+                sh_addralign: 1,
+                sh_entsize: 1,
+            });
+        }
         w.write_shstrtab_section_header();
     }
 
@@ -931,6 +961,17 @@ pub(crate) fn build_equal_vaddr_loads_elf(filesz: &[u64]) -> Vec<u8> {
 /// and a writable one over a read-only one is the shape that asks whether the
 /// `ReadOnlyMemory` view knows about a mapping it did not load.
 pub(crate) fn build_overlapping_loads_elf(loads: &[(u32, u64, u8)]) -> Vec<u8> {
+    let at_base: Vec<(u32, u64, u64, u8)> = loads
+        .iter()
+        .map(|&(p_flags, len, fill)| (p_flags, EQUAL_VADDR_LOAD_BASE, len, fill))
+        .collect();
+    build_loads_elf(&at_base)
+}
+
+/// An x86-64 ET_EXEC with one PT_LOAD per `(p_flags, p_vaddr, len, fill)`
+/// entry, each over its own file extent of `len` bytes of `fill`. `.text` and
+/// `e_entry` are the first entry's.
+pub(crate) fn build_loads_elf(loads: &[(u32, u64, u64, u8)]) -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut w = Writer::new(Endianness::Little, true, &mut buf);
@@ -943,49 +984,49 @@ pub(crate) fn build_overlapping_loads_elf(loads: &[(u32, u64, u8)]) -> Vec<u8> {
         w.reserve_program_headers(loads.len() as u32);
         let offsets: Vec<u64> = loads
             .iter()
-            .map(|&(_, len, _)| w.reserve(len as usize, 1) as u64)
+            .map(|&(_, _, len, _)| w.reserve(len as usize, 1) as u64)
             .collect();
         w.reserve_shstrtab();
         w.reserve_section_headers();
 
+        let (_, first_vaddr, first_len, _) = loads[0];
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
             e_type: elf::ET_EXEC,
             e_machine: elf::EM_X86_64,
-            e_entry: EQUAL_VADDR_LOAD_BASE,
+            e_entry: first_vaddr,
             e_flags: 0,
         })
         .expect("write file header");
 
         w.write_align_program_headers();
-        for (&(p_flags, len, _), &p_offset) in loads.iter().zip(&offsets) {
+        for (&(p_flags, p_vaddr, len, _), &p_offset) in loads.iter().zip(&offsets) {
             w.write_program_header(&ProgramHeader {
                 p_type: elf::PT_LOAD,
                 p_flags,
                 p_offset,
-                p_vaddr: EQUAL_VADDR_LOAD_BASE,
-                p_paddr: EQUAL_VADDR_LOAD_BASE,
+                p_vaddr,
+                p_paddr: p_vaddr,
                 p_filesz: len,
                 p_memsz: len,
                 p_align: 1,
             });
         }
 
-        for &(_, len, fill) in loads {
+        for &(_, _, len, fill) in loads {
             w.write(&vec![fill; len as usize]);
         }
         w.write_shstrtab();
 
         w.write_null_section_header();
-        let (_, len, _) = loads[0];
         w.write_section_header(&SectionHeader {
             name: Some(text_name),
             sh_type: elf::SHT_PROGBITS,
             sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
-            sh_addr: EQUAL_VADDR_LOAD_BASE,
+            sh_addr: first_vaddr,
             sh_offset: offsets[0],
-            sh_size: len,
+            sh_size: first_len,
             sh_link: 0,
             sh_info: 0,
             sh_addralign: 1,
@@ -1434,9 +1475,8 @@ fn build_sections_elf(
 /// identical range `count` times and 1 is `count` windows sharing all but a
 /// byte.
 ///
-/// Section dedup is on the loaded address, so every header is its own region
-/// and the copying loader materialises `blob_len` bytes per header while the
-/// file grows by `stagger` each.
+/// Section dedup is on the loaded address, so every header is its own region,
+/// `blob_len` bytes wide, while the file grows by `stagger` each.
 pub(crate) fn build_shared_file_range_elf(
     count: usize,
     blob_len: usize,
@@ -1508,7 +1548,7 @@ pub(crate) fn build_mips64_rel32_elf(endian: Endianness) -> RelFixture {
 }
 
 /// A mips64el ET_DYN whose one `SHT_REL` entry carries a relocation type
-/// nothing here handles (`R_MIPS_COPY`) and a symbol index that collides with
+/// nothing here handles (`R_MIPS_GPREL32`) and a symbol index that collides with
 /// `R_MIPS_16`.
 ///
 /// `object` reads `Elf64_Rel::r_info` as a single little-endian `u64`, so the
@@ -1519,7 +1559,7 @@ pub(crate) fn build_mips64el_transposed_kind_elf() -> RelFixture {
         endian: Endianness::Little,
         is_64: true,
         e_machine: elf::EM_MIPS,
-        r_type: elf::R_MIPS_COPY,
+        r_type: elf::R_MIPS_GPREL32,
         defined_symbol: true,
         slot_init: vec![0u8; 8],
     })

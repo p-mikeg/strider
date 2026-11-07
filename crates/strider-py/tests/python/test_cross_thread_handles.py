@@ -1,3 +1,4 @@
+import contextlib
 import gc
 import os
 import threading
@@ -21,9 +22,10 @@ def _analyze():
 
 
 def _drop_on_new_thread(box):
-    t = threading.Thread(target=lambda: (box.clear(), gc.collect()))
+    t = threading.Thread(target=lambda: (box.clear(), gc.collect()), daemon=True)
     t.start()
-    t.join()
+    t.join(60)
+    assert not t.is_alive(), "drop thread hung"
 
 
 @pytest.mark.skipif(not os.path.exists("/proc/self/statm"), reason="needs procfs")
@@ -48,43 +50,23 @@ def test_dropping_a_function_off_thread_does_not_leak_its_lifter():
     assert _rss_mb() - settled < 40
 
 
-def test_sleigh_backed_work_off_thread_raises_instead_of_killing_the_thread():
-    """`PanicException` is a `BaseException`, so it escaped `except Exception`
-    and the worker died silently. These now raise a catchable error."""
+def test_a_render_runs_off_the_thread_that_built_the_lifter():
+    """A render reads the arch's name table, not the decoder, so a worker
+    thread renders exactly what the building thread does."""
     _el, cfg, fn = _analyze()
-    caught = {}
-
-    def run(label, thunk):
-        def body():
-            try:
-                thunk()
-                caught[label] = "ok"
-            except Exception as e:  # must be reachable
-                caught[label] = type(e).__name__
-
-        t = threading.Thread(target=body)
-        t.start()
-        t.join()
-
-    run("pretty", lambda: fn.to_dot(pretty=True))
-    run("cfg_dot", lambda: cfg.to_dot())
-    assert caught == {"pretty": "StriderError", "cfg_dot": "StriderError"}
-
-
-def test_work_that_needs_no_sleigh_still_runs_off_thread():
-    _el, cfg, fn = _analyze()
-    out = {}
+    here = {"dot": fn.to_dot(), "pretty": fn.to_dot(pretty=True), "cfg_dot": cfg.to_dot()}
+    there = {}
 
     def body():
-        dot = fn.to_dot()
-        out["dot"] = len(dot) if dot is not None else 0
-        out["entry"] = cfg.entry
+        there["dot"] = fn.to_dot()
+        there["pretty"] = fn.to_dot(pretty=True)
+        there["cfg_dot"] = cfg.to_dot()
 
-    t = threading.Thread(target=body)
+    t = threading.Thread(target=body, daemon=True)
     t.start()
-    t.join()
-    assert out["dot"] > 0
-    assert out["entry"] is not None
+    t.join(60)
+    assert not t.is_alive(), "render thread hung"
+    assert there == here
 
 
 def _off_thread(thunk):
@@ -96,33 +78,153 @@ def _off_thread(thunk):
         except Exception as e:
             out["v"] = type(e).__name__
 
-    t = threading.Thread(target=body)
+    t = threading.Thread(target=body, daemon=True)
     t.start()
-    t.join()
+    t.join(60)
+    assert not t.is_alive(), "worker hung"
     return out["v"]
 
 
-def test_call_other_abi_raises_off_thread_instead_of_answering_none():
-    """`None` is the answer for a name strider does not classify, which fails
-    the lift. Degrading an off-thread failure to it reported a different,
-    wrong classification."""
-    el = strider.lift.load_elf("fixtures/out/x86/memory.elf")
-    assert el.call_other_abi("in") is not None
-    assert _off_thread(lambda: el.call_other_abi("in")) == "StriderError"
+def test_analyze_off_thread_answers_as_on_thread():
+    el = strider.lift.load_elf(ELF)
+    here = el.analyze(FUNC).function.to_text()
+    assert _off_thread(lambda: el.analyze(FUNC).function.to_text()) == here
 
 
-def test_add_elf_off_thread_does_not_steal_the_handle():
-    """`add_elf` rebuilds the underlying handle, and the rebuild keeps the
-    pin on the building thread. Re-pinning to the caller would cost that
-    thread the handle permanently, under an error naming it as the foreign
-    one."""
+def test_call_other_abi_answers_off_thread():
+    el = strider.lift.load_elf("fixtures/out/x86/memory.elf")
+    assert _off_thread(lambda: el.call_other_abi("in")) == el.call_other_abi("in")
+
+
+def test_add_elf_off_thread_merges_for_every_thread():
     el = strider.lift.load_elf("fixtures/out/x86/memory.elf")
     el.analyze("array_sum")
-    added = _off_thread(
-        lambda: el.add_elf("fixtures/out/x86/elf_relocs.elf") or "ok"
-    )
-    assert added == "StriderError"
-    # Still usable on its own thread, and the merge still works there.
-    el.analyze("array_sum")
-    el.add_elf("fixtures/out/x86/elf_relocs.elf")
+    added = _off_thread(lambda: el.add_elf("fixtures/out/x86/elf_relocs.elf") or "ok")
+    assert added == "ok"
     assert "helper_a" in el.symbols()
+    el.analyze("array_sum")
+
+
+_ADD_RET = b"\x48\x83\xc0\x01\xc3"  # add rax, 1 ; ret
+_CC = strider.sleigh.CallingConvention.x86_64_systemv()
+
+
+@contextlib.contextmanager
+def _analyze_in_flight(build, inner, entry, cc):
+    """Yield `build(reader)` and an earlier `Function` of it while a worker
+    thread's `analyze` on it sits inside `reader.read`."""
+    armed, entered, release = threading.Event(), threading.Event(), threading.Event()
+
+    class Blocking(strider.reader.MemReader):
+        def read(self, addr, size):
+            if armed.is_set() and not entered.is_set():
+                entered.set()
+                release.wait(30)
+            return inner.read(addr, size)
+
+    lift = build(Blocking())
+    earlier = lift.analyze(entry, cc).function
+    first = {}
+
+    def run():
+        try:
+            first["fn"] = lift.analyze(entry, cc).function
+        except Exception as e:
+            first["err"] = repr(e)
+
+    armed.set()
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    try:
+        assert entered.wait(10), first
+        yield lift, earlier
+    finally:
+        release.set()
+        t.join(60)
+    assert not t.is_alive(), "analyze hung"
+    assert "fn" in first, first
+
+
+def _x86_64(mem):
+    return strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+
+
+def _plain_in_flight():
+    return _analyze_in_flight(_x86_64, strider.reader.BufferReader(0x1000, _ADD_RET), 0x1000, _CC)
+
+
+def test_a_second_call_while_one_is_in_flight_raises_the_reentrant_error():
+    """Off-thread use is legal; concurrent use of one handle is not. The
+    first `analyze` holds the handle while its reader blocks, and a call from
+    another thread meanwhile raises rather than interleaving."""
+    with _plain_in_flight() as (lift, _earlier):
+        with pytest.raises(strider.StriderError, match="already in use"):
+            lift.analyze(0x1000, _CC)
+
+
+_METHODS = {
+    "user_op_names": lambda lift, fn, vn: lift.user_op_names(),
+    "call_other_abi": lambda lift, fn, vn: lift.call_other_abi("in"),
+    "pcode_at": lambda lift, fn, vn: lift.pcode_at(0x1000, 0x1000),
+    "reader": lambda lift, fn, vn: lift.reader(),
+    "rom": lambda lift, fn, vn: lift.rom(),
+    "arch": lambda lift, fn, vn: lift.arch,
+    "build_cfg": lambda lift, fn, vn: lift.build_cfg(0x1000),
+    "optimize": lambda lift, fn, vn: fn.optimize(),
+}
+# Shipped only under the `test-hooks` feature, and the one method here that
+# takes the handle to replace it rather than to read it.
+if hasattr(strider.lift.Lifter, "_rebuild"):
+    _METHODS["_rebuild"] = lambda lift, fn, vn: lift._rebuild(  # type: ignore[attr-defined]
+        strider.sleigh.SleighArch.x86_64(), strider.reader.BufferReader(0x1000, _ADD_RET)
+    )
+
+
+@pytest.mark.parametrize("method", sorted(_METHODS))
+def test_a_method_called_while_analyze_is_in_flight_raises_strider_error(method):
+    """Every method that reads the handle raises the same catchable error a
+    second `analyze` does, from whichever thread it is called."""
+    vn = strider.sleigh.SleighArch.x86_64().reg("RAX")
+    with _plain_in_flight() as (lift, fn):
+        with pytest.raises(strider.StriderError, match="already in use"):
+            _METHODS[method](lift, fn, vn)
+
+
+def test_an_add_elf_while_analyze_is_in_flight_merges_nothing():
+    """The merge and the rebuild take the handle together, so an `add_elf`
+    that meets an analysis in flight refuses before the reader or the
+    symbol table sees the new ELF."""
+    el = strider.lift.load_elf(ELF)
+    other = "fixtures/out/x86/elf_relocs.elf"
+
+    def build(mem):
+        # Deliberate: the constructor `load_elf` calls, which the stub leaves
+        # out, over a reader that can block.
+        args = (el._elf, el.arch, el.cc, mem, el._elf.ro_reader())
+        return strider.lift.ElfLifter(*args)  # type: ignore[call-arg]
+
+    entry = el.symbol(FUNC).address
+    with _analyze_in_flight(build, el.reader(), entry, el.cc) as (lift, _earlier):
+        with pytest.raises(strider.StriderError, match="already in use"):
+            lift.add_elf(other)
+        assert "helper_a" not in el.symbols()
+    lift.add_elf(other)
+    assert "helper_a" in el.symbols()
+
+
+def test_an_elf_lifters_repr_and_endianness_answer_while_analyze_is_in_flight():
+    """`repr` never raises, and `endianness` reads the loaded ELF, so neither
+    needs the handle an `analyze` on another thread holds."""
+    el = strider.lift.load_elf(ELF)
+
+    def build(mem):
+        # Deliberate: the constructor `load_elf` calls, which the stub leaves
+        # out, over a reader that can block.
+        args = (el._elf, el.arch, el.cc, mem, el._elf.ro_reader())
+        return strider.lift.ElfLifter(*args)  # type: ignore[call-arg]
+
+    entry = el.symbol(FUNC).address
+    with _analyze_in_flight(build, el.reader(), entry, el.cc) as (lift, _earlier):
+        assert repr(lift) == "ElfLifter(cc=x86_cdecl)"
+        assert lift.endianness == "little"
+    assert repr(lift) == "ElfLifter(arch=x86, cc=x86_cdecl)"

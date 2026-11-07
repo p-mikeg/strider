@@ -4,14 +4,7 @@
 //! Value-only on purpose: control-flow invariants stay in hand-authored
 //! fixtures.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unreachable,
-    clippy::todo,
-    clippy::enum_variant_names
-)]
+#![allow(clippy::todo, clippy::enum_variant_names)]
 
 use proptest::prelude::*;
 
@@ -53,27 +46,27 @@ proptest! {
         );
     }
 
-    /// Dedup must be independent of construction history.
+    /// Re-creating any cached node of a generated graph returns that node:
+    /// dedup depends on the key, not on construction history.
     #[test]
     fn prop_dedup_determinism(steps in step_seq()) {
         let Some(mut fg) = replay(&steps) else {
             return Ok(());
         };
-        use strider_ir::node::{NodeKind, ValueKind, ValueType};
-        let id = fg.intern_int_const(42, ValueType::I32);
-        let a = fg.graph_mut().create_node(
-            NodeKind::IntConst(id),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let b = fg.graph_mut().create_node(
-            NodeKind::IntConst(id),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        prop_assert_eq!(
-            a, b,
-            "dedup cache returned distinct NodeIds for identical IntConst(42:I32)"
-        );
+        let nodes: Vec<_> = fg.graph().all_node_ids().collect();
+        let mut checked = 0;
+        for n in nodes {
+            if !fg.graph().is_cached(n) {
+                continue;
+            }
+            let g = fg.graph();
+            let kind = *g.node_kind(n);
+            let inputs: Vec<_> = g.node_inputs(n).iter().collect();
+            let outputs: Vec<_> = g.node_outputs(n).iter().map(|&v| g.value_kind(v)).collect();
+            let again = fg.graph_mut().create_node(kind, inputs, outputs);
+            prop_assert_eq!(again, n, "re-creating a cached node minted a new one");
+            checked += 1;
+        }
+        prop_assert!(checked > 0, "no cached node: the generator emits none");
     }
 }

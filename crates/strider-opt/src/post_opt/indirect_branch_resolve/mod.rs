@@ -1,22 +1,19 @@
-//! Classifies the placeholder targets the lifter inserts at `BranchIndirect`
-//! sites.
-//!
-//! [`classify_target`] tries an ordered list of sound recognisers, first match
-//! wins: a literal `IntConst` address, an `InitialVar(lr)` return, then
-//! `table::classify_table_dispatch` for rodata jump tables and on-stack label
-//! arrays.  No match leaves the target unresolved.
+use std::cell::LazyCell;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker};
 
 use strider_cfg::ResolvedTargets;
 
-use crate::pipeline::{OptCtx, PostOptimizer};
-use crate::{EditFunction, ReadOnlyMemory};
+use crate::ReadOnlyMemory;
 
 pub(crate) mod eval;
+mod feasible;
+pub(crate) mod index_range;
 mod return_target;
 pub(crate) mod table;
+#[cfg(test)]
+mod tests;
 
 pub use return_target::ReturnTargets;
 
@@ -24,461 +21,173 @@ pub use return_target::ReturnTargets;
 /// still spans billions of them.
 pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
-/// `None` when the dispatch value matches no known sound shape, which defers
-/// the branch.  `rom` is consulted only by the rodata jump-table shape.
-///
-/// # Soundness
-///
-/// Every recogniser must identify the runtime target set UNAMBIGUOUSLY and
-/// fails closed on a partial proof, never under-approximating.  `Load(sp)` for
-/// a `pop pc`-style return, which a `push X; pop pc` tail call shares the shape
-/// of, is classified only where [`ReturnTargets`] follows the slot back to a
-/// store of the entry link register.  That walk is the one place a
-/// call-boundary relaxation reaches a decoded target, and it is the orchestrator
-/// that keeps the answer honest: the seated `Return` carries a return site, so
-/// every round re-checks the seat against its own IR. A verdict that rests on
-/// `return_slots_survive_untracked_writes` is not reported; clearing the claim
-/// and re-running is how a caller audits one.
-///
-/// Of `assumptions` the table walk honours `stack_global_disjoint` and the
-/// allocation identity `noalias_allocators` gives `decompose`.  The
-/// call-boundary relaxations are deliberately not among them
-/// (`eval::table_walk_options`): this walk decides a decoded branch target,
-/// so a relaxation that is wrong produces a wrong edge rather than a wrong
-/// fold.
-#[must_use]
+/// `SiteClassifier::classify` on a classifier built for `function` alone.
+#[cfg(any(test, feature = "test-util"))]
 pub fn classify_target(
     function: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    assumptions: &crate::AssumptionOptions,
 ) -> Option<ResolvedTargets> {
-    let target_value = function.indirect_branch_target(branch);
-    // The ISA mode this branch's instruction committed for its target(s), when
-    // it is an interworking branch; carried on the branch as a live input and
-    // evaluated per resolved target below.
-    let mode_value = function.indirect_branch_isa_mode(branch);
-    single_const_target(function, target_value, mode_value)
-        .or_else(|| link_register_return(function, branch, target_value, assumptions))
-        .or_else(|| {
-            table::classify_table_dispatch(function, branch, rom, ranges, assumptions, mode_value)
-        })
+    SiteClassifier::new(function, rom).classify(branch)
 }
 
-/// The literal target of an `IntConst` dispatch value.  A literal is always a
-/// deterministic function of the pcode, so it is the only possible target.
-fn single_const_target(
-    function: &strider_ir::Function,
-    target_value: ValueId,
-    mode_value: Option<ValueId>,
-) -> Option<ResolvedTargets> {
-    if !matches!(function.kind_of_value(target_value), NodeKind::IntConst(_)) {
-        return None;
-    }
-    let k = function.int_const_u128(target_value)?;
-    // A committed interworking mode MUST fold to a constant here; if it does
-    // not, fail closed (`?` defers the whole branch) rather than decode the
-    // const target in the flowing mode. Mirrors the table path (table.rs).
-    let isa_bit = match mode_value {
-        Some(mv) => Some(function.int_const_u128(mv)? != 0),
-        None => None,
-    };
-    // Reject rather than truncate a const with its high 64 bits set.
-    Some(ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(
-        u64::try_from(k).ok()?,
-        isa_bit,
-    )))
+type LazyRanges<'f> =
+    LazyCell<index_range::RangeMap<'f>, Box<dyn FnOnce() -> index_range::RangeMap<'f> + 'f>>;
+
+/// One function's dispatch-site recogniser, with the memos its sites share.
+/// Every recogniser fails closed on a partial proof. Under correct claims the
+/// set is never short; a guard the range analysis does not connect to the
+/// index, or an infeasible phi arm no `If` on the same condition cuts, can
+/// over-approximate it.
+pub(crate) struct SiteClassifier<'f> {
+    function: &'f strider_ir::Function,
+    /// Built on the first table query.
+    ranges: LazyRanges<'f>,
+    eval: eval::Evaluator<'f>,
+    returns: ReturnTargets<'f>,
+    /// Per value, the `Add(value, k)` siblings [`index_range::RangeMap::may_bound_sum`]
+    /// admits, with each `k`.
+    sums: rustc_hash::FxHashMap<ValueId, Vec<(ValueId, u128)>>,
 }
 
-/// The value under an interworking mask, else `value` unchanged.
-///
-/// `BXWritePC` / `JXWritePC` emit `target & ~1`: the cleared bit is the ISA
-/// mode, which the branch carries separately, so the mask hides the
-/// `InitialVar(lr)` shape under it.  Only the exact low-bit mask is stripped;
-/// any other constant is real arithmetic on the target.
-fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> ValueId {
-    let producer = function.producer(value);
-    if !matches!(
-        function.node_kind(producer),
-        NodeKind::IntBinaryOp(strider_ir::node::IntBinaryOp::And)
-    ) {
-        return value;
-    }
-    let Ok([a, b]) = function.producer_inputs_exact::<2>(value) else {
-        return value;
-    };
-    let Some(ty) = function.value_type_opt(value) else {
-        return value;
-    };
-    let want = ty.bit_mask_u128() ^ 1;
-    for (operand, other) in [(a, b), (b, a)] {
-        if function.int_const_u128(other) == Some(want) {
-            return operand;
+impl<'f> SiteClassifier<'f> {
+    /// The recogniser for `function`'s dispatch sites. `rom` is the binary's
+    /// read-only image, read only by the table arm; `None` disables it.
+    pub(crate) fn new(
+        function: &'f strider_ir::Function,
+        rom: Option<&'f dyn ReadOnlyMemory>,
+    ) -> Self {
+        Self {
+            function,
+            ranges: LazyCell::new(Box::new(move || index_range::RangeMap::new(function))),
+            eval: eval::Evaluator::new(function, rom),
+            returns: ReturnTargets::new(function),
+            sums: rustc_hash::FxHashMap::default(),
         }
     }
-    value
-}
 
-/// `None` on stack-push ABIs (x86 / x86_64), which have no link register.
-///
-/// A single-register pop into the PC (ARM `ldr pc,[sp],#4`) lifts to a
-/// `BranchIndirect` over a stack load, not a `Return`, and once a call sits
-/// between the push and the pop nothing folds that load back to the link
-/// register.  [`ReturnTargets`] is what separates it from the `push X; pop pc`
-/// tail call it looks like.
-fn link_register_return(
-    function: &strider_ir::Function,
-    branch: NodeId,
-    target_value: ValueId,
-    assumptions: &crate::AssumptionOptions,
-) -> Option<ResolvedTargets> {
-    let lr = function.default_cc().link_register_vn?;
-    match *function.kind_of_value(strip_isa_mode_mask(function, target_value)) {
-        NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {
-            Some(ResolvedTargets::LinkRegister)
-        }
-        NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
-            ReturnTargets::new(function, assumptions)
-                .returns_to_caller(branch, target_value)
-                .then_some(ResolvedTargets::LinkRegister)
-        }
-        _ => None,
+    /// The target set of `site`, an `IndirectBranch` or a seated `Switch`
+    /// (never a return), from the first recogniser to match: a literal
+    /// address, an `InitialVar(lr)` or [`ReturnTargets::returns_to_caller`]
+    /// return, then the table arm. `None` defers the site.
+    #[must_use]
+    pub(crate) fn classify(&mut self, site: NodeId) -> Option<ResolvedTargets> {
+        let f = self.function;
+        let switch = matches!(f.node_kind(site), NodeKind::Switch(_));
+        // The ISA mode an interworking branch commits for its targets.
+        let (target_value, mode_value) = if switch {
+            (f.switch_selector(site), f.switch_isa_mode(site))
+        } else {
+            (
+                f.indirect_branch_target(site),
+                f.indirect_branch_isa_mode(site),
+            )
+        };
+        self.single_const_target(target_value, mode_value)
+            .or_else(|| {
+                (!switch)
+                    .then(|| self.link_register_return(site, target_value))
+                    .flatten()
+            })
+            .or_else(|| self.classify_dispatch_value(site, target_value, mode_value))
     }
-}
 
-/// Classifies every live `IndirectBranch` placeholder into
-/// [`OptCtx::indirect_resolutions`], and re-derives every live `Switch` from
-/// its retained selector.  Never mutates the graph.
-///
-/// Must run as a post-pass: a dispatch value only becomes classifiable once the
-/// optimizer has folded it into a recognizable shape.
-#[derive(Clone)]
-pub struct IndirectBranchClassify;
-
-impl PostOptimizer for IndirectBranchClassify {
-    fn apply(&self, edit: &mut EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()> {
-        let function = edit.function();
-
-        // Most functions have neither a placeholder nor a seated `Switch`, so
-        // one walk collects both kinds and the KnownBits / dominator /
-        // value-range setup below is skipped when it finds nothing.
-        let sites: Vec<NodeId> = function
-            .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
-            .collect();
-
-        // Off leaves every site a placeholder, but each one still has to be
-        // REPORTED: the orchestrator derives its live-placeholder set from
-        // `indirect_resolutions`, so returning before the inserts below would
-        // publish an empty `unresolved_indirect_branches` while placeholders
-        // are live. A seated `Switch` is already resolved and reports nothing
-        // as unresolved, but it is exactly the site nothing verified, and
-        // `unverified_seeded_sites` reads the same map to name it.
-        if !ctx.options.resolve_indirect_branches {
-            ctx.indirect_resolutions = sites.into_iter().map(|node| (node, None)).collect();
-            return Ok(());
-        }
-
-        let mut resolutions: rustc_hash::FxHashMap<_, _> = rustc_hash::FxHashMap::default();
-        if !sites.is_empty() {
-            // Computed once, since the graph does not change during this pass.
-            let known = crate::opt::known_bits::analyze(function)?;
-            let doms = strider_ir::control_dominator_tree(function);
-            let mut ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
-
-            for node in sites {
-                // An already-seated `Switch` is re-derived from its retained
-                // selector, which reads as a wider table once a loop back-edge
-                // through its own arms closes. The orchestrator REPLACES the
-                // seated set with this one, adopting per address the ISA mode
-                // it already proved, and the `Switch` carries the mode its
-                // instruction commits, so a widened arm is evaluated in its own
-                // mode. `None` keeps the seated arms and REPORTS the site
-                // unresolved: they may be a proper subset.
-                let resolved = if matches!(function.node_kind(node), NodeKind::Switch(_)) {
-                    // Fail closed like every other bail on this path: an absent
-                    // node is not an unresolved one, so `continue` here would
-                    // leave the seated arms unreported.
-                    let Some(&selector) = function.node_inputs(node).get(1) else {
-                        resolutions.insert(node, None);
-                        continue;
-                    };
-                    table::classify_dispatch_value(
-                        function,
-                        node,
-                        selector,
-                        ctx.rom,
-                        &mut ranges,
-                        &ctx.options.assumptions,
-                        function.switch_isa_mode(node),
-                    )
-                } else {
-                    classify_target(
-                        function,
-                        node,
-                        ctx.rom,
-                        &mut ranges,
-                        &ctx.options.assumptions,
-                    )
-                };
-                resolutions.insert(node, resolved);
-            }
-        }
-        ctx.indirect_resolutions = resolutions;
-
-        Ok(())
+    /// The literal target of an `IntConst` dispatch value.
+    fn single_const_target(
+        &self,
+        target_value: ValueId,
+        mode_value: Option<ValueId>,
+    ) -> Option<ResolvedTargets> {
+        let function = self.function;
+        let k = function.int_const_u128(target_value)?;
+        // A committed mode that does not fold defers the branch.
+        let isa_bit = match mode_value {
+            Some(mv) => Some(function.int_const_u128(mv)? != 0),
+            None => None,
+        };
+        Some(ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(
+            u64::try_from(k).ok()?,
+            isa_bit,
+        )))
     }
-}
 
-#[cfg(test)]
-mod tests {
-    //! These build nodes directly rather than lifting, so the classifier's
-    //! match arms are exercised in isolation.
-
-    use super::*;
-    use strider_ir::node::{IntBinaryOp, NodeKind, ValueType};
-    use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
-    use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
-
-    /// Runs the two value-based recognisers on a dispatch value directly.
-    ///
-    /// The entry stands in for the branch site: these targets are an
-    /// `InitialVar` or an `IntConst`, so no slot is followed from it.
-    fn classify_target_bare(
-        function: &strider_ir::Function,
+    /// A return through the link register, directly or popped from the stack
+    /// (ARM `ldr pc,[sp],#4`); [`ReturnTargets`] tells the latter from a
+    /// `push X; pop pc` tail call. `None` on ABIs with no link register.
+    fn link_register_return(
+        &mut self,
+        branch: NodeId,
         target_value: ValueId,
     ) -> Option<ResolvedTargets> {
-        single_const_target(function, target_value, None).or_else(|| {
-            link_register_return(
-                function,
-                function.entry(),
-                target_value,
-                &crate::AssumptionOptions::default(),
-            )
-        })
-    }
-
-    /// An empty region terminated by a Return over the caller-supplied value,
-    /// so the classifier sees a real validation-passing graph.
-    fn empty_graph_returning(
-        target_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
-    ) -> (strider_ir::Function, ValueId) {
-        let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-        let region = builder.create_region_all().expect("create_region");
-        builder
-            .set_entry_region_all(region)
-            .expect("set_entry_region");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let target = target_inputs(&mut builder);
-        // Re-stamp in case the closure cleared the lift_addr.
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        builder
-            .build_return(Some(target), &[])
-            .expect("build_return");
-        builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
-        // `build` is a move, but `ValueId` is a stable entity index.
-        (function, target)
-    }
-
-    /// PhiCollapse has not run on these hand-built fixtures, so the tracked
-    /// read sits behind single-input `VarPhi`s the classifier arms look past.
-    fn skip_trivial_var_phis(function: &strider_ir::Function, mut value: ValueId) -> ValueId {
-        loop {
-            let pid = function.producer(value);
-            let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function
-                    .get_vn_for_value(function.node_outputs(pid)[0])
-                    .is_some();
-            if !is_var_phi {
-                return value;
+        let function = self.function;
+        let lr = function.default_cc().link_register?;
+        match *function.kind_of_value(strip_isa_mode_mask(function, target_value)) {
+            NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {
+                Some(ResolvedTargets::LinkRegister)
             }
-            // Inputs are [phi_token, ...per-pred values], so a single
-            // predecessor puts the value at slot 1.
-            if function.node_inputs(pid).len() != 2 {
-                return value;
-            }
-            let Some(slot1) = function.nth_input(pid, 1) else {
-                return value;
-            };
-            value = slot1;
+            NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => self
+                .returns
+                .returns_to_caller(branch, target_value)
+                .then_some(ResolvedTargets::LinkRegister),
+            _ => None,
         }
     }
+}
 
-    #[test]
-    fn indirect_branch_carries_its_mode_input() {
-        // An interworking branch carries its ISA-mode bit as slot 3; the resolver
-        // surfaces it, read live off the placeholder.
-        let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-        let region = builder.create_region_all().expect("create_region");
-        builder.set_entry_region_all(region).expect("set_entry");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let mode = builder.build_int_const(1u64, ValueType::I64).unwrap();
-        let target = builder.build_int_const(0x8000u64, ValueType::I64).unwrap();
-        let branch = builder
-            .build_indirect_branch_with_mode(target, Some(mode))
-            .expect("build_branch");
-        builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
+/// The operand of an exact `target & ~1` interworking mask (`BXWritePC` /
+/// `JXWritePC`, whose cleared bit the branch carries separately), else `value`.
+fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> ValueId {
+    let Some((operand, mask)) = crate::const_eval::var_and_const_of(
+        function,
+        function.producer(value),
+        NodeKind::IntBinaryOp(strider_ir::node::IntBinaryOp::And),
+    ) else {
+        return value;
+    };
+    let want = function
+        .value_type_opt(value)
+        .and_then(|ty| ty.int_mask_u128())
+        .map(|m| m ^ 1);
+    if want == Some(mask) { operand } else { value }
+}
 
-        assert_eq!(function.indirect_branch_isa_mode(branch), Some(mode));
+/// Every live dispatch site of a function, and what was recovered for each.
+#[derive(Debug)]
+pub struct ClassifiedSites {
+    /// Every reachable `IndirectBranch` placeholder and seated `Switch`.
+    pub sites: Vec<NodeId>,
+    /// The sites a target set was recovered for.
+    pub resolved: rustc_hash::FxHashMap<NodeId, ResolvedTargets>,
+}
+
+impl ClassifiedSites {
+    /// Every live dispatch site of `f`, none resolved.
+    #[must_use]
+    pub fn unresolved(f: &strider_ir::Function) -> Self {
+        Self {
+            sites: f
+                .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
+                .collect(),
+            resolved: rustc_hash::FxHashMap::default(),
+        }
     }
+}
 
-    #[test]
-    fn non_switching_branch_has_no_mode_input() {
-        // A 3-input branch: no mode, so it keeps the flowing mode.
-        let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-        let region = builder.create_region_all().expect("create_region");
-        builder.set_entry_region_all(region).expect("set_entry");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let target = builder.build_int_const(0x8000u64, ValueType::I64).unwrap();
-        let branch = builder.build_indirect_branch(target).expect("build_branch");
-        builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
-
-        assert_eq!(function.indirect_branch_isa_mode(branch), None);
+/// Classifies every live `IndirectBranch` and re-derives every live `Switch` of
+/// `f`, the optimized function.
+pub fn classify_sites(
+    f: &strider_ir::Function,
+    rom: Option<&dyn ReadOnlyMemory>,
+) -> ClassifiedSites {
+    let mut out = ClassifiedSites::unresolved(f);
+    if out.sites.is_empty() {
+        return out;
     }
-
-    #[test]
-    fn const_target_with_unfoldable_mode_defers() {
-        // A `bx <const>` whose committed ISA mode does not fold to a constant
-        // must fail closed: the callee's mode is unknown, so defer rather than
-        // decode the const target in the flowing mode (the table path already
-        // fails closed here via `?`).
-        let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-        let region = builder.create_region_all().expect("create_region");
-        builder.set_entry_region_all(region).expect("set_entry");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let target = builder.build_int_const(0x8000u64, ValueType::I64).unwrap();
-        // A symbolic (non-IntConst) mode, as a runtime `entry & 1` would be.
-        let one = builder.build_int_const(1u64, ValueType::I64).unwrap();
-        let mode = builder
-            .build_int_binary_operation(target, one, IntBinaryOp::And, ValueType::I64)
-            .unwrap();
-        builder
-            .build_indirect_branch_with_mode(target, Some(mode))
-            .expect("build_branch");
-        builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
-
-        assert_eq!(single_const_target(&function, target, Some(mode)), None);
+    let mut classifier = SiteClassifier::new(f, rom);
+    for &node in &out.sites {
+        if let Some(targets) = classifier.classify(node) {
+            out.resolved.insert(node, targets);
+        }
     }
-
-    #[test]
-    fn classify_int_const_returns_single() {
-        let (function, target) = empty_graph_returning(|fb| {
-            // I64 because BranchIndirect targets are pointer-sized.
-            fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
-        });
-        let result = classify_target_bare(&function, target);
-        assert_eq!(result, Some(ResolvedTargets::Single(0x1234.into())));
-    }
-
-    #[test]
-    fn classify_initial_var_with_matching_lr_returns_link_register() {
-        let lr_vn = fake_reg_vn(0x4c, 4);
-        // The only tracked variable IS the link register, so reading it gives
-        // an `InitialVar(lr)`.
-        let mut builder = RegisterSet::new()
-            .tracked(lr_vn)
-            .link_register(lr_vn)
-            .build_fn_single_region()
-            .expect("RegisterSet::build_fn_single_region");
-        let target = builder.read_variable(&lr_vn).expect("read_variable(lr)");
-        builder
-            .build_return(Some(target), &[])
-            .expect("build_return");
-        builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
-
-        let producer_value = skip_trivial_var_phis(&function, target);
-
-        let result = classify_target_bare(&function, producer_value);
-        assert_eq!(result, Some(ResolvedTargets::LinkRegister));
-    }
-
-    #[test]
-    fn classify_initial_var_with_non_matching_vn_returns_none() {
-        let lr_vn = fake_reg_vn(0x4c, 4);
-        let other_vn = fake_reg_vn(0x10, 4);
-        // The tracked variable and the declared link register differ, so no
-        // match is possible.
-        let mut builder = RegisterSet::new()
-            .tracked(other_vn)
-            .link_register(lr_vn)
-            .build_fn_single_region()
-            .expect("RegisterSet::build_fn_single_region");
-        let target = builder
-            .read_variable(&other_vn)
-            .expect("read_variable(other)");
-        builder
-            .build_return(Some(target), &[])
-            .expect("build_return");
-        builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
-
-        let producer_value = skip_trivial_var_phis(&function, target);
-
-        let result = classify_target_bare(&function, producer_value);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn classify_initial_var_with_lr_unset_returns_none() {
-        // InitialVar(lr_vn) with `link_register_vn = None`, the x86 case.
-        let lr_vn = fake_reg_vn(0x4c, 4);
-        let mut builder = RegisterSet::new()
-            .tracked(lr_vn)
-            .build_fn_single_region()
-            .expect("RegisterSet::build_fn_single_region");
-        let target = builder.read_variable(&lr_vn).expect("read_variable(lr)");
-        builder
-            .build_return(Some(target), &[])
-            .expect("build_return");
-        builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
-
-        let producer_value = skip_trivial_var_phis(&function, target);
-
-        let result = classify_target_bare(&function, producer_value);
-        assert_eq!(result, None);
-    }
-
-    /// The pass publishes what it found on every exit, so a second run over an
-    /// `OptCtx` carrying an earlier run's map never leaves a stale site behind.
-    #[test]
-    fn classify_pass_republishes_on_a_site_free_function() {
-        let (mut function, _target) =
-            empty_graph_returning(|fb| fb.build_int_const(0x1234u64, ValueType::I64).unwrap());
-        let stale = function.entry();
-        let mut ctx = crate::OptCtx::at_floor(None);
-        ctx.indirect_resolutions.insert(stale, None);
-        crate::run_post(&IndirectBranchClassify, &mut function, &mut ctx).expect("classify");
-        assert!(
-            ctx.indirect_resolutions.is_empty(),
-            "a function with no branch site publishes an empty map"
-        );
-    }
-
-    #[test]
-    fn classify_unrelated_node_kind_returns_none() {
-        let (function, target) = empty_graph_returning(|fb| {
-            let lhs = fb.build_int_const(1u64, ValueType::I64).unwrap();
-            let rhs = fb.build_int_const(2u64, ValueType::I64).unwrap();
-            fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, ValueType::I64)
-                .expect("build_int_binary_operation")
-        });
-        // ConstantFold would turn 1+2 into IntConst(3), but the optimiser does
-        // not run here, so the producer stays an IntBinaryOp.
-        let producer_kind = *function.kind_of_value(target);
-        assert!(
-            matches!(producer_kind, NodeKind::IntBinaryOp(_)),
-            "fixture must produce an IntBinaryOp; got {producer_kind:?}"
-        );
-        assert_eq!(classify_target_bare(&function, target), None);
-    }
+    out
 }

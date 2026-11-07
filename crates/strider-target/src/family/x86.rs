@@ -1,0 +1,395 @@
+use super::{DecodeFacts, Family};
+use crate::ArchPreset;
+use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Row};
+use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
+
+pub(crate) static X86: Family = Family {
+    #[cfg(any(test, feature = "test-util"))]
+    name: "x86",
+    #[cfg(any(test, feature = "test-util"))]
+    ghidra_ldefs: "x86/data/languages/x86.ldefs",
+    facts: DecodeFacts {
+        isa_mode_var: None,
+        flow_commit_vars: &[],
+        transient_decode_vars: &[],
+        has_delay_slots: false,
+        callother_output_exact: true,
+        register_space_reach: None,
+        internal_registers: &["xmmTmp1", "xmmTmp2"],
+        volatile_registers: &[],
+        non_volatile_registers: &[],
+    },
+    rounding_ops: &["mxcsrRoundingControl", "x87RoundingControl"],
+    msr_mode_op: None,
+    rounding_register: None,
+    call_other: CALL_OTHER,
+    // No prefixes: `vp*_avx*` also names gather / scatter / maskmov ops that
+    // reach memory the p-code does not spell out.
+    call_other_prefixes: &[],
+    call_other_fallback: None,
+    calling_conventions: CALLING_CONVENTIONS,
+};
+
+/// Writes a segment base; memory is clobbered so no access forwards across it.
+const fn base_write(base: &'static [&'static str]) -> CallOtherClass {
+    CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: base,
+        clobbers_memory: true,
+        no_return: false,
+    })
+}
+
+const CALL_OTHER: &[Row] = &[
+    // `swi` is every INT vector (0x80, INT3, ...), so it names no registers.
+    // `int` is `swi` plus the sla's `call [intloc]`, a `Call` under the
+    // default convention.
+    Row::new(&["swi"], MEM_CLOBBER),
+    // Linux x86_64 syscall: RAX = number, RDI/RSI/RDX/R10/R8/R9 = args, RAX =
+    // return; SYSCALL itself writes RCX (rip) and R11 (rflags).
+    Row {
+        names: &["syscall"],
+        only: Some(&[ArchPreset::X86_64]),
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
+            implicit_writes: &["RAX", "RCX", "R11"],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
+    // RDPKRU reads ECX and zeroes EDX; EAX is the op's p-code output.
+    Row::new(
+        &["rdpkru_u32"],
+        CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["ECX"],
+            implicit_writes: &["EDX"],
+            clobbers_memory: false,
+            no_return: false,
+        }),
+    ),
+    // Operands and outputs are p-code.
+    Row::new(&["rdtsc", "rdtscp", "rdmsr", "xgetbv"], PURE),
+    // CPUID serializes, a full memory barrier; `cpuid(EAX)` drops the ECX
+    // sub-leaf, and its register writes are p-code.
+    Row::new(
+        &[
+            "cpuid",
+            "cpuid_Architectural_Performance_Monitoring_info",
+            "cpuid_Deterministic_Cache_Parameters_info",
+            "cpuid_Direct_Cache_Access_info",
+            "cpuid_Extended_Feature_Enumeration_info",
+            "cpuid_Extended_Topology_info",
+            "cpuid_MONITOR_MWAIT_Features_info",
+            "cpuid_Processor_Extended_States_info",
+            "cpuid_Quality_of_Service_info",
+            "cpuid_Thermal_Power_Management_info",
+            "cpuid_Version_info",
+            "cpuid_basic_info",
+            "cpuid_brand_part1_info",
+            "cpuid_brand_part2_info",
+            "cpuid_brand_part3_info",
+            "cpuid_cache_tlb_info",
+            "cpuid_serial_info",
+        ],
+        CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["ECX"],
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    ),
+    // WRMSR: operands explicit; ECX may name IA32_FS_BASE / IA32_GS_BASE, and
+    // any MSR can change what later loads read.
+    Row::new(&["wrmsr"], base_write(&["FS_OFFSET", "GS_OFFSET"])),
+    // RDFSBASE / RDGSBASE: the destination is the p-code output.
+    Row::new(&["readfsbase", "readgsbase"], PURE),
+    // WRFSBASE / WRGSBASE: `FS:` / `GS:` addresses read FS_OFFSET / GS_OFFSET.
+    Row::new(&["writefsbase"], base_write(&["FS_OFFSET"])),
+    Row::new(&["writegsbase"], base_write(&["GS_OFFSET"])),
+    // MONITOR / MONITORX: `monitor()` has no operands; RAX = address,
+    // ECX = extensions, EDX = hints.
+    Row {
+        names: &["monitor", "monitorx"],
+        only: Some(&[ArchPreset::X86_64]),
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["RAX", "ECX", "EDX"],
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
+    // 32-bit MONITOR / MONITORX take the address in EAX.
+    Row {
+        names: &["monitor", "monitorx"],
+        only: Some(&[ArchPreset::X86]),
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["EAX", "ECX", "EDX"],
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
+    // MWAIT / MWAITX wait for the monitored line to be written: EAX = hints,
+    // ECX = extensions.
+    Row::new(
+        &["mwait"],
+        CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["EAX", "ECX"],
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    ),
+    // MWAITX: EBX = timer (ECX[1]).
+    Row::new(
+        &["mwaitx"],
+        CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["EAX", "ECX", "EBX"],
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    ),
+    // HLT resumes after an interrupt, whose handler may write any memory.
+    Row::new(&["halt"], MEM_CLOBBER),
+    // SYSRET / SYSEXIT leave the kernel for user mode.
+    Row::new(&["sysret", "sysexit"], CallOtherClass::NO_RETURN),
+    // SWAPGS changes the base of every later `%gs:` access.
+    Row::new(&["swapgs"], base_write(&["GS_OFFSET"])),
+    // Register-to-register SIMD / crypto / x87 ops: every operand is listed,
+    // and an `m128` / `m256` / `m512` operand is a dynamic varnode, so its
+    // access is a p-code LOAD / STORE beside the op.
+    Row::new(
+        &[
+            // AES-NI: `XmmReg1 = <op>(XmmReg1, XmmReg2_m128)`.
+            "aesdec",
+            "aesdeclast",
+            "aesenc",
+            "aesenclast",
+            "aesimc",
+            "aeskeygenassist",
+            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)`.
+            "crc32",
+            // x87 FYL2X / FYL2XP1: `log2st0:10 = log2(ST0)`.
+            "log2",
+            // x87 FPREM / FPREM1 and their status-word ops.
+            "x87Prem",
+            "x87Prem1",
+            "x87Prem1Status",
+            "x87PremStatus",
+            // `XmmReg1 = pblendvb(XmmReg1, XmmReg2_m128, XMM0)`.
+            "pblendvb",
+            // MMX and SSE `psraw`.
+            "psraw",
+            // `XmmReg = movntdqa(XmmReg, m128)`.
+            "movntdqa",
+            // `sha.sinc`; the `sha256*` rows are in `common.rs`.
+            "sha1msg1_sha",
+            "sha1msg2_sha",
+            "sha1nexte_sha",
+            "sha1rnds4_sha",
+            // AVX.
+            "vpaddq_avx",
+            "vpshufb_avx",
+            "vpshufd_avx",
+            "vpsrldq_avx",
+            // `m128 = vmovntdq_avx(XmmReg1)`.
+            "vmovntdq_avx",
+            // AVX2.
+            "vpaddd_avx2",
+            "vpblendd_avx2",
+            "vpcmpgtb_avx2",
+            "vpermd_avx2",
+            "vpshufb_avx2",
+            "vpsraw_avx2",
+            // AVX-512; masking is p-code around the op. One
+            // `vpbroadcastb_avx512bw` form leaves its ModRM GPR source
+            // unmodelled in the sla: a register imprecision, not a memory one.
+            "vbroadcasti32x4_avx512f",
+            "vmovdqa64_avx512f",
+            "vpbroadcastb_avx512bw",
+        ],
+        PURE,
+    ),
+    // Memory the p-code leaves out: `movdir64b(Reg, m512)`'s store to [Reg],
+    // and `xsha256(ECX, ESI, EDI)`'s reads from [ESI] and digest at [EDI].
+    Row::new(&["movdir64b", "xsha256"], MEM_CLOBBER),
+    // FXRSTOR / XRSTOR*: void pcodeops (constructors `FXRSTOR`, `XRSTOR`), so
+    // this row is the only model of the state they load.
+    Row::new(
+        &[
+            "_fxrstor",
+            "_fxrstor64",
+            "xrstor",
+            "xrstor64",
+            "xrstors",
+            "xrstors64",
+        ],
+        CallOtherClass::Call(CallOtherAbi {
+            // XRSTOR's component bitmap; FXRSTOR shares the over-approximation.
+            implicit_reads: &["EAX", "EDX"],
+            implicit_writes: X86_EXTENDED_STATE,
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    ),
+    // FXSAVE: the same state, read.
+    Row::new(
+        &["_fxsave", "_fxsave64"],
+        CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: X86_EXTENDED_STATE,
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    ),
+    // XSAVE*: the same state, read under the EDX:EAX component bitmap.
+    Row::new(
+        &[
+            "xsave",
+            "xsave64",
+            "xsavec",
+            "xsavec64",
+            "xsaveopt",
+            "xsaveopt64",
+            "xsaves",
+            "xsaves64",
+        ],
+        CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: X86_XSAVE_READS,
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    ),
+];
+
+/// The x87 / SSE / AVX / AVX-512 / MPX / CET state the FXSAVE and XSAVE
+/// families move, declared by the sla for both widths. `ST0`-`ST7` contain
+/// `MM0`-`MM7`; `YMMn_H` are the AVX upper halves.
+const X86_EXTENDED_STATE: &[&str] = X86_XSAVE_READS.split_at(2).1;
+
+/// XSAVE's EDX:EAX component bitmap, then [`X86_EXTENDED_STATE`].
+#[rustfmt::skip]
+const X86_XSAVE_READS: &[&str] = &[
+    "EAX", "EDX",
+    "ST0", "ST1", "ST2", "ST3", "ST4", "ST5", "ST6", "ST7",
+    "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5", "XMM6", "XMM7",
+    "XMM8", "XMM9", "XMM10", "XMM11", "XMM12", "XMM13", "XMM14", "XMM15",
+    "YMM0_H", "YMM1_H", "YMM2_H", "YMM3_H", "YMM4_H", "YMM5_H", "YMM6_H", "YMM7_H",
+    "YMM8_H", "YMM9_H", "YMM10_H", "YMM11_H", "YMM12_H", "YMM13_H", "YMM14_H", "YMM15_H",
+    "K0", "K1", "K2", "K3", "K4", "K5", "K6", "K7",
+    "XMM16", "XMM17", "XMM18", "XMM19", "XMM20", "XMM21", "XMM22", "XMM23",
+    "XMM24", "XMM25", "XMM26", "XMM27", "XMM28", "XMM29", "XMM30", "XMM31",
+    "YMM16_H", "YMM17_H", "YMM18_H", "YMM19_H", "YMM20_H", "YMM21_H", "YMM22_H", "YMM23_H",
+    "YMM24_H", "YMM25_H", "YMM26_H", "YMM27_H", "YMM28_H", "YMM29_H", "YMM30_H", "YMM31_H",
+    "BND0", "BND1", "BND2", "BND3", "BNDCFGU", "BNDSTATUS",
+    "IA32_PL0_SSP", "IA32_PL1_SSP", "IA32_PL2_SSP",
+    "MXCSR", "FPUControlWord", "FPUStatusWord", "FPUTagWord", "FPULastInstructionOpcode",
+    "FPUDataPointer", "FPUInstructionPointer", "FPUPointerSelector", "FPUDataSelector",
+];
+
+const CALLING_CONVENTIONS: &[CcPreset] = &[
+    CcPreset {
+        name: "x86_64_systemv",
+        cc: CallingConvention::x86_64_systemv(),
+        arches: &[ArchPreset::X86_64],
+        ghidra: &[(
+            "x86/data/languages/x86-64-gcc.cspec",
+            None,
+            &[ArchPreset::X86_64],
+        )],
+    },
+    CcPreset {
+        name: "x86_cdecl",
+        cc: CallingConvention::x86_cdecl(),
+        arches: &[ArchPreset::X86],
+        ghidra: &[("x86/data/languages/x86gcc.cspec", None, &[ArchPreset::X86])],
+    },
+    // `-mregparm=3` is Ghidra's `__regparm3`.
+    CcPreset {
+        name: "x86_linux_kernel",
+        cc: CallingConvention::x86_linux_kernel(),
+        arches: &[ArchPreset::X86],
+        ghidra: &[(
+            "x86/data/languages/x86gcc.cspec",
+            Some("__regparm3"),
+            &[ArchPreset::X86],
+        )],
+    },
+];
+
+impl CallingConvention {
+    /// The x86-64 System V ABI calling convention.
+    #[must_use]
+    pub const fn x86_64_systemv() -> Self {
+        CallingConvention {
+            stack_ptr: "RSP",
+            arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
+            // X87-class (`long double`) arguments go on the stack.
+            arg_passing_regs_float: &[
+                "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5", "XMM6", "XMM7",
+            ],
+            callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
+            ret_val_regs: &["RAX", "RDX"],
+            // SSE in XMM0/XMM1, X87 in ST0, COMPLEX_X87 in ST0/ST1.
+            ret_val_regs_float: &["XMM0", "XMM1", "ST0", "ST1"],
+            // Above the 8-byte return address.
+            stack_args: Some(StackArgs {
+                base_offset: 8,
+                increment: 8,
+            }),
+            ret_stack_pop: 8,
+            // `call` pushes the return address.
+            link_register: None,
+            preserves_memory: false,
+            preserves_all_registers: false,
+            entry_address: None,
+            reg_args_adjoin_stack_args: false,
+        }
+    }
+
+    /// The x86 cdecl calling convention. A callee ending in
+    /// `ret $imm16` (stdcall, a hidden struct-return pointer) needs a
+    /// per-address convention popping `4 + imm16`, and a PC thunk one that
+    /// does not preserve its register.
+    #[must_use]
+    pub const fn x86_cdecl() -> Self {
+        CallingConvention {
+            stack_ptr: "ESP",
+            arg_passing_regs: &[],
+            // Scalar floats go on the stack. The psABI's `__m128` arguments in
+            // XMM0-XMM2 are left out so `arg(n)` stays stack-only; a caller's vector
+            // argument setup goes unrooted.
+            arg_passing_regs_float: &[],
+            callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
+            ret_val_regs: &["EAX", "EDX"],
+            // Scalar floats in ST0, `__m128` in XMM0.
+            ret_val_regs_float: &["ST0", "XMM0"],
+            // Above the 4-byte return address.
+            stack_args: Some(StackArgs {
+                base_offset: 4,
+                increment: 4,
+            }),
+            // The plain `ret`.
+            ret_stack_pop: 4,
+            // `call` pushes the return address.
+            link_register: None,
+            preserves_memory: false,
+            preserves_all_registers: false,
+            entry_address: None,
+            reg_args_adjoin_stack_args: false,
+        }
+    }
+
+    /// The Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
+    /// Map a variadic (`printk`) or `asmlinkage` callee, which takes every
+    /// argument on the stack, to [`Self::x86_cdecl`] in `per_address_ccs`.
+    #[must_use]
+    pub const fn x86_linux_kernel() -> Self {
+        CallingConvention {
+            arg_passing_regs: &["EAX", "EDX", "ECX"],
+            ..Self::x86_cdecl()
+        }
+    }
+}

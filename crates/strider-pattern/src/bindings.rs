@@ -1,55 +1,35 @@
-//! Capture-to-binding journal backing every pattern match.
-
-use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{
-    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
-};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer};
 
 use crate::capture::Capture;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Binding {
-    /// Value-less-root capture (`If`, `Return`, `IndirectBranch`, `Switch`,
-    /// `Unreachable`): only the owning node is meaningful. `Call` / `CallOther`
-    /// do NOT land here: they anchor on their memory-token output and bind a
-    /// `Value`.
+    /// A capture on a node with no anchor output (`If`, `Return`, `Switch`, ...).
+    /// `Call` / `CallOther` anchor on their memory token, so bind a `Value`.
     Node(NodeId),
-    /// Value-producing capture (`int_add`, `int_const`, the `any_*`
-    /// constructors). The owning node comes back via
-    /// [`strider_ir::Graph::producer`].
+    /// A capture on an output value.
     Value(ValueId),
 }
 
-/// Bindings accumulated during one match attempt. Append-only: rebinding a
-/// `Capture` to a different value fails the containing match.
-///
-/// Backtracking is journal-based: a speculative sub-match calls `mark` first
-/// and `restore` on failure, which drops the entry `Vec`'s tail and de-indexes
-/// the rolled-back captures.
+/// The captures bound by one match attempt. Rebinding a `Capture` to something
+/// else fails the match; backtracking truncates back to a `mark`.
 #[derive(Clone, Default)]
 pub struct Bindings {
-    /// In production order.
+    /// In bind order, one entry per capture.
     entries: Vec<(Capture, Binding)>,
-    /// Each bound capture to its sole `entries` index.
-    index: FxHashMap<Capture, usize>,
-    /// The match's structural footprint: root, interior and captured leaves.
-    /// Shares the `entries` journal's mark / restore lifecycle. May hold
-    /// duplicates when a DAG sub-pattern matched twice.
+    /// Every node the match covered; may hold duplicates.
     matched: Vec<NodeId>,
 }
 
-/// The binding state at the moment of marking. Rolling back to it discards
-/// both the capture entries and the matched nodes appended since.
+/// A [`Bindings`] length to roll back to.
 #[derive(Clone, Copy)]
 pub(crate) struct BindingsMark {
     entries: usize,
     matched: usize,
 }
 
-// The `NodeKind` variant name doubles as the returned op type, so one
-// `$variant` token drives both. `get_bool_binary_op` needs an extra I1 check
-// and stays hand-written below.
+// `$variant` names both the `NodeKind` variant and the returned op type.
 macro_rules! op_extractor {
     ($(#[$attr:meta])* $fn:ident => $variant:ident) => {
         $(#[$attr])*
@@ -71,15 +51,12 @@ impl Bindings {
         }
     }
 
-    /// Idempotent: restoring to an already-current mark is a no-op.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
-        for (c, _) in self.entries.drain(mark.entries..) {
-            self.index.remove(&c);
-        }
+        self.entries.truncate(mark.entries);
         self.matched.truncate(mark.matched);
     }
 
-    /// Call only once a pat node has *fully* matched `node`.
+    /// Call only once a pattern node has fully matched `node`.
     pub(crate) fn record_matched(&mut self, node: NodeId) {
         self.matched.push(node);
     }
@@ -88,24 +65,20 @@ impl Bindings {
         &self.matched
     }
 
-    /// `true` on a new or idempotent bind, `false` on conflict, which leaves
-    /// the existing binding untouched.
+    /// `false` on a conflicting rebind, which keeps the existing binding.
     pub(crate) fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
-        if let Some(&i) = self.index.get(&c) {
-            return self.entries[i].1 == binding;
+        if let Some(bound) = self.get_binding(c) {
+            return bound == binding;
         }
-        self.index.insert(c, self.entries.len());
         self.entries.push((c, binding));
         true
     }
 
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
-        self.index.get(&c).map(|&i| self.entries[i].1)
+        self.entries.iter().find(|(e, _)| *e == c).map(|&(_, b)| b)
     }
 
-    /// `None` for an unbound capture or one bound to a NODE (`Binding::Node`,
-    /// the value-less roots). A captured control edge is a `Binding::Value`
-    /// and comes back.
+    /// The bound value; `None` if unbound or bound to a node.
     pub fn get_value(&self, c: Capture) -> Option<ValueId> {
         match self.get_binding(c)? {
             Binding::Value(out) => Some(out),
@@ -113,30 +86,19 @@ impl Bindings {
         }
     }
 
-    /// A match's identity, keying [`crate::Matcher::find_all`]'s dedup: two
-    /// configurations binding the same captures to the same things are one
-    /// match (`int_add(x, x)` swapped is one, not two). The root is the
-    /// enclosing key, the dedup set being per candidate node, so a
-    /// capture-free pattern reports one match per root.
-    ///
-    /// Sorted by capture id, making the key independent of bind order.
-    ///
-    /// Visible captures only, as [`Self::iter`]: a builder-minted identity pin
-    /// is invisible to the caller, so two configurations that differ only in
-    /// which operand a pin landed on are one match, not two.
+    /// The visible bindings sorted by capture id: the per-root dedup key of
+    /// [`crate::Matcher::find_all`].
     pub(crate) fn binding_signature(&self) -> Vec<(u32, Binding)> {
         let mut sig: Vec<(u32, Binding)> = self.iter().map(|(c, b)| (c.id(), b)).collect();
         sig.sort_unstable_by_key(|&(id, _)| id);
         sig
     }
 
-    /// Graph-free.
     pub fn is_bound(&self, c: Capture) -> bool {
-        self.index.contains_key(&c)
+        self.get_binding(c).is_some()
     }
 
-    /// A `Binding::Value` resolves its owning node via
-    /// [`strider_ir::Graph::producer`].
+    /// The bound node, or the bound value's producer.
     pub fn get_node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         match self.get_binding(c)? {
             Binding::Node(node) => Some(node),
@@ -144,8 +106,7 @@ impl Bindings {
         }
     }
 
-    /// In bind order. Builder-minted identity pins are skipped: a caller holds
-    /// no handle to one, so reporting it would only pollute what it sees.
+    /// In bind order, skipping internal captures.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (Capture, Binding)> + '_ {
         self.entries
             .iter()
@@ -153,27 +114,19 @@ impl Bindings {
             .map(|(c, b)| (*c, *b))
     }
 
-    // Every typed extractor below returns `None` for an unbound capture, a
-    // control-flow binding, or a producer whose `NodeKind` is the wrong
-    // shape.
+    // The extractors below return `None` when unbound or the wrong kind; the value ones also
+    // when node-bound.
 
-    /// Masked to the output type's bit width.
-    pub fn get_uint(&self, c: Capture, function: &strider_ir::Function) -> Option<u128> {
-        function.int_const_u128(self.get_value(c)?)
+    /// The bound `IntConst`'s value, at any width.
+    pub fn get_uint(
+        &self,
+        c: Capture,
+        function: &strider_ir::Function,
+    ) -> Option<strider_ir::UBig> {
+        function.int_const(self.get_value(c)?).cloned()
     }
 
-    /// Sign-extended from the output type's bit width.
-    pub fn get_int(&self, c: Capture, function: &strider_ir::Function) -> Option<i128> {
-        function.int_const_i128(self.get_value(c)?)
-    }
-
-    /// A boolean constant is an `IntConst` typed `I1`.
-    pub fn get_bool(&self, c: Capture, function: &strider_ir::Function) -> Option<bool> {
-        function.bool_const_val(self.get_value(c)?)
-    }
-
-    /// `None` for a non-value output kind (`Control` / `Memory` /
-    /// `PhiToken`) as well as for the usual unbound / control-flow cases.
+    /// The bound value's type; `None` for control, memory and phi-token outputs.
     pub fn get_type(
         &self,
         c: Capture,
@@ -182,7 +135,7 @@ impl Bindings {
         function.value_kind(self.get_value(c)?).as_value()
     }
 
-    /// The raw IEEE 754 bit pattern.
+    /// The bound `FloatConst`'s raw IEEE 754 bits.
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
         let value = self.get_value(c)?;
         match graph.kind_of_value(value) {
@@ -190,34 +143,6 @@ impl Bindings {
             _ => None,
         }
     }
-
-    op_extractor! {
-        get_int_binary_op => IntBinaryOp
-    }
-
-    op_extractor! {
-        get_int_unary_op => IntUnaryOp
-    }
-
-    op_extractor! {
-        get_int_cmp_op => IntCmpOp
-    }
-
-    /// A boolean binary op is an `IntBinaryOp` whose output is `I1`.
-    pub fn get_bool_binary_op(&self, c: Capture, graph: &Graph) -> Option<IntBinaryOp> {
-        let node = self.get_node(c, graph)?;
-        let NodeKind::IntBinaryOp(op) = graph.node_kind(node) else {
-            return None;
-        };
-        let value = self.get_value(c)?;
-        if !graph.value_kind(value).as_value()?.is_bool() {
-            return None;
-        }
-        Some(*op)
-    }
-
-    // Boolean NOT is `Xor(x, IntConst(1)):I1`, so a bool unary op comes back
-    // from `get_bool_binary_op` as `IntBinaryOp::Xor`.
 
     op_extractor! {
         get_float_binary_op => FloatBinaryOp
@@ -232,82 +157,51 @@ impl Bindings {
     }
 }
 
-// `Binding` and `bind_capture` are `pub(crate)`, out of reach of an
-// integration test.
 #[cfg(test)]
 mod tests {
     use super::*;
     use strider_ir::node::ValueType;
-    use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
+    use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
     use strider_ir_test_utils::make_empty_fn;
 
+    /// A capture binds once: rebinding the same node or value is idempotent, a different one
+    /// conflicts and keeps the first.
     #[test]
-    fn capture_bind_and_get_with_real_output_ids() {
-        // `return(IntConst(1) + IntConst(2))`, for two distinct `ValueId`s.
-        let mut a_value = None;
-        let mut b_value = None;
-        let _function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
-            a_value = Some(av);
-            b_value = Some(bv);
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+    fn capture_bind_and_get_with_real_ids() {
+        let function = make_empty_fn(|b| {
+            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
         })
         .expect("build graph");
-        let a = a_value.unwrap();
-        let b = b_value.unwrap();
+        let mut consts = function
+            .walk()
+            .filter(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)));
+        let n1 = consts.next().expect("first const node");
+        let n2 = consts.next().expect("second const node");
+        let (a, b) = (function.node_outputs(n1)[0], function.node_outputs(n2)[0]);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert_eq!(bindings.get_value(v), None);
-        let ba = Binding::Value(a);
-        let bb = Binding::Value(b);
-        assert!(bindings.bind_capture(v, ba));
+        assert!(bindings.bind_capture(v, Binding::Value(a)));
+        assert!(bindings.bind_capture(v, Binding::Value(a)));
+        assert!(!bindings.bind_capture(v, Binding::Value(b)));
         assert_eq!(bindings.get_value(v), Some(a));
 
-        // Idempotent with the same output.
-        assert!(bindings.bind_capture(v, ba));
-        assert_eq!(bindings.get_value(v), Some(a));
-
-        // Conflict preserves original.
-        assert!(!bindings.bind_capture(v, bb));
-        assert_eq!(bindings.get_value(v), Some(a));
-    }
-
-    #[test]
-    fn capture_bind_and_get_with_real_node_ids() {
-        // Thread through an Add so both constants stay reachable.
-        let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
-        })
-        .expect("build graph");
-
-        let mut ids = function
-            .walk()
-            .filter(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)));
-        let n1 = ids.next().expect("first const node");
-        let n2 = ids.next().expect("second const node");
-        assert_ne!(n1, n2);
-
-        let mut bindings = Bindings::default();
-        let v = Capture::new();
-        assert_eq!(bindings.get_node(v, function.graph()), None);
-        let b1 = Binding::Node(n1);
-        let b2 = Binding::Node(n2);
-        assert!(bindings.bind_capture(v, b1));
-        assert_eq!(bindings.get_node(v, function.graph()), Some(n1));
-        assert!(bindings.bind_capture(v, b1));
-        assert!(!bindings.bind_capture(v, b2));
-        assert_eq!(bindings.get_node(v, function.graph()), Some(n1));
+        let n = Capture::new();
+        assert_eq!(bindings.get_node(n, function.graph()), None);
+        assert!(bindings.bind_capture(n, Binding::Node(n1)));
+        assert!(bindings.bind_capture(n, Binding::Node(n1)));
+        assert!(!bindings.bind_capture(n, Binding::Node(n2)));
+        assert_eq!(bindings.get_node(n, function.graph()), Some(n1));
     }
 
     #[test]
     fn get_uint_reads_int_const_through_bound_capture() {
         let mut c_value = None;
         let function = make_empty_fn(|b| {
-            let c = b.build_int_const(7u64, ValueType::I64).unwrap();
+            let c = b.build_int_const(7u64, ValueType::int(64)).unwrap();
             c_value = Some(c);
             Ok(c)
         })
@@ -317,17 +211,41 @@ mod tests {
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Value(c)));
-        assert_eq!(bindings.get_uint(v, &function), Some(7));
+        assert_eq!(
+            bindings.get_uint(v, &function),
+            Some(strider_ir::UBig::from(7u8))
+        );
+    }
+
+    /// A 4-limb `I256` constant comes back whole.
+    #[test]
+    fn get_uint_reads_a_constant_past_the_carrier() {
+        use strider_ir::UBig;
+        let wide = UBig::from_words(&[1, 2, 3, 4]);
+        let mut c_value = None;
+        let function = make_empty_fn(|b| {
+            let c = b
+                .build_int_const(wide.clone(), ValueType::int(256))
+                .unwrap();
+            c_value = Some(c);
+            Ok(c)
+        })
+        .expect("build graph");
+
+        let mut bindings = Bindings::default();
+        let v = Capture::new();
+        assert!(bindings.bind_capture(v, Binding::Value(c_value.unwrap())));
+        assert_eq!(bindings.get_uint(v, &function), Some(wide));
     }
 
     #[test]
     fn get_uint_returns_none_when_not_an_int_const() {
         let mut s_value = None;
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
+            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
             let s = b
-                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
             s_value = Some(s);
             Ok(s)
@@ -342,97 +260,28 @@ mod tests {
     }
 
     #[test]
-    fn get_int_binary_op_reads_op_variant_through_bound_capture() {
-        let mut s_value = None;
-        let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
-            let s = b
-                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
-                .unwrap();
-            s_value = Some(s);
-            Ok(s)
-        })
-        .expect("build graph");
-        let s = s_value.unwrap();
-        let add_node = function.producer(s);
-
-        let mut bindings = Bindings::default();
-        let v = Capture::new();
-        assert!(bindings.bind_capture(v, Binding::Node(add_node)));
-        assert_eq!(
-            bindings.get_int_binary_op(v, function.graph()),
-            Some(IntBinaryOp::Add)
-        );
-    }
-
-    #[test]
     fn unbound_capture_yields_none_for_every_typed_extractor() {
         let function =
-            make_empty_fn(|b| b.build_int_const(0u64, ValueType::I64)).expect("build graph");
+            make_empty_fn(|b| b.build_int_const(0u64, ValueType::int(64))).expect("build graph");
         let bindings = Bindings::default();
         let v = Capture::new();
         assert_eq!(bindings.get_value(v), None);
         assert_eq!(bindings.get_node(v, function.graph()), None);
         assert_eq!(bindings.get_uint(v, &function), None);
-        assert_eq!(bindings.get_int(v, &function), None);
-        assert_eq!(bindings.get_bool(v, &function), None);
         assert_eq!(bindings.get_float_bits(v, function.graph()), None);
-        assert_eq!(bindings.get_int_binary_op(v, function.graph()), None);
-        assert_eq!(bindings.get_int_unary_op(v, function.graph()), None);
-        assert_eq!(bindings.get_int_cmp_op(v, function.graph()), None);
-        assert_eq!(bindings.get_bool_binary_op(v, function.graph()), None);
         assert_eq!(bindings.get_float_binary_op(v, function.graph()), None);
         assert_eq!(bindings.get_float_unary_op(v, function.graph()), None);
         assert_eq!(bindings.get_float_cmp_op(v, function.graph()), None);
     }
 
-    /// A rolled-back capture must rebind as brand-new rather than bouncing
-    /// off a stale entry.
+    /// A restore keeps the bindings before its mark and drops the rest; a dropped capture
+    /// rebinds as new and a fresh capture reuses its slot.
     #[test]
     fn restore_drops_tail_and_allows_rebind() {
-        let function =
-            make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).expect("build graph");
-        let n = function
-            .walk()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
-            .expect("int const node");
-
-        let mut bindings = Bindings::default();
-        let kept = Capture::new();
-        let dropped_a = Capture::new();
-        let dropped_b = Capture::new();
-
-        assert!(bindings.bind_capture(kept, Binding::Node(n)));
-        let mark = bindings.mark();
-        assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
-        assert!(bindings.bind_capture(dropped_b, Binding::Node(n)));
-
-        assert!(bindings.get_binding(kept).is_some());
-        assert!(bindings.get_binding(dropped_a).is_some());
-        assert!(bindings.get_binding(dropped_b).is_some());
-
-        bindings.restore(mark);
-
-        assert!(bindings.get_binding(kept).is_some());
-        assert!(bindings.get_binding(dropped_a).is_none());
-        assert!(bindings.get_binding(dropped_b).is_none());
-
-        // No stale entry may survive the truncate.
-        assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
-        assert!(bindings.get_binding(dropped_a).is_some());
-    }
-
-    /// Pins the capture index against the entry journal: a stale or
-    /// mis-keyed index would resurface a dropped binding or mis-resolve a
-    /// kept one.
-    #[test]
-    fn partial_restore_keeps_survivors_and_reindexes_cleanly() {
-        // Two distinct nodes so kept and dropped bindings differ.
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
         })
         .expect("build graph");
         let mut consts = function
@@ -446,37 +295,22 @@ mod tests {
         assert!(bindings.bind_capture(a, Binding::Node(n1)));
         assert!(bindings.bind_capture(b, Binding::Node(n2)));
         let mark = bindings.mark();
-        assert!(bindings.bind_capture(dropped, Binding::Node(n1)));
-
         bindings.restore(mark);
+        assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
 
+        assert!(bindings.bind_capture(dropped, Binding::Node(n1)));
+        bindings.restore(mark);
         assert_eq!(bindings.get_binding(a), Some(Binding::Node(n1)));
         assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
         assert!(bindings.get_binding(dropped).is_none());
 
-        // A fresh capture reuses `dropped`'s slot.
+        assert!(bindings.bind_capture(dropped, Binding::Node(n2)));
+        assert_eq!(bindings.get_binding(dropped), Some(Binding::Node(n2)));
         let fresh = Capture::new();
+        bindings.restore(mark);
         assert!(bindings.bind_capture(fresh, Binding::Node(n2)));
         assert_eq!(bindings.get_binding(fresh), Some(Binding::Node(n2)));
         assert_eq!(bindings.get_binding(a), Some(Binding::Node(n1)));
-        assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
-    }
-
-    #[test]
-    fn restore_to_current_mark_is_noop() {
-        let function =
-            make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).expect("build graph");
-        let n = function
-            .walk()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
-            .expect("int const node");
-
-        let mut bindings = Bindings::default();
-        let c = Capture::new();
-        assert!(bindings.bind_capture(c, Binding::Node(n)));
-        let mark = bindings.mark();
-        bindings.restore(mark);
-        assert!(bindings.get_binding(c).is_some());
     }
 
     /// A `Binding::Node` and a `Binding::Value` never compare equal, even
@@ -486,7 +320,7 @@ mod tests {
     fn node_then_value_binding_for_same_capture_conflicts() {
         let mut c_value = None;
         let function = make_empty_fn(|b| {
-            let c = b.build_int_const(7u64, ValueType::I64).unwrap();
+            let c = b.build_int_const(7u64, ValueType::int(64)).unwrap();
             c_value = Some(c);
             Ok(c)
         })

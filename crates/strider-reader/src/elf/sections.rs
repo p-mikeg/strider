@@ -1,28 +1,7 @@
-//! ELF to [`MemRegion`] loaders.
-//!
-//! # Dispatch
-//!
-//! ET_EXEC / ET_DYN walk **program headers** (PT_LOAD), the canonical runtime
-//! layout: section headers can be stripped entirely without affecting it.
-//!
-//! ET_REL and every other kind fall back to walking **sections**, since a
-//! relocatable object has no program headers at all (PT_LOAD only appears
-//! post-link). Pre-link `sh_addr` is typically 0, so `.text`, `.text.startup`,
-//! `.text.foo` commonly share VMA 0. [`ElfSectionLayout`] resolves that the way
-//! a linker (and GHIDRA's `.o` import) does, by giving each colliding section
-//! its own synthetic base. Every address a caller sees goes through it: a
-//! region start, a relocation site, a symbol.
-//!
-//! Both walks dedup by **loaded** address, since `MemRegionsLookupTable` keeps
-//! one region per start: sections first-wins, segments widest-wins. What
-//! reaches the section dedup is the non-empty, allocatable, non-TLS sections,
-//! and the rebase hands exactly those strictly increasing bases, so on ET_REL
-//! it never fires; on a linked image forced down the section walk the bases are
-//! the raw `sh_addr`s, where a linker-script overlay can collide. Deciding here
-//! keeps the choice deterministic rather than leaving it to that table's
-//! last-insert-wins rule.
+//! Both walks keep one region per loaded start: sections first-wins, segments
+//! widest-wins.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Context as _;
 use object::{Object, ObjectKind, ObjectSection, ObjectSegment, ObjectSymbol};
@@ -40,221 +19,189 @@ pub enum RegionSource {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoadFilter {
-    /// `.text`, `.rodata`, `.plt`, `.eh_frame`, plus a writable-but-executable
-    /// mapping: what an instruction FETCH may reference.
+    /// Executable or non-writable mappings: what an instruction fetch may
+    /// reference.
     CodeAndReadOnly,
-    /// Immutable mappings only. The ROM feeds `LoadReadOnly`, which folds a
-    /// constant-address load without consulting the memory chain, so a writable
-    /// mapping here makes a store-then-reload fold to its file-initial value.
+    /// Immutable mappings only: a constant-address load from one folds to its
+    /// bytes, so a writable one would fold a store-then-reload to its
+    /// file-initial value.
     ImmutableOnly,
-    /// [`ImmutableOnly`](Self::ImmutableOnly) plus `.got` and `.data.rel.ro`,
-    /// writable mappings that the dynamic loader fills before the program runs
-    /// and that a full-RELRO link then maps read-only.
-    ///
-    /// An UNCHECKED claim about the runtime, which the image cannot prove: a
-    /// `.got` slot rewritten later (a traditional MIPS lazy-binding stub, a
-    /// `dlopen`ed interposition, a program that writes its own GOT) folds to
-    /// its load-time value here. What it buys is the PIC table base: on
-    /// `-mabicalls` MIPS the jump-table base is loaded through the GOT, so
-    /// nothing in the dispatch folds while those slots are unmapped.
-    ///
-    /// `.got.plt` is NOT included. Lazy binding rewrites those slots on the
-    /// first call through each one, so their load-time contents are the PLT
-    /// resolver stub rather than the callee, whatever the image claims.
-    ///
-    /// A section of either name is carved out only where the link really maps
-    /// it writable and not as TLS (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`), and
-    /// `relocate = false` is refused outright: it denies the very claim this
-    /// filter makes.
+    /// [`ImmutableOnly`](Self::ImmutableOnly) plus relocated `.got`, `.got2`
+    /// and `.data.rel.ro`, as under `got_is_rom`; a slot only the loader
+    /// computes is a hole. Adds none when a tag-placed table is unreadable.
     ImmutableAndRelocatedGot,
     /// Every allocatable mapping, `.data` / `.got` / `.data.rel.ro` included.
     AllAllocatable,
 }
 
 impl LoadFilter {
-    /// PT_LOAD only. Exec beats write for the fetch role, since a firmware image
-    /// can ship a single RWX PT_LOAD.
+    /// Exec beats write for fetch: firmware can ship a single RWX PT_LOAD.
+    fn accepts(self, is_writable: bool, is_exec: bool) -> bool {
+        match self {
+            LoadFilter::CodeAndReadOnly => is_exec || !is_writable,
+            LoadFilter::ImmutableOnly => !is_writable,
+            LoadFilter::ImmutableAndRelocatedGot | LoadFilter::AllAllocatable => true,
+        }
+    }
+
     fn segment_accepts(self, p_flags: u32) -> bool {
-        let is_writable = p_flags & object::elf::PF_W != 0;
-        let is_exec = p_flags & object::elf::PF_X != 0;
-        match self {
-            LoadFilter::CodeAndReadOnly => is_exec || !is_writable,
-            LoadFilter::ImmutableOnly => !is_writable,
-            // The GOT lives in a writable PT_LOAD, so the whole mapping is
-            // taken and `collect_regions` cuts the rest of it back out.
-            LoadFilter::ImmutableAndRelocatedGot | LoadFilter::AllAllocatable => true,
-        }
+        self.accepts(
+            p_flags & object::elf::PF_W != 0,
+            p_flags & object::elf::PF_X != 0,
+        )
     }
 
-    /// Sections always require `SHF_ALLOC` and reject `SHF_TLS`; `SHF_WRITE` /
-    /// `SHF_EXECINSTR` then pick exec-or-rodata vs include-writable.
-    ///
-    /// A `SHF_TLS` section is addressed as an offset into the per-thread block,
-    /// so [`ElfSectionLayout`] leaves it at its `sh_addr`. Loading it would map
-    /// a non-empty `.tdata` at its `sh_addr`, 0 in a `.o`, at an address that
-    /// means nothing and that the rebase deliberately leaves unmapped.
     fn section_accepts(self, sh_flags: u64) -> bool {
-        let is_alloc = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0;
-        let is_tls = sh_flags & u64::from(object::elf::SHF_TLS) != 0;
-        if !is_alloc || is_tls {
-            return false;
-        }
-        let is_exec = sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0;
-        let is_writable = sh_flags & u64::from(object::elf::SHF_WRITE) != 0;
-        match self {
-            LoadFilter::CodeAndReadOnly => is_exec || !is_writable,
-            LoadFilter::ImmutableOnly => !is_writable,
-            LoadFilter::ImmutableAndRelocatedGot | LoadFilter::AllAllocatable => true,
-        }
+        is_mapped(sh_flags)
+            && self.accepts(
+                has(sh_flags, object::elf::SHF_WRITE),
+                has(sh_flags, object::elf::SHF_EXECINSTR),
+            )
     }
 }
 
-/// Whether `name` is one of the sections
-/// [`LoadFilter::ImmutableAndRelocatedGot`] serves although they are writable:
-/// `.got`, `.data.rel.ro` and its `.local` / per-object suffixes.
-///
-/// `.got.plt` fails the exact-name test, for the reason the filter gives.
-fn is_relocated_got_name(name: &str) -> bool {
-    name == ".got" || name == ".data.rel.ro" || name.starts_with(".data.rel.ro.")
+fn sh_flags<'d>(sec: &impl ObjectSection<'d>) -> Option<u64> {
+    match sec.flags() {
+        object::SectionFlags::Elf { sh_flags } => Some(sh_flags),
+        _ => None,
+    }
 }
 
-/// `[start, end)` of every such section, at its [`ElfSectionLayout`] base and
-/// over its whole declared extent.
-///
-/// The name alone is not enough, because every address a range here names stops
-/// being cut out of the read-only image: the section has to be one the loader
-/// really maps and really leaves writable, so it needs the flags
-/// [`LoadFilter::section_accepts`] demands of a mapped writable section
-/// (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`, whose addresses are offsets into the
-/// per-thread block). A name-only match carves out whatever sits at the
-/// address, which for an unmapped section is another section's writable bytes.
-fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressRanges {
-    let mut out = Vec::new();
+fn has(sh_flags: u64, flag: u32) -> bool {
+    sh_flags & u64::from(flag) != 0
+}
+
+/// `SHF_ALLOC` and not `SHF_TLS`: a section in the flat address space. A
+/// TLS section's `sh_addr` is an offset into the per-thread block.
+fn is_mapped(sh_flags: u64) -> bool {
+    has(sh_flags, object::elf::SHF_ALLOC) && !has(sh_flags, object::elf::SHF_TLS)
+}
+
+/// `.got`, `.got2`, `.data.rel.ro` and its suffixed forms; not `.got.plt`.
+fn is_relocated_got_name(name: &str) -> bool {
+    name == ".got" || name == ".got2" || name == ".data.rel.ro" || name.starts_with(".data.rel.ro.")
+}
+
+/// `[start, end)` of every mapped writable section [`is_relocated_got_name`]
+/// names, clipped at the next allocated section and the end of its PT_LOAD.
+/// Empty when `unread`: an unread table could relocate any of them.
+fn relocated_got_ranges(
+    obj: &object::File<'_>,
+    layout: &ElfSectionLayout,
+    unread: bool,
+) -> AddressSet {
+    if unread {
+        return AddressSet::default();
+    }
+    let mut starts = Vec::new();
+    let mut served = Vec::new();
     for sec in obj.sections() {
-        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
+        let Some(flags) = sh_flags(&sec) else {
             continue;
         };
-        let mapped_writable = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
-            && sh_flags & u64::from(object::elf::SHF_WRITE) != 0
-            && sh_flags & u64::from(object::elf::SHF_TLS) == 0;
-        if sec.size() == 0 || !mapped_writable || !sec.name().is_ok_and(is_relocated_got_name) {
+        if sec.size() == 0 || !is_mapped(flags) {
             continue;
         }
         let base = layout.section_base(&sec);
-        out.push((base, base.saturating_add(sec.size())));
+        starts.push(base);
+        if has(flags, object::elf::SHF_WRITE) && sec.name().is_ok_and(is_relocated_got_name) {
+            served.push((base, base.saturating_add(sec.size())));
+        }
     }
-    AddressRanges::merged(out)
-}
-
-/// The instruction-FETCH image, kind-dispatched per the module docs: PT_LOAD
-/// program headers for ET_EXEC / ET_DYN, sections at their
-/// [`ElfSectionLayout`] bases otherwise.
-///
-/// A writable-but-executable mapping is included, since a firmware image can
-/// ship a single RWX PT_LOAD and there would otherwise be nothing to decode.
-/// That makes this a superset of the runtime-immutable image;
-/// [`super::ElfFileMemReader`] subtracts the writable ones from it for its
-/// [`crate::ReadOnlyMemory`] view.
-///
-/// # Errors
-///
-/// When an accepted segment or section's `data()` can't be read, its
-/// `address + length` would exceed `u64::MAX`, or the copies exceed the
-/// loader's amplification ceiling over the distinct file bytes behind them;
-/// every mapping is copied here, the caller holding no image to window into.
-pub fn elf_get_loadable_regions(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
-    Ok(collect_regions(
-        obj,
-        None,
-        RegionSource::Auto,
-        LoadFilter::CodeAndReadOnly,
-        &ElfSectionLayout::new(obj),
-    )?
-    .regions)
+    starts.sort_unstable();
+    for (lo, hi) in &mut served {
+        if let Some(&next) = starts.get(starts.partition_point(|&s| s <= *lo)) {
+            *hi = (*hi).min(next);
+        }
+        let segment_end = obj
+            .segments()
+            .map(|seg| (seg.address(), seg.address().saturating_add(seg.size())))
+            .find(|&(start, end)| start <= *lo && *lo < end);
+        if let Some((_, end)) = segment_end {
+            *hi = (*hi).min(end);
+        }
+    }
+    AddressSet::merged(served)
 }
 
 /// The mappings one walk accepted, and which addresses are writable.
-#[derive(Default)]
 pub(crate) struct LoadedImage {
+    /// One per start.
     pub(crate) regions: Vec<MemRegion>,
-    /// Every writable mapping the walk SAW, whether or not it survived the
-    /// filter and the dedup: a writable PT_LOAD overlapping an accepted
-    /// read-only one leaves no region behind, and a [`crate::ReadOnlyMemory`]
-    /// view that did not know about it would serve the accepted mapping's
-    /// file-initial bytes for an address that is RW at runtime.
-    pub(crate) writable: AddressRanges,
-    /// Every executable mapping the walk saw.  A field that is writable AND
-    /// executable is code the program may rewrite, so an uncomputed relocation
-    /// over one stays a hole: the bytes reach the decoder, where serving them
-    /// unrelocated is a wrong instruction rather than stale data.
-    pub(crate) executable: AddressRanges,
+    /// Every writable address the walk saw, less the ranges served as ROM.
+    pub(crate) writable: AddressSet,
+    /// Every executable mapping the walk saw.
+    pub(crate) executable: AddressSet,
+    /// Indices of the sections the section walk loaded; empty off it.
+    pub(crate) owners: BTreeSet<usize>,
 }
 
-impl LoadedImage {
+/// [`LoadedImage`] before its sets are merged.
+#[derive(Default)]
+struct Walk {
+    regions: Vec<MemRegion>,
+    writable: Vec<(u64, u64)>,
+    executable: Vec<(u64, u64)>,
+    owners: BTreeSet<usize>,
+}
+
+impl Walk {
     /// Address space, not file bytes: a mapping's BSS tail is writable too.
     fn note_writable(&mut self, start: u64, size: u64) {
-        if size != 0 {
-            self.writable.0.push((start, start.saturating_add(size)));
-        }
+        self.writable.push((start, start.saturating_add(size)));
     }
 
     fn note_executable(&mut self, start: u64, size: u64) {
-        if size != 0 {
-            self.executable.0.push((start, start.saturating_add(size)));
+        self.executable.push((start, start.saturating_add(size)));
+    }
+
+    fn into_image(self) -> LoadedImage {
+        LoadedImage {
+            regions: self.regions,
+            writable: AddressSet::merged(self.writable),
+            executable: AddressSet::merged(self.executable),
+            owners: self.owners,
         }
     }
 
-    /// Cuts every writable address but `served`'s out of the regions, so that
-    /// no read of one can serve bytes the program can overwrite.
-    ///
-    /// `served` leaves `writable`, so a relocation the applier cannot compute
-    /// over a served address is a hole rather than the field's file bytes:
-    /// [`crate::ReadOnlyMemory`] answers from these regions alone.
-    fn without_writable_except(mut self, served: &AddressRanges) -> Self {
-        self.writable = AddressRanges::merged_without(std::mem::take(&mut self.writable.0), served);
-        self.regions = cut(self.regions, &self.writable);
-        self
+    /// The image with every writable address but `served`'s cut out of the
+    /// regions. `served` also leaves `writable`, so an uncomputed relocation
+    /// there becomes a hole.
+    fn without_writable_except(self, served: &AddressSet) -> LoadedImage {
+        let writable = AddressSet::merged_without(self.writable, served);
+        LoadedImage {
+            // Overlapping mappings cut at one address leave pieces with equal starts.
+            regions: crate::collapse_equal_starts(without_ranges(self.regions, &writable)),
+            writable,
+            executable: AddressSet::merged(self.executable),
+            owners: self.owners,
+        }
     }
 }
 
-/// `regions` with every address of `ranges` cut out: a region a range splits
-/// becomes the pieces either side of it, sharing its bytes.
-///
-/// How a read-only view of one image bars another image's writable mapping,
-/// `ranges` being [`OwnedElf::writable_ranges`](super::OwnedElf::writable_ranges).
-pub fn without_ranges(regions: Vec<MemRegion>, ranges: &[(u64, u64)]) -> Vec<MemRegion> {
-    cut(regions, &AddressRanges::merged(ranges.to_vec()))
-}
-
-fn cut(regions: Vec<MemRegion>, ranges: &AddressRanges) -> Vec<MemRegion> {
+/// `regions` with every address of `ranges` cut out; a split region's pieces
+/// share its bytes.
+pub fn without_ranges(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRegion> {
     let mut kept = Vec::with_capacity(regions.len());
     for region in regions {
-        let (mut lo, end) = (region.start_addr(), region.end_addr());
-        for &(w_lo, w_hi) in ranges.overlapping(lo, end) {
-            if w_lo > lo {
-                kept.push(region.slice(lo, w_lo));
-            }
-            lo = lo.max(w_hi);
+        let (start, end) = (region.start_addr(), region.end_addr());
+        if ranges.overlapping(start, end).is_empty() {
+            kept.push(region);
+            continue;
         }
-        if lo < end {
-            kept.push(if lo == region.start_addr() {
-                region
-            } else {
-                region.slice(lo, end)
-            });
-        }
+        ranges.pieces_outside(start, end, |lo, hi| kept.push(region.slice(lo, hi)));
     }
     kept
 }
 
-/// `[start, end)` address ranges, ascending and disjoint once
-/// [`merged`](Self::merged).
+/// Non-empty `[start, end)` ranges, ascending, disjoint and non-touching.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct AddressRanges(Vec<(u64, u64)>);
+pub struct AddressSet(Vec<(u64, u64)>);
 
-impl AddressRanges {
-    /// `ranges` sorted, with everything that overlaps or touches merged.
-    pub(crate) fn merged(mut ranges: Vec<(u64, u64)>) -> Self {
+impl AddressSet {
+    /// `ranges` sorted and merged; `start >= end` is dropped.
+    pub fn merged(mut ranges: Vec<(u64, u64)>) -> Self {
+        ranges.retain(|&(lo, hi)| lo < hi);
         ranges.sort_unstable();
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
         for (lo, hi) in ranges {
@@ -267,136 +214,75 @@ impl AddressRanges {
     }
 
     /// [`merged`](Self::merged) with every address of `cut_out` removed.
-    /// `cut_out` must itself be merged.
     fn merged_without(ranges: Vec<(u64, u64)>, cut_out: &Self) -> Self {
         let merged = Self::merged(ranges);
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(merged.0.len());
-        for (mut lo, hi) in merged.0 {
-            for &(k_lo, k_hi) in cut_out.overlapping(lo, hi) {
-                if k_lo > lo {
-                    out.push((lo, k_lo));
-                }
-                lo = lo.max(k_hi);
-            }
-            if lo < hi {
-                out.push((lo, hi));
-            }
+        for (lo, hi) in merged.0 {
+            cut_out.pieces_outside(lo, hi, |lo, hi| out.push((lo, hi)));
         }
         Self(out)
     }
 
-    /// The merged ranges overlapping `[lo, hi)`.
-    fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
+    /// Each piece of `[lo, hi)` this set does not hold, ascending, to `f`.
+    fn pieces_outside(&self, mut lo: u64, hi: u64, mut f: impl FnMut(u64, u64)) {
+        for &(c_lo, c_hi) in self.overlapping(lo, hi) {
+            if c_lo > lo {
+                f(lo, c_lo);
+            }
+            lo = lo.max(c_hi);
+        }
+        if lo < hi {
+            f(lo, hi);
+        }
+    }
+
+    /// The ranges overlapping `[lo, hi)`.
+    pub(crate) fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
         let first = self.0.partition_point(|&(_, end)| end <= lo);
         let last = first + self.0[first..].partition_point(|&(start, _)| start < hi);
         &self.0[first..last]
     }
 
-    pub(crate) fn as_slice(&self) -> &[(u64, u64)] {
+    /// The addresses of `self` not in `cut`.
+    pub(crate) fn without(&self, cut: &Self) -> Self {
+        Self::merged_without(self.0.clone(), cut)
+    }
+
+    /// The ranges, ascending.
+    pub fn as_slice(&self) -> &[(u64, u64)] {
         &self.0
     }
 
-    /// Whether `[addr, addr + len)` touches any of the merged ranges.
+    /// Whether `[addr, addr + len)` touches any of the ranges.
     pub(crate) fn touches(&self, addr: u64, len: usize) -> bool {
         len != 0
             && !self
                 .overlapping(addr, addr.saturating_add(len as u64))
                 .is_empty()
     }
-}
 
-/// One accepted section, carrying everything the section walks read.
-struct AcceptedSection<'d> {
-    index: usize,
-    base: u64,
-    file_range: Option<(u64, u64)>,
-    data: &'d [u8],
-}
-
-/// Every section the section walk accepts under `filter`, in index order.
-///
-/// Which sections survive decides where regions land and which relocation sites
-/// this crate owns. Both have to agree, so they read this one walk instead of
-/// each spelling the filter, the empty-section skip and the layout base out
-/// again.
-///
-/// `layout` must be the one built for `obj`.
-///
-/// # Errors
-///
-/// When an accepted section's `data()` can't be read.
-fn accepted_sections<'d>(
-    obj: &object::File<'d>,
-    filter: LoadFilter,
-    layout: &ElfSectionLayout,
-) -> Result<Vec<AcceptedSection<'d>>> {
-    let mut out = Vec::new();
-    for sec in obj.sections() {
-        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
-            continue;
-        };
-        if !filter.section_accepts(sh_flags) {
-            continue;
-        }
-        let data = sec.data().context("failed to parse ELF")?;
-        if data.is_empty() {
-            continue;
-        }
-        out.push(AcceptedSection {
-            index: sec.index().0,
-            base: layout.section_base(&sec),
-            file_range: sec.file_range(),
-            data,
-        });
+    /// Whether the set holds every address of the non-empty `[lo, hi)`.
+    pub fn covers(&self, lo: u64, hi: u64) -> bool {
+        let i = self.0.partition_point(|&(start, _)| start <= lo);
+        i.checked_sub(1).is_some_and(|i| hi <= self.0[i].1)
     }
-    Ok(out)
 }
 
-/// [`accepted_sections`] under **first-wins dedup** on the loaded base, still in
-/// index order.
-///
-/// # Errors
-///
-/// Same as [`accepted_sections`].
-fn deduped_sections<'d>(
-    obj: &object::File<'d>,
-    filter: LoadFilter,
-    layout: &ElfSectionLayout,
-) -> Result<Vec<AcceptedSection<'d>>> {
-    let mut seen: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
-    Ok(accepted_sections(obj, filter, layout)?
-        .into_iter()
-        .filter(|sec| seen.insert(sec.base))
-        .collect())
-}
+/// Where each ET_REL section is loaded: in index order, an allocated non-TLS
+/// section below the watermark moves to `align_up(watermark, sh_addralign)`,
+/// starting at a base that leaves 0 unmapped. Identity for a linked image.
+/// Independent of the filter, so every view agrees on where a section is.
+pub struct ElfSectionLayout(Option<Rebased>);
 
-/// Where each ET_REL section is loaded: a synthetic image base upwards, so
-/// address 0 stays unmapped.
-///
-/// An ET_REL object is unlinked, and every toolchain leaves `sh_addr` at 0
-/// there, so `.text`, `.text.startup` and `.rodata` all claim VMA 0. Assigning
-/// them distinct addresses is the linker's job, and this does it: sections are
-/// walked in index order and any whose `sh_addr` runs into already-placed space
-/// moves up to `align_up(watermark, sh_addralign)`, the watermark starting at
-/// the image base.
-///
-/// Populated only for an ET_REL. A linked image has real, disjoint `sh_addr`s,
-/// so it holds no entries and every address passes through untouched.
-/// The layout is filter-independent (every section participates, loaded or
-/// not), so the fetch and ROM views agree on where a section is even when only
-/// one of them maps it.
-pub struct ElfSectionLayout {
-    /// Section index -> loaded base. Absent means the section's own `sh_addr`.
+/// An ET_REL's synthetic link.
+struct Rebased {
+    /// Section index -> loaded base, for every section header.
     bases: BTreeMap<usize, u64>,
-    /// Sections whose base plus declared size runs past the address space: the
-    /// base is where their region would go, and nothing can be addressed
-    /// through it.
-    unseated: std::collections::BTreeSet<usize>,
-    /// ET_REL, so `bases` holds every section header and an index absent from
-    /// it is out of range rather than a pass-through.
-    rebased: bool,
-    /// Symbol index -> synthetic address, for every ET_REL symbol the link
-    /// would place outside this object: undefined and `SHN_COMMON` ones.
+    /// Sections whose base plus declared size overflows: no symbol in them
+    /// has an address.
+    unseated: BTreeSet<usize>,
+    /// Symbol index -> synthetic address of each undefined, `SHN_COMMON` or
+    /// defined `STT_GNU_IFUNC` symbol.
     externs: BTreeMap<usize, u64>,
     /// Where the synthetic GOT starts: slot `i` holds symbol `i`'s address.
     got_base: u64,
@@ -406,18 +292,15 @@ pub struct ElfSectionLayout {
     toc_base: Option<u64>,
 }
 
-/// Where an ET_REL's first rebased section is seated, so that address 0 stays
-/// unmapped: a mapped 0 makes a null dereference a readable, foldable ROM read.
-///
-/// Round, obviously not a link-time address, and inside the low 2 GiB so an
-/// absolute 32-bit relocation field still holds it.
+/// Where an ET_REL's first rebased section is seated. Keeps 0 unmapped, so a
+/// null dereference does not fold, and fits an absolute 32-bit field.
 const ET_REL_IMAGE_BASE: u64 = 0x1000_0000;
 
-/// Page granularity of the synthetic ranges past an ET_REL image: each starts
-/// on a page boundary one unmapped page past the previous one.
+/// Granularity of the synthetic ranges past an ET_REL image, which sit one
+/// unmapped page apart.
 const ET_REL_PAGE: u64 = 0x1000;
 
-/// Address space per undefined symbol in the extern range.
+/// Address space per undefined or defined-IFUNC symbol in the extern range.
 const EXTERN_STRIDE: u64 = 0x10;
 
 /// `.TOC.` sits this far past the start of the TOC it addresses, so a signed
@@ -425,63 +308,30 @@ const EXTERN_STRIDE: u64 = 0x10;
 const PPC64_TOC_BIAS: u64 = 0x8000;
 
 impl ElfSectionLayout {
-    /// A rebase whose alignment round-up would run past `u64::MAX` seats the
-    /// section at the bare watermark; building its [`MemRegion`] is what
-    /// reports an `address + length` overflow. A section whose declared size
-    /// runs past `u64::MAX` from its base leaves the watermark alone and
-    /// addresses none of its symbols.
+    /// An alignment round-up past `u64::MAX` seats the section at the bare
+    /// watermark. A section whose size overflows from its base leaves the
+    /// watermark alone and addresses none of its symbols.
     pub fn new(obj: &object::File<'_>) -> Self {
-        let mut bases = BTreeMap::new();
-        let mut unseated = std::collections::BTreeSet::new();
-        // A linked image's section addresses are the real ones.
         if obj.kind() != ObjectKind::Relocatable {
-            return Self {
-                bases,
-                unseated,
-                rebased: false,
-                externs: BTreeMap::new(),
-                got_base: 0,
-                word: 0,
-                toc_base: None,
-            };
+            return Self(None);
         }
+        let mut bases = BTreeMap::new();
+        let mut unseated = BTreeSet::new();
         let mut watermark = ET_REL_IMAGE_BASE;
         let mut toc_section = None;
         for sec in obj.sections() {
-            // `SHF_TLS` is allocatable but lives in the per-thread block, not
-            // the flat address space: a `.tdata` / `.tbss` symbol's `st_value`
-            // is an offset into that block, so giving the section a base here
-            // would mint an address that means nothing.
-            let alloc = matches!(
-                sec.flags(),
-                object::read::SectionFlags::Elf { sh_flags }
-                    if sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
-                        && sh_flags & u64::from(object::elf::SHF_TLS) == 0
-            );
-            // `sh_size`, not the file bytes: SHT_NOBITS (`.bss`, `.tbss`) has
-            // no bytes yet still occupies address space, and its symbols
-            // resolve through this base.
+            let alloc = sh_flags(&sec).is_some_and(is_mapped);
+            // `sh_size`: SHT_NOBITS occupies address space too.
             let size = sec.size();
             let addr = sec.address();
-            // A non-allocatable or zero-size section occupies no address
-            // space, so it stays at its `sh_addr`. The watermark is monotone,
-            // so a section DECLARING an address below it is rebased even
-            // though that `sh_addr` is authoritative; gcc/clang/`ld -r` emit 0
-            // for every ET_REL section, which is what makes the rule safe on
-            // toolchain output and only a risk on a hand-crafted object.
-            let base = if !alloc || size == 0 || addr >= watermark {
+            // An address below the watermark is rebased; an empty section is
+            // seated too, moving the watermark to its aligned base.
+            let base = if !alloc || addr >= watermark {
                 addr
             } else {
                 align_up(watermark, sec.align())
             };
-            // A `sh_size` overflowing the address space is malformed and no
-            // base holds it. The watermark stays put, everywhere the sections
-            // after it could go being inside the range this one claims, and
-            // its symbols get no address rather than one resolving into
-            // whichever section took their offsets. SHT_NOBITS never validates
-            // `sh_size`, having no file bytes to bound it; a section carrying
-            // bytes fails the load where its region is built.
-            if alloc && size != 0 {
+            if alloc {
                 match base.checked_add(size) {
                     Some(end) => watermark = end,
                     None => {
@@ -495,8 +345,7 @@ impl ElfSectionLayout {
             bases.insert(sec.index().0, base);
         }
 
-        // Past the image, one unmapped page apart: the undefined and common
-        // symbols, then the GOT.
+        // Past the image: the extern symbols, then the GOT.
         let past = |end: u64| align_up(end, ET_REL_PAGE).saturating_add(ET_REL_PAGE);
         let word = if obj.is_64() { 8 } else { 4 };
         let arch = obj.architecture();
@@ -509,6 +358,11 @@ impl ElfSectionLayout {
                 cursor = align_up(cursor, sym.address());
                 externs.insert(sym.index().0, cursor);
                 cursor = cursor.saturating_add(sym.size().max(1));
+            } else if is_ifunc(&sym) && !sym.is_undefined() {
+                // Its `st_value` is the resolver.
+                cursor = align_up(cursor, EXTERN_STRIDE);
+                externs.insert(sym.index().0, cursor);
+                cursor = cursor.saturating_add(EXTERN_STRIDE);
             } else if sym.is_undefined() && sym.index().0 != 0 {
                 match sym.name() {
                     Ok(".TOC.") if arch == object::Architecture::PowerPc64 => {
@@ -532,98 +386,92 @@ impl ElfSectionLayout {
         for index in deferred {
             externs.insert(index, toc_base.unwrap_or(got_base));
         }
-        Self {
+        Self(Some(Rebased {
             bases,
             unseated,
-            rebased: true,
             externs,
             got_base,
             word,
             toc_base,
-        }
+        }))
     }
 
-    /// The address an ET_REL gives a symbol the link would place outside the
-    /// object: an undefined symbol gets a distinct one in an unmapped range
-    /// past the image, a `SHN_COMMON` one room for its size there. `.TOC.` is
-    /// the PowerPC64 TOC pointer and `_GLOBAL_OFFSET_TABLE_` the GOT's start.
-    ///
-    /// `None` for a defined symbol and for any symbol of a linked image.
+    /// The synthetic address of an ET_REL undefined, `SHN_COMMON` or defined
+    /// `STT_GNU_IFUNC` symbol, in an unmapped range past the image. On
+    /// PowerPC64 `.TOC.` and `_GLOBAL_OFFSET_TABLE_` are the TOC pointer,
+    /// elsewhere `_GLOBAL_OFFSET_TABLE_` is the GOT's start. `None` otherwise.
     pub fn extern_address(&self, symbol_index: usize) -> Option<u64> {
-        self.externs.get(&symbol_index).copied()
+        self.0.as_ref()?.externs.get(&symbol_index).copied()
     }
 
-    /// Where the synthetic GOT starts, `_GLOBAL_OFFSET_TABLE_`.
-    pub(crate) fn got_base(&self) -> u64 {
-        self.got_base
+    /// Where an ET_REL's synthetic GOT starts.
+    pub(crate) fn got_base(&self) -> Option<u64> {
+        Some(self.0.as_ref()?.got_base)
     }
 
     /// The GOT slot holding symbol `symbol_index`'s address, and its width.
     pub(crate) fn got_slot(&self, symbol_index: usize) -> Option<(u64, usize)> {
-        let offset = (symbol_index as u64).checked_mul(self.word)?;
-        Some((self.got_base.checked_add(offset)?, self.word as usize))
+        let r = self.0.as_ref()?;
+        let offset = (symbol_index as u64).checked_mul(r.word)?;
+        Some((r.got_base.checked_add(offset)?, r.word as usize))
     }
 
-    /// The PowerPC64 TOC pointer: `.TOC.`, `0x8000` past the object's `.toc`.
+    /// The PowerPC64 TOC pointer: `0x8000` past the object's `.toc`, else
+    /// past the synthetic GOT.
     pub(crate) fn toc_base(&self) -> Option<u64> {
-        self.toc_base
-    }
-
-    /// Whether the layout rebased an ET_REL.
-    pub(crate) fn is_rebased(&self) -> bool {
-        self.rebased
+        self.0.as_ref()?.toc_base
     }
 
     /// Where `sec` is loaded.
     pub fn section_base<'d>(&self, sec: &impl ObjectSection<'d>) -> u64 {
-        self.base(sec.index().0).unwrap_or_else(|| sec.address())
+        self.0
+            .as_ref()
+            .and_then(|r| r.bases.get(&sec.index().0).copied())
+            .unwrap_or_else(|| sec.address())
     }
 
-    /// Where `sym` resolves to. gABI: an ET_REL `st_value` is an offset from
-    /// the start of the section `st_shndx` names, so the address is that
-    /// section's base plus it; a linked image's `st_value` is already the
-    /// address and no base is recorded. An undefined, absolute or `SHN_COMMON`
-    /// symbol has no section index and is returned as-is.
-    ///
-    /// `None` when an ET_REL `st_shndx` names no section header, or one whose
-    /// declared size the address space cannot hold: the offset it declares has
-    /// no base, so the symbol has no address.
+    /// Where `sym` resolves to: an ET_REL `st_value` plus its section's base,
+    /// else `st_value`. `None` when an ET_REL `st_shndx` names no section, or
+    /// an unseated one.
     pub fn try_symbol_address<'d>(&self, sym: &impl object::ObjectSymbol<'d>) -> Option<u64> {
-        let Some(index) = sym.section_index() else {
+        let (Some(index), Some(r)) = (sym.section_index(), &self.0) else {
             return Some(sym.address());
         };
-        if self.unseated.contains(&index.0) {
+        if r.unseated.contains(&index.0) {
             return None;
         }
-        match self.base(index.0) {
-            Some(base) => Some(base.wrapping_add(sym.address())),
-            None if self.rebased => None,
-            None => Some(sym.address()),
-        }
+        Some(r.bases.get(&index.0)?.wrapping_add(sym.address()))
     }
 
-    /// [`try_symbol_address`], reading an out-of-range `st_shndx` as the bare
-    /// `st_value`. Naming a symbol is what that serves; patching one is
-    /// [`try_symbol_address`]'s.
-    ///
-    /// [`try_symbol_address`]: Self::try_symbol_address
+    /// [`try_symbol_address`](Self::try_symbol_address), falling back to the
+    /// bare `st_value`; for naming, not patching.
     pub fn symbol_address<'d>(&self, sym: &impl object::ObjectSymbol<'d>) -> u64 {
         self.try_symbol_address(sym)
             .unwrap_or_else(|| sym.address())
     }
+}
 
-    fn base(&self, section_index: usize) -> Option<u64> {
-        self.bases.get(&section_index).copied()
+/// `STT_GNU_IFUNC`, from `st_info`'s low nibble.
+pub(crate) fn is_ifunc<'d>(sym: &impl object::ObjectSymbol<'d>) -> bool {
+    matches!(
+        sym.flags(),
+        object::SymbolFlags::Elf { st_info, .. } if st_info & 0xf == object::elf::STT_GNU_IFUNC
+    )
+}
+
+/// The kind letter of an ARM / AArch64 mapping symbol name: `$a`, `$d`, `$t`
+/// or `$x`, optionally suffixed `.<anything>`.
+pub fn mapping_symbol_kind(name: &str) -> Option<u8> {
+    match name.as_bytes() {
+        [b'$', k @ (b'a' | b'd' | b't' | b'x')]
+        | [b'$', k @ (b'a' | b'd' | b't' | b'x'), b'.', ..] => Some(*k),
+        _ => None,
     }
 }
 
 /// The spans of executable sections that ARM / AArch64 mapping symbols mark as
-/// data: each run of `$d` marks spans to the next `$a` / `$t` / `$x` in its
-/// section, or to the section's end. Sorted by start; empty for an image with
-/// no `$d`.
-///
-/// A literal pool sits inside a function's extent and decodes as plausible
-/// instructions, so these are the only record that those bytes are not code.
+/// data (literal pools): each `$d` run to the next `$a` / `$t` / `$x` in its
+/// section, or the section's end. Sorted by start.
 pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range<u64>> {
     use object::{ObjectSymbol, SymbolKind};
     let layout = ElfSectionLayout::new(obj);
@@ -636,16 +484,10 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
         if sym.kind() == SymbolKind::Section {
             continue;
         }
-        // `$d`, `$a`, `$t`, `$x`, optionally suffixed `.<anything>`.
-        let kind = match name.as_bytes() {
-            [b'$', k] | [b'$', k, b'.', ..] => *k,
-            _ => continue,
+        let Some(kind) = mapping_symbol_kind(name) else {
+            continue;
         };
-        let is_data = match kind {
-            b'd' => true,
-            b'a' | b't' | b'x' => false,
-            _ => continue,
-        };
+        let is_data = kind == b'd';
         let Some(address) = layout.try_symbol_address(&sym) else {
             continue;
         };
@@ -657,18 +499,13 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
             continue;
         };
         // By flag, not kind: a debug companion's `.text` is `SHT_NOBITS`.
-        let executable = matches!(
-            section.flags(),
-            object::SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0
-        );
+        let executable = sh_flags(&section).is_some_and(|f| has(f, object::elf::SHF_EXECINSTR));
         if !executable {
             continue;
         }
         let end = layout.section_base(&section).saturating_add(section.size());
         section_marks.sort_unstable();
-        // One descending pass carrying the next code mark, so a run of `$d`
-        // marks costs O(k) rather than O(k^2) and emits one range instead of k
-        // nested ones.
+        // Descending, so a run of `$d` emits one range.
         let mut stop = end;
         let mut run_start: Option<u64> = None;
         for &(start, is_data) in section_marks.iter().rev() {
@@ -694,11 +531,8 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
 }
 
 /// Where each ppc64 ELFv1 `.opd` descriptor of an ET_REL enters its code: the
-/// `S + A` of the `R_PPC64_ADDR64` on the descriptor's first word. Empty for
-/// anything else.
-///
-/// An unlinked `.opd` holds zeros, so the relocations are the only record of
-/// the entry; `S` is rebased through `layout` exactly as a patch's is.
+/// `S + A` of the `R_PPC64_ADDR64` on its first word, an unlinked `.opd`
+/// holding zeros. Empty for anything else.
 pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> BTreeMap<u64, u64> {
     let mut out = BTreeMap::new();
     if obj.architecture() != object::Architecture::PowerPc64
@@ -706,21 +540,15 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
     {
         return out;
     }
-    let Some(opd) = obj.section_by_name(".opd") else {
+    let (object::File::Elf64(f), Some(opd)) = (obj, obj.section_by_name(".opd")) else {
         return out;
     };
     let base = layout.section_base(&opd);
-    for (offset, reloc) in opd.relocations() {
-        if reloc.flags()
-            != (object::RelocationFlags::Elf {
-                r_type: object::elf::R_PPC64_ADDR64,
-            })
-        {
+    for (offset, r_type, sym, addend) in opd_relocations(f, opd.index().0) {
+        if r_type != object::elf::R_PPC64_ADDR64 || sym == 0 {
             continue;
         }
-        let object::RelocationTarget::Symbol(idx) = reloc.target() else {
-            continue;
-        };
+        let idx = object::SymbolIndex(sym as usize);
         let Ok(sym) = obj.symbol_by_index(idx) else {
             continue;
         };
@@ -730,9 +558,8 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
         else {
             continue;
         };
-        // 0 is never an entry, and leaving it out keeps a descriptor whose
-        // relocation names no symbol visible as one.
-        let entry = s.wrapping_add(reloc.addend() as u64);
+        // 0 is never an entry.
+        let entry = s.wrapping_add(addend as u64);
         if entry != 0 {
             out.insert(base.wrapping_add(offset), entry);
         }
@@ -740,12 +567,52 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
     out
 }
 
-/// ppc64 ELFv1 function descriptors.
-///
-/// On that ABI `st_value` of an `STT_FUNC` symbol addresses an 8-byte-aligned
-/// {entry, TOC, env} triple in `.opd` rather than code, and the first
-/// doubleword is the address to decode from. ELFv2 has no descriptors, and no
-/// other architecture defines them.
+/// The TOC pointer each ppc64 ELFv1 `.opd` descriptor of an ET_REL holds:
+/// the `TOC + A` of the `R_PPC64_TOC` on its second word, by descriptor.
+fn opd_tocs(obj: &object::File<'_>, layout: &ElfSectionLayout) -> BTreeMap<u64, u64> {
+    let (object::File::Elf64(f), Some(opd), Some(toc)) =
+        (obj, obj.section_by_name(".opd"), layout.toc_base())
+    else {
+        return BTreeMap::new();
+    };
+    let base = layout.section_base(&opd);
+    opd_relocations(f, opd.index().0)
+        .into_iter()
+        .filter(|&(offset, r_type, ..)| r_type == object::elf::R_PPC64_TOC && offset >= 8)
+        .map(|(offset, _, _, addend)| {
+            (
+                base.wrapping_add(offset - 8),
+                toc.wrapping_add(addend as u64),
+            )
+        })
+        .collect()
+}
+
+/// `(r_offset, r_type, r_sym, r_addend)` of every relocation against the
+/// section `target`.
+fn opd_relocations(
+    f: &object::read::elf::ElfFile64<'_, object::Endianness>,
+    target: usize,
+) -> Vec<(u64, u32, u32, i64)> {
+    use object::read::elf::SectionHeader as _;
+    let endian = f.endian();
+    let symtab = f.elf_symbol_table().section();
+    f.elf_section_table()
+        .iter()
+        .filter(|sh| {
+            matches!(
+                sh.sh_type(endian),
+                object::elf::SHT_REL | object::elf::SHT_RELA | object::elf::SHT_CREL
+            ) && sh.link(endian) == symtab
+                && sh.sh_info(endian) as usize == target
+        })
+        .flat_map(|sh| super::relocations::raw_entries(f, sh))
+        .map(|(offset, r_type, sym, addend)| (offset, r_type, sym, addend.unwrap_or(0)))
+        .collect()
+}
+
+/// ppc64 ELFv1 function descriptors: an `STT_FUNC` `st_value` addresses an
+/// {entry, TOC, env} triple in `.opd` whose first doubleword is the code.
 pub struct OpdTable<'d> {
     descriptors: Descriptors<'d>,
 }
@@ -758,8 +625,12 @@ enum Descriptors<'d> {
         data: &'d [u8],
         endian_le: bool,
     },
-    /// An ET_REL's, from [`opd_entries`]: the section's own bytes are zeros.
-    Relocated(BTreeMap<u64, u64>),
+    /// An ET_REL's, from [`opd_entries`] and [`opd_tocs`]: the section's own
+    /// bytes are zeros.
+    Relocated {
+        entries: BTreeMap<u64, u64>,
+        tocs: BTreeMap<u64, u64>,
+    },
 }
 
 impl<'d> OpdTable<'d> {
@@ -769,9 +640,7 @@ impl<'d> OpdTable<'d> {
         if obj.architecture() != object::Architecture::PowerPc64 {
             return None;
         }
-        // `e_flags` bits 0..1 are the ABI level. 2 is ELFv2; 1 is ELFv1, and
-        // so is the 0 that means "unspecified", which is what a toolchain
-        // emitting an `.opd` at all has to mean.
+        // `e_flags` bits 0..1: 2 is ELFv2; 1 and unspecified 0 are ELFv1.
         let object::FileFlags::Elf { e_flags, .. } = obj.flags() else {
             return None;
         };
@@ -780,9 +649,13 @@ impl<'d> OpdTable<'d> {
         }
         let opd = obj.section_by_name(".opd")?;
         if obj.kind() == ObjectKind::Relocatable {
-            let entries = opd_entries(obj, &ElfSectionLayout::new(obj));
-            return (!entries.is_empty()).then_some(Self {
-                descriptors: Descriptors::Relocated(entries),
+            let layout = ElfSectionLayout::new(obj);
+            let entries = opd_entries(obj, &layout);
+            return (!entries.is_empty()).then(|| Self {
+                descriptors: Descriptors::Relocated {
+                    entries,
+                    tocs: opd_tocs(obj, &layout),
+                },
             });
         }
         let data = opd.data().ok()?;
@@ -795,41 +668,43 @@ impl<'d> OpdTable<'d> {
         })
     }
 
-    /// The code entry the descriptor at `addr` names, or `None` when `addr` is
-    /// not a whole descriptor word in this table, or when the word reads zero.
-    ///
-    /// "Whole word" is the 8-byte stride the descriptor triple is built from:
-    /// a `.opd` offset that is not a multiple of it straddles the {entry, TOC}
-    /// boundary and would read half of each as one address. A multiple naming
-    /// a descriptor's TOC or environment word is followed as if it were an
-    /// entry: which words start a descriptor takes a stride the section does
-    /// not carry, the triple being 24 bytes in compiler output and 16 in the
-    /// hand-written asm that leaves the environment word off. An ET_REL is
-    /// exact instead, each entry word carrying a relocation of its own.
-    ///
-    /// A zero word is a descriptor nothing filled in: address 0 is never the
-    /// entry, and passing `addr` through unfollowed leaves the descriptor
-    /// visible.
+    /// The code entry the descriptor at `addr` names; `None` when `addr` is
+    /// not an 8-byte-aligned word of the table or the word is zero. On a
+    /// linked image any word counts (the 24- or 16-byte stride is unknown), so
+    /// a TOC or environment word reads as an entry too.
     pub fn entry_at(&self, addr: u64) -> Option<u64> {
-        let (base, data, endian_le) = match &self.descriptors {
-            Descriptors::Relocated(entries) => return entries.get(&addr).copied(),
-            Descriptors::Bytes {
-                base,
-                data,
-                endian_le,
-            } => (*base, *data, *endian_le),
+        match &self.descriptors {
+            Descriptors::Relocated { entries, .. } => entries.get(&addr).copied(),
+            Descriptors::Bytes { .. } => self.word_at(addr),
+        }
+    }
+
+    /// The TOC pointer, and so `r2` on entry, of the descriptor at `addr`;
+    /// `None` where [`Self::entry_at`] is, or when the word is zero.
+    pub fn toc_at(&self, addr: u64) -> Option<u64> {
+        self.entry_at(addr)?;
+        match &self.descriptors {
+            Descriptors::Relocated { tocs, .. } => tocs.get(&addr).copied(),
+            Descriptors::Bytes { .. } => self.word_at(addr.checked_add(8)?),
+        }
+    }
+
+    /// A linked table's nonzero 8-byte-aligned word at `addr`.
+    fn word_at(&self, addr: u64) -> Option<u64> {
+        let Descriptors::Bytes {
+            base,
+            data,
+            endian_le,
+        } = self.descriptors
+        else {
+            return None;
         };
         let off = usize::try_from(addr.checked_sub(base)?).ok()?;
         if off % 8 != 0 {
             return None;
         }
-        let word: [u8; 8] = data.get(off..off.checked_add(8)?)?.try_into().ok()?;
-        let entry = if endian_le {
-            u64::from_le_bytes(word)
-        } else {
-            u64::from_be_bytes(word)
-        };
-        (entry != 0).then_some(entry)
+        let word = crate::bytes::read_uint(data.get(off..off.checked_add(8)?)?, endian_le);
+        (word != 0).then_some(word)
     }
 }
 
@@ -841,202 +716,60 @@ fn align_up(value: u64, align: u64) -> u64 {
         .unwrap_or(value)
 }
 
-/// Which sections the ET_REL relocation walk owns, i.e. exactly those
-/// [`collect_loadable_sections_dedup`] kept.
-///
-/// Shares [`deduped_sections`] with it rather than inferring the set from the
-/// loaded bytes: which sections survive depends on `filter`, and two sections
-/// holding equal bytes are indistinguishable afterwards, so guessing would
-/// write `.rela.data` straight over `.text.f`.
-///
-/// `filter` must be the one the regions were loaded with, and `layout` the one
-/// built for `obj`.
-///
-/// Empty for every kind but ET_REL, the only one whose relocations are sited
-/// through sections.
-///
-/// # Errors
-///
-/// When an allocatable section's `data()` can't be read, matching
-/// [`collect_loadable_sections_dedup`].
-pub(crate) fn loaded_section_indices(
-    obj: &object::File<'_>,
-    layout: &ElfSectionLayout,
-    filter: LoadFilter,
-) -> Result<std::collections::BTreeSet<usize>> {
-    if obj.kind() != ObjectKind::Relocatable {
-        return Ok(std::collections::BTreeSet::new());
-    }
-    Ok(deduped_sections(obj, filter, layout)?
-        .into_iter()
-        .map(|sec| sec.index)
-        .collect())
-}
-
-/// `bytes`, when given, is the whole image the regions are windows into; the
-/// regions then share it instead of copying. `None` copies each mapping, for a
-/// caller holding only a parsed [`object::File`].
-///
-/// # Errors
-///
-/// When an accepted segment or section's `data()` can't be read, its
-/// `address + length` would exceed `u64::MAX`, or, on the copying path, the
-/// copies exceed [`MAX_COPY_AMPLIFICATION`] times the distinct file bytes
-/// behind them.
+/// The regions `source` and `filter` select, as windows into `bytes`, which
+/// `obj` was parsed from. Errs when an accepted mapping's data can't be read
+/// or it ends past `u64::MAX`.
 pub(crate) fn collect_regions(
     obj: &object::File<'_>,
-    bytes: Option<&FileBytes>,
+    bytes: &FileBytes,
     source: RegionSource,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
+    unread: bool,
 ) -> Result<LoadedImage> {
     let image = match (source, obj.kind()) {
         (RegionSource::Auto, ObjectKind::Executable | ObjectKind::Dynamic) => {
             collect_loadable_segments(obj, bytes, filter)?
         }
-        // ET_REL plus any unknown / core kind. An `.o` has no program headers,
-        // and a core dump's segment layout isn't what the analyser wants
-        // either, so the section walk is the safer fallback for both.
+        // ET_REL, core and unknown kinds.
         _ => collect_loadable_sections_dedup(obj, bytes, filter, layout)?,
     };
     Ok(match filter {
         // A read-only mapping a writable one overlaps is writable there.
-        LoadFilter::ImmutableOnly => image.without_writable_except(&AddressRanges::default()),
+        LoadFilter::ImmutableOnly => image.without_writable_except(&AddressSet::default()),
         LoadFilter::ImmutableAndRelocatedGot => {
-            image.without_writable_except(&relocated_got_ranges(obj, layout))
+            image.without_writable_except(&relocated_got_ranges(obj, layout, unread))
         }
-        _ => LoadedImage {
-            writable: AddressRanges::merged(image.writable.0),
-            executable: AddressRanges::merged(image.executable.0),
-            ..image
-        },
+        _ => image.into_image(),
     })
 }
 
-/// Ceiling on the bytes the copying path materialises, as a multiple of the
-/// distinct file bytes it has been asked to copy.
-const MAX_COPY_AMPLIFICATION: u64 = 4;
-
-/// What the copying path has allocated, against the file bytes it has seen.
-///
-/// Headers name a file extent and an address independently, so N mappings can
-/// each copy one blob: `sh_size` is bounded by the file, their sum is not. A
-/// crafted 8 MB image with 65k allocatable section headers over one 4 MB blob
-/// otherwise asks for a quarter of a terabyte and aborts.
-///
-/// The denominator is the merged UNION of those extents, not a set of
-/// `(offset, size)` keys: N windows over one blob at N consecutive offsets are
-/// N distinct keys but cover blob + N bytes, so keys would let the copies grow
-/// in lockstep with the denominator and the ratio never fire.
-#[derive(Default)]
-struct CopyBudget {
-    copied: u64,
-    /// Disjoint, non-touching `[start, end)` file extents, keyed by start.
-    covered: BTreeMap<u64, u64>,
-    covered_total: u64,
+/// One mapping, `range` being its file extent, as a window into `bytes`.
+/// Errs when it has no file extent or the window does not fit.
+fn region_from(bytes: &FileBytes, addr: u64, range: Option<(u64, u64)>) -> Result<MemRegion> {
+    let (offset, len) = range
+        .ok_or_else(|| anyhow::anyhow!("the mapping at {addr:#x} has bytes but no file extent"))?;
+    // A mapping ending exactly at 2^64 loses its last, unmappable byte.
+    let tops_out = len != 0 && addr.checked_add(len).is_none() && addr.wrapping_add(len) == 0;
+    MemRegion::window(addr, bytes, offset, len - u64::from(tops_out))
 }
 
-impl CopyBudget {
-    /// # Errors
-    ///
-    /// When the copies exceed [`MAX_COPY_AMPLIFICATION`] times the distinct
-    /// file bytes behind them.
-    fn charge(&mut self, range: Option<(u64, u64)>, len: u64) -> Result<()> {
-        let fresh = match range {
-            Some((offset, extent)) => self.cover(offset, extent),
-            // No file extent to attribute the bytes to, so they are their own
-            // denominator.
-            None => len,
-        };
-        self.covered_total = self.covered_total.saturating_add(fresh);
-        self.copied = self.copied.saturating_add(len);
-        if self.copied > self.covered_total.saturating_mul(MAX_COPY_AMPLIFICATION) {
-            anyhow::bail!(
-                "loading would copy {} bytes out of {} distinct file bytes",
-                self.copied,
-                self.covered_total
-            );
-        }
-        Ok(())
-    }
-
-    /// Adds `[offset, offset + len)` to the union, absorbing every extent it
-    /// overlaps or touches, and answers the bytes the union gained.
-    fn cover(&mut self, offset: u64, len: u64) -> u64 {
-        let Some(end) = offset.checked_add(len).filter(|_| len != 0) else {
-            return 0;
-        };
-        let (mut lo, mut hi, mut absorbed) = (offset, end, 0u64);
-        // Descending from the last extent starting at or before `hi`: extents
-        // are disjoint, so the first one ending below `lo` ends the run.
-        while let Some((&start, &stop)) = self.covered.range(..=hi).next_back() {
-            if stop < lo {
-                break;
-            }
-            (lo, hi) = (lo.min(start), hi.max(stop));
-            absorbed += stop - start;
-            self.covered.remove(&start);
-        }
-        self.covered.insert(lo, hi);
-        (hi - lo) - absorbed
-    }
-}
-
-/// One mapping of `data`, as a window into `bytes` when the image is at hand
-/// and `range` is its file-backed extent, else as an owned copy charged to
-/// `budget`.
-fn region_from(
-    bytes: Option<&FileBytes>,
+struct AcceptedSegment {
     addr: u64,
-    range: Option<(u64, u64)>,
-    data: &[u8],
-    budget: &mut CopyBudget,
-) -> Result<MemRegion> {
-    // The byte at `u64::MAX` is unmappable, so a mapping ending exactly at
-    // 2^64 loses that byte rather than failing the load.
-    let tops_out =
-        |len: u64| len != 0 && addr.checked_add(len).is_none() && addr.wrapping_add(len) == 0;
-    match (bytes, range) {
-        (Some(bytes), Some((offset, len))) => {
-            MemRegion::window(addr, bytes, offset, len - u64::from(tops_out(len)))
-        }
-        _ => {
-            budget.charge(range, data.len() as u64)?;
-            let len = data.len() - usize::from(tops_out(data.len() as u64));
-            MemRegion::new(addr, data[..len].to_vec())
-        }
-    }
-}
-
-/// One accepted PT_LOAD, carrying everything the segment walk reads.
-struct AcceptedSegment<'d> {
-    addr: u64,
+    /// The bytes it both holds and maps.
     file_range: (u64, u64),
-    data: &'d [u8],
 }
 
-/// One [`MemRegion`] per accepted PT_LOAD segment, from the bytes it both
-/// holds and maps, in program-header order under **widest-wins dedup** on
-/// `p_vaddr`. A segment with nothing to load is skipped: a BSS-only one
-/// (`p_filesz == 0`), and one mapping nothing (`p_memsz == 0`) however much
-/// file it holds.
-///
-/// The dedup rule is the section walk's, resolved the other way: only one
-/// region per start address survives [`crate::MemRegionsLookupTable`], so
-/// keeping a narrower mapping would leave the bytes past its end unfetchable
-/// even though a wider mapping declares them. "Widest" is by MAPPED extent,
-/// so a segment declaring more file than it maps does not win on the strength
-/// of bytes that belong to no mapping.
-fn collect_loadable_segments<'d>(
-    obj: &object::File<'d>,
-    bytes: Option<&FileBytes>,
+/// One [`MemRegion`] per accepted PT_LOAD with bytes it both holds and maps,
+/// in program-header order, the widest (by that extent) per `p_vaddr`.
+fn collect_loadable_segments(
+    obj: &object::File<'_>,
+    bytes: &FileBytes,
     filter: LoadFilter,
-) -> Result<LoadedImage> {
-    let mut out = LoadedImage::default();
-    let mut accepted: Vec<AcceptedSegment<'d>> = Vec::new();
+) -> Result<Walk> {
+    let mut out = Walk::default();
+    let mut accepted: Vec<AcceptedSegment> = Vec::new();
     for seg in obj.segments() {
-        // `obj.segments()` already yields PT_LOAD only, so `p_flags` is read
-        // purely for the writable / executable filter axis.
         let object::SegmentFlags::Elf { p_flags } = seg.flags() else {
             continue;
         };
@@ -1049,33 +782,17 @@ fn collect_loadable_segments<'d>(
         if !filter.segment_accepts(p_flags) {
             continue;
         }
-        let data = seg.data().context("failed to parse ELF")?;
-        // `p_filesz` is what the FILE holds, `p_memsz` what the image MAPS.
-        // The gABI specifies only the `p_memsz > p_filesz` zero-fill
-        // direction and leaves the reverse undefined; `object` parses such an
-        // image happily, and the two real loaders disagree (Linux `elf_map`
-        // sizes the mapping from `p_filesz`, glibc rejects the segment). The
-        // mapped extent is taken as `p_memsz` because `writable` /
-        // `executable` are tracked on it, so serving the tail would let the
-        // ROM view (fetch regions minus `writable`) answer for the tail of a
-        // WRITABLE segment, and would answer a straddling fetch from the wrong
-        // one. Clamping under-approximates rather than over-serves: an
-        // address in the tail reads as unmapped.
-        // Saturating on a 32-bit host, where `p_memsz` can exceed
-        // `usize::MAX`: the `min` then yields `data.len()`, which is right,
-        // since a mapping that large clamps nothing.
-        let mapped = usize::try_from(seg.size())
-            .unwrap_or(usize::MAX)
-            .min(data.len());
-        let data = &data[..mapped];
-        if data.is_empty() {
+        seg.data().context("failed to parse ELF")?;
+        // `p_filesz > p_memsz` is undefined; serve only `p_memsz`, the extent
+        // `writable` / `executable` track.
+        let (file_off, file_len) = seg.file_range();
+        let file_len = file_len.min(seg.size());
+        if file_len == 0 {
             continue;
         }
-        let (file_off, file_len) = seg.file_range();
         accepted.push(AcceptedSegment {
             addr: seg.address(),
-            file_range: (file_off, file_len.min(seg.size())),
-            data,
+            file_range: (file_off, file_len),
         });
     }
 
@@ -1083,9 +800,9 @@ fn collect_loadable_segments<'d>(
     for (i, seg) in accepted.iter().enumerate() {
         widest
             .entry(seg.addr)
-            // First of a tie, so an image with no collisions is untouched.
+            // First of a tie.
             .and_modify(|w| {
-                if accepted[*w].data.len() < seg.data.len() {
+                if accepted[*w].file_range.1 < seg.file_range.1 {
                     *w = i;
                 }
             })
@@ -1094,55 +811,55 @@ fn collect_loadable_segments<'d>(
     let mut keep: Vec<usize> = widest.into_values().collect();
     keep.sort_unstable();
 
-    let mut budget = CopyBudget::default();
     for i in keep {
         let seg = &accepted[i];
-        out.regions.push(region_from(
-            bytes,
-            seg.addr,
-            Some(seg.file_range),
-            seg.data,
-            &mut budget,
-        )?);
+        out.regions
+            .push(region_from(bytes, seg.addr, Some(seg.file_range))?);
     }
     Ok(out)
 }
 
 /// One [`MemRegion`] per accepted file-backed section, at its
-/// [`ElfSectionLayout`] base, in section-index order under **first-wins dedup**
-/// on that base.
+/// [`ElfSectionLayout`] base, in index order, the first per base; the
+/// survivors are also [`LoadedImage::owners`]. A `PF_W` PT_LOAD is writable
+/// whatever the `sh_flags` of the sections it maps.
 fn collect_loadable_sections_dedup(
     obj: &object::File<'_>,
-    bytes: Option<&FileBytes>,
+    bytes: &FileBytes,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
-) -> Result<LoadedImage> {
-    let mut out = LoadedImage::default();
-    for sec in obj.sections() {
-        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
-            continue;
-        };
-        let bit = |flag: u32| sh_flags & u64::from(flag) != 0;
-        // `SHF_TLS` is excluded for the reason [`ElfSectionLayout::new`] gives:
-        // its `sh_addr` names nothing in the flat address space.
-        if bit(object::elf::SHF_ALLOC) && !bit(object::elf::SHF_TLS) {
-            if bit(object::elf::SHF_WRITE) {
-                out.note_writable(layout.section_base(&sec), sec.size());
-            }
-            if bit(object::elf::SHF_EXECINSTR) {
-                out.note_executable(layout.section_base(&sec), sec.size());
-            }
+) -> Result<Walk> {
+    let mut out = Walk::default();
+    for seg in obj.segments() {
+        if let object::SegmentFlags::Elf { p_flags } = seg.flags()
+            && p_flags & object::elf::PF_W != 0
+        {
+            out.note_writable(seg.address(), seg.size());
         }
     }
-    let mut budget = CopyBudget::default();
-    for sec in deduped_sections(obj, filter, layout)? {
-        out.regions.push(region_from(
-            bytes,
-            sec.base,
-            sec.file_range,
-            sec.data,
-            &mut budget,
-        )?);
+    let mut seen = BTreeSet::new();
+    for sec in obj.sections() {
+        let Some(flags) = sh_flags(&sec) else {
+            continue;
+        };
+        let base = layout.section_base(&sec);
+        if is_mapped(flags) {
+            if has(flags, object::elf::SHF_WRITE) {
+                out.note_writable(base, sec.size());
+            }
+            if has(flags, object::elf::SHF_EXECINSTR) {
+                out.note_executable(base, sec.size());
+            }
+        }
+        if !filter.section_accepts(flags)
+            || sec.data().context("failed to parse ELF")?.is_empty()
+            || !seen.insert(base)
+        {
+            continue;
+        }
+        out.regions
+            .push(region_from(bytes, base, sec.file_range())?);
+        out.owners.insert(sec.index().0);
     }
     Ok(out)
 }
@@ -1151,82 +868,98 @@ fn collect_loadable_sections_dedup(
 mod tests {
     use super::*;
     use object::elf::{PF_R, PF_W, PF_X};
+    use proptest::prelude::*;
 
-    /// An RWX PT_LOAD is the whole image on firmware / bare-metal / `ld -N`
-    /// binaries. Excluding it leaves the instruction-fetch reader with no
-    /// regions, reported as "address is not mapped" on the first decode.
-    #[test]
-    fn code_and_read_only_keeps_an_executable_writable_segment() {
-        let f = LoadFilter::CodeAndReadOnly;
-        assert!(f.segment_accepts(PF_R | PF_W | PF_X), "RWX is still code");
-        assert!(f.segment_accepts(PF_R | PF_X), "RX");
-        assert!(f.segment_accepts(PF_R), "RO");
-        assert!(
-            !f.segment_accepts(PF_R | PF_W),
-            "RW data stays out of the ROM"
-        );
+    /// An address low in the space or within 80 bytes of its top, so ends
+    /// saturate at `u64::MAX`.
+    fn address() -> impl Strategy<Value = u64> {
+        prop_oneof![0u64..72, (u64::MAX - 80)..=u64::MAX]
     }
 
-    /// The segment and section filters must agree on the exec-over-write rule,
-    /// since the same `LoadFilter` serves both walks.
-    #[test]
-    fn segment_and_section_filters_agree_on_exec_over_write() {
-        let f = LoadFilter::CodeAndReadOnly;
-        let alloc = u64::from(object::elf::SHF_ALLOC);
-        let write = u64::from(object::elf::SHF_WRITE);
-        let exec = u64::from(object::elf::SHF_EXECINSTR);
-        assert_eq!(
-            f.segment_accepts(PF_R | PF_W | PF_X),
-            f.section_accepts(alloc | write | exec)
-        );
-        assert_eq!(
-            f.segment_accepts(PF_R | PF_W),
-            f.section_accepts(alloc | write)
-        );
-    }
-
-    #[test]
-    fn all_allocatable_takes_everything() {
-        let f = LoadFilter::AllAllocatable;
-        assert!(f.segment_accepts(PF_R | PF_W));
-        assert!(f.section_accepts(u64::from(object::elf::SHF_ALLOC)));
-    }
-
-    /// "Allocatable" is the floor for every section filter, so membership in
-    /// [`loaded_section_indices`] already implies `SHF_ALLOC`. ET_REL relocation
-    /// siting relies on that to avoid a second alloc check.
-    #[test]
-    fn every_section_filter_requires_alloc() {
-        let write = u64::from(object::elf::SHF_WRITE);
-        let exec = u64::from(object::elf::SHF_EXECINSTR);
-        for f in [
-            LoadFilter::CodeAndReadOnly,
-            LoadFilter::ImmutableOnly,
-            LoadFilter::ImmutableAndRelocatedGot,
-            LoadFilter::AllAllocatable,
-        ] {
-            assert!(!f.section_accepts(0), "no flags at all");
-            assert!(!f.section_accepts(write | exec), "SHF_ALLOC absent");
+    proptest! {
+        /// `covers` holds exactly when one range of the set holds the query,
+        /// and, for a non-empty query, when every address of it is in the
+        /// set: touching, overlapping and empty inputs included.
+        #[test]
+        fn covers_holds_exactly_when_every_address_is_in_the_set(
+            ranges in proptest::collection::vec((address(), 0u64..8), 0..8),
+            lo in address(),
+            len in 0u64..12,
+        ) {
+            let ranges: Vec<(u64, u64)> =
+                ranges.into_iter().map(|(s, n)| (s, s.saturating_add(n))).collect();
+            let hi = lo.saturating_add(len);
+            let model: std::collections::BTreeSet<u64> =
+                ranges.iter().flat_map(|&(s, e)| s..e).collect();
+            let set = AddressSet::merged(ranges);
+            let in_one = set.as_slice().iter().any(|&(s, e)| s <= lo && hi <= e);
+            prop_assert_eq!(set.covers(lo, hi), in_one);
+            if lo < hi {
+                prop_assert_eq!(set.covers(lo, hi), (lo..hi).all(|a| model.contains(&a)));
+            }
         }
     }
 
-    /// [`ElfSectionLayout::new`] leaves a `SHF_TLS` section at its `sh_addr`,
-    /// so a filter that loaded one would seat `.tdata` at VMA 0 on top of
-    /// `.text`. Every filter must reject it, `AllAllocatable` included.
+    /// An inverted range holds no address, so it is dropped rather than left
+    /// to break the order the queries binary-search.
     #[test]
-    fn no_section_filter_accepts_a_tls_section() {
+    fn an_inverted_range_is_dropped() {
+        let set = AddressSet::merged(vec![(7, 8), (10, 5)]);
+        assert_eq!(set.as_slice(), &[(7, 8)]);
+        assert!(!set.covers(5, 10));
+    }
+
+    /// An empty range holds no address: it neither touches a query across
+    /// it nor splits a region cut by the set.
+    #[test]
+    fn an_empty_range_is_dropped() {
+        let set = AddressSet::merged(vec![(10, 10)]);
+        assert!(set.as_slice().is_empty());
+        assert!(!set.touches(9, 2));
+        let region = MemRegion::new(0, vec![0; 20]).unwrap();
+        let kept = without_ranges(vec![region], &set);
+        assert_eq!(
+            kept.iter()
+                .map(|r| (r.start_addr(), r.end_addr()))
+                .collect::<Vec<_>>(),
+            [(0, 20)]
+        );
+    }
+
+    /// Each filter over every write / exec combination, the segment and
+    /// section walks agreeing. `CodeAndReadOnly` keeps an RWX mapping, the
+    /// whole image of firmware or an `ld -N` binary. A section needs
+    /// `SHF_ALLOC`, which ET_REL relocation siting relies on, and no
+    /// `SHF_TLS`, which `ElfSectionLayout::new` would leave at VMA 0.
+    #[test]
+    fn each_filter_accepts_by_write_and_exec() {
         let alloc = u64::from(object::elf::SHF_ALLOC);
-        let write = u64::from(object::elf::SHF_WRITE);
         let tls = u64::from(object::elf::SHF_TLS);
-        for f in [
-            LoadFilter::CodeAndReadOnly,
-            LoadFilter::ImmutableOnly,
-            LoadFilter::ImmutableAndRelocatedGot,
-            LoadFilter::AllAllocatable,
+        // (writable, executable)
+        let combos = [(false, false), (false, true), (true, false), (true, true)];
+        for (f, want) in [
+            (LoadFilter::CodeAndReadOnly, [true, true, false, true]),
+            (LoadFilter::ImmutableOnly, [true, true, false, false]),
+            (LoadFilter::ImmutableAndRelocatedGot, [true; 4]),
+            (LoadFilter::AllAllocatable, [true; 4]),
         ] {
-            assert!(!f.section_accepts(alloc | write | tls), ".tdata");
-            assert!(!f.section_accepts(alloc | tls), "SHF_TLS without SHF_WRITE");
-            assert!(f.section_accepts(alloc), "a plain allocatable section");
+            for ((w, x), want) in combos.into_iter().zip(want) {
+                let p_flags = PF_R | if w { PF_W } else { 0 } | if x { PF_X } else { 0 };
+                let sh_flags = if w {
+                    u64::from(object::elf::SHF_WRITE)
+                } else {
+                    0
+                } | if x {
+                    u64::from(object::elf::SHF_EXECINSTR)
+                } else {
+                    0
+                };
+                let at = format!("{f:?} w={w} x={x}");
+                assert_eq!(f.segment_accepts(p_flags), want, "{at}: segment");
+                assert_eq!(f.section_accepts(alloc | sh_flags), want, "{at}: section");
+                assert!(!f.section_accepts(sh_flags), "{at}: no SHF_ALLOC");
+                assert!(!f.section_accepts(alloc | tls | sh_flags), "{at}: SHF_TLS");
+            }
         }
     }
 }

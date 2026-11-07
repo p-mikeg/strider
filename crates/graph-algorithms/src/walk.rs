@@ -1,9 +1,8 @@
-use alloc::vec::Vec;
-use core::ops::ControlFlow;
+use std::marker::PhantomData;
 
 use cranelift_entity::EntityRef;
 
-use entity_utils::set::DenseEntitySet;
+use entity_utils::DenseEntitySet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkPhase {
@@ -14,111 +13,54 @@ pub enum WalkPhase {
 }
 
 pub trait GraphRef {
-    type NodeId: Copy;
+    type NodeId: EntityRef;
 
-    /// Short-circuits if `f` returns [`ControlFlow::Break`].
-    fn try_successors(
-        &self,
-        node: Self::NodeId,
-        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()>;
-
-    fn successors(&self, node: Self::NodeId, mut f: impl FnMut(Self::NodeId)) {
-        let _ = self.try_successors(node, |succ| {
-            f(succ);
-            ControlFlow::Continue(())
-        });
-    }
+    /// Calls `f` once per successor of `node`, in push order.
+    fn successors(&self, node: Self::NodeId, f: impl FnMut(Self::NodeId));
 }
 
 impl<G: GraphRef> GraphRef for &'_ G {
     type NodeId = G::NodeId;
 
-    fn try_successors(
-        &self,
-        node: Self::NodeId,
-        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        (*self).try_successors(node, f)
+    fn successors(&self, node: Self::NodeId, f: impl FnMut(Self::NodeId)) {
+        (*self).successors(node, f);
     }
 }
 
-/// Stack state for a pre-order DFS.
-#[derive(Debug)]
-pub(crate) struct PreOrderContext<N> {
-    stack: Vec<N>,
-}
+/// The graph whose successors of a node are what `F` returns for it.
+pub struct FnSuccs<N, F>(F, PhantomData<fn(N)>);
 
-impl<N: Copy> PreOrderContext<N> {
-    pub(crate) const fn new() -> Self {
-        Self { stack: Vec::new() }
-    }
-
-    /// Roots are visited in REVERSE iteration order, since the stack pops
-    /// LIFO; callers wanting forward order must reverse the iterator
-    /// themselves. [`PostOrderContext::reset`] seeds its stack the same way,
-    /// but reversing its post-order restores source order.
-    pub(crate) fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
-        self.stack.clear();
-        self.stack.extend(roots);
-    }
-
-    pub(crate) fn next(
-        &mut self,
-        graph: impl GraphRef<NodeId = N>,
-        visited: &mut DenseEntitySet<N>,
-    ) -> Option<N>
-    where
-        N: EntityRef,
-    {
-        let node = loop {
-            let node = self.stack.pop()?;
-            if !visited.contains(node) {
-                break node;
-            }
-        };
-
-        visited.insert(node);
-
-        graph.successors(node, |succ| {
-            // Keeps the stack small, but does not replace the pop-time check:
-            // a node unvisited now may be visited by the time it is popped.
-            if !visited.contains(succ) {
-                self.stack.push(succ);
-            }
-        });
-
-        Some(node)
+impl<N, F> FnSuccs<N, F> {
+    pub fn new(f: F) -> Self {
+        Self(f, PhantomData)
     }
 }
 
-impl<N: Copy> Default for PreOrderContext<N> {
-    fn default() -> Self {
-        Self::new()
+impl<N: EntityRef, I: IntoIterator<Item = N>, F: Fn(N) -> I> GraphRef for FnSuccs<N, F> {
+    type NodeId = N;
+
+    fn successors(&self, node: N, mut f: impl FnMut(N)) {
+        for succ in (self.0)(node) {
+            f(succ);
+        }
     }
 }
 
-/// Yields each node reachable from the roots exactly once. A DFS preorder,
-/// which is NOT a topological order: successors are explored LIFO, so at a
-/// join the node is emitted from the successor explored first and precedes the
-/// earlier sibling that also reaches it.
+/// Yields each node reachable from the roots once, in DFS preorder;
+/// successors are visited in reverse push order.
 pub struct PreOrder<G: GraphRef> {
     graph: G,
     visited: DenseEntitySet<G::NodeId>,
-    ctx: PreOrderContext<G::NodeId>,
+    stack: Vec<G::NodeId>,
 }
 
-impl<G: GraphRef> PreOrder<G>
-where
-    G::NodeId: EntityRef,
-{
+impl<G: GraphRef> PreOrder<G> {
+    /// Roots pop last-first.
     pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
-        let mut ctx = PreOrderContext::new();
-        ctx.reset(roots);
         Self {
             graph,
             visited: DenseEntitySet::default(),
-            ctx,
+            stack: roots.into_iter().collect(),
         }
     }
 
@@ -128,77 +70,75 @@ where
     }
 }
 
-impl<G: GraphRef> Iterator for PreOrder<G>
-where
-    G::NodeId: EntityRef,
-{
+impl<G: GraphRef> Iterator for PreOrder<G> {
     type Item = G::NodeId;
 
     fn next(&mut self) -> Option<G::NodeId> {
-        self.ctx.next(&self.graph, &mut self.visited)
-    }
-}
-
-/// Stack state for a post-order DFS.
-#[derive(Debug)]
-pub(crate) struct PostOrderContext<N> {
-    stack: Vec<(WalkPhase, N)>,
-}
-
-impl<N: Copy> PostOrderContext<N> {
-    pub(crate) const fn new() -> Self {
-        Self { stack: Vec::new() }
-    }
-
-    /// Roots go on the stack in source order, which (LIFO) visits them
-    /// backwards and so preserves source order in any derived RPO: if `u`
-    /// precedes `v` in `roots` and no path runs `v -> u`, `u` precedes `v` in
-    /// the RPO.
-    pub(crate) fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
-        self.stack.clear();
-        self.stack
-            .extend(roots.into_iter().map(|node| (WalkPhase::Pre, node)));
-    }
-
-    pub(crate) fn next(
-        &mut self,
-        graph: impl GraphRef<NodeId = N>,
-        visited: &mut DenseEntitySet<N>,
-    ) -> Option<N>
-    where
-        N: EntityRef,
-    {
-        loop {
-            let (phase, node) = self.next_event(&graph, visited)?;
-            if phase == WalkPhase::Post {
-                return Some(node);
+        let Self {
+            graph,
+            visited,
+            stack,
+        } = self;
+        let node = loop {
+            let node = stack.pop()?;
+            if !visited.contains(node) {
+                break node;
             }
+        };
+
+        visited.insert(node);
+
+        graph.successors(node, |succ| {
+            // A pruning only: a node can still be pushed twice before its visit.
+            if !visited.contains(succ) {
+                stack.push(succ);
+            }
+        });
+
+        Some(node)
+    }
+}
+
+/// Yields each reached node once, after every successor that is not a DFS
+/// ancestor of it.
+pub struct PostOrder<G: GraphRef> {
+    graph: G,
+    visited: DenseEntitySet<G::NodeId>,
+    stack: Vec<(WalkPhase, G::NodeId)>,
+}
+
+impl<G: GraphRef> PostOrder<G> {
+    /// Roots pop last-first, so in a derived RPO an earlier root precedes
+    /// every later root that does not reach it.
+    pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
+        Self {
+            graph,
+            visited: DenseEntitySet::default(),
+            stack: roots
+                .into_iter()
+                .map(|node| (WalkPhase::Pre, node))
+                .collect(),
         }
     }
 
-    /// Exposes both pre- and post-visit events; [`next`](Self::next) filters
-    /// down to the post-visits.
-    pub(crate) fn next_event(
-        &mut self,
-        graph: impl GraphRef<NodeId = N>,
-        visited: &mut DenseEntitySet<N>,
-    ) -> Option<(WalkPhase, N)>
-    where
-        N: EntityRef,
-    {
+    /// The next pre- or post-visit event; the iterator yields post-visits only.
+    pub fn next_event(&mut self) -> Option<(WalkPhase, G::NodeId)> {
+        let Self {
+            graph,
+            visited,
+            stack,
+        } = self;
         loop {
-            let (phase, node) = self.stack.pop()?;
+            let (phase, node) = stack.pop()?;
             match phase {
                 WalkPhase::Pre => {
                     if !visited.contains(node) {
                         visited.insert(node);
-                        self.stack.push((WalkPhase::Post, node));
+                        stack.push((WalkPhase::Post, node));
                         graph.successors(node, |succ| {
-                            // Keeps the stack small, but does not replace the
-                            // pop-time check: a node unvisited now may be
-                            // visited by the time it is popped.
+                            // A pruning only: a node can still be pushed twice before its visit.
                             if !visited.contains(succ) {
-                                self.stack.push((WalkPhase::Pre, succ));
+                                stack.push((WalkPhase::Pre, succ));
                             }
                         });
 
@@ -213,60 +153,47 @@ impl<N: Copy> PostOrderContext<N> {
     }
 }
 
-impl<N: Copy> Default for PostOrderContext<N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Yields each node exactly once, after every successor that is not a DFS
-/// ancestor of it. On a cycle the back edge's target is already on the stack,
-/// so it is yielded after the successor that closes the cycle.
-pub struct PostOrder<G: GraphRef> {
-    graph: G,
-    visited: DenseEntitySet<G::NodeId>,
-    ctx: PostOrderContext<G::NodeId>,
-}
-
-impl<G: GraphRef> PostOrder<G>
-where
-    G::NodeId: EntityRef,
-{
-    pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
-        let mut ctx = PostOrderContext::new();
-        ctx.reset(roots);
-        Self {
-            graph,
-            visited: DenseEntitySet::default(),
-            ctx,
-        }
-    }
-
-    /// Both the pre- and post-visit event of each node, where the iterator
-    /// yields only the post-visits. The pre/post pair brackets the node's
-    /// subtree, which is what bounds the current DFS path.
-    pub fn next_event(&mut self) -> Option<(WalkPhase, G::NodeId)> {
-        self.ctx.next_event(&self.graph, &mut self.visited)
-    }
-}
-
-impl<G: GraphRef> Iterator for PostOrder<G>
-where
-    G::NodeId: EntityRef,
-{
+impl<G: GraphRef> Iterator for PostOrder<G> {
     type Item = G::NodeId;
 
     fn next(&mut self) -> Option<G::NodeId> {
-        self.ctx.next(&self.graph, &mut self.visited)
+        loop {
+            if let (WalkPhase::Post, node) = self.next_event()? {
+                return Some(node);
+            }
+        }
     }
 }
 
-pub fn entity_postorder<G: GraphRef>(
+/// [`PostOrder`] of what `roots` reach, every node after its successors, or
+/// `Err(node)` for the first node found with a successor on the current DFS
+/// path, which puts it on a cycle. Asks each reached node for its successors
+/// twice.
+#[cfg(feature = "test-util")]
+pub fn acyclic_postorder<G: GraphRef>(
     graph: G,
     roots: impl IntoIterator<Item = G::NodeId>,
-) -> PostOrder<G>
-where
-    G::NodeId: EntityRef,
-{
-    PostOrder::new(graph, roots)
+) -> Result<Vec<G::NodeId>, G::NodeId> {
+    let mut walk = PostOrder::new(&graph, roots);
+    // Not a `DenseEntitySet`: dropping its maximum costs O(max_index / 64).
+    let mut on_path: cranelift_entity::SecondaryMap<G::NodeId, bool> =
+        cranelift_entity::SecondaryMap::new();
+    let mut order = Vec::new();
+    while let Some((phase, node)) = walk.next_event() {
+        match phase {
+            WalkPhase::Pre => {
+                on_path[node] = true;
+                let mut back = false;
+                graph.successors(node, |succ| back |= on_path[succ]);
+                if back {
+                    return Err(node);
+                }
+            }
+            WalkPhase::Post => {
+                on_path[node] = false;
+                order.push(node);
+            }
+        }
+    }
+    Ok(order)
 }

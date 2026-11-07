@@ -11,10 +11,10 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use object::write::{Object, Relocation, Symbol, SymbolId, SymbolSection};
+use common::write_object::{defined, reloc, undefined};
+use object::write::{Object, Symbol, SymbolId, SymbolSection};
 use object::{
-    Architecture, BinaryFormat, Endianness, RelocationFlags, SectionKind, SymbolFlags, SymbolKind,
-    SymbolScope, elf,
+    Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope, elf,
 };
 use object::{Object as _, ObjectSymbol as _};
 use strider_reader::MemRegionsLookupTable;
@@ -46,57 +46,6 @@ fn symbol_address(bytes: &[u8], name: &str) -> u64 {
     layout
         .extern_address(sym.index().0)
         .unwrap_or_else(|| layout.symbol_address(&sym))
-}
-
-fn defined(
-    obj: &mut Object<'_>,
-    name: &str,
-    section: object::write::SectionId,
-    value: u64,
-) -> SymbolId {
-    obj.add_symbol(Symbol {
-        name: name.as_bytes().to_vec(),
-        value,
-        size: 0,
-        kind: SymbolKind::Text,
-        scope: SymbolScope::Linkage,
-        weak: false,
-        section: SymbolSection::Section(section),
-        flags: SymbolFlags::None,
-    })
-}
-
-fn undefined(obj: &mut Object<'_>, name: &str) -> SymbolId {
-    obj.add_symbol(Symbol {
-        name: name.as_bytes().to_vec(),
-        value: 0,
-        size: 0,
-        kind: SymbolKind::Unknown,
-        scope: SymbolScope::Linkage,
-        weak: false,
-        section: SymbolSection::Undefined,
-        flags: SymbolFlags::None,
-    })
-}
-
-fn reloc(
-    obj: &mut Object<'_>,
-    section: object::write::SectionId,
-    offset: u64,
-    symbol: SymbolId,
-    addend: i64,
-    r_type: u32,
-) {
-    obj.add_relocation(
-        section,
-        Relocation {
-            offset,
-            symbol,
-            addend,
-            flags: RelocationFlags::Elf { r_type },
-        },
-    )
-    .expect("relocation");
 }
 
 /// `h(x) { return ext_fn(x) + 1; }`: the `call` is to a symbol no section
@@ -555,6 +504,176 @@ fn x86_64_got64_and_gotpc64_address_the_slot_together() {
     assert_eq!(u64::from_le_bytes(held), symbol_address(&bytes, "g"));
 }
 
+/// `-fno-pic -fno-plt` calls `call *ext_fn@GOT`, a bare disp32 (ModRM
+/// `mod = 0, rm = 5`) naming the slot's own address. Through a base register
+/// the field is the slot's offset from the GOT: `call *ext_fn@GOT(%ebx)`,
+/// `(%ebp)` (`mod = 2, rm = 5`), and, the linkers reading the byte before the
+/// field as a ModRM whatever it is, an index-only SIB `(,%ecx,4)` and the
+/// disp8 of `movl $ext_fn@GOT, 4(%ebx)`. `SHT_REL`, so the
+/// `mov ext_fn@GOT+4, %eax` field holds its addend.
+#[test]
+fn i386_got32x_without_a_base_register_addresses_the_slot_itself() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::I386, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // (the bytes before the field, its implicit addend, its type)
+    let insns: [(&[u8], u8, u32); 6] = [
+        (&[0xff, 0x15], 0, elf::R_386_GOT32X),
+        (&[0xff, 0x93], 0, elf::R_386_GOT32X),
+        (&[0xff, 0x95], 0, elf::R_386_GOT32X),
+        (&[0x8b, 0x05], 4, elf::R_386_GOT32),
+        (&[0xff, 0x14, 0x8d], 0, elf::R_386_GOT32),
+        (&[0xc7, 0x43, 0x04], 0, elf::R_386_GOT32),
+    ];
+    let mut code = Vec::new();
+    let mut fields = Vec::new();
+    for (head, addend, _) in insns {
+        code.extend_from_slice(head);
+        fields.push(code.len() as u64);
+        code.extend_from_slice(&[addend, 0, 0, 0]);
+    }
+    code.push(0xc3);
+    obj.append_section_data(text, &code, 1);
+    defined(&mut obj, "f", text, 0);
+    undefined(&mut obj, "_GLOBAL_OFFSET_TABLE_");
+    let ext = undefined(&mut obj, "ext_fn");
+    for (&field, (_, _, r_type)) in fields.iter().zip(insns) {
+        reloc(&mut obj, text, field, ext, 0, r_type);
+    }
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    let at = |i: usize| u64::from(word(&table, insn + fields[i], false));
+    let slot = at(0);
+    assert_eq!(
+        u64::from(word(&table, slot, false)),
+        symbol_address(&bytes, "ext_fn"),
+        "the base-less field is the address of a slot holding ext_fn"
+    );
+    assert_eq!(at(3), slot + 4);
+    let got = symbol_address(&bytes, "_GLOBAL_OFFSET_TABLE_");
+    for i in [1, 2, 4, 5] {
+        assert_eq!(
+            got + at(i),
+            slot,
+            "{:x?}: through a base the field is the slot's offset from the GOT",
+            insns[i].0
+        );
+    }
+}
+
+/// `lea ext_fn@GOT, %eax` passes the base-less test, and GNU ld gives it the
+/// slot's offset from the GOT where lld gives the slot's address: the field
+/// is a hole.
+#[test]
+fn an_i386_got_lea_is_a_hole() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::I386, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(text, &[0x8d, 0x05, 0, 0, 0, 0, 0xc3], 1);
+    defined(&mut obj, "f", text, 0);
+    let ext = undefined(&mut obj, "ext_fn");
+    reloc(&mut obj, text, 2, ext, 0, elf::R_386_GOT32);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    let err = table
+        .read_exact(insn + 2, &mut [0u8; 4])
+        .expect_err("a GOT lea is a hole")
+        .to_string();
+    assert!(
+        err.contains(&format!("relocation of type {} ", elf::R_386_GOT32)),
+        "{err}"
+    );
+}
+
+/// A field in the first two bytes of its section has no opcode and ModRM
+/// before it: the slot's offset from the GOT, whatever the byte before it.
+#[test]
+fn an_i386_got_field_at_a_sections_start_is_the_slots_offset() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::I386, Endianness::Little);
+    let at0 = obj.add_section(Vec::new(), b".rodata.a".to_vec(), SectionKind::ReadOnlyData);
+    obj.append_section_data(at0, &[0; 4], 4);
+    let at1 = obj.add_section(Vec::new(), b".rodata.b".to_vec(), SectionKind::ReadOnlyData);
+    obj.append_section_data(at1, &[0x05, 0, 0, 0, 0], 4);
+    undefined(&mut obj, "_GLOBAL_OFFSET_TABLE_");
+    let ext = undefined(&mut obj, "ext_fn");
+    reloc(&mut obj, at0, 0, ext, 0, elf::R_386_GOT32);
+    reloc(&mut obj, at1, 1, ext, 0, elf::R_386_GOT32);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let got = symbol_address(&bytes, "_GLOBAL_OFFSET_TABLE_");
+    let a = got
+        + u64::from(word(
+            &table,
+            common::section_base(&bytes, ".rodata.a"),
+            false,
+        ));
+    let b = got
+        + u64::from(word(
+            &table,
+            common::section_base(&bytes, ".rodata.b") + 1,
+            false,
+        ));
+    assert_eq!(a, b, "one slot");
+    assert_eq!(
+        u64::from(word(&table, a, false)),
+        symbol_address(&bytes, "ext_fn")
+    );
+}
+
+/// `ldr x0, :got:foo+16` asks for the slot holding `foo + 16`, which no slot
+/// holds; `G + A` lands in the next symbol's slot. Its siblings with an
+/// addend are holes too, and `ldr x1, :got:foo` reaches foo's slot.
+#[test]
+fn aarch64_a_got_reference_with_an_addend_is_a_hole() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::Aarch64, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    let mut code = Vec::new();
+    // ldr x0, 0 ; adrp x0, 0 ; ldr x0, [x0] ; ldr x1, 0 ; ret
+    for insn in [
+        0x5800_0000u32,
+        0x9000_0000,
+        0xf940_0000,
+        0x5800_0001,
+        0xd65f_03c0,
+    ] {
+        code.extend_from_slice(&insn.to_le_bytes());
+    }
+    obj.append_section_data(text, &code, 4);
+    let data = obj.add_section(Vec::new(), b".data".to_vec(), SectionKind::Data);
+    obj.append_section_data(data, &[0u8; 32], 8);
+    let foo = defined(&mut obj, "foo", data, 0);
+    reloc(&mut obj, text, 0, foo, 16, elf::R_AARCH64_GOT_LD_PREL19);
+    reloc(&mut obj, text, 4, foo, 16, elf::R_AARCH64_ADR_GOT_PAGE);
+    reloc(&mut obj, text, 8, foo, 16, elf::R_AARCH64_LD64_GOT_LO12_NC);
+    reloc(&mut obj, text, 12, foo, 0, elf::R_AARCH64_GOT_LD_PREL19);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let p = common::section_base(&bytes, ".text");
+    for (off, r_type) in [
+        (0, elf::R_AARCH64_GOT_LD_PREL19),
+        (4, elf::R_AARCH64_ADR_GOT_PAGE),
+        (8, elf::R_AARCH64_LD64_GOT_LO12_NC),
+    ] {
+        let err = table
+            .read_exact(p + off, &mut [0u8; 4])
+            .expect_err("a GOT reference with an addend is a hole")
+            .to_string();
+        assert!(
+            err.contains(&format!("relocation of type {r_type} ")),
+            "+{off}: {err}"
+        );
+    }
+    let ldr = u64::from(word(&table, p + 12, false));
+    let slot = (p + 12).wrapping_add_signed(sext((ldr >> 5) & 0x7_ffff, 19) * 4);
+    let mut held = [0u8; 8];
+    table.read_exact(slot, &mut held).expect("foo's slot");
+    assert_eq!(u64::from_le_bytes(held), symbol_address(&bytes, "foo"));
+}
+
 /// A writable section is left alone because nothing folds data the program
 /// rewrites; a writable EXECUTABLE one is not data. `CodeAndReadOnly` keeps an
 /// RWX mapping on purpose (firmware, `ld -N`), so its bytes reach the decoder,
@@ -586,4 +705,261 @@ fn an_uncomputed_relocation_in_writable_code_is_still_a_hole() {
         Some(1),
         "only the opcode before the field is served"
     );
+}
+
+/// `fixtures/loader/out/x64_abs32.o`: `R_X86_64_32`'s value zero-extends, so
+/// `foo - 0x20000000`, which fits the field only signed, is a hole, and
+/// `foo + 0x80000000`, which fits only unsigned, is patched, as GNU ld
+/// refuses the one and links the other.
+#[test]
+fn an_x86_64_abs32_field_takes_only_a_zero_extending_value() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/loader/out/x64_abs32.o");
+    let bytes = std::fs::read(&path).expect("run `make -C fixtures/loader`");
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    let foo = symbol_address(&bytes, "foo");
+    assert!(foo < 0x2000_0000, "{foo:#x}: the first value is negative");
+
+    let err = table
+        .read_exact(insn + 1, &mut [0u8; 4])
+        .expect_err("only fits signed")
+        .to_string();
+    assert!(
+        err.contains(&format!("relocation of type {} ", elf::R_X86_64_32)),
+        "{err}"
+    );
+    assert_eq!(
+        u64::from(word(&table, insn + 6, false)),
+        foo + 0x8000_0000,
+        "fits unsigned"
+    );
+}
+
+/// A fetch through `ElfFileMemReader` that lands on such a hole names the
+/// relocation, as the lookup table does.
+#[test]
+fn a_fetch_on_an_uncomputed_relocation_names_it() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(text, &[0xb8, 0x11, 0x22, 0x33, 0x44, 0xc3], 1);
+    let tls = undefined(&mut obj, "tls_var");
+    reloc(&mut obj, text, 1, tls, 0, elf::R_X86_64_TPOFF32);
+    let bytes = obj.write().expect("write");
+    let insn = common::section_base(&bytes, ".text");
+
+    let owned = strider_reader::elf::OwnedElf::parse(bytes).expect("parse");
+    let reader = strider_reader::ElfFileMemReader::new(
+        &owned,
+        strider_reader::elf::RelocationMode::Applied { got_is_rom: false },
+    )
+    .expect("reader");
+    let mut buf = [0u8; 4];
+    let err = rsleigh::MemReader::read(
+        &reader,
+        rsleigh::VnAddr {
+            space: rsleigh::VnSpace::RAM,
+            off: insn + 1,
+        },
+        &mut buf,
+    )
+    .expect_err("a hole")
+    .to_string();
+    assert!(err.contains("relocation of type 23"), "got: {err}");
+}
+
+/// On big-endian PowerPC a half16 relocation names the instruction's low
+/// halfword, two bytes in: an uncomputed one holes only those two bytes and
+/// leaves the next instruction fetchable.
+#[test]
+fn an_uncomputed_ppc_be_half16_holes_only_its_halfword() {
+    let ppc32 = [
+        elf::R_PPC_GOT16,
+        elf::R_PPC_SECTOFF,
+        elf::R_PPC_SECTOFF_LO,
+        elf::R_PPC_SECTOFF_HI,
+        elf::R_PPC_SECTOFF_HA,
+        elf::R_PPC_EMB_SDA2REL,
+        elf::R_PPC_EMB_RELST_LO,
+        elf::R_PPC_EMB_RELST_HI,
+        elf::R_PPC_EMB_RELST_HA,
+        elf::R_PPC_EMB_RELSDA,
+    ];
+    // `R_PPC64_REL16_HIGH` .. `_HIGHESTA` and `R_PPC64_ADDR16_HIGHER34` ..
+    // `R_PPC64_REL16_HIGHESTA34`, which `object` does not name.
+    let ppc64 = [
+        elf::R_PPC64_TPREL16_LO,
+        elf::R_PPC64_SECTOFF,
+        elf::R_PPC64_SECTOFF_LO,
+        elf::R_PPC64_SECTOFF_HI,
+        elf::R_PPC64_SECTOFF_HA,
+        elf::R_PPC64_SECTOFF_DS,
+        elf::R_PPC64_SECTOFF_LO_DS,
+    ]
+    .into_iter()
+    .chain(136..=143)
+    .chain(240..=245);
+    for (arch, r_type) in ppc32
+        .into_iter()
+        .map(|t| (Architecture::PowerPc, t))
+        .chain(ppc64.map(|t| (Architecture::PowerPc64, t)))
+    {
+        let mut obj = Object::new(BinaryFormat::Elf, arch, Endianness::Big);
+        let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+        // lwz r9, 0(r30); lwz r3, 0(r9)
+        let mut code = Vec::new();
+        for insn in [0x813e_0000u32, 0x8069_0000] {
+            code.extend_from_slice(&insn.to_be_bytes());
+        }
+        obj.append_section_data(text, &code, 4);
+        let ext = undefined(&mut obj, "ext_var");
+        reloc(&mut obj, text, 2, ext, 0, r_type);
+        let bytes = obj.write().expect("write");
+
+        let table = relocated(&bytes);
+        let insn = common::section_base(&bytes, ".text");
+        let mut half = [0u8; 2];
+        assert_eq!(
+            table.read(insn, &mut half),
+            Some(2),
+            "{arch:?} type {r_type}: the opcode half"
+        );
+        assert_eq!(
+            table.read(insn + 2, &mut half),
+            None,
+            "{arch:?} type {r_type}: the field is a hole"
+        );
+        assert_eq!(
+            word(&table, insn + 4, true),
+            0x8069_0000,
+            "{arch:?} type {r_type}"
+        );
+    }
+}
+
+/// The 8-byte fields `object` does not size hole all eight bytes: neither
+/// word is served from read-only data.
+#[test]
+fn an_uncomputed_eight_byte_field_holes_all_eight_bytes() {
+    let ppc64 = (Architecture::PowerPc64, Endianness::Big);
+    let x86_64 = (Architecture::X86_64, Endianness::Little);
+    // The doubleword64s, `R_PPC64_ADDR64_LOCAL` (117) and the prefixed
+    // 34-bit / 28-bit types (128..=135, 144..=151), which `object` does
+    // not name.
+    let ppc64_types = [
+        elf::R_PPC64_UADDR64,
+        elf::R_PPC64_PLT64,
+        elf::R_PPC64_PLTREL64,
+        117,
+    ]
+    .into_iter()
+    .chain(128..=135)
+    .chain(144..=151)
+    .map(|r_type| (ppc64, r_type));
+    let x86_64_types = [elf::R_X86_64_GOTPLT64, elf::R_X86_64_SIZE64]
+        .into_iter()
+        .map(|r_type| (x86_64, r_type));
+    for ((arch, endian), r_type) in ppc64_types.chain(x86_64_types) {
+        let mut obj = Object::new(BinaryFormat::Elf, arch, endian);
+        let data = obj.add_section(Vec::new(), b".rodata".to_vec(), SectionKind::ReadOnlyData);
+        obj.append_section_data(data, &[0x11u8; 16], 8);
+        let ext = undefined(&mut obj, "ext_var");
+        reloc(&mut obj, data, 0, ext, 0, r_type);
+        let bytes = obj.write().expect("write");
+
+        let table = relocated(&bytes);
+        let base = common::section_base(&bytes, ".rodata");
+        let mut w = [0u8; 4];
+        assert_eq!(
+            table.read(base, &mut w),
+            None,
+            "{arch:?} {r_type}: first word"
+        );
+        assert_eq!(
+            table.read(base + 4, &mut w),
+            None,
+            "{arch:?} {r_type}: second word"
+        );
+        assert_eq!(
+            table.read(base + 8, &mut w),
+            Some(4),
+            "{arch:?} {r_type}: past it"
+        );
+    }
+}
+
+/// The PowerPC TLS markers name no field: the instruction they mark (the
+/// `bl __tls_get_addr` of a `TLSGD` / `TLSLD` sequence, the initial-exec
+/// `add` of a `TLS`) is served as assembled, not holed.
+#[test]
+fn a_ppc_tls_marker_leaves_its_instruction_served() {
+    for (arch, r_type) in [
+        (Architecture::PowerPc64, elf::R_PPC64_TLS),
+        (Architecture::PowerPc64, elf::R_PPC64_TLSGD),
+        (Architecture::PowerPc64, elf::R_PPC64_TLSLD),
+        (Architecture::PowerPc, elf::R_PPC_TLS),
+        (Architecture::PowerPc, elf::R_PPC_TLSGD),
+        (Architecture::PowerPc, elf::R_PPC_TLSLD),
+    ] {
+        let mut obj = Object::new(BinaryFormat::Elf, arch, Endianness::Big);
+        let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+        // `bl .`
+        obj.append_section_data(text, &0x4800_0001u32.to_be_bytes(), 4);
+        let tv = undefined(&mut obj, "tv");
+        reloc(&mut obj, text, 0, tv, 0, r_type);
+        let bytes = obj.write().expect("write");
+
+        let table = relocated(&bytes);
+        let base = common::section_base(&bytes, ".text");
+        let mut w = [0u8; 4];
+        assert_eq!(table.read(base, &mut w), Some(4), "{arch:?} {r_type}");
+        assert_eq!(u32::from_be_bytes(w), 0x4800_0001, "{arch:?} {r_type}");
+    }
+}
+
+/// The 16-bit Thumb fields `object` does not size (`THM_JUMP11`,
+/// `THM_JUMP8`, ...) hole only their halfword, leaving the next instruction
+/// fetchable; `ABS8` holes one byte.
+#[test]
+fn an_uncomputed_narrow_arm_field_holes_only_its_bytes() {
+    let types = [
+        (elf::R_ARM_ABS16, 2),
+        (elf::R_ARM_THM_ABS5, 2),
+        (elf::R_ARM_ABS8, 1),
+        (elf::R_ARM_THM_PC8, 2),
+        (elf::R_ARM_THM_SWI8, 2),
+        (elf::R_ARM_THM_JUMP6, 2),
+        (elf::R_ARM_THM_PC11, 2),
+        (elf::R_ARM_THM_PC9, 2),
+    ];
+    for (r_type, width) in types {
+        let mut obj = Object::new(BinaryFormat::Elf, Architecture::Arm, Endianness::Little);
+        let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+        // b .; bne .; movs r0, #1; bx lr
+        let code: Vec<u8> = [0xe7feu16, 0xd1fe, 0x2001, 0x4770]
+            .iter()
+            .flat_map(|h| h.to_le_bytes())
+            .collect();
+        obj.append_section_data(text, &code, 4);
+        let ext = undefined(&mut obj, "ext_fn");
+        reloc(&mut obj, text, 2, ext, 0, r_type);
+        let bytes = obj.write().expect("write");
+
+        let table = relocated(&bytes);
+        let insn = common::section_base(&bytes, ".text");
+        let mut byte = [0u8; 1];
+        assert_eq!(
+            table.read(insn + 2, &mut byte),
+            None,
+            "type {r_type}: the field"
+        );
+        assert_eq!(
+            table.read(insn + 2 + width, &mut byte),
+            Some(1),
+            "type {r_type}: past the field"
+        );
+        let mut half = [0u8; 2];
+        assert_eq!(table.read(insn + 4, &mut half), Some(2), "type {r_type}");
+        assert_eq!(u16::from_le_bytes(half), 0x2001, "type {r_type}");
+    }
 }

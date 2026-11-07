@@ -1,143 +1,49 @@
 # strider-cfg
 
-Decodes one function's bytes into a control-flow graph of straight-line regions,
-through GHIDRA's Sleigh (`rsleigh`). IR-free: a `Cfg` is a graph of pcode
-instruction runs plus a terminator per run, and knows nothing of the
-sea-of-nodes IR `strider-lift` builds from it.
+Decodes one function's bytes into a control-flow graph of straight-line p-code
+regions through GHIDRA's Sleigh (`rsleigh`). IR-free: `strider-lift` builds the
+IR from a `Cfg`.
 
-## What's here
+## API
 
-- `Builder::for_arch(arch, sleigh, start_addr, opts).build()` -> `Cfg`. A work
-  queue seeded with the entry drives decoding: each item either decodes a new
-  region or routes an edge to an existing one. `with_flow_context` lends the
-  sla's flowing context vars plus the function's own decode mode;
-  `with_per_address_ccs` supplies calling conventions for call targets.
-- `Region`, the graph's node: maximal straight-line pcode entered only at
-  `start_addr`, ending at its `RegionTerminator`. `contains_addr` decides which
-  bytes it owns, down to the pcode index, since a region can end mid-pcode
-  sequence.
-- `CfgOptions<'a>`: `fn_max_size` / `allow_code_before_start_addr` bound the
-  function, `known_targets` (borrowed, so a binary-wide table costs nothing
-  per function) seats indirect-branch answers a caller derived,
-  `call_other_overrides` classifies user-op names, and `data_ranges` names
-  address ranges that hold data and are never decoded.
-- `FlowVars` / `FlowContext`: the sla's flowing decode context, discovered once
-  per sla and lent to every build.
-- Queries on `Cfg` (`regions`, `region_ids`, `region_predecessors`,
-  `region_if`, `switch_arm_regions`) and dark-themed Graphviz output
-  (`dot_dumper`, `neighborhood_dot`).
-- `insn_text` / `insn_plain_text`: one decoded p-code op as text, a LOAD /
-  STORE space id named by its space (`Cfg::space_ids`) rather than printed as
-  the host address Sleigh encodes it as.
+- `DecodeEngine::new(arch, reader)?.build_cfg(entry, &opts)` -> `Cfg`. Every
+  build decodes as on a fresh engine. On an arch with an ISA mode the entry's
+  low bit selects it (Thumb, MIPS16e).
+- `Region`: a straight-line run of p-code from `start_addr`, ending at its
+  `RegionTerminator`, not necessarily maximal. It can end mid-instruction.
+- `CfgOptions<'a>`: the function `bound` and `fragment_ranges`, borrowed
+  target tables (`known_targets`, `derived_targets`, `no_return_targets`,
+  `call_other_overrides`, `local_entries`), and `data_ranges`, bytes decoded
+  only at the entry.
+- Queries on `Cfg` (`regions`, `region_containing`, `region_if`,
+  `switch_arm_regions`, ...), Graphviz output (`dot_dumper`,
+  `neighborhood_dot`), and `insn_text` for one p-code op.
 
-## No region is built twice over one instruction
+## Decoding
 
-Region ownership is by address. A target an existing region owns routes to that
-region, splitting it at the target's instruction or p-code boundary instead of
-building a second region over the same instructions. Incoming edges move to the
-first half, which keeps the start address; the second half keeps the region id
-and so its outgoing edges. The first edge to arrive therefore fixes the ISA
-mode the bytes decode in; a later edge carrying a different mode is recorded
-rather than decoding a second copy of them.
+A target inside an existing region splits it at the target's instruction or
+p-code boundary rather than decoding those bytes again. The first decode fixes
+the ISA mode of those bytes; a later edge in another mode is reported. A
+target off every boundary (overlapping code) cannot be split out and is
+reported as `InteriorTarget`.
 
-Overlapping code is the exception, and the only one. Sequential decoding steps
-over a region start interior to an instruction it decodes, the fall-through
-check being by exact start address, and those bytes then have two owners with
-two different instruction streams. The stepped-over start is reported on
-`interior_branch_targets`.
+A region decodes sequentially, because `Sleigh::lift_one` carries context
+(ARM/Thumb and IT state, MIPS16) that an instruction can commit
+at a later address. Each queued edge carries the context reaching its target,
+so a seated indirect target or a backward edge decodes in the right mode.
 
-Within a region decoding is strictly sequential. `Sleigh::lift_one` takes
-`&mut self` and carries context-register state (ARM/Thumb mode and IT-block
-state, MIPS16, ppc `linkreg`) that a decoded instruction can itself commit at a
-later address, so lifting out of order returns the wrong instructions. x86
-declares its decode vars flowing but no constructor commits one (no
-`globalset`), so a prefix changes the context only within its own instruction.
+A `BranchIndirect` is seated from `derived_targets` / `known_targets` or
+deferred as `UnresolvedIndirectBranch` for a resolver above this crate. A
+table with an arm off a boundary or out of the bound defers whole. An arm
+found off-boundary after the seal is dropped alone; an address lost to a
+direct edge's ISA mode loses every arm there. A `Switch` left with no arm
+defers. Direct edges are explored before any arm, so a direct decode wins an
+ISA-mode clash.
 
-That state is *flowing* context: as in GHIDRA's `ContextDatabase` a flowing var
-is a value committed per address, holding forward until the next change point.
-Each queued edge captures the context reaching its target and `FlowVars::pin_at`
-commits it back before that target decodes, so a region Sleigh never
-straight-line-flowed into (a caller-seated indirect target, a backward edge)
-still decodes in the mode that reaches it. An interworking branch bakes its own
-ISA-mode bit into the context it hands the target.
+## Incompleteness
 
-## How a region ends
-
-`Unconditional` (an explicit branch, a fall-through into an already-discovered
-region, a zero-pcode-op instruction such as `nop` or `endbr64`, the first half
-of a split, or a fall-through onto bytes that hold no instruction, which edges
-to a `TailCall` stub), `CondBranch` carrying the taken target, `Return`,
-`NoReturn` (a CallOther classified as a `BUG()`-class trap, a call whose target
-has a no-return calling convention, a call whose return address is out of
-range, or a call whose fall-through reaches bytes that hold no instruction,
-which also DROPS everything after the call), `TailCall` carrying the callee,
-`Switch` carrying a jump table's arms and the dispatch address, and
-`UnresolvedIndirectBranch`. Only `Unconditional`, `CondBranch` and `Switch`
-ever have an outgoing edge.
-
-Classifying a `BranchIndirect` needs the IR, which sits above this crate, so a
-site is either seated from `known_targets` or deferred as
-`UnresolvedIndirectBranch`. A seat maps `LinkRegister` to `Return`, an
-out-of-range `Single` to `TailCall`, and anything else to a `Switch`, an
-in-function `Single` included, so a later round can widen the site instead of
-latching its first answer. A deferral keeps the `target_vn` and
-address anchor the value a resolver inspects before feeding the answer back.
-
-A target interior to a region but off every pcode boundary is neither: no split
-can express it. It comes from overlapping code, or from a jump-table entry read
-past the end of the table. For a direct branch the edge is wired to the region
-that owns those bytes, whose stream starts earlier, so the arm is not the stream
-the branch jumps to.
-
-A table's arms are judged at the seal. One arm off every boundary, or one out
-of the function bound, and the WHOLE site defers as
-`UnresolvedIndirectBranch`, a bad arm being evidence that the bound the
-classifier derived is wrong. Only an arm the site learns about
-after it was seated is dropped on its own, and a `Switch` left with no arm
-degrades to `UnresolvedIndirectBranch` too. So does one whose bytes turn out to
-be decoded in the other ISA mode. Every edge the entry reaches without an arm is
-decoded before any arm: such an edge proves the mode it carries, a
-classifier-committed `isa_bit` only claims one, so that decode keeps the bytes
-and the arm goes. An edge found while decoding an arm's code is only as certain
-as the arm and arrives after the arms decoded before it, so there the first
-decode keeps the bytes, the edge is wired, and the clash is reported.
-
-## Nothing is dropped silently
-
-A completed `Cfg` may be incomplete, and says so through seven getters. Read them
-all: they overlap in cause and not in content.
-
-- `undecodable_seeded_targets`: a seeded target that would not decode, or that
-  leads to code that would not, with the dispatch site it was an arm of. A
-  seeded target is a misclassification, so its edge is dropped and reported.
-  The entry names the ARM; the bytes that would not decode are on
-  `undecodable_branch_targets`. "Leads to" stops at the next dispatch, so an
-  arm reaching those bytes only back through another table keeps its edge.
-  Bytes Sleigh rejects on a path from the entry through no arm still fail the
-  whole build.
-- `unmapped_branch_targets`: a DIRECT branch or a sequential fall-through to an
-  address the reader has no bytes for. It leaves through an empty `TailCall`
-  stub, so the regions that did decode survive. A MIPS branch whose delay slot
-  is unmapped reports the branch's own address. An unmapped ENTRY is still an
-  `Err` on the whole build.
-- `undecodable_branch_targets`: a direct branch, or a fall-through past a call,
-  to bytes that hold no instruction: Sleigh rejects them, or
-  `CfgOptions::data_ranges` (an ELF's `$d` mapping symbols) marks them as data.
-  A branch leaves through a `TailCall` stub; the call is ended as `NoReturn`,
-  dropping any instructions between it and the bytes. A literal pool never
-  decodes as code, and a traceback table or an `abort` word no longer fails the
-  build. The instruction at the start address decodes even inside a data range.
-- `isa_mode_conflicts`: two edges reached an address carrying different ISA
-  modes, and the losing path decodes in the winner's. A direct edge the entry
-  reaches without an arm wins over an arm; otherwise the first decode wins by
-  work-queue order, so neither decode can be trusted.
-- `interior_branch_targets`: the off-boundary targets above, whose edge is
-  inexact (a direct branch) or absent (a dropped `Switch` arm), plus a region
-  start a later decode stepped over.
-- `link_register_seated` and `tail_call_seated`: sites a seated answer consumed
-  at build time. No placeholder and no `Switch` anchor survives, so nothing
-  later can tell a genuine `bx lr` or tail call from a dispatch collapsed to its
-  first derived answer.
-
-Depends only on `strider-target`, `dot`, `rsleigh`, `anyhow`, `petgraph` and
-`rustc-hash`.
+`Cfg::incomplete()` is a sorted set of `(PcodeInsnAddr, Reason)`; each
+reason's contract is on `Reason`. A build resolves nothing, so every deferred
+site is `UnresolvedBranch` and every seat `UnverifiedSeed`. An unmapped or
+undecodable entry, or a fall-through no call explains into bytes Sleigh
+rejects, fails the build.

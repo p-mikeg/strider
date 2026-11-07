@@ -12,7 +12,8 @@ import pytest
 
 import strider
 from strider import pattern as p
-from .conftest import fixture_path
+from strider import template as tpl
+from .conftest import built_lifter_and_function, fixture_path
 
 
 @pytest.fixture(scope="module")
@@ -112,10 +113,13 @@ def test_ordered_pins_the_outer_op_only(mul_add_fn):
 
 @pytest.fixture(scope="module")
 def ne_fn():
-    """`control.c::factorial`: one `!=` over two distinct values."""
+    """`control.c::factorial` with its one `a < b` grafted into `a != b`: the
+    optimised x64 corpus keeps no int `!=` over two distinct values."""
     _cfg, fn, _unresolved = strider.lift.load_elf(
         str(fixture_path("x64", "control"))
     ).analyze("factorial")
+    x, y = p.Capture(), p.Capture()
+    assert fn.rewrite(find=p.int_slt(p.var(x), p.var(y)), replace=tpl.int_ne(x, y)) == 1
     return fn
 
 
@@ -201,3 +205,92 @@ def test_ordered_is_a_no_op_on_an_unlowered_non_commutative_binary(symbol, ctor)
     free = fn.find_all(pat)
     assert len(free) >= 1
     assert len(fn.find_all(pat.ordered())) == len(free)
+
+
+def test_ordered_pins_through_inputs_of_width(add_fn, ne_fn):
+    a, b = p.Capture("a"), p.Capture("b")
+
+    pinned = add_fn.find_all(p.inputs_of_width(64, p.int_add(p.var(a), p.var(b))).ordered())
+    assert len(pinned) == 1
+    assert pinned[0].node(a) == _add_operands(add_fn)[0]
+
+    pinned = ne_fn.find_all(p.bool_inputs(p.int_ne(p.var(a), p.var(b))).ordered())
+    assert len(pinned) == 1, "the pin must land on the Equal under the Xor"
+    assert [pinned[0].node(a), pinned[0].node(b)] == _ne_operands(ne_fn)
+
+
+def test_ordered_pins_a_builder_through_inputs_of_width(add_fn):
+    a, b = p.Capture("a"), p.Capture("b")
+    pat = p.inputs_of_width(64, p.int_binary("Add", p.var(a), p.var(b)))
+    assert len(add_fn.find_all(pat)) == 2
+    pinned = add_fn.find_all(pat.ordered())
+    assert len(pinned) == 1
+    assert pinned[0].node(a) == _add_operands(add_fn)[0]
+
+
+@pytest.mark.parametrize(
+    "pat",
+    [
+        p.inputs_of_width(32, p.float_binary("Add", p.anything(), p.anything())),
+        p.bool_inputs(p.bool_binary("And", p.anything(), p.anything())),
+        p.bool_inputs(p.int_binary("Xor", p.anything(), p.anything())),
+    ],
+)
+def test_ordered_accepts_every_binary_builder_through_inputs_of_width(pat):
+    pat.ordered()
+
+
+def test_ordered_still_refuses_a_unary_op_over_a_builder():
+    with pytest.raises(strider.StriderError, match=re.escape("int_neg()")):
+        p.int_neg(p.int_binary("Add", p.anything(), p.anything())).ordered()
+
+
+@pytest.fixture(scope="module")
+def float_ne_fn():
+    """`floats.c::f64_compare` with each `a < b` grafted into `a != b`: the
+    corpus lifts no float `!=` over two distinct values."""
+    _lift, fn = built_lifter_and_function("x64", "floats", "f64_compare", optimize=False)
+    x, y = p.Capture(), p.Capture()
+    assert fn.rewrite(find=p.float_lt(p.var(x), p.var(y)), replace=tpl.float_ne(x, y))
+    return fn
+
+
+def _float_ne_sites(fn):
+    """`(root, lhs, rhs)` per float `!=` over two distinct values, in IR slot
+    order."""
+    sites = set()
+    for i in fn.node_ids():
+        if "IntBinaryOp(Xor)" not in fn.node(i).kind():
+            continue
+        for inp in fn.node(i).inputs():
+            if "FloatCmpOp(Equal)" not in inp.kind():
+                continue
+            l, r = inp.inputs()
+            if l != r:
+                sites.add((i, l.id, r.id))
+    return sites
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda a, b: p.float_ne(a, b).ordered(),
+        lambda a, b: p.float_ne(a, b).ordered().ordered(),
+    ],
+    ids=["ordered", "ordered-twice"],
+)
+def test_ordered_pins_a_lowered_float_ne(float_ne_fn, build):
+    a, b = p.Capture("a"), p.Capture("b")
+
+    def bindings(pat):
+        return {
+            (m.roots[0], m.node(a).id, m.node(b).id)
+            for m in float_ne_fn.find_all(pat)
+            if m.node(a) != m.node(b)
+        }
+
+    sites = _float_ne_sites(float_ne_fn)
+    assert len(sites) == 2
+    swapped = {(root, r, l) for root, l, r in sites}
+    assert bindings(p.float_ne(p.var(a), p.var(b))) == sites | swapped
+    assert bindings(build(p.var(a), p.var(b))) == sites

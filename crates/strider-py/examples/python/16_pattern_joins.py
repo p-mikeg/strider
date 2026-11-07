@@ -13,13 +13,9 @@ def analyze(elf: str, name: str):
     prog = strider.lift.load_elf(
         str(WORKSPACE / "fixtures" / "out" / "x86" / f"{elf}.elf")
     )
-    opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-    )
-    return prog.analyze(name, opts=opts)[1]
+    return prog.analyze(name)[1]
 
 
-# --- 1. Producer -> consumer: one value, two patterns, one shared capture ---
 # The capture prod is the multiply's result AND the add's operand, so the join
 # pairs each a*b with the + c that consumes it.
 print("=== 1. producer -> consumer (shared capture) ===")
@@ -36,7 +32,6 @@ print(f"equivalent nested add(mul(a, b), c): {len(nested)} binding rows")
 print("  a shared capture equals the nested form; the two halves need not nest")
 
 
-# --- 2. JoinPredicate: correlate two INDEPENDENT matches ---
 # Two loads off the same base aren't one nested pattern; a join relates them.
 # captures() declares the captures it correlates; constraint() decides.
 print("\n=== 2. JoinPredicate over two matches ===")
@@ -63,9 +58,7 @@ for r in pairs:
     print(f"  base + {r.uint_opt(o1)} and base + {r.uint_opt(o2)}")
 
 
-# --- 3. Constraint algebra: negate (and any_of / all_of) ---
-# Constraints compose like booleans. negate(SameOffset) recovers section 2;
-# any_of / all_of OR / AND several conditions over one join.
+# negate(SameOffset) recovers section 2; any_of / all_of OR / AND constraints.
 print("\n=== 3. composing constraints ===")
 
 

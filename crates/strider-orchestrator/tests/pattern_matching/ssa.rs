@@ -1,5 +1,5 @@
 //! SSA-shaped patterns: `phi()`, `initial_var_for(vn)`, and the
-//! `SideTables::arg_index_to_values` side-table `FunctionArgDetect` populates.
+//! `FunctionSideTables::arg_index_to_values` side-table `FunctionArgDetect` populates.
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRViewer, IntCmpOp};
@@ -57,7 +57,7 @@ fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
 }
 
 // After `FunctionArgDetect`, the underlying `InitialVar` / `Load` nodes
-// survive unchanged and are recorded in `SideTables::arg_index_to_values`.
+// survive unchanged and are recorded in `FunctionSideTables::arg_index_to_values`.
 // The tests below check the side-table contents and carrier node kinds.
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
@@ -74,25 +74,22 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let sp_v = t.read_var(&sp);
     let four = t.u64(4);
     let addr = t.add(sp_v, four);
-    let v = t.load_ram(addr, ValueType::I64);
+    let v = t.load_ram(addr, ValueType::int(64));
     let mut function = t.ret_val(v);
 
     // Collapse the single-predecessor `read_var(sp)` phi so the stack-arg
     // load is a bare `InitialVar(sp) + 4` terminal (the production shape
     // after PhiCollapse) before the SP-aware post-pass runs.
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
-    pre.add(strider_orchestrator::opt::PhiCollapse);
-    pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-    )
-    .expect("phi collapse");
+    pre.add(&strider_orchestrator::opt::PhiCollapse);
+    pre.add(&strider_orchestrator::opt::RegionCollapse);
+    pre.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("phi collapse");
 
     strider_orchestrator::opt::run_post(
         &FunctionArgDetect,
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
+        &strider_orchestrator::opt::OptCtx::new(None),
     )
     .expect("FunctionArgDetect");
     function
@@ -217,13 +214,10 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
     // become the merge region's direct predecessors, the shape the
     // direct-edge constraint keys on.
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
-    pre.add(strider_orchestrator::opt::PhiCollapse);
-    pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-    )
-    .expect("collapse");
+    pre.add(&strider_orchestrator::opt::PhiCollapse);
+    pre.add(&strider_orchestrator::opt::RegionCollapse);
+    pre.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("collapse");
 
     let m = Matcher::new(&function);
     let (t, f, ph, v) = (
@@ -410,13 +404,10 @@ fn graph_memphi_diamond() -> strider_ir::Function {
 fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     let mut function = graph_memphi_diamond();
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
-    pre.add(strider_orchestrator::opt::PhiCollapse);
-    pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-    )
-    .expect("collapse");
+    pre.add(&strider_orchestrator::opt::PhiCollapse);
+    pre.add(&strider_orchestrator::opt::RegionCollapse);
+    pre.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("collapse");
 
     let m = Matcher::new(&function);
     let (t, f, mp, sv, dv) = (
@@ -467,13 +458,10 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
 fn collapsed_phi_diamond() -> strider_ir::Function {
     let (mut function, _reg) = graph_phi_for_reg();
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
-    pre.add(strider_orchestrator::opt::PhiCollapse);
-    pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-    )
-    .expect("collapse");
+    pre.add(&strider_orchestrator::opt::PhiCollapse);
+    pre.add(&strider_orchestrator::opt::RegionCollapse);
+    pre.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("collapse");
     function
 }
 
@@ -607,21 +595,20 @@ fn negate_over_an_unbound_capture_drops_every_row() {
     );
 }
 
-/// No match when the arm value is a different constant.
+/// The false arm's constant is an input of the same phi, so only the edge
+/// constraint can reject it on the true edge.
 #[test]
-fn phi_input_from_edge_any_input_negative() {
+fn phi_input_from_edge_rejects_the_other_arms_constant() {
     let function = collapsed_phi_diamond();
+    for k in [1u64, 2] {
+        a::matches(&function, phi().any_input(int_const(k)).build(), 1);
+    }
     let m = Matcher::new(&function);
     let (t, ph, v) = (Capture::new(), Capture::new(), Capture::new());
     let guard = if_else().capture_true(t).build();
-    // 0xDEAD is on neither arm.
-    let phi_p = phi()
-        .any_input(int_const(0xDEADu64).capture(v))
-        .capture(ph)
-        .build();
-
-    let hits = m
-        .find_joined_constrained(
+    let on_true_edge = |k: u64| -> usize {
+        let phi_p = phi().any_input(int_const(k).capture(v)).capture(ph).build();
+        m.find_joined_constrained(
             &[&guard, &phi_p],
             &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
@@ -629,8 +616,12 @@ fn phi_input_from_edge_any_input_negative() {
                 value: v,
             }],
         )
-        .unwrap();
-    assert!(hits.is_empty(), "no arm merges 0xDEAD");
+        .unwrap()
+        .len()
+    };
+    // `reg == 0` takes the arm that writes 1.
+    assert_eq!(on_true_edge(1), 1);
+    assert_eq!(on_true_edge(2), 0, "2 merges on the false edge only");
 }
 
 /// A capture bound BOTH by a free-floating root and by `any_input` on the phi

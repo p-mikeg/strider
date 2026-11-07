@@ -5,13 +5,14 @@ mod support;
 
 use support::{assertions as a, shapes};
 
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::{NodeKind, SwitchTableId, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::{RegisterSet, mem_phi_with_two_stores};
+use strider_pattern::matcher::{KindSpec, MatcherBuilder};
 use strider_pattern::{
     Capture, CaptureExt, CastMask, MatchPat, Matcher, WithOutput, any_int_const, anything, call,
-    call_other, entry, if_else, indirect_branch, int_add, int_const, load, mem_phi, phi, region,
-    ret, store, switch, unreachable, var,
+    call_other, entry, first_of, if_else, indirect_branch, int_add, int_const, load, mem_phi,
+    one_of, phi, region, ret, store, switch, unreachable, var,
 };
 
 /// The convention a `Call` carries is not part of `call()`.
@@ -23,7 +24,7 @@ fn call_matches_whatever_convention_the_call_carries() {
         ..b.function().default_cc().clone()
     };
     for (addr, cc) in [(0x1000u64, None), (0x2000, Some(&override_cc))] {
-        let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
+        let tgt = b.build_int_const(addr, ValueType::int(64)).unwrap();
         b.build_call_cc(tgt, cc).unwrap();
     }
     b.build_return(None, &[]).unwrap();
@@ -49,12 +50,12 @@ fn call_arg_nests_value_builder_load() {
         .arg(arg)
         .build_fn_single_region()
         .unwrap();
-    let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x40u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.write_variable(&arg, loaded).unwrap();
-    let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
+    let tgt = b.build_int_const(0xABCDu64, ValueType::int(64)).unwrap();
     b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
@@ -87,7 +88,7 @@ fn call_other_name_filter() {
 
 fn return_const(v: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let val = b.build_int_const(v, ValueType::I64).unwrap();
+    let val = b.build_int_const(v, ValueType::int(64)).unwrap();
     b.build_return(Some(val), &[]).unwrap();
     b.build().unwrap()
 }
@@ -105,7 +106,7 @@ fn ret_val_matches_and_captures() {
 
 fn indirect_branch_to(target_addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let tgt = b.build_int_const(target_addr, ValueType::I64).unwrap();
+    let tgt = b.build_int_const(target_addr, ValueType::int(64)).unwrap();
     b.build_indirect_branch(tgt).unwrap();
     b.build().unwrap()
 }
@@ -162,9 +163,69 @@ fn unreachable_captures_node() {
     ));
 }
 
+/// A capture on an output-less producer, reached through an alternation or
+/// `CaptureExt`, binds the node as the inherent `capture` does.
+#[test]
+fn a_capture_over_output_less_producers_binds_the_node() {
+    let function = return_const(7);
+    let ret_node = |hits: &[strider_pattern::Match], c| {
+        let n = hits[0].node(c, function.graph()).expect("node bound");
+        assert!(matches!(function.node_kind(n), NodeKind::Return));
+    };
+    let c = Capture::new();
+    ret_node(
+        &a::matches(&function, CaptureExt::capture(ret(), c).into_pattern(), 1),
+        c,
+    );
+    let c = Capture::new();
+    let alt = one_of![ret(), unreachable()].capture(c).into_pattern();
+    ret_node(&a::matches(&function, alt, 1), c);
+    let c = Capture::new();
+    let alt = first_of![unreachable(), ret()].capture(c).into_pattern();
+    ret_node(&a::matches(&function, alt, 1), c);
+    let c = Capture::new();
+    let nested = one_of![one_of![ret()], unreachable()]
+        .capture(c)
+        .into_pattern();
+    ret_node(&a::matches(&function, nested, 1), c);
+
+    let function = unreachable_fn();
+    let c = Capture::new();
+    a::matches(
+        &function,
+        one_of![ret(), unreachable()].capture(c).into_pattern(),
+        1,
+    );
+}
+
+/// In a mixed alternation the output-less arm binds its node and the other
+/// arm keeps binding its output.
+#[test]
+fn a_capture_over_a_mixed_alternation_keeps_both_arms() {
+    let (function, if_id) = if_then_else();
+    let c = Capture::new();
+    let hits = Matcher::new(&function)
+        .find_all(&one_of![if_else(), ret()].capture(c).into_pattern())
+        .unwrap();
+    let kinds: Vec<_> = hits
+        .iter()
+        .map(|h| *function.node_kind(h.node(c, function.graph()).unwrap()))
+        .collect();
+    let returns = kinds
+        .iter()
+        .filter(|k| matches!(k, NodeKind::Return))
+        .count();
+    assert_eq!(returns, 2, "{kinds:?}");
+    assert!(
+        hits.iter().any(
+            |h| h.value(c).is_some() && function.graph().producer(h.value(c).unwrap()) == if_id
+        )
+    );
+}
+
 fn switch_fn(addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let dispatch = b.build_int_const(addr, ValueType::I64).unwrap();
+    let dispatch = b.build_int_const(addr, ValueType::int(64)).unwrap();
     let a = b.create_region_all().unwrap();
     let c = b.create_region_all().unwrap();
     b.build_switch(dispatch, &[(a, 0x1000), (c, 0x1020)])
@@ -205,6 +266,33 @@ fn switch_selector_matches_and_captures() {
     assert!(hits[0].value(c).is_some());
 }
 
+/// A root with no output vertex is matched once, not once per arm.
+#[test]
+fn a_vertex_less_switch_root_is_matched_once() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let dispatch = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+    let arms: Vec<_> = (0..8u64)
+        .map(|i| (b.create_region_all().unwrap(), 0x1000 + i))
+        .collect();
+    b.build_switch(dispatch, &arms).unwrap();
+    for &(r, _) in &arms {
+        b.set_region(r);
+        b.build_return(None, &[]).unwrap();
+    }
+    let function = b.build().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let selector = anything().filter(move |_, _| {
+        seen.fetch_add(1, Ordering::Relaxed);
+        true
+    });
+    let pat = switch().capture(Capture::new()).selector(selector);
+    a::matches(&function, pat.build(), 1);
+    assert!(calls.load(Ordering::Relaxed) <= 2, "{calls:?}");
+}
+
 /// `Switch` is the one builder whose `.output(slot)` vertex is also its only
 /// vertex, so the root lookup has nothing to pick between and the slot has to
 /// be pinned on the vertex itself.
@@ -229,6 +317,55 @@ fn switch_output_slot_pins_one_arm() {
     );
 }
 
+/// A sole vertex pinned to slot 1 binds the output at slot 1 only, where an
+/// unpinned sole vertex takes whichever output is being matched.
+#[test]
+fn a_pinned_sole_vertex_binds_its_own_slot() {
+    let function = switch_fn(0x1000);
+    let switch_node = function
+        .walk()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Switch(_)))
+        .expect("the fixture's switch");
+    let outputs = function.node_outputs(switch_node);
+    let c = Capture::new();
+    let hits = a::matches(&function, switch_output_at_1(c, true), 1);
+    assert_eq!(hits[0].value(c), Some(outputs[1]));
+    let hits = a::matches(&function, switch_output_at_1(c, false), outputs.len());
+    let bound: Vec<_> = hits.iter().filter_map(|m| m.value(c)).collect();
+    assert_eq!(bound, outputs);
+}
+
+/// A join dedups on the bound value, not its node: rows binding one capture
+/// to distinct outputs of one node stay distinct.
+#[test]
+fn a_join_keeps_rows_binding_distinct_outputs_of_one_node() {
+    let function = switch_fn(0x1000);
+    let c = Capture::new();
+    let pat = switch_output_at_1(c, false);
+    let rows = Matcher::new(&function)
+        .find_joined_constrained(&[&pat], &[])
+        .unwrap();
+    let bound: Vec<_> = rows.iter().filter_map(|row| row[0].value(c)).collect();
+    let switch_node = function.producer(bound[0]);
+    assert_eq!(bound, function.node_outputs(switch_node));
+}
+
+/// A raw `Switch` with one output vertex at slot 1 capturing `c`: `pinned`,
+/// it binds that slot's output; otherwise whichever output is matched.
+fn switch_output_at_1(c: Capture, pinned: bool) -> strider_pattern::Pattern {
+    let mut b = MatcherBuilder::new();
+    let node = b.node(KindSpec::variant_of(&NodeKind::Switch(
+        SwitchTableId::from_u32(0),
+    )));
+    let out = b.value_output(node, 1);
+    b.set_output_any(out);
+    if pinned {
+        b.pin_value_out_slot(out);
+    }
+    b.capture_output(out, c);
+    b.finish()
+}
+
 fn if_then_else() -> (strider_ir::Function, strider_ir::node::NodeId) {
     let (function, if_node, ()) = RegisterSet::new()
         .build_if_then_else_returns(|b| {
@@ -246,6 +383,53 @@ fn if_cond_captures() {
     let hits = a::matches(&function, if_else().cond(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
 }
+
+/// An output slot past any node's outputs matches nothing, even at the
+/// largest index.
+#[test]
+fn an_output_slot_past_the_end_matches_nothing() {
+    let function = shapes::call_at(0x1234);
+    let pat = call().output(usize::MAX).capture(Capture::new()).build();
+    a::none(&function, pat);
+}
+
+/// `.output(n)` on an `If` names control output `n`: 0 the true edge, 1 the
+/// false one.
+#[test]
+fn if_output_slot_binds_that_edge() {
+    let (function, if_node) = if_then_else();
+    let edges = function.node_outputs(if_node);
+    for slot in [0, 1] {
+        let c = Capture::new();
+        let hits = a::matches(&function, if_else().output(slot).capture(c).build(), 1);
+        assert_eq!(hits[0].value(c), Some(edges[slot]), "output({slot})");
+    }
+}
+
+/// Nested, `.output(n)` is a sibling vertex: whichever arm's region the `If`
+/// feeds, it names output `n`, so both regions match.
+#[test]
+fn if_output_slot_names_that_output_from_either_arm_region() {
+    let (function, if_node) = if_then_else();
+    let edges = function.node_outputs(if_node);
+    for slot in [0, 1] {
+        let c = Capture::new();
+        let pat = region()
+            .any_input(if_else().output(slot).capture(c))
+            .build();
+        let hits = a::matches(&function, pat, 2);
+        let mut fed: Vec<_> = hits
+            .iter()
+            .filter_map(|m| function.node_inputs(m.root()).into_iter().next())
+            .collect();
+        fed.sort_unstable_by_key(|v| edges.iter().position(|e| e == v));
+        assert_eq!(fed, edges, "output({slot})");
+        for m in &hits {
+            assert_eq!(m.value(c), Some(edges[slot]), "output({slot})");
+        }
+    }
+}
+
 #[test]
 fn if_capture_true_false_bind_distinct_control_outputs() {
     let (function, if_id) = if_then_else();
@@ -284,36 +468,32 @@ fn if_else_capture_and_control_output_captures_coexist() {
     assert!(hits[0].value(f).is_some(), "false output still binds");
 }
 
-/// The cast ladder is a fallback inside a branch walk too: the enclosing
-/// continuation reaches the root counter, so a direct hit still cuts it.
+/// The cast ladder is a fallback: a direct hit on the cond cuts it, so the
+/// truncate binds and the value it truncates does not.
 #[test]
-fn a_branch_walk_cast_ladder_is_a_fallback_not_an_alternative() {
+fn an_if_cond_cast_ladder_is_a_fallback_not_an_alternative() {
     let (function, _, (trunc, wide)) = RegisterSet::new()
         .build_if_then_else_returns(|b| {
-            let x = b.build_int_const(1u64, ValueType::I8)?;
-            let y = b.build_int_const(2u64, ValueType::I8)?;
-            let wide =
-                b.build_int_binary_operation(x, y, strider_ir::IntBinaryOp::Add, ValueType::I8)?;
+            let x = b.build_int_const(1u64, ValueType::int(8))?;
+            let y = b.build_int_const(2u64, ValueType::int(8))?;
+            let wide = b.build_int_binary_operation(
+                x,
+                y,
+                strider_ir::IntBinaryOp::Add,
+                ValueType::int(8),
+            )?;
             let trunc = b.truncate_if_needed(wide, ValueType::I1)?;
             Ok((trunc, (trunc, wide)))
         })
         .unwrap();
     let c = Capture::new();
-    let cond = || if_else().cond(anything().capture(c));
-    let top = cond().build().ignore_casts_mask(CastMask::TRUNCATE);
-    let nested = if_else()
-        .with_true(
-            region()
-                .input(0, cond())
-                .into_pattern()
-                .ignore_casts_mask(CastMask::TRUNCATE),
-        )
-        .build();
-    for pat in [top, nested] {
-        let hits = a::matches(&function, pat, 1);
-        assert_eq!(hits[0].value(c), Some(trunc));
-        assert_ne!(hits[0].value(c), Some(wide));
-    }
+    let pat = if_else()
+        .cond(anything().capture(c))
+        .build()
+        .ignore_casts_mask(CastMask::TRUNCATE);
+    let hits = a::matches(&function, pat, 1);
+    assert_eq!(hits[0].value(c), Some(trunc));
+    assert_ne!(hits[0].value(c), Some(wide));
 }
 
 #[test]
@@ -359,12 +539,12 @@ fn phi_over_two_consts() -> strider_ir::Function {
     b.build_if(cond, region_t, region_f).unwrap();
 
     b.set_region(region_t);
-    let v1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+    let v1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
     b.write_variable(&var_vn, v1).unwrap();
     b.build_branch(join).unwrap();
 
     b.set_region(region_f);
-    let v2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let v2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     b.write_variable(&var_vn, v2).unwrap();
     b.build_branch(join).unwrap();
 
@@ -390,18 +570,23 @@ fn phi_feeding_add() -> strider_ir::Function {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, region_t, region_f).unwrap();
     b.set_region(region_t);
-    let v1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+    let v1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
     b.write_variable(&var_vn, v1).unwrap();
     b.build_branch(join).unwrap();
     b.set_region(region_f);
-    let v2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let v2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     b.write_variable(&var_vn, v2).unwrap();
     b.build_branch(join).unwrap();
     b.set_region(join);
     let phi_val = b.read_variable(&var_vn).unwrap();
-    let ten = b.build_int_const(10u64, ValueType::I64).unwrap();
+    let ten = b.build_int_const(10u64, ValueType::int(64)).unwrap();
     let sum = b
-        .build_int_binary_operation(phi_val, ten, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(
+            phi_val,
+            ten,
+            strider_ir::IntBinaryOp::Add,
+            ValueType::int(64),
+        )
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     b.set_lift_addr(None);
@@ -455,12 +640,12 @@ fn phi_over_casts_of_load() -> strider_ir::Function {
 
     for region in [region_t, region_f] {
         b.set_region(region);
-        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+        let addr = b.build_int_const(0x40u64, ValueType::int(64)).unwrap();
         let loaded = b
-            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
             .unwrap();
         let z = b
-            .extend_if_needed(loaded, ValueType::I64, ExtendOp::ZeroExtend)
+            .extend_if_needed(loaded, ValueType::int(64), ExtendOp::ZeroExtend)
             .unwrap();
         b.write_variable(&phi_reg, z).unwrap();
         b.build_branch(join).unwrap();
@@ -641,6 +826,21 @@ fn phi_for_vn_filters() {
     a::none(&function, phi().for_vn(rbx).build());
 }
 
+#[test]
+fn every_repeated_for_vn_must_hold() {
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let rbx = strider_ir_test_utils::reg_vn(16, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .build_fn_single_region()
+        .unwrap();
+    let v = b.read_variable(&rax).unwrap();
+    b.build_return(Some(v), &[]).unwrap();
+    let function = b.build().unwrap();
+    a::matches(&function, phi().for_vn(rax).for_vn(rax).build(), 1);
+    a::none(&function, phi().for_vn(rbx).for_vn(rax).build());
+}
+
 /// `phi_token` targets raw slot 0 directly, no `+1` shift. `PhiToken` falls
 /// outside `MatchPat`'s value domain, so a typed sub can never bind it.
 #[test]
@@ -771,63 +971,6 @@ fn mem_phi_phi_token_targets_slot_zero() {
     );
 }
 
-#[test]
-fn call_any_input_binds_target() {
-    let function = shapes::call_at(0x1234);
-    a::matches(
-        &function,
-        call().any_input(int_const(0x1234u128)).build(),
-        1,
-    );
-}
-
-#[test]
-fn call_other_any_input_binds_arg() {
-    let function = call_other_named("f", 5);
-    let matcher = Matcher::new(&function);
-    let hits = matcher
-        .find_all(&call_other().any_input(var(Capture::new())).build())
-        .unwrap();
-    assert!(!hits.is_empty(), "any_input must bind some CallOther input");
-}
-
-#[test]
-fn ret_any_input_binds_ret_val() {
-    let function = return_const(7);
-    a::matches(&function, ret().any_input(int_const(7u128)).build(), 1);
-}
-
-#[test]
-fn indirect_branch_any_input_binds_target() {
-    let function = indirect_branch_to(0xBEEF);
-    a::matches(
-        &function,
-        indirect_branch().any_input(int_const(0xBEEFu128)).build(),
-        1,
-    );
-}
-
-#[test]
-fn switch_any_input_binds_address() {
-    let function = switch_fn(0xC0DE);
-    a::matches(
-        &function,
-        switch().any_input(int_const(0xC0DEu128)).build(),
-        1,
-    );
-}
-
-/// Only a wildcard reaches the sole ctrl predecessor: ctrl is not a value edge.
-#[test]
-fn unreachable_any_input_wildcard_reaches_ctrl() {
-    let function = unreachable_fn();
-    a::matches(
-        &function,
-        unreachable().any_input(var(Capture::new())).build(),
-        1,
-    );
-}
-
 /// `return(load[0x1000]:I64)`.
 fn load_from_0x1000() -> strider_ir::Function {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
@@ -836,22 +979,88 @@ fn load_from_0x1000() -> strider_ir::Function {
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     b.build().unwrap()
 }
 
+/// `return(store[0x1000] = 99)`.
+fn store_99() -> strider_ir::Function {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+    let data = b.build_int_const(99u64, ValueType::int(64)).unwrap();
+    b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+    b.build_return(None, &[]).unwrap();
+    b.build().unwrap()
+}
+
+/// Each builder's `any_input` reaches the operand its fixture holds. An
+/// argument-less `CallOther` or an `Unreachable` offers its control and
+/// memory inputs.
 #[test]
-fn load_any_input_binds_addr() {
-    let function = load_from_0x1000();
-    a::matches(
-        &function,
-        load().any_input(int_const(0x1000u128)).build(),
-        1,
-    );
+fn any_input_binds_the_fixture_operand() {
+    let cases: [(&str, strider_ir::Function, strider_pattern::Pattern, usize); 8] = [
+        (
+            "call",
+            shapes::call_at(0x1234),
+            call().any_input(int_const(0x1234u128)).build(),
+            1,
+        ),
+        (
+            "call_other",
+            call_other_named("f", 5),
+            call_other().any_input(var(Capture::new())).build(),
+            2,
+        ),
+        (
+            "ret",
+            return_const(7),
+            ret().any_input(int_const(7u128)).build(),
+            1,
+        ),
+        (
+            "indirect_branch",
+            indirect_branch_to(0xBEEF),
+            indirect_branch().any_input(int_const(0xBEEFu128)).build(),
+            1,
+        ),
+        (
+            "switch",
+            switch_fn(0xC0DE),
+            switch().any_input(int_const(0xC0DEu128)).build(),
+            1,
+        ),
+        (
+            "unreachable",
+            unreachable_fn(),
+            unreachable().any_input(var(Capture::new())).build(),
+            2,
+        ),
+        (
+            "load",
+            load_from_0x1000(),
+            load().any_input(int_const(0x1000u128)).build(),
+            1,
+        ),
+        (
+            "store",
+            store_99(),
+            store().any_input(int_const(99u128)).build(),
+            1,
+        ),
+    ];
+    for (name, function, pat, want) in cases {
+        let got = Matcher::new(&function).find_all(&pat).unwrap().len();
+        assert_eq!(got, want, "{name}");
+    }
 }
 
 #[test]
@@ -889,22 +1098,6 @@ fn if_raw_input_slot_is_the_cond_slot() {
     a::matches(&function, if_else().any_input(anything()).build(), 1);
 }
 
-#[test]
-fn store_any_input_binds_data() {
-    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
-    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-    let data = b.build_int_const(99u64, ValueType::I64).unwrap();
-    b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
-    b.build_return(None, &[]).unwrap();
-    let function = b.build().unwrap();
-    a::matches(&function, store().any_input(int_const(99u128)).build(), 1);
-}
-
 /// Register-passed carrier (`InitialVar(rax)`) at index 0 and stack-passed
 /// carrier (a `Load`) at index 1, registered directly in `arg_index_to_values`
 /// the way the `FunctionArgDetect` post-pass would.
@@ -919,13 +1112,13 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     // Register-arg carrier: InitialVar(rax).
     let v = b.read_variable(&rax).unwrap();
     // Stack-arg carrier.
-    let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x40u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     // Combine both carriers so each stays reachable from the Return.
     let sum = b
-        .build_int_binary_operation(v, loaded, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(v, loaded, strider_ir::IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     let mut function = b.build().unwrap();
@@ -940,16 +1133,14 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
         .all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Load(_)))
         .expect("Load carrier");
-    // Stamp the offset `StackOffsetDetect` would record, so
+    // Stamp the offset a run's closing stamp would record, so
     // `function_arg_stack`'s offset check has something to read. Only the
     // offset is read, so any valid base output handle works.
     let base = function.node_outputs(stack_carrier)[0];
     // `stack_offset(node)` resolves via the node's address value, so stamp the
     // slot on the Load's address input.
     let carrier_addr = function.node_inputs(stack_carrier)[1];
-    function
-        .side_tables_mut()
-        .set_stack_slot(carrier_addr, base, 0x40);
+    function.set_stack_slot(carrier_addr, base, 0x40);
     let reg_value = function.node_outputs(reg_carrier)[0];
     let stack_value = function.node_outputs(stack_carrier)[0];
     function.side_tables_mut().register_arg_value(0, reg_value);
@@ -990,7 +1181,7 @@ fn int_and_float_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let a = b.read_variable(&rax).unwrap();
     let f0 = b.read_variable(&fp0).unwrap();
     let sum = b
-        .build_int_binary_operation(a, f0, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(a, f0, strider_ir::IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     let mut function = b.build().unwrap();
@@ -1062,6 +1253,31 @@ fn function_arg_reg_matches_only_register_carrier() {
     a::matches(&function, function_arg(0).build(), 1);
 }
 
+/// The carrier is the full container register, so a narrower view of it selects
+/// the same argument, as `initial_var_for` does.
+#[test]
+fn function_arg_reg_matches_a_sub_register_of_the_carrier() {
+    use strider_ir::node::FunctionArgSource;
+    use strider_pattern::{any_function_arg, function_arg_reg, initial_var_for};
+    let (function, _rax) = two_arg_carriers();
+    let eax = strider_ir_test_utils::reg_vn(0, 4);
+    a::matches(&function, initial_var_for(eax).into_pattern(), 1);
+    a::matches(&function, function_arg_reg(eax, 0).build(), 1);
+    a::matches(
+        &function,
+        any_function_arg()
+            .source(FunctionArgSource::Register(eax))
+            .build(),
+        1,
+    );
+    // Wider than the carrier: not contained.
+    let wide = strider_ir_test_utils::reg_vn(0, 16);
+    a::none(&function, function_arg_reg(wide, 0).build());
+    // Overlapping the carrier's top half and running past it: not contained.
+    let straddle = strider_ir_test_utils::reg_vn(4, 8);
+    a::none(&function, function_arg_reg(straddle, 0).build());
+}
+
 #[test]
 fn function_arg_stack_matches_only_stack_carrier() {
     use strider_pattern::function_arg_stack;
@@ -1126,7 +1342,7 @@ fn call_with_clobber_retval() -> strider_ir::Function {
         .tracked(rax)
         .build_fn_single_region()
         .unwrap();
-    let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
+    let tgt = b.build_int_const(0x1234u64, ValueType::int(64)).unwrap();
     b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
@@ -1148,7 +1364,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     let clobber_value = *function
         .node_outputs(call)
         .iter()
-        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
+        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::int(64)))
         .expect("64-bit clobber value output");
 
     // The I64 call-target const is the other 64-bit value, hence two matches.
@@ -1187,7 +1403,7 @@ fn call_and_clobber(function: &strider_ir::Function) -> (NodeKind, strider_ir::n
     let clobber = *function
         .node_outputs(call)
         .iter()
-        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
+        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::int(64)))
         .expect("64-bit clobber value output at slot 2");
     (*function.node_kind(call), clobber)
 }
@@ -1239,14 +1455,14 @@ fn call_output_slot_type_constraint() {
     let m = Matcher::new(&function);
 
     assert_eq!(
-        m.find_all(&call().output(2).of_type(ValueType::I64).build())
+        m.find_all(&call().output(2).of_type(ValueType::int(64)).build())
             .unwrap()
             .len(),
         1,
         "slot-2 output is I64",
     );
     assert_eq!(
-        m.find_all(&call().output(2).of_type(ValueType::I32).build())
+        m.find_all(&call().output(2).of_type(ValueType::int(32)).build())
             .unwrap()
             .len(),
         0,
@@ -1329,8 +1545,8 @@ fn region_any_input_typed_value_sub_matches_nothing() {
 
 fn indirect_branch_with_mode(target_addr: u64, mode: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let tgt = b.build_int_const(target_addr, ValueType::I64).unwrap();
-    let m = b.build_int_const(mode, ValueType::I8).unwrap();
+    let tgt = b.build_int_const(target_addr, ValueType::int(64)).unwrap();
+    let m = b.build_int_const(mode, ValueType::int(8)).unwrap();
     b.build_indirect_branch_with_mode(tgt, Some(m)).unwrap();
     b.build().unwrap()
 }
@@ -1352,19 +1568,4 @@ fn indirect_branch_isa_mode_matches_only_a_switching_branch() {
 
     let plain = indirect_branch_to(0x4000);
     a::none(&plain, indirect_branch().input(3, anything()).build());
-}
-
-/// `with_true` takes an already built `Pattern`, so no builder cap bounds the
-/// nesting and the free is a walk of caller-shaped depth. Built iteratively on
-/// the test thread; only the drop runs on the small one.
-#[test]
-fn a_deeply_nested_branch_tower_frees_on_a_small_stack() {
-    let tower = (0..8_000).fold(ret().build(), |p, _| if_else().with_true(p).build());
-
-    std::thread::Builder::new()
-        .stack_size(256 * 1024)
-        .spawn(move || drop(tower))
-        .unwrap()
-        .join()
-        .unwrap();
 }

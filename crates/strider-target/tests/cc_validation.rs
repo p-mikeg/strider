@@ -14,16 +14,8 @@ fn validate_rejects_sp_in_arg_passing_regs() {
     let sp = vn(0x40);
     let cc = BuiltCallingConvention {
         arg_passing_regs: vec![vn(0x10), sp, vn(0x20)],
-        callee_saved_regs: vec![],
         ret_val_regs: vec![vn(0x18)],
-        ret_val_regs_float: vec![],
-        stack_vn: sp,
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register_vn: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
-        no_return: false,
+        stack_ptr: sp,
         ..Default::default()
     };
     let res = cc.validate();
@@ -33,39 +25,41 @@ fn validate_rejects_sp_in_arg_passing_regs() {
     );
     let msg = res.unwrap_err().to_string();
     assert!(
-        msg.contains("stack_vn") && msg.contains("arg_passing_regs"),
-        "error must name both stack_vn and the offending list, got: {msg}",
+        msg.contains("stack pointer") && msg.contains("arg_passing_regs"),
+        "error must name both the stack pointer and the offending list, got: {msg}",
     );
 }
 
-/// The link register is in `callee_saved_regs` so `InitialVar(lr)` propagates
-/// through a call site; a `Some` `link_register_vn` missing from that list is
-/// the one state the lifter cannot represent.
+/// A function's own link register is in `callee_saved_regs` so
+/// `InitialVar(lr)` propagates through a call site. A per-address callee's
+/// may be left out, so the call clobbers it.
 #[test]
-fn validate_rejects_a_link_register_outside_callee_saved() {
+fn only_a_default_convention_needs_its_link_register_callee_saved() {
     let lr = vn(0x58);
     let cc = BuiltCallingConvention {
         callee_saved_regs: vec![vn(0x20)],
-        stack_vn: vn(0x40),
-        link_register_vn: Some(lr),
+        stack_ptr: vn(0x40),
+        link_register: Some(lr),
         ..Default::default()
     };
+    cc.validate()
+        .expect("a callee may clobber its link register");
     let msg = cc
-        .validate()
+        .validate_default()
         .expect_err("a link register outside callee_saved_regs must be rejected")
         .to_string();
     assert!(
-        msg.contains("link_register_vn") && msg.contains("callee_saved_regs"),
+        msg.contains("link_register") && msg.contains("callee_saved_regs"),
         "error must name both, got: {msg}",
     );
     // Listed, it validates.
     BuiltCallingConvention {
         callee_saved_regs: vec![vn(0x20), lr],
-        stack_vn: vn(0x40),
-        link_register_vn: Some(lr),
+        stack_ptr: vn(0x40),
+        link_register: Some(lr),
         ..Default::default()
     }
-    .validate()
+    .validate_default()
     .expect("a listed link register validates");
 }
 
@@ -75,15 +69,7 @@ fn validate_rejects_arg_overlapping_callee_saved() {
     let cc = BuiltCallingConvention {
         arg_passing_regs: vec![shared],
         callee_saved_regs: vec![shared],
-        ret_val_regs: vec![],
-        ret_val_regs_float: vec![],
-        stack_vn: vn(0x40),
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register_vn: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
-        no_return: false,
+        stack_ptr: vn(0x40),
         ..Default::default()
     };
     let res = cc.validate();
@@ -106,13 +92,7 @@ fn validate_rejects_ret_int_overlapping_ret_float() {
         callee_saved_regs: vec![vn(0x20)],
         ret_val_regs: vec![shared],
         ret_val_regs_float: vec![shared],
-        stack_vn: vn(0x40),
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register_vn: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
-        no_return: false,
+        stack_ptr: vn(0x40),
         ..Default::default()
     };
     let res = cc.validate();
@@ -130,14 +110,7 @@ fn validate_accepts_clean_layout() {
         arg_passing_regs: vec![vn(0x10), vn(0x18)],
         callee_saved_regs: vec![vn(0x20)],
         ret_val_regs: vec![vn(0x28)],
-        ret_val_regs_float: vec![],
-        stack_vn: vn(0x40),
-        stack_args: None,
-        ret_stack_pop: 0,
-        link_register_vn: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
-        no_return: false,
+        stack_ptr: vn(0x40),
         ..Default::default()
     }
     .validate()
@@ -164,7 +137,7 @@ fn validate_rejects_container_overlap_not_only_exact_equality() {
     let cc = BuiltCallingConvention {
         arg_passing_regs_float: vec![q8],
         callee_saved_regs: vec![d8],
-        stack_vn: vn(0x40),
+        stack_ptr: vn(0x40),
         ..Default::default()
     };
     let res = cc.validate();
@@ -202,14 +175,14 @@ fn validate_accepts_adjacent_and_cross_space_ranges() {
     BuiltCallingConvention {
         arg_passing_regs: vec![arg],
         callee_saved_regs: vec![adjacent, other_space],
-        stack_vn: vn(0x40),
+        stack_ptr: vn(0x40),
         ..Default::default()
     }
     .validate()
     .expect("adjacent and cross-space ranges do not overlap");
 }
 
-/// The `stack_vn` rule is byte-level like every other disjointness rule
+/// The `stack_ptr` rule is byte-level like every other disjointness rule
 /// here: a SUB-register of the SP in a list is the SP's storage.  An SP
 /// sub-register in an argument list makes the stack pointer's tracked
 /// container `function_arg(0)`.
@@ -227,7 +200,7 @@ fn validate_rejects_a_stack_pointer_subregister() {
             "callee_saved_regs",
             BuiltCallingConvention {
                 callee_saved_regs: vec![sp_low, vn(0x10)],
-                stack_vn: sp,
+                stack_ptr: sp,
                 ..Default::default()
             },
         ),
@@ -235,7 +208,7 @@ fn validate_rejects_a_stack_pointer_subregister() {
             "arg_passing_regs",
             BuiltCallingConvention {
                 arg_passing_regs: vec![sp_low, vn(0x10)],
-                stack_vn: sp,
+                stack_ptr: sp,
                 ..Default::default()
             },
         ),
@@ -245,8 +218,8 @@ fn validate_rejects_a_stack_pointer_subregister() {
             .expect_err("an SP sub-register must be rejected")
             .to_string();
         assert!(
-            msg.contains("stack_vn") && msg.contains(list_name),
-            "error must name stack_vn and {list_name}, got: {msg}",
+            msg.contains("stack pointer") && msg.contains(list_name),
+            "error must name the stack pointer and {list_name}, got: {msg}",
         );
     }
 }

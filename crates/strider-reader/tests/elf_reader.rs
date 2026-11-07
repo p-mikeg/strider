@@ -9,14 +9,14 @@ use common::reader_contract::{
     assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_errors,
 };
 use rsleigh::{MemReader, VnAddr, VnSpace};
+use strider_reader::elf::RelocationMode;
 use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
 use tempfile::NamedTempFile;
 
-/// A reader over synthetic ELF bytes, copying them the way `from_object`
-/// does.
+/// A reader over synthetic ELF bytes.
 fn reader(bytes: &[u8]) -> ElfFileMemReader {
-    let obj = object::File::parse(bytes).expect("parse synthetic ELF");
-    ElfFileMemReader::from_object(&obj).expect("from_object")
+    let elf = strider_reader::OwnedElf::parse(bytes.to_vec()).expect("parse synthetic ELF");
+    ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("ElfFileMemReader::new")
 }
 
 fn read_raw(r: &ElfFileMemReader, addr: u64, len: usize) -> Vec<u8> {
@@ -96,8 +96,7 @@ fn elf_reader_over_a_mapped_temp_elf() {
     f.flush().unwrap();
 
     let owned = strider_reader::load_elf(f.path()).unwrap();
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let r = ElfFileMemReader::from_object(&obj).unwrap();
+    let r = ElfFileMemReader::new(&owned, RelocationMode::Unapplied).unwrap();
     assert_eq!(read_raw(&r, 0x1000, 4), &[0xde, 0xad, 0xbe, 0xef]);
 }
 
@@ -122,11 +121,10 @@ fn the_reader_serves_a_relocation_site_unpatched() {
         },
     );
     let elf = strider_reader::OwnedElf::parse(fx.bytes.clone()).expect("parse");
-    let obj = elf.checked_file().expect("parse");
 
     assert_eq!(
         read_raw(
-            &ElfFileMemReader::from_object(&obj).unwrap(),
+            &ElfFileMemReader::new(&elf, RelocationMode::Unapplied).unwrap(),
             fx.slot_addr,
             4
         ),
@@ -220,5 +218,44 @@ fn a_read_only_region_set_leaves_out_a_writable_mapping_over_it() {
             .read_exact(base + 0x80, &mut buf)
             .expect("past the writable mapping");
         assert_eq!(buf, [0xaa; 4]);
+    }
+}
+
+/// Two read-only PT_LOADs at different starts, one writable mapping cutting
+/// both so their pieces share a start: the ROM view answers from the cut
+/// pieces, the later one winning, while fetch still reads the uncut image.
+#[test]
+fn a_rom_read_over_cut_overlapping_loads_serves_the_later_piece() {
+    use object::elf::{PF_R, PF_W};
+    let r = reader(&common::elf_fixture::build_loads_elf(&[
+        (PF_R, 0x1010, 0x40, 0xbb),
+        (PF_R, 0x1000, 0x80, 0xaa),
+        (PF_R | PF_W, 0x1000, 0x20, 0xcc),
+    ]));
+    assert_mem_reader_reads(&r, 0x1020, &[0xbb; 4]);
+    assert_eq!(read_raw(&r, 0x1020, 4), [0xaa; 4]);
+}
+
+/// An image the section walk serves at its sections' own addresses (ET_CORE,
+/// an unknown `e_type`) can seat a read-only section where an earlier
+/// writable one starts. Fetch keeps the earlier section; the ROM view keeps
+/// the read-only one, past the writable one's end.
+#[test]
+fn a_rom_read_serves_a_read_only_section_past_a_writable_one_at_its_start() {
+    use common::elf_fixture::{SectionSpec, build_elf_with_sections};
+    for e_type in [object::elf::ET_CORE, 0xfe00] {
+        let mut bytes = build_elf_with_sections(&[
+            SectionSpec::rwx(0x1000, vec![0xcc; 0x10]),
+            SectionSpec::rodata(0x1000, vec![0xbb; 0x40]),
+        ]);
+        bytes[16..18].copy_from_slice(&e_type.to_le_bytes());
+        let r = reader(&bytes);
+        assert_mem_reader_reads(&r, 0x1000, &[0xcc; 4]);
+        assert_mem_reader_unmapped_is_not_mapped_error(&r, 0x1020);
+        assert!(
+            ReadOnlyMemory::read(&r, 0x1000, &mut [0u8; 4]).is_err(),
+            "{e_type:#x}: 0x1000 is writable"
+        );
+        assert_eq!(read_raw(&r, 0x1020, 4), [0xbb; 4], "{e_type:#x}");
     }
 }

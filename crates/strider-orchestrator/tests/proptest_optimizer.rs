@@ -1,15 +1,5 @@
-//! Property-based invariants for the optimizer.
-//!
-//! Companion to `strider-ir/tests/proptest_invariants.rs`, which verifies
-//! `validate()` over strategy-generated graphs; this file verifies asm-
-//! fingerprint monotonicity under the default pipeline: every node's
-//! fingerprint after `opt::default_pipeline().run()` is a superset of its
-//! pre-pipeline value (the contract is superset-only, passes may grow
-//! fingerprints but never shrink them).
-//!
-//! Scope: value-only DAGs via a sequence of [`FunctionBuilder`] actions,
-//! mirroring `cranelift-fuzzgen`. Control-flow properties stay in
-//! hand-authored fixtures.
+//! The default pipeline never shrinks a node's asm fingerprint, over
+//! generated value-only DAGs.
 
 #![allow(clippy::enum_variant_names)]
 
@@ -61,7 +51,7 @@ proptest! {
         let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg);
 
         let pipeline: OptimizerPipeline = default_pipeline();
-        let run_res = pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::at_floor(None));
+        let run_res = pipeline.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None));
         prop_assert!(
             run_res.is_ok(),
             "default_pipeline should not error on strategy-generated graph: {:?}",

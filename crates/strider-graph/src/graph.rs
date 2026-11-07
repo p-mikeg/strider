@@ -6,11 +6,12 @@ use smallvec::SmallVec;
 
 use crate::cache::{NodeCache, NodeCacheable};
 use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
-use crate::iter::{InputCursor, Inputs};
+use crate::iter::Inputs;
 use crate::storage::{Node, RawStore, UseData, ValueData};
 
 /// Nodes, their input/output slots, the dedup cache, and a generation counter
-/// bumped on every arena-reshuffling operation.
+/// (bumped by compaction and `bump_generation`).
+#[derive(Clone)]
 pub struct Graph<N, V, C: NodeCacheable<N, V>> {
     pub(crate) store: RawStore<N, V>,
     cache: NodeCache,
@@ -24,21 +25,12 @@ impl<N, V, C: NodeCacheable<N, V>> Default for Graph<N, V, C> {
     }
 }
 
-// Manual `Clone` so the bound is `N: Clone, V: Clone` only: the derive would
-// also demand `C: Clone`, spurious for a `PhantomData` ZST. The clone is deep
-// and independent.
-impl<N: Clone, V: Clone, C: NodeCacheable<N, V>> Clone for Graph<N, V, C> {
-    fn clone(&self) -> Self {
-        Graph {
-            store: self.store.clone(),
-            cache: self.cache.clone(),
-            _policy: PhantomData,
-            generation: self.generation,
-        }
-    }
-}
-
 impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
+    /// Bytes per node in the arena; its input and output lists are pooled apart.
+    pub const NODE_RECORD_SIZE: usize = size_of::<Node<N>>();
+    /// Bytes per node output in the arena.
+    pub const VALUE_RECORD_SIZE: usize = size_of::<ValueData<V>>();
+
     pub fn new() -> Self {
         Graph {
             store: RawStore::new(),
@@ -48,7 +40,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         }
     }
 
-    /// Delegates the dedup-or-create decision to the cache, driven by `C`.
+    /// Creates a node, or returns an existing equal one if `C` caches its kind.
     pub fn create_node(
         &mut self,
         kind: N,
@@ -89,7 +81,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
     #[inline]
     pub fn producer(&self, value_id: ValueId) -> NodeId {
-        self.store.producer(value_id)
+        self.store.outputs[value_id].source_id
     }
 
     #[inline]
@@ -109,6 +101,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     #[inline]
     pub fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
         let use_id = *self.store.node_input_uses(node).get(idx)?;
+        crate::iter::count_edge_read();
         Some(self.store.inputs[use_id].value_id)
     }
 
@@ -116,14 +109,11 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     ///
     /// If `idx` is past the node's current input count.
     pub fn node_input_id_at(&self, node: NodeId, idx: usize) -> crate::Result<UseId> {
-        self.store
-            .node_input_uses(node)
-            .get(idx)
-            .copied()
-            .ok_or_else(|| {
-                let len = self.node_inputs(node).len();
-                anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
-            })
+        let uses = self.store.node_input_uses(node);
+        uses.get(idx).copied().ok_or_else(|| {
+            let len = uses.len();
+            anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
+        })
     }
 
     /// # Errors
@@ -140,11 +130,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 "node {node_id:?} does not have exactly {M} inputs (has {actual})"
             ));
         }
-        let mut result = [ValueId::default(); M];
-        for (i, v) in inputs.into_iter().enumerate() {
-            result[i] = v;
-        }
-        Ok(result)
+        Ok(core::array::from_fn(|i| inputs[i]))
     }
 
     /// # Errors
@@ -155,15 +141,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         node_id: NodeId,
     ) -> crate::Result<[ValueId; M]> {
         let outputs = self.node_outputs(node_id);
-        if outputs.len() != M {
+        outputs.try_into().map_err(|_| {
             let actual = outputs.len();
-            return Err(anyhow!(
-                "node {node_id:?} does not have exactly {M} outputs (has {actual})"
-            ));
-        }
-        let mut result = [ValueId::default(); M];
-        result.copy_from_slice(outputs);
-        Ok(result)
+            anyhow!("node {node_id:?} does not have exactly {M} outputs (has {actual})")
+        })
     }
 
     #[inline]
@@ -182,10 +163,9 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.inputs[use_id].node_id
     }
 
-    /// Re-canonicalize `node` against the dedup cache after its inputs changed.
-    /// `Some(twin)` is an existing structurally-equal node the caller should
-    /// merge `node` into; `None` means `node` is now the canonical
-    /// representative, or is a non-cacheable kind.
+    /// Re-canonicalizes `node` after its inputs changed. `Some(twin)` is an
+    /// existing structurally-equal node to merge `node` into; `None` means
+    /// `node` is now canonical, or not cacheable.
     pub fn canonicalize_node(&mut self, node: NodeId) -> Option<NodeId>
     where
         V: Clone,
@@ -199,16 +179,19 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.nodes.next_key()
     }
 
+    /// Whether `node` holds a dedup entry.
+    #[cfg(any(test, feature = "test-injectors"))]
+    pub fn is_cached(&self, node: NodeId) -> bool {
+        self.cache.contains(node)
+    }
+
     #[inline]
     pub fn has_node(&self, id: NodeId) -> bool {
         self.store.nodes.is_valid(id)
     }
 
-    /// `None` if no node with that index exists.
-    ///
-    /// `u32::MAX` is `cranelift-entity`'s reserved sentinel and `NodeId::new`
-    /// only debug-asserts on it, so it is rejected before the id is built: a raw id from
-    /// outside (a Python caller) must produce `None`, never a panic.
+    /// `None` if no node with that index exists, including the reserved
+    /// `u32::MAX`; never panics on an untrusted id.
     #[inline]
     pub fn node_id_from_u32(&self, raw: u32) -> Option<NodeId> {
         if raw == u32::MAX {
@@ -239,11 +222,11 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.outputs.keys()
     }
 
-    /// The cache is NOT notified: if the payload feeds the cache key, call
+    /// The cache is not notified: if the payload feeds the cache key, call
     /// [`rebuild_cache`](Self::rebuild_cache) afterwards.
     #[inline]
     pub fn node_kind_mut(&mut self, node_id: NodeId) -> &mut N {
-        self.store.node_kind_mut(node_id)
+        &mut self.store.nodes[node_id].kind
     }
 
     /// Re-keys the cache after node payloads feeding the cache key were
@@ -261,6 +244,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         let first_use = self.store.outputs[value_id].first_use.expand();
         core::iter::successors(first_use, move |id| self.store.inputs[*id].next.expand()).map(
             move |id| {
+                crate::iter::count_edge_read();
                 let use_data = &self.store.inputs[id];
                 (use_data.node_id, use_data.input_index)
             },
@@ -279,13 +263,25 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.outputs[value].first_use.expand()
     }
 
-    #[inline]
-    pub fn value_use_cursor(&mut self, value_id: ValueId) -> InputCursor<'_, N, V, C> {
-        let first_use = self.store.outputs[value_id].first_use.expand();
-        InputCursor {
-            graph: self,
-            current: first_use,
-        }
+    /// Appends an output of `kind` as the node's last.
+    pub fn add_node_output(&mut self, node_id: NodeId, kind: V) -> ValueId {
+        self.cache.invalidate(node_id);
+        let index = self.store.nodes[node_id]
+            .outputs
+            .len(&self.store.output_pool) as u32;
+        let value = self
+            .store
+            .outputs
+            .push(ValueData::new(kind, node_id, index));
+        self.store.nodes[node_id]
+            .outputs
+            .push(value, &mut self.store.output_pool);
+        value
+    }
+
+    /// The cache is not notified, as for [`Self::node_kind_mut`].
+    pub fn value_kind_mut(&mut self, value_id: ValueId) -> &mut V {
+        &mut self.store.outputs[value_id].kind
     }
 
     /// Appends `value_id` as the node's last input.
@@ -302,32 +298,16 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.link_use_to_value_list(use_id);
     }
 
-    /// Compacts the remaining inputs' indices. `false` if `index` is out of
+    /// Removes input `index` and compacts the rest; `false` if it is out of
     /// bounds.
     #[cfg(any(test, feature = "test-injectors"))]
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> bool {
         let index = index as usize;
-        let inputs = &self.store.nodes[node_id].inputs;
-        let slice = inputs.as_slice(&self.store.input_pool);
-        let Some(&delete_use_id) = slice.get(index) else {
-            return false;
-        };
-        // After the bounds check: invalidating first would evict a node whose
-        // structure never changed, and this path never re-inserts it.
-        self.cache.invalidate(node_id);
-
-        self.store.nodes[node_id]
-            .inputs
-            .remove(index, &mut self.store.input_pool);
-        let tail: SmallVec<[UseId; 4]> = self.store.nodes[node_id]
-            .inputs
-            .as_slice(&self.store.input_pool)[index..]
-            .into();
-        for use_id in tail {
-            self.store.inputs[use_id].input_index -= 1;
+        let in_range = index < self.store.node_input_uses(node_id).len();
+        if in_range {
+            self.remove_node_inputs_batch(node_id, [index]);
         }
-        self.store.unlink_use_from_value_list(delete_use_id);
-        true
+        in_range
     }
 
     /// Removes the inputs at `indices` and compacts the rest: O(D) for a node's
@@ -337,9 +317,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         node_id: NodeId,
         indices: impl IntoIterator<Item = usize>,
     ) {
-        // Degree-bounded, so a bitset over the current input count is O(D).
         let len = self.store.node_input_uses(node_id).len();
-        let mut drop_slot = vec![false; len];
+        let mut drop_slot: SmallVec<[bool; 8]> = smallvec::smallvec![false; len];
         let mut any = false;
         for idx in indices {
             if idx < len {
@@ -350,11 +329,9 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         if !any {
             return;
         }
-        // After the early return: invalidating first would evict a node whose
-        // structure never changed, and this path never re-inserts it.
+        // Invalidated only on a real removal.
         self.cache.invalidate(node_id);
 
-        // Partition into survivors (reindexed) and victims (unlinked).
         let old_uses: SmallVec<[UseId; 4]> = self.store.node_input_uses(node_id).into();
         let mut survivors: SmallVec<[UseId; 4]> = SmallVec::with_capacity(old_uses.len());
         for (slot, use_id) in old_uses.into_iter().enumerate() {
@@ -371,7 +348,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         *inputs = UseIdList::from_iter(survivors, &mut self.store.input_pool);
     }
 
-    /// Keeps both affected use-lists consistent. A self-redirect is a no-op.
+    /// Points input slot `input_id` at `value_id`, a no-op if it already is.
     ///
     /// # Panics
     ///
@@ -399,7 +376,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.link_use_to_value_list(input_id);
     }
 
-    /// Unlinks each from its value's use-list.
+    /// Removes every input of `node_id`, unlinking each from its value's
+    /// use-list.
     pub fn detach_node_inputs(&mut self, node_id: NodeId) {
         self.cache.invalidate(node_id);
         let use_ids: SmallVec<[UseId; 4]> = self.store.nodes[node_id]
@@ -414,44 +392,34 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
             .clear(&mut self.store.input_pool);
     }
 
-    /// `false` if `old` had no uses, or if `old == new_val` since a
-    /// self-redirect changes nothing.
+    /// Redirects every use of `old` to `new_val`; `false` if `old` had none or
+    /// `old == new_val`.
     pub fn replace_all_uses(&mut self, old: ValueId, new_val: ValueId) -> bool {
-        if old == new_val {
+        if old == new_val || self.store.outputs[old].first_use.is_none() {
             return false;
         }
-        let mut cursor = self.value_use_cursor(old);
-        if cursor.current().is_none() {
-            return false;
+        while let Some(use_id) = self.store.outputs[old].first_use.expand() {
+            self.update_input(use_id, new_val);
         }
-        while cursor.replace_current_with(new_val) {}
         true
     }
 
-    /// Clears `value`'s use-list head, severing the producer's forward link to
-    /// its consumers WITHOUT touching the consumers' input edges. Leaves the
-    /// graph inconsistent, for tests that need a broken graph.
+    /// Clears `value`'s use-list head without touching its consumers' input
+    /// edges, leaving the graph inconsistent for tests.
     #[doc(hidden)]
     #[cfg(any(test, feature = "test-injectors"))]
     pub fn corrupt_clear_first_use(&mut self, value: ValueId) {
         self.store.outputs[value].first_use = None.into();
     }
 
-    /// Rebuilds the arena to retain exactly the nodes in `reachable`, dropping
-    /// every other node. Returns the old-to-new id translation table.
-    ///
-    /// `reachable` MUST be backward-input-closed, i.e. every input's producing
-    /// node is present, and duplicate-free. Both violations panic; unchecked, a
-    /// repeated id would build two input batches for one surviving node, the
-    /// second replacing the first in its input list, and the blanket relink
-    /// would splice the orphaned first batch into its values' use-lists too, so
-    /// `value_uses` reported consumers no node owns.
-    ///
-    /// Invalidates every pre-compaction `NodeId` / `ValueId` / `UseId`, and
-    /// bumps the generation counter. The cache is left keyed on the
-    /// PRE-compaction ids, for a caller that rewrites cache-key-bearing
-    /// payloads afterwards and would discard a rebuild: it MUST
+    /// Rebuilds the arena with exactly the nodes in `reachable` and returns the
+    /// old-to-new id table. Invalidates every old id and bumps the generation.
+    /// The cache is left keyed on the old ids: call
     /// [`rebuild_cache`](Self::rebuild_cache) before any deduping create.
+    ///
+    /// # Panics
+    ///
+    /// If `reachable` is not duplicate-free and closed under inputs' producers.
     pub fn retain_reachable_stale_cache(
         &mut self,
         reachable: impl IntoIterator<Item = NodeId>,
@@ -460,25 +428,23 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         N: Clone,
         V: Clone,
     {
-        self.generation = self.generation.wrapping_add(1);
+        self.bump_generation();
 
         let reachable: Vec<NodeId> = reachable.into_iter().collect();
 
-        // Sized up front off the survivors, so these arenas carry no doubling
-        // slack beside the graph they are replacing.  The list pools are left
-        // to grow: their size classes are the pool's own, and reserving the
-        // old pool's capacity costs more than the doubling it saves.
+        // Arenas sized exactly; the list pools are left to grow.
         let (mut out_slots, mut in_slots) = (0usize, 0usize);
         for &id in &reachable {
             out_slots += self.store.nodes[id].outputs.len(&self.store.output_pool);
             in_slots += self.store.nodes[id].inputs.len(&self.store.input_pool);
         }
-        let mut new_nodes: PrimaryMap<NodeId, Node<N>> = PrimaryMap::with_capacity(reachable.len());
-        let mut new_outputs: PrimaryMap<ValueId, ValueData<V>> =
-            PrimaryMap::with_capacity(out_slots);
-        let mut new_inputs: PrimaryMap<UseId, UseData> = PrimaryMap::with_capacity(in_slots);
-        let mut new_output_pool = ListPool::<ValueId>::new();
-        let mut new_input_pool = ListPool::<UseId>::new();
+        let mut new = RawStore {
+            nodes: PrimaryMap::with_capacity(reachable.len()),
+            outputs: PrimaryMap::with_capacity(out_slots),
+            inputs: PrimaryMap::with_capacity(in_slots),
+            output_pool: ListPool::new(),
+            input_pool: ListPool::new(),
+        };
 
         let mut remap =
             NodeIdRemap::with_capacity(self.store.nodes.len(), self.store.outputs.len());
@@ -486,16 +452,13 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         // Copy nodes (placeholder slot lists) and outputs first, so every new
         // NodeId / ValueId exists before the second pass rewrites edges.
         for &old_node_id in &reachable {
-            // Not a `debug_assert`: violating it corrupts the arena silently, and
-            // the slot this reads is written below either way.
+            // Not a `debug_assert`: a repeat would silently corrupt use-lists.
             assert!(
                 remap.nodes[old_node_id].is_none(),
-                "`reachable` repeated {old_node_id:?}: the second input batch \
-                 orphans the first, which the relink still splices into the \
-                 use-lists"
+                "`reachable` repeats {old_node_id:?}"
             );
             let new_kind = self.store.nodes[old_node_id].kind.clone();
-            let new_node_id = new_nodes.push(Node::new(new_kind));
+            let new_node_id = new.nodes.push(Node::new(new_kind));
             remap.nodes[old_node_id] = Some(new_node_id);
 
             let old_value_ids: SmallVec<[ValueId; 4]> = self.store.nodes[old_node_id]
@@ -509,12 +472,13 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 let kind = old_out.kind.clone();
                 let output_index = old_out.output_index;
                 let new_value_id =
-                    new_outputs.push(ValueData::new(kind, new_node_id, output_index));
+                    new.outputs
+                        .push(ValueData::new(kind, new_node_id, output_index));
                 remap.outputs[old_value_id] = Some(new_value_id);
                 new_value_ids.push(new_value_id);
             }
-            new_nodes[new_node_id].outputs =
-                ValueIdList::from_iter(new_value_ids, &mut new_output_pool);
+            new.nodes[new_node_id].outputs =
+                ValueIdList::from_iter(new_value_ids, &mut new.output_pool);
         }
 
         // Copy inputs, rewriting each value_id through the remap.
@@ -534,29 +498,21 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 );
                 let input_index = old_input.input_index;
                 let new_use_id =
-                    new_inputs.push(UseData::new(new_value_id, new_node_id, input_index));
+                    new.inputs
+                        .push(UseData::new(new_value_id, new_node_id, input_index));
+                new.link_use_to_value_list(new_use_id);
                 new_use_ids.push(new_use_id);
             }
-            new_nodes[new_node_id].inputs = UseIdList::from_iter(new_use_ids, &mut new_input_pool);
+            new.nodes[new_node_id].inputs = UseIdList::from_iter(new_use_ids, &mut new.input_pool);
         }
 
-        // Swap the arenas in before rebuilding use-lists.
-        self.store.nodes = new_nodes;
-        self.store.outputs = new_outputs;
-        self.store.inputs = new_inputs;
-        self.store.output_pool = new_output_pool;
-        self.store.input_pool = new_input_pool;
-
-        for i in 0..self.store.inputs.len() {
-            self.store.link_use_to_value_list(UseId::new(i));
-        }
-
+        self.store = new;
         remap
     }
 }
 
-/// Sparse old-to-new id table from [`Graph::retain_reachable_stale_cache`]: only surviving
-/// ids are populated, dropped ids return `None`.
+/// Old-to-new id table from [`Graph::retain_reachable_stale_cache`]; dropped
+/// ids map to `None`.
 #[derive(Debug, Clone, Default)]
 pub struct NodeIdRemap {
     nodes: SecondaryMap<NodeId, Option<NodeId>>,
@@ -564,7 +520,7 @@ pub struct NodeIdRemap {
 }
 
 impl NodeIdRemap {
-    /// Sized for the PRE-compaction arena, which is what the keys index.
+    /// Sized for the old arena, which the keys index.
     fn with_capacity(nodes: usize, outputs: usize) -> Self {
         Self {
             nodes: SecondaryMap::with_capacity(nodes),

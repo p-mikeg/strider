@@ -1,42 +1,39 @@
 use std::fmt::Write as _;
 
 use cranelift_entity::SecondaryMap;
-use entity_utils::set::DenseEntitySet;
+use dashu_int::UBig;
+use entity_utils::DenseEntitySet;
 
 use crate::IRViewer;
 use crate::function::Function;
-use crate::node::const_value::ConstValue;
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeId,
     NodeKind, ValueId, ValueKind,
 };
 
 impl Function {
-    /// The canonical text form: a header (endianness, tracked varnodes, default
-    /// convention, argument carriers), then one line per node reachable from
-    /// [`Self::entry`] as `outs = op[payload] ins`, values named `%vN` in print
-    /// order. With `fingerprints`, each line ends in its sorted asm address set
-    /// `  @{..}`; those sets can dwarf the rest on large functions, and each
-    /// one costs a walk of that node's whole fingerprint union closure, so a
-    /// chain of unions is quadratic in its length while the text stays linear
-    /// (see [`UnionDag::for_each`](entity_utils::UnionDag::for_each)).
-    ///
-    /// Control nodes print in reverse postorder of the control graph, taking
-    /// successors in output-index order. Each is preceded by its unprinted
-    /// data inputs in post-order over input slots. A `Phi` / `MemPhi` prints
-    /// right after its `Region`, siblings in the order a consumer first
-    /// demands them, and the cone of an input it takes over a predecessor edge
-    /// prints after that predecessor. A value that cone shares with a block
-    /// printed later is pulled into that later block, so a line of the cone
-    /// can name a value defined below it. Nothing reads an arena id, a hash
-    /// order or a use-list, save a control output's single use, so equal
-    /// graphs print equal text however they were built.
-    ///
-    /// Unreachable nodes are not printed, which is why [`Self::compact`]
-    /// leaves the text unchanged.
+    /// The canonical text form: a header, then one `outs = op[payload] ins` line per node
+    /// reachable from [`Self::entry`]. With `fingerprints`, each attributed line ends in its
+    /// asm address set `  @{..}`. Equal graphs print equal text however built;
+    /// [`Self::compact`] keeps it.
     pub fn to_text(&self, fingerprints: bool) -> String {
+        self.to_text_with(fingerprints, &vn_str)
+    }
+
+    /// [`Self::to_text`], spelling each varnode `names` knows as its register
+    /// (`RDI` for `%:0x38:8`).
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn to_text_named(&self, fingerprints: bool, names: &strider_target::ArchNames) -> String {
+        let regs = names.regs();
+        self.to_text_with(fingerprints, &|vn: &rsleigh::Vn| {
+            regs.vn_to_name(*vn)
+                .map_or_else(|| vn_str(vn), str::to_owned)
+        })
+    }
+
+    fn to_text_with(&self, fingerprints: bool, vn_name: VnName<'_>) -> String {
         let order = Orderer::new(self).run();
-        render(self, &attach_phis(self, order), fingerprints)
+        render(self, &attach_phis(self, order), fingerprints, vn_name)
     }
 }
 
@@ -46,7 +43,7 @@ fn is_phi(kind: &NodeKind) -> bool {
 
 /// The `Region` a phi's token input comes from.
 fn phi_region(f: &Function, phi: NodeId) -> Option<NodeId> {
-    let token = f.nth_input(phi, 0)?;
+    let token = f.nth_input(phi, NodeKind::PHI_TOKEN_SLOT)?;
     let region = f.producer(token);
     matches!(f.node_kind(region), NodeKind::Region).then_some(region)
 }
@@ -256,14 +253,17 @@ fn attach_phis(f: &Function, seq: Vec<NodeId>) -> Vec<NodeId> {
 
 type Names = SecondaryMap<ValueId, Option<u32>>;
 
+/// How a varnode is spelled.
+type VnName<'a> = &'a dyn Fn(&rsleigh::Vn) -> String;
+
 fn push_name(out: &mut String, names: &Names, value: ValueId) {
-    let _ = match names.get(value).copied().flatten() {
+    let _ = match names[value] {
         Some(n) => write!(out, "%v{n}"),
         None => write!(out, "%?"),
     };
 }
 
-fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
+fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_>) -> String {
     let mut names: Names = SecondaryMap::new();
     let mut next = 0u32;
     for &node in order {
@@ -274,21 +274,33 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
     }
 
     let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "endian {}",
-        match f.endianness() {
-            strider_target::Endianness::Little => "little",
-            strider_target::Endianness::Big => "big",
-        }
-    );
-    let _ = writeln!(out, "tracked {}", vn_list(f.all_vns()));
-    let cc_fields = cc_fields(f.default_cc());
+    let name = |endianness| match endianness {
+        strider_target::Endianness::Little => "little",
+        strider_target::Endianness::Big => "big",
+    };
+    let bytes = f.byte_order();
+    let _ = write!(out, "endian {}", name(bytes.data));
+    if bytes.register != bytes.data {
+        let _ = write!(out, " register={}", name(bytes.register));
+    }
+    out.push('\n');
+    let _ = writeln!(out, "tracked {}", vn_list(f.all_vns(), vn_name));
+    let cc_fields = cc_fields(f.default_cc(), vn_name);
     out.push_str("default_cc");
-    for (field, value) in &cc_fields {
+    // The last field prints only when set.
+    let shown = cc_fields.len() - usize::from(!f.default_cc().reg_args_adjoin_stack_args);
+    for (field, value) in &cc_fields[..shown] {
         let _ = write!(out, " {field}={value}");
     }
     out.push('\n');
+    render_claims(&mut out, f.assumptions());
+    match f.call_register_frame_reach() {
+        None => {}
+        Some(i128::MAX) => out.push_str("frame_address_in_call_register reach=unbounded\n"),
+        Some(reach) => {
+            let _ = writeln!(out, "frame_address_in_call_register reach={reach}");
+        }
+    }
     let st = f.side_tables();
     render_args(&mut out, &names, "arg", st.iter_arg_indices(), |i| {
         st.arg_index_to_values(i)
@@ -307,25 +319,22 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
             out.push('\n');
         }
         let outputs = f.node_outputs(node);
-        for (i, &value) in outputs.iter().enumerate() {
-            if i > 0 {
-                out.push_str(", ");
-            }
-            push_name(&mut out, &names, value);
+        push_sep(&mut out, ", ", outputs, |out, &value| {
+            push_name(out, &names, value);
             out.push(':');
-            out.push_str(value_kind_str(f.value_kind(value)));
+            push_value_kind(out, f.value_kind(value));
             if let Some(&id) = st.value_vn.get(&value) {
                 let _ = match f.initial_vn_opt(id) {
-                    Some(vn) => write!(out, "<{}>", vn_str(&vn)),
+                    Some(vn) => write!(out, "<{}>", vn_name(&vn)),
                     None => write!(out, "<?>"),
                 };
             }
-        }
+        });
         if !outputs.is_empty() {
             out.push_str(" = ");
         }
         out.push_str(op_name(kind));
-        render_payload(f, node, &cc_fields, &mut out);
+        render_payload(f, node, &cc_fields, vn_name, &mut out);
         for (i, value) in f.node_inputs(node).into_iter().enumerate() {
             out.push_str(if i == 0 { " " } else { ", " });
             push_name(&mut out, &names, value);
@@ -334,12 +343,9 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
             let mut addrs: Vec<u64> = st.asm_fingerprint(node).into_iter().collect();
             addrs.sort_unstable();
             out.push_str("  @{");
-            for (i, addr) in addrs.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
+            push_sep(&mut out, ", ", &addrs, |out, addr| {
                 let _ = write!(out, "{addr:#x}");
-            }
+            });
             out.push('}');
         }
         out.push('\n');
@@ -361,7 +367,7 @@ fn render_args<'a>(
     for index in indices {
         let mut carriers: Vec<u32> = carriers_of(index)
             .iter()
-            .filter_map(|&value| names.get(value).copied().flatten())
+            .filter_map(|&value| names[value])
             .collect();
         carriers.sort_unstable();
         carriers.dedup();
@@ -369,12 +375,9 @@ fn render_args<'a>(
             continue;
         }
         let _ = write!(out, "{label} {index} [");
-        for (i, n) in carriers.iter().enumerate() {
-            if i > 0 {
-                out.push_str(", ");
-            }
+        push_sep(out, ", ", &carriers, |out, n| {
             let _ = write!(out, "%v{n}");
-        }
+        });
         out.push_str("]\n");
     }
 }
@@ -383,12 +386,13 @@ fn render_payload(
     f: &Function,
     node: NodeId,
     default_cc: &[(&'static str, String)],
+    vn_name: VnName<'_>,
     out: &mut String,
 ) {
     match *f.node_kind(node) {
         NodeKind::InitialVar(id) => {
             let _ = match f.initial_vn_opt(id) {
-                Some(vn) => write!(out, "[{}]", vn_str(&vn)),
+                Some(vn) => write!(out, "[{}]", vn_name(&vn)),
                 None => write!(out, "[?]"),
             };
         }
@@ -396,17 +400,9 @@ fn render_payload(
             let _ = write!(out, "[{}]", space_str(space));
         }
         NodeKind::IntConst(id) => {
-            // The interner probe first: `int_const_u128` panics on a dangling id.
-            let _ = match f.const_interner.get(id) {
+            let _ = match f.side_tables().const_interner.get(id) {
                 None => write!(out, "[?]"),
-                Some(stored) => match f
-                    .node_outputs(node)
-                    .first()
-                    .and_then(|&value| f.int_const_u128(value))
-                {
-                    Some(bits) => write!(out, "[{bits:#x}]"),
-                    None => write!(out, "[{}]", const_str(stored)),
-                },
+                Some(stored) => write!(out, "[{}]", const_str(stored)),
             };
         }
         NodeKind::FloatConst(bits) => {
@@ -415,12 +411,9 @@ fn render_payload(
         NodeKind::Switch(id) => match f.switch_table(id) {
             Some(targets) => {
                 out.push('[');
-                for (i, target) in targets.iter().enumerate() {
-                    if i > 0 {
-                        out.push_str(", ");
-                    }
+                push_sep(out, ", ", targets, |out, target| {
                     let _ = write!(out, "{target:#x}");
-                }
+                });
                 out.push(']');
             }
             None => out.push_str("[?]"),
@@ -428,16 +421,11 @@ fn render_payload(
         NodeKind::Call { cc: Some(id) } => match f.cc(id) {
             Some(cc) => {
                 out.push('[');
-                let mut first = true;
-                for ((field, value), (_, default)) in cc_fields(cc).iter().zip(default_cc) {
-                    if value != default {
-                        if !first {
-                            out.push(' ');
-                        }
-                        first = false;
-                        let _ = write!(out, "{field}={value}");
-                    }
-                }
+                let fields = cc_fields(cc, vn_name);
+                let overridden = fields.iter().zip(default_cc).filter(|(a, b)| a.1 != b.1);
+                push_sep(out, " ", overridden, |out, ((field, value), _)| {
+                    let _ = write!(out, "{field}={value}");
+                });
                 out.push(']');
             }
             None => out.push_str("[?]"),
@@ -550,16 +538,20 @@ fn op_name(kind: &NodeKind) -> &'static str {
     }
 }
 
-fn value_kind_str(kind: ValueKind) -> &'static str {
+fn push_value_kind(out: &mut String, kind: ValueKind) {
     match kind {
-        ValueKind::Typed(ty) => ty.as_str(),
-        ValueKind::Control => "ctrl",
-        ValueKind::PhiToken => "token",
-        ValueKind::Memory => "mem",
+        ValueKind::Typed(ty) => {
+            let _ = write!(out, "{ty}");
+        }
+        ValueKind::Control => out.push_str("ctrl"),
+        ValueKind::PhiToken => out.push_str("token"),
+        ValueKind::Memory => out.push_str("mem"),
     }
 }
 
-fn space_str(space: rsleigh::VnSpace) -> String {
+/// `space` as its Sleigh shortcut character, or its byte in hex where that
+/// is not graphic or is the `:` separator.
+pub(crate) fn space_str(space: rsleigh::VnSpace) -> String {
     let byte = space.shortcut_raw();
     if byte.is_ascii_graphic() && byte != b':' {
         char::from(byte).to_string()
@@ -568,8 +560,8 @@ fn space_str(space: rsleigh::VnSpace) -> String {
     }
 }
 
-/// `space:offset:size`, the space as its Sleigh shortcut character.
-fn vn_str(vn: &rsleigh::Vn) -> String {
+/// `space:offset:size`, the space as [`space_str`] spells it.
+pub(crate) fn vn_str(vn: &rsleigh::Vn) -> String {
     format!(
         "{}:{:#x}:{}",
         space_str(vn.addr_space),
@@ -578,53 +570,82 @@ fn vn_str(vn: &rsleigh::Vn) -> String {
     )
 }
 
-fn vn_list(vns: &[rsleigh::Vn]) -> String {
-    let items: Vec<String> = vns.iter().map(vn_str).collect();
-    format!("[{}]", items.join(", "))
-}
-
-/// Hex, high limb first.
-fn const_str(value: &ConstValue) -> String {
-    match value {
-        ConstValue::Bits(bits) => format!("{bits:#x}"),
-        ConstValue::Wide(limbs) => {
-            let mut high = limbs.iter().rev().skip_while(|&&limb| limb == 0);
-            let Some(top) = high.next() else {
-                return "0x0".to_owned();
-            };
-            let mut s = format!("{top:#x}");
-            for limb in high {
-                let _ = write!(s, "{limb:016x}");
-            }
-            s
+/// `items`, `sep`-separated, each written by `each`.
+fn push_sep<T>(
+    out: &mut String,
+    sep: &str,
+    items: impl IntoIterator<Item = T>,
+    mut each: impl FnMut(&mut String, T),
+) {
+    for (i, item) in items.into_iter().enumerate() {
+        if i > 0 {
+            out.push_str(sep);
         }
+        each(out, item);
     }
 }
 
-/// Every field, in declaration order.
-fn cc_fields(cc: &strider_target::BuiltCallingConvention) -> Vec<(&'static str, String)> {
+fn vn_list(vns: &[rsleigh::Vn], vn_name: VnName<'_>) -> String {
+    let items: Vec<String> = vns.iter().map(vn_name).collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// Hex, at any width.
+fn const_str(value: &UBig) -> String {
+    format!("{value:#x}")
+}
+
+/// The claims that are on, in declaration order, as one `assumptions` line;
+/// nothing when none is.
+fn render_claims(out: &mut String, claims: &crate::AssumptionOptions) {
+    let held = claims.omitted_by(&crate::AssumptionOptions::none());
+    if held.is_empty() {
+        return;
+    }
+    out.push_str("assumptions");
+    for name in held {
+        if name == "noalias_allocators" {
+            let mut addrs: Vec<u64> = claims.noalias_allocators.iter().copied().collect();
+            addrs.sort_unstable();
+            let addrs: Vec<String> = addrs.iter().map(|a| format!("{a:#x}")).collect();
+            let _ = write!(out, " {name}=[{}]", addrs.join(", "));
+        } else {
+            let _ = write!(out, " {name}");
+        }
+    }
+    out.push('\n');
+}
+
+/// The printed fields, in declaration order.
+fn cc_fields(
+    cc: &strider_target::BuiltCallingConvention,
+    vn_name: VnName<'_>,
+) -> Vec<(&'static str, String)> {
     let strider_target::BuiltCallingConvention {
         arg_passing_regs,
         arg_passing_regs_float,
         callee_saved_regs,
         ret_val_regs,
         ret_val_regs_float,
-        stack_vn,
+        stack_ptr: stack_vn,
         stack_args,
         ret_stack_pop,
-        link_register_vn,
+        link_register: link_register_vn,
         preserves_memory,
         preserves_all_registers,
-        no_return,
-        entry_address_vn,
+        entry_address: entry_address_vn,
+        reg_args_adjoin_stack_args,
     } = cc;
     vec![
-        ("arg_passing_regs", vn_list(arg_passing_regs)),
-        ("arg_passing_regs_float", vn_list(arg_passing_regs_float)),
-        ("callee_saved_regs", vn_list(callee_saved_regs)),
-        ("ret_val_regs", vn_list(ret_val_regs)),
-        ("ret_val_regs_float", vn_list(ret_val_regs_float)),
-        ("stack_vn", vn_str(stack_vn)),
+        ("arg_passing_regs", vn_list(arg_passing_regs, vn_name)),
+        (
+            "arg_passing_regs_float",
+            vn_list(arg_passing_regs_float, vn_name),
+        ),
+        ("callee_saved_regs", vn_list(callee_saved_regs, vn_name)),
+        ("ret_val_regs", vn_list(ret_val_regs, vn_name)),
+        ("ret_val_regs_float", vn_list(ret_val_regs_float, vn_name)),
+        ("stack_vn", vn_name(stack_vn)),
         (
             "stack_args",
             stack_args.map_or_else(
@@ -637,19 +658,23 @@ fn cc_fields(cc: &strider_target::BuiltCallingConvention) -> Vec<(&'static str, 
             "link_register_vn",
             link_register_vn
                 .as_ref()
-                .map_or_else(|| "none".to_owned(), vn_str),
+                .map_or_else(|| "none".to_owned(), vn_name),
         ),
         ("preserves_memory", preserves_memory.to_string()),
         (
             "preserves_all_registers",
             preserves_all_registers.to_string(),
         ),
-        ("no_return", no_return.to_string()),
         (
             "entry_address_vn",
             entry_address_vn
                 .as_ref()
-                .map_or_else(|| "none".to_owned(), vn_str),
+                .map_or_else(|| "none".to_owned(), vn_name),
+        ),
+        // Last, so the header can leave it out unset.
+        (
+            "reg_args_adjoin_stack_args",
+            reg_args_adjoin_stack_args.to_string(),
         ),
     ]
 }

@@ -1,18 +1,20 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use object::{Object, ObjectSymbol};
+use object::{Object, ObjectSection, ObjectSymbol};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyMemoryView};
 
 use crate::errors::into_strider_err;
-use strider_reader::elf::{ElfSectionLayout, LoadFilter, OpdTable, RegionSource, without_ranges};
+use strider_reader::elf::{
+    AddressSet, ElfSectionLayout, OpdTable, RegionSource, RelocationMode, mapping_symbol_kind,
+    without_ranges,
+};
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory, RegionIndex};
 
-/// The GIL already serialises every access; `Mutex` is here so a wrapper
-/// holding one is `Send`, which is what lets a `Function` outlive the thread
-/// that built it. Poisoning is recovered from rather than propagated: the
-/// guarded data is plain and no panic can leave it half-written.
+/// Every lock is taken under the GIL (a GIL-free `analyze` reads a
+/// `reader_view` snapshot); never hold a guard across a call that can release
+/// it. Poisoning is ignored: no panic leaves the plain data half-written.
 trait LockShared<T> {
     fn lock_shared(&self) -> MutexGuard<'_, T>;
 }
@@ -25,15 +27,12 @@ impl<T> LockShared<T> for Mutex<T> {
 
 pub(crate) struct PyBufferReaderInner {
     pub(crate) regions: Vec<MemRegion>,
-    /// Lazily rebuilt; cleared on every region change.
+    /// Cleared on every region change.
     pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
-    /// Bytes in the largest single region, built with `table`.
-    max_region_len: Option<usize>,
 }
 
-/// Raw byte reader for firmware or custom sources.  Works as both the
-/// `mem` (instruction fetch) and `rom` (read-only memory) argument.  Cheap
-/// to clone; clones share state with the original.
+/// Raw byte reader, usable as both `mem` and `rom`.
+// Clones share state.
 #[pyclass(name = "BufferReader", module = "strider.reader")]
 #[derive(Clone)]
 pub struct PyBufferReader {
@@ -47,33 +46,14 @@ impl PyBufferReader {
             return Arc::clone(t);
         }
         let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
-        inner.max_region_len = Some(
-            inner
-                .regions
-                .iter()
-                .map(|r| (r.end_addr() - r.start_addr()) as usize)
-                .max()
-                .unwrap_or(0),
-        );
         inner.table = Some(Arc::clone(&t));
         t
     }
 
-    /// Point-in-time snapshot implementing both `rsleigh::MemReader` and
-    /// `ReadOnlyMemory`.
+    /// Point-in-time snapshot of the regions.
     pub(crate) fn reader_view(&self) -> PyBufferReaderView {
         let table = self.lookup_table();
         PyBufferReaderView { table }
-    }
-
-    /// Upper bound on what one `MemRegionsLookupTable::read` can return; the
-    /// table itself publishes no such bound.
-    fn read_bound(&self) -> usize {
-        if let Some(n) = self.inner.lock_shared().max_region_len {
-            return n;
-        }
-        drop(self.lookup_table());
-        self.inner.lock_shared().max_region_len.unwrap_or(0)
     }
 
     pub(crate) fn from_regions(regions: Vec<MemRegion>) -> Self {
@@ -81,7 +61,6 @@ impl PyBufferReader {
             inner: Arc::new(Mutex::new(PyBufferReaderInner {
                 regions,
                 table: None,
-                max_region_len: None,
             })),
         }
     }
@@ -89,17 +68,13 @@ impl PyBufferReader {
 
 #[pymethods]
 impl PyBufferReader {
-    /// Create a reader over a single raw-byte region: `data` mapped at
-    /// `base_addr`.  Raises `StriderError` if the region is invalid.
+    /// Map `data` at `base_addr`. Raises `ValueError` if `base_addr +
+    /// len(data)` exceeds `2**64 - 1`, `TypeError` for a buffer whose items
+    /// are not one byte.
     #[new]
-    fn new(base_addr: u64, data: &Bound<'_, PyAny>) -> PyResult<Self> {
-        // `bytes` / `bytearray` copy in one piece; anything else (a list of
-        // ints) converts per element.
-        let data = match data.extract::<pyo3::pybacked::PyBackedBytes>() {
-            Ok(bytes) => bytes.to_vec(),
-            Err(_) => data.extract::<Vec<u8>>()?,
-        };
-        let region = MemRegion::new(base_addr, data).map_err(into_strider_err)?;
+    fn new(base_addr: crate::bigint::Addr, data: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let region = MemRegion::new(base_addr.0, extract_bytes(data)?.into_owned())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(Self::from_regions(vec![region]))
     }
 
@@ -110,188 +85,160 @@ impl PyBufferReader {
         )
     }
 
-    /// Read up to `size` bytes starting at `addr`.  Returns the bytes
-    /// (possibly fewer than `size` near a region edge, or before a relocation
-    /// this loader does not compute) or `None` when `addr` is unmapped or
-    /// inside such a relocation's field.
+    /// Up to `size` bytes at `addr` (fewer at a region edge), or `None`
+    /// when unmapped. An `ElfLifter` reader also stops before, and gives
+    /// `None` inside, an uncomputed relocation field (writable
+    /// non-executable data serves the file bytes).
     fn read<'py>(
         &self,
         py: Python<'py>,
-        addr: u64,
-        size: usize,
+        addr: crate::bigint::Addr,
+        size: crate::bigint::Unsigned<usize>,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        let size = size.0;
         let table = self.lookup_table();
         table.check_unchanged().map_err(into_strider_err)?;
-        // `table.read` fills from one region only, so a multi-exabyte `size`
-        // would allocate (and OOM) for nothing.
-        let mut buf = vec![0u8; size.min(self.read_bound())];
-        match table.read(addr, &mut buf) {
-            Some(n) => {
-                buf.truncate(n);
-                Ok(Some(PyBytes::new_bound(py, &buf)))
-            }
-            None => Ok(None),
-        }
+        Ok(table
+            .read_vec(addr.0, size)
+            .map(|buf| PyBytes::new_bound(py, &buf)))
     }
 }
 
-/// One stat per distinct mapping behind `mem_obj`, before anything decodes
-/// through it. A reader that is not a `BufferReader` maps nothing and cannot
-/// go stale.
-pub(crate) fn check_mem_unchanged(py: Python<'_>, mem_obj: &Option<Py<PyAny>>) -> PyResult<()> {
-    let Some(obj) = mem_obj else { return Ok(()) };
-    let Ok(buf) = obj.extract::<PyBufferReader>(py) else {
-        return Ok(());
-    };
-    buf.lookup_table()
-        .check_unchanged()
+/// Errors if a file mapped behind a `BufferReader` in `objs` changed.
+pub(crate) fn check_mem_unchanged(
+    py: Python<'_>,
+    objs: &[&Option<Arc<Py<PyAny>>>],
+) -> PyResult<()> {
+    let tables: Vec<_> = objs
+        .iter()
+        .filter_map(|obj| obj.as_ref()?.extract::<PyBufferReader>(py).ok())
+        .map(|buf| buf.lookup_table())
+        .collect();
+    MemRegionsLookupTable::check_all_unchanged(tables.iter().map(|t| &**t))
         .map_err(into_strider_err)
 }
 
-/// Where a symbol sits in this address space, if anywhere: its own address
-/// when it is defined, `Import` when it only names something another image
-/// defines.
 enum SymbolPlace {
     Defined,
-    /// An undefined symbol still carrying an address: a linked image's PLT
-    /// stub, or the synthetic one an object file's layout gives it.
+    /// An address the file defines no bytes at: a PLT stub, or an object
+    /// file's synthetic extern (an undefined, common or defined IFUNC
+    /// symbol's).
     Import(u64),
     Nowhere,
 }
 
 fn symbol_place<'d, S: ObjectSymbol<'d>>(sym: &S, layout: &ElfSectionLayout) -> SymbolPlace {
-    // A TLS symbol's value is an offset into the per-thread block, so it has
-    // no address in this space whichever kind of object holds it.
+    // A TLS symbol's value is an offset into the per-thread block.
     if sym.kind() == object::SymbolKind::Tls {
         return SymbolPlace::Nowhere;
     }
+    if let Some(addr) = layout.extern_address(sym.index().0) {
+        return SymbolPlace::Import(addr);
+    }
     match sym.section() {
         object::SymbolSection::Section(_) => SymbolPlace::Defined,
-        // `SHN_ABS` 0 is how a linked image spells a synthetic entry, such as
-        // an `STT_FILE` name.
+        // `SHN_ABS` at 0 is a synthetic entry, such as an `STT_FILE` name.
         object::SymbolSection::Absolute if sym.address() != 0 => SymbolPlace::Defined,
-        object::SymbolSection::Undefined | object::SymbolSection::Common => {
-            match layout.extern_address(sym.index().0) {
-                Some(addr) => SymbolPlace::Import(addr),
-                None if sym.is_undefined() && sym.address() != 0 => {
-                    SymbolPlace::Import(sym.address())
-                }
-                None => SymbolPlace::Nowhere,
-            }
+        object::SymbolSection::Undefined if sym.address() != 0 => {
+            SymbolPlace::Import(sym.address())
         }
         _ => SymbolPlace::Nowhere,
     }
 }
 
-/// `Segments` auto-dispatches: PT_LOAD headers for ET_EXEC / ET_DYN,
-/// falling back to the section walker for ET_REL (no program headers).
-/// `Sections` forces the section walk even on a linked binary that does
-/// carry PT_LOAD segments.
-#[derive(Clone, Copy)]
-pub(crate) enum ElfRegionSource {
-    Segments,
-    Sections,
+/// A MIPS symbol `st_other` marks `STO_MIPS16`.
+fn is_mips16<'d, S: ObjectSymbol<'d>>(sym: &S) -> bool {
+    matches!(sym.flags(), object::SymbolFlags::Elf { st_other, .. } if st_other & 0xf0 == 0xf0)
 }
 
-impl From<ElfRegionSource> for RegionSource {
-    fn from(source: ElfRegionSource) -> Self {
-        match source {
-            ElfRegionSource::Segments => RegionSource::Auto,
-            ElfRegionSource::Sections => RegionSource::Sections,
+/// One file's ppc64 ELFv1 descriptors: its own `.opd`, or, where that is
+/// `SHT_NOBITS` as a debug file's is, the loaded ELFs'.
+enum Opds<'a, 'd> {
+    Own(OpdTable<'d>),
+    Loaded(&'a [OpdTable<'d>]),
+}
+
+impl<'a, 'd> Opds<'a, 'd> {
+    /// `None` off ppc64 ELFv1, or for a `SHT_NOBITS` `.opd` with no loaded
+    /// ELFv1 image.
+    fn new(file: &object::File<'d>, loaded: &'a [OpdTable<'d>]) -> Option<Self> {
+        if let Some(own) = OpdTable::new(file) {
+            return Some(Self::Own(own));
+        }
+        let nobits = file
+            .section_by_name(".opd")
+            .is_some_and(|s| s.kind() == object::SectionKind::UninitializedData);
+        (nobits && !loaded.is_empty()).then_some(Self::Loaded(loaded))
+    }
+
+    fn table(&self, descriptor: u64) -> Option<&OpdTable<'d>> {
+        match self {
+            Self::Own(t) => Some(t),
+            Self::Loaded(ts) => ts.iter().find(|t| t.entry_at(descriptor).is_some()),
         }
     }
+
+    fn entry_at(&self, descriptor: u64) -> Option<u64> {
+        self.table(descriptor)?.entry_at(descriptor)
+    }
+
+    fn toc_at(&self, descriptor: u64) -> Option<u64> {
+        self.table(descriptor)?.toc_at(descriptor)
+    }
 }
 
-/// Instruction fetch / raw reads: writable sections are included only when
-/// relocations are applied, so a relocated `.got` / `.data.rel.ro` is readable.
-fn elf_to_mem_regions(
-    elf: &strider_reader::OwnedElf,
-    source: ElfRegionSource,
-    apply_relocations: bool,
-) -> PyResult<Vec<MemRegion>> {
-    let filter = if apply_relocations {
-        LoadFilter::AllAllocatable
-    } else {
-        LoadFilter::CodeAndReadOnly
-    };
-    elf.regions(source.into(), filter, apply_relocations)
-        .map_err(into_strider_err)
-}
-
-/// Code + read-only sections only; writable ones (`.data`, `.got`,
-/// `.data.rel.ro`) are EXCLUDED, so every address here is
-/// runtime-immutable.
-///
-/// `relocated_got_is_rom` takes `.got` and `.data.rel.ro` back in, on the
-/// caller's claim that nothing rewrites them once the loader has run. Never
-/// `.got.plt`; see [`LoadFilter::ImmutableAndRelocatedGot`].
-///
-/// Refuses it together with `apply_relocations=False`, which denies that same
-/// claim.
-///
-/// Shares one backing buffer with [`elf_to_mem_regions`]: the ROM is a filter
-/// over the same bytes.
-fn elf_to_rom_regions(
-    elf: &strider_reader::OwnedElf,
-    source: ElfRegionSource,
+/// `load_elf`'s two relocation flags; `relocated_got_is_rom` needs
+/// `apply_relocations`.
+fn relocation_mode(
     apply_relocations: bool,
     relocated_got_is_rom: bool,
-) -> PyResult<Vec<MemRegion>> {
-    if relocated_got_is_rom && !apply_relocations {
-        return Err(into_strider_err(anyhow::anyhow!(
-            "relocated_got_is_rom=True claims the loader has already relocated \
-             `.got` / `.data.rel.ro`, and apply_relocations=False says it has not. \
-             Served unrelocated, those slots read as their on-disk bytes, which is 0 \
-             on a PIE (the address lives in the relocation addend), and a dispatch \
-             through one folds to address 0 with nothing reported unresolved. Pass \
-             apply_relocations=True, or relocated_got_is_rom=False"
-        )));
+) -> PyResult<RelocationMode> {
+    match (apply_relocations, relocated_got_is_rom) {
+        (true, got_is_rom) => Ok(RelocationMode::Applied { got_is_rom }),
+        (false, false) => Ok(RelocationMode::Unapplied),
+        (false, true) => Err(into_strider_err(anyhow::anyhow!(
+            "relocated_got_is_rom=True needs apply_relocations=True: unrelocated GOT \
+             slots serve their on-disk bytes (0 on a PIE)"
+        ))),
     }
-    let filter = if relocated_got_is_rom {
-        LoadFilter::ImmutableAndRelocatedGot
-    } else {
-        LoadFilter::ImmutableOnly
-    };
-    elf.regions(source.into(), filter, apply_relocations)
-        .map_err(into_strider_err)
 }
 
-/// Parsed ELF binary.  Construct via `strider.lift.load_elf(path)`.
+/// Parsed ELF binary, from `strider.lift.load_elf(path)`.
 #[pyclass(name = "_LoadedElf", module = "strider.reader")]
 pub struct PyLoadedElf {
     /// Load order; the first wins on symbol-name collisions.
     elfs: Vec<strider_reader::OwnedElf>,
-    /// Every address a loaded ELF maps writable, which no ELF's read-only
-    /// view may serve.
-    writable: Vec<(u64, u64)>,
-    /// Instruction fetch / raw reads; includes writable sections when
-    /// relocations were applied.
+    /// Never served by `rom`.
+    writable: AddressSet,
+    /// Includes writable sections when relocations were applied.
     mem: PyBufferReader,
     /// The runtime-immutable subset.
     rom: PyBufferReader,
-    /// The region-collection strategy this ELF was loaded with.
-    source: ElfRegionSource,
-    /// ELFs consulted for symbols only, never for bytes: a debug companion is
-    /// linked at the same addresses as the image it describes, so merging it
-    /// through `add_elf` would collide with what is already mapped.
+    source: RegionSource,
+    /// ELFs consulted for symbols only, never for bytes.
     symbol_elfs: Vec<strider_reader::OwnedElf>,
-    /// Symbols supplied directly. Appended last, so an ELF keeps a colliding
-    /// name; `symbol_at` still reaches these by address, and one with a size
-    /// can win there.
+    /// Appended last, so an ELF keeps a colliding name.
     extra_symbols: Vec<PySymbol>,
-    /// Every symbol of every source, built on the first symbol query and
-    /// dropped whenever a source is added.
-    symbol_table: Mutex<Option<SymbolTable>>,
-    /// The `$d` mapping-symbol spans of every ELF, built on first use and
-    /// dropped whenever an ELF is added.
-    data_ranges: Mutex<Option<strider_cfg::DataRanges>>,
+    memo: ElfMemo,
+}
+
+/// Dropped when a source it reads is added.
+#[derive(Default)]
+struct ElfMemo {
+    symbols: OnceLock<SymbolTable>,
+    data_ranges: OnceLock<strider_cfg::DataRanges>,
+    local_entries: OnceLock<Arc<strider_cfg::LocalEntries>>,
+    /// Whether any symbol source has a `<base>.cold` symbol.
+    has_cold_symbols: OnceLock<bool>,
+    /// ppc64 ELFv1 function entries to their descriptors' TOC pointers;
+    /// `None` where two descriptors disagree.
+    entry_tocs: OnceLock<HashMap<u64, Option<u64>>>,
 }
 
 fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
     let mut inner = reader.inner.lock_shared();
     inner.regions.extend(regions);
     inner.table = None;
-    inner.max_region_len = None;
 }
 
 fn region_spans(regions: &[MemRegion]) -> Vec<(u64, u64)> {
@@ -301,31 +248,17 @@ fn region_spans(regions: &[MemRegion]) -> Vec<(u64, u64)> {
         .collect()
 }
 
-/// Every address `new` covers is covered by `existing`.
-fn spans_covered(existing: &[(u64, u64)], new: &[(u64, u64)]) -> bool {
-    let mut spans = existing.to_vec();
-    spans.sort_unstable();
-    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(spans.len());
-    for (lo, hi) in spans {
-        match merged.last_mut() {
-            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
-            _ => merged.push((lo, hi)),
-        }
-    }
-    // Merged spans are disjoint, so a span inside their union is inside one.
-    new.iter()
-        .all(|&(lo, hi)| merged.iter().any(|&(s, e)| s <= lo && hi <= e))
+/// Every address `new` maps is mapped by `existing`.
+fn regions_covered(existing: &[MemRegion], new: &[MemRegion]) -> bool {
+    let mapped = AddressSet::merged(region_spans(existing));
+    region_spans(new)
+        .iter()
+        .all(|&(lo, hi)| mapped.covers(lo, hi))
 }
 
-/// A sub-range where `new` serves different bytes than `existing` at an
-/// address both map, or `None` if every such address reads the same (a benign
-/// re-merge of the same image). See `add_elf` for why differing overlap is
-/// rejected.
-///
-/// Each address is compared as a one-byte read resolves it, through the
-/// highest-start region covering it on each side. Which region that is only
-/// changes at a region boundary, so the comparison walks the intervals between
-/// boundaries rather than every overlapping pair of regions.
+/// A sub-range both map where `new` serves different bytes than `existing`.
+/// An address resolves as a read does, through the highest-start covering
+/// region.
 fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, u64)> {
     let (old_index, new_index) = (RegionIndex::new(existing), RegionIndex::new(new));
     let mut old_bounds: Vec<u64> = existing
@@ -333,7 +266,7 @@ fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, 
         .flat_map(|r| [r.start_addr(), r.end_addr()])
         .collect();
     old_bounds.sort_unstable();
-    let mut spans: Vec<(u64, u64)> = new.iter().map(|r| (r.start_addr(), r.end_addr())).collect();
+    let mut spans = region_spans(new);
     spans.sort_unstable();
     let mut cuts: Vec<u64> = Vec::new();
     let mut covered_to = 0u64;
@@ -361,39 +294,48 @@ fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, 
     })
 }
 
-/// One ELF symbol: where it is, what the ELF says it spans, and which loaded
-/// region it falls in.
-#[pyclass(name = "Symbol", module = "strider.reader", frozen)]
-#[derive(Clone)]
+/// One ELF symbol. Equal when every field is.
+#[pyclass(name = "Symbol", module = "strider.reader", frozen, eq, hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PySymbol {
-    /// The symbol name as spelled in the ELF symbol table.
+    /// The name as spelled in the symbol table.
     #[pyo3(get)]
     name: String,
-    /// The symbol's virtual address (`st_value`), except for a ppc64 ELFv1
-    /// function, where it is the code the `.opd` descriptor at `st_value`
-    /// names.
+    /// `st_value`; for a ppc64 ELFv1 function, the code its `.opd`
+    /// descriptor names. A Thumb function keeps the Thumb bit, and a MIPS16
+    /// one (`STO_MIPS16`) gets the ISA bit. An object
+    /// file's undefined, common or defined IFUNC symbol has an unmapped
+    /// address past the image.
     #[pyo3(get)]
-    address: u64,
-    /// `None` for `st_size == 0`, which records no extent rather than an
-    /// empty one: a hand-written `.S` entry point with no `.size` directive
-    /// is still a whole function. Also `None` once a ppc64 ELFv1 descriptor
-    /// has been followed, `st_size` having measured the descriptor.
+    pub(crate) address: u64,
+    /// `st_size`; `None` when 0, for an object file's defined IFUNC, or when
+    /// a ppc64 ELFv1 function's `st_size` measures its `.opd` descriptor.
     #[pyo3(get)]
-    size: Option<u64>,
+    pub(crate) size: Option<u64>,
     is_function: bool,
-    /// An ARM Thumb function, whose `address` keeps the ISA bit.
-    thumb: bool,
-    region: Option<(u64, u64)>,
+    /// The ISA bit `address` carries.
+    isa_bit: IsaBit,
+    /// `address` plus the ppc64 ELFv2 local-entry offset, else `address`.
+    #[pyo3(get)]
+    local_entry: u64,
+    pub(crate) region: Option<(u64, u64)>,
+}
+
+/// The ISA-mode bit a function's address carries.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum IsaBit {
+    None,
+    Thumb,
+    Mips16,
 }
 
 impl PySymbol {
-    /// The first byte the symbol covers: `address` without a Thumb bit.
+    /// The first byte the symbol covers: `address` without its ISA bit.
     fn start(&self) -> u64 {
-        self.address & !u64::from(self.thumb)
+        self.address & !u64::from(self.isa_bit != IsaBit::None)
     }
 
-    /// One past the last address the symbol covers. A symbol with no recorded
-    /// size covers only its own first byte.
+    /// One past the last address covered; an unsized symbol covers one byte.
     fn covered_end(&self) -> u64 {
         self.start().saturating_add(self.size.unwrap_or(1))
     }
@@ -401,31 +343,29 @@ impl PySymbol {
 
 #[pymethods]
 impl PySymbol {
-    /// Whether the ELF types this `STT_FUNC` (or `STT_GNU_IFUNC`), rather
-    /// than inferring it from the section the symbol lives in.
+    /// Whether the ELF types this `STT_FUNC` or `STT_GNU_IFUNC`, but `False`
+    /// for an object file's defined IFUNC, which has no code at its extern
+    /// address.
     #[getter]
     fn is_function(&self) -> bool {
         self.is_function
     }
 
-    /// One past the last byte, or `None` when `size` is. Measured from the
-    /// first instruction, so a Thumb function's ISA bit does not count.
+    /// One past the last byte, or `None` when `size` is. Ignores the ISA
+    /// bit.
     #[getter]
     fn end(&self) -> Option<u64> {
         self.size.map(|s| self.start().saturating_add(s))
     }
 
-    /// Whether this is an ARM Thumb function: `address` then carries the
-    /// Thumb bit, which is what `analyze` enters the function in Thumb mode
-    /// on, and its first instruction is at `address & ~1`.
+    /// An ARM Thumb function: `address` carries the Thumb bit, so `analyze`
+    /// enters in Thumb mode at `address & ~1`.
     #[getter]
     fn is_thumb(&self) -> bool {
-        self.thumb
+        self.isa_bit == IsaBit::Thumb
     }
 
-    /// The `(start, end)` bounds (end exclusive) of the loaded region this
-    /// symbol maps into, such as the `.text` mapping, or `None` when its
-    /// address falls in no mapped region.
+    /// `(start, end)` of the loaded region holding the symbol, or `None`.
     #[getter]
     fn region(&self) -> Option<(u64, u64)> {
         self.region
@@ -442,8 +382,6 @@ impl PySymbol {
     }
 }
 
-/// Every named, addressed symbol of every loaded ELF, with a by-name and a
-/// by-address lookup over it.
 struct SymbolTable {
     /// Load order, then symbol-table order within an ELF.
     syms: Vec<PySymbol>,
@@ -451,26 +389,19 @@ struct SymbolTable {
     by_name: HashMap<String, usize>,
     /// Indices into `syms`, ascending by first byte, ties in load order.
     by_addr: Vec<usize>,
-    /// Which symbols cover an address, over `[start, covered_end)`.
+    /// Over `[start, covered_end)`.
     extents: RegionIndex,
+    /// Sized cold fragments by the index into `syms` of the function owning them.
+    cold_fragments: HashMap<usize, Vec<std::ops::Range<u64>>>,
 }
 
-/// A build id as the hex string every tool prints it in.
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl PyLoadedElf {
-    /// Refuses a symbol file that describes a different binary.
-    ///
-    /// The whole point of attaching one is a stripped image, where every name
-    /// comes from the symbol file alone. A wrong-build file therefore yields a
-    /// complete, silently wrong name-to-address map rather than an obviously
-    /// empty one. `.note.gnu.build-id` settles it when both carry one, since a
-    /// debug file keeps the build id of the image it was split from.
-    /// Otherwise the architecture has to agree, which catches the coarse
-    /// mistakes; nothing catches two builds of the same source with neither a
-    /// build id nor a differing arch.
+    /// Refuses a symbol file that describes a different binary: by build id
+    /// when both carry one, else by architecture.
     fn check_describes_a_loaded_image(
         &self,
         candidate: &strider_reader::OwnedElf,
@@ -504,25 +435,110 @@ impl PyLoadedElf {
         Ok(())
     }
 
-    /// Building parses the mapping, so a file that changed underneath is an
-    /// error here rather than a SIGBUS. A table already built needs no mapping
-    /// and costs no stat.
-    fn with_symbols<T>(&self, f: impl FnOnce(&SymbolTable) -> T) -> PyResult<T> {
-        let stale = self.symbol_table.lock_shared().is_none();
-        if stale {
-            self.check_unchanged()?;
-            let built = self.build_symbol_table();
-            *self.symbol_table.lock_shared() = Some(built);
+    /// Refuses an ELF whose architecture, class, byte order or ARM
+    /// `EF_ARM_BE8` differs from the first image's.
+    fn check_same_target(&self, candidate: &strider_reader::OwnedElf, path: &str) -> PyResult<()> {
+        use object::read::Object as _;
+        let Some(image) = self.elfs.first() else {
+            return Ok(());
+        };
+        let target = |elf: &strider_reader::OwnedElf| -> anyhow::Result<String> {
+            let file = elf.checked_file()?;
+            Ok(format!(
+                "{:?} {}-bit {}-endian{}",
+                file.architecture(),
+                if file.is_64() { 64 } else { 32 },
+                if file.is_little_endian() {
+                    "little"
+                } else {
+                    "big"
+                },
+                if elf.is_arm_be8()? { " BE8" } else { "" },
+            ))
+        };
+        let (want, got) = (
+            target(image).map_err(into_strider_err)?,
+            target(candidate).map_err(into_strider_err)?,
+        );
+        if want != got {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "add_elf: {path} is {got}, the loaded image {want}; one handle \
+                 decodes one target"
+            )));
         }
-        let table = self.symbol_table.lock_shared();
-        Ok(f(table.as_ref().expect("just built")))
+        Ok(())
     }
 
-    /// Bytes inside executable sections that ARM / AArch64 mapping symbols
-    /// mark as data, over every ELF and symbol file.
+    /// Merge another ELF's regions and symbols. The earlier ELF wins a name
+    /// collision; `relocated_got_is_rom` applies to this image only. Errors
+    /// on a different target or an address already loaded with other bytes;
+    /// re-merging a loaded image does nothing.
+    pub(crate) fn add_elf(
+        &mut self,
+        path: &str,
+        apply_relocations: bool,
+        relocated_got_is_rom: bool,
+    ) -> PyResult<()> {
+        let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
+        self.check_same_target(&elf, path)?;
+        let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
+        let image = elf.image(self.source, mode).map_err(into_strider_err)?;
+        let rom_regions = without_ranges(image.rom, &self.writable);
+        if let Some((lo, hi)) =
+            differing_overlap(&self.mem.inner.lock_shared().regions, &image.fetch)
+        {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "add_elf: {path} maps [{lo:#x}, {hi:#x}) with bytes that differ from what is \
+                 already loaded there; add_elf merges shared objects at DISTINCT addresses, so \
+                 two ELFs linked at the same base cannot be merged into one address space"
+            )));
+        }
+        // An image mapping nothing still goes through, for its symbols.
+        if !image.fetch.is_empty()
+            && regions_covered(&self.mem.inner.lock_shared().regions, &image.fetch)
+            && image
+                .writable
+                .as_slice()
+                .iter()
+                .all(|&(lo, hi)| self.writable.covers(lo, hi))
+        {
+            return Ok(());
+        }
+        invalidate_and_extend(&self.mem, image.fetch);
+        {
+            let mut rom = self.rom.inner.lock_shared();
+            let kept = without_ranges(std::mem::take(&mut rom.regions), &image.writable);
+            rom.regions = kept;
+        }
+        invalidate_and_extend(&self.rom, rom_regions);
+        self.writable = AddressSet::merged(
+            self.writable
+                .as_slice()
+                .iter()
+                .chain(image.writable.as_slice())
+                .copied()
+                .collect(),
+        );
+        self.elfs.push(elf);
+        self.memo = ElfMemo::default();
+        Ok(())
+    }
+
+    /// Stats the mappings before a build, so a changed file errors rather than
+    /// SIGBUSes.
+    fn with_symbols<T>(&self, f: impl FnOnce(&SymbolTable) -> T) -> PyResult<T> {
+        if self.memo.symbols.get().is_none() {
+            self.check_unchanged()?;
+        }
+        Ok(f(self
+            .memo
+            .symbols
+            .get_or_init(|| self.build_symbol_table())))
+    }
+
+    /// The `$d` mapping-symbol spans of every ELF and symbol file.
     pub(crate) fn data_ranges(&self) -> PyResult<strider_cfg::DataRanges> {
-        let mut cached = self.data_ranges.lock_shared();
-        if let Some(ranges) = cached.as_ref() {
+        if let Some(ranges) = self.memo.data_ranges.get() {
             return Ok(ranges.clone());
         }
         self.check_unchanged()?;
@@ -533,53 +549,189 @@ impl PyLoadedElf {
             };
             all.extend(strider_reader::elf::mapping_symbol_data_ranges(&file));
         }
-        let ranges = strider_cfg::DataRanges::new(all);
-        *cached = Some(ranges.clone());
-        Ok(ranges)
+        Ok(self
+            .memo
+            .data_ranges
+            .get_or_init(|| strider_cfg::DataRanges::new(all))
+            .clone())
     }
 
-    /// One name can have several symbols: FreeBSD's `model_name` is both an
-    /// STT_FUNC in `.text` and an STT_OBJECT in `.rodata`, so a code symbol
-    /// wins within an ELF, and the first ELF in load order wins across them.
+    /// The cold fragments of every function symbol at `entry`.
+    pub(crate) fn cold_fragments(&self, entry: u64) -> PyResult<strider_cfg::DataRanges> {
+        let names_cold = |name: &str| cold_fragment_base(name).is_some();
+        let has_cold = match self.memo.has_cold_symbols.get() {
+            Some(&has) => has,
+            None => {
+                self.check_unchanged()?;
+                let has = self.extra_symbols.iter().any(|s| names_cold(&s.name))
+                    || self.elfs.iter().chain(&self.symbol_elfs).any(|obj| {
+                        obj.checked_file().is_ok_and(|file| {
+                            file.symbols()
+                                .chain(file.dynamic_symbols())
+                                .any(|s| s.name().is_ok_and(names_cold))
+                        })
+                    });
+                *self.memo.has_cold_symbols.get_or_init(|| has)
+            }
+        };
+        if !has_cold {
+            return Ok(strider_cfg::DataRanges::default());
+        }
+        self.with_symbols(|t| {
+            // An ISA-bit symbol's `start` is one below its address.
+            let first = t
+                .by_addr
+                .partition_point(|&i| t.syms[i].start() < entry.saturating_sub(1));
+            let functions = t.by_addr[first..]
+                .iter()
+                .copied()
+                .take_while(|&i| t.syms[i].start() <= entry)
+                .filter(|&i| t.syms[i].is_function && t.syms[i].address == entry);
+            strider_cfg::DataRanges::new(
+                functions
+                    .filter_map(|i| t.cold_fragments.get(&i))
+                    .flatten()
+                    .cloned(),
+            )
+        })
+    }
+
+    /// `r2` on entry to the ppc64 ELFv1 function whose code starts at
+    /// `entry`: the TOC pointer of the `.opd` descriptor a function symbol
+    /// names there. `None` off ELFv1, for an address no descriptor enters,
+    /// or where two descriptors give it different TOCs.
+    pub(crate) fn entry_toc(&self, entry: u64) -> PyResult<Option<u64>> {
+        if let Some(tocs) = self.memo.entry_tocs.get() {
+            return Ok(tocs.get(&entry).copied().flatten());
+        }
+        let mut tocs: HashMap<u64, Option<u64>> = HashMap::new();
+        let loaded = self.loaded_opds();
+        for obj in self.elfs.iter().chain(&self.symbol_elfs) {
+            let file = obj.checked_file().map_err(into_strider_err)?;
+            let Some(opd) = Opds::new(&file, &loaded) else {
+                continue;
+            };
+            let layout = ElfSectionLayout::new(&file);
+            for sym in file.symbols().chain(file.dynamic_symbols()) {
+                if sym.kind() != object::SymbolKind::Text
+                    || !matches!(symbol_place(&sym, &layout), SymbolPlace::Defined)
+                {
+                    continue;
+                }
+                let descriptor = layout.symbol_address(&sym);
+                let (Some(code), Some(toc)) = (opd.entry_at(descriptor), opd.toc_at(descriptor))
+                else {
+                    continue;
+                };
+                tocs.entry(code)
+                    .and_modify(|seen| {
+                        if *seen != Some(toc) {
+                            *seen = None;
+                        }
+                    })
+                    .or_insert(Some(toc));
+            }
+        }
+        let tocs = self.memo.entry_tocs.get_or_init(|| tocs);
+        Ok(tocs.get(&entry).copied().flatten())
+    }
+
+    /// The loaded ELFs' `.opd` tables, for a symbol file's descriptors; empty
+    /// without one.
+    fn loaded_opds(&self) -> Vec<OpdTable<'_>> {
+        if self.symbol_elfs.is_empty() {
+            return Vec::new();
+        }
+        self.elfs
+            .iter()
+            .filter_map(|o| OpdTable::new(&o.checked_file().ok()?))
+            .collect()
+    }
+
+    /// The local entries of every ELF and symbol file; empty off ppc64.
+    pub(crate) fn local_entries(&self) -> PyResult<Arc<strider_cfg::LocalEntries>> {
+        if let Some(entries) = self.memo.local_entries.get() {
+            return Ok(Arc::clone(entries));
+        }
+        let mut ppc64 = false;
+        for obj in self.elfs.iter().chain(&self.symbol_elfs) {
+            let file = obj.checked_file().map_err(into_strider_err)?;
+            ppc64 |= file.architecture() == object::Architecture::PowerPc64;
+        }
+        let entries = if ppc64 {
+            self.with_symbols(|t| {
+                strider_cfg::LocalEntries::new(t.syms.iter().map(|s| (s.address, s.local_entry)))
+            })?
+        } else {
+            strider_cfg::LocalEntries::default()
+        };
+        Ok(Arc::clone(
+            self.memo.local_entries.get_or_init(|| Arc::new(entries)),
+        ))
+    }
+
+    /// For a name with several symbols, a code symbol wins within an ELF, and
+    /// the first ELF in load order wins across them.
     fn build_symbol_table(&self) -> SymbolTable {
         let mem = self.mem.inner.lock_shared();
-        // Indexed rather than scanned per symbol: an `ET_REL` object carries one
-        // region per SHF_ALLOC section, so a `-ffunction-sections` build grows
-        // both axes together.
         let index = RegionIndex::new(&mem.regions);
-        // The highest start among the regions covering `address`, which is how
-        // `MemRegionsLookupTable::read` resolves an overlap; slice order could
-        // name a region that never serves these bytes.
+        // The highest-start covering region, as a read resolves an overlap.
         let region_of = |address: u64| -> Option<(u64, u64)> {
             let r = &mem.regions[index.covering(address, 1).next()?];
             Some((r.start_addr(), r.end_addr()))
         };
         let mut syms: Vec<PySymbol> = Vec::new();
+        // Per symbol: the object file (`STT_FILE` group) of a local, `None` for a global.
+        let mut file_scope: Vec<Option<usize>> = Vec::new();
+        let mut scopes = 0usize;
         let mut by_name: HashMap<String, usize> = HashMap::new();
-        // Names only an undefined symbol carries, taken once no ELF defines
-        // them.
+        // Taken only for names no ELF defines.
         let mut imports: Vec<(String, usize)> = Vec::new();
+        let loaded = self.loaded_opds();
         for obj in self.elfs.iter().chain(&self.symbol_elfs) {
-            // `with_symbols` stats every mapping before calling this, so a
-            // rebuild between the two is the torn-read race the reader
-            // documents rather than something to report here. Skipping the ELF
-            // is still better than panicking across the FFI for it.
+            // `with_symbols` already statted; a failure is a torn-read race.
             let Ok(file) = obj.checked_file() else {
                 continue;
             };
             let layout = ElfSectionLayout::new(&file);
             let arm = file.architecture() == object::Architecture::Arm;
-            // `None` for everything but a linked ppc64 ELFv1 image; built once
-            // per ELF rather than per symbol.
-            let opd = OpdTable::new(&file);
+            let mips = matches!(
+                file.architecture(),
+                object::Architecture::Mips
+                    | object::Architecture::Mips64
+                    | object::Architecture::Mips64_N32
+            );
+            let marks_spans = arm
+                || matches!(
+                    file.architecture(),
+                    object::Architecture::Aarch64 | object::Architecture::Aarch64_Ilp32
+                );
+            // `None` off ppc64 ELFv1.
+            let opd = Opds::new(&file, &loaded);
+            // ELFv1: `.f` names the code, `f` the descriptor.
+            let dot_names: std::collections::HashSet<&str> = if opd.is_some() {
+                file.symbols()
+                    .filter_map(|s| s.name().ok())
+                    .filter(|n| n.starts_with('.'))
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            };
             let mut per_elf: HashMap<String, usize> = HashMap::new();
-            // `.symtab` and `.dynsym` overlap: an exported symbol is in both, and
-            // only `iter_symbols` would show it twice.
+            // An exported symbol is in both `.symtab` and `.dynsym`.
             let mut seen: std::collections::HashSet<(String, u64)> =
                 std::collections::HashSet::new();
+            scopes += 1;
+            let mut scope = scopes;
             for sym in file.symbols().chain(file.dynamic_symbols()) {
+                if sym.kind() == object::SymbolKind::File {
+                    scopes += 1;
+                    scope = scopes;
+                    continue;
+                }
                 let Ok(name) = sym.name() else { continue };
-                if name.is_empty() {
+                // A mapping symbol marks a code or data span, not a symbol.
+                if name.is_empty() || (marks_spans && mapping_symbol_kind(name).is_some()) {
                     continue;
                 }
                 let place = symbol_place(&sym, &layout);
@@ -588,19 +740,36 @@ impl PyLoadedElf {
                     SymbolPlace::Import(addr) => addr,
                     SymbolPlace::Nowhere => continue,
                 };
-                let is_function = sym.kind() == object::SymbolKind::Text;
+                // A defined IFUNC at its extern address: no code there, and
+                // its `st_size` is the resolver's.
+                let ifunc_extern = matches!(place, SymbolPlace::Import(_))
+                    && matches!(sym.section(), object::SymbolSection::Section(_));
+                let is_function = sym.kind() == object::SymbolKind::Text && !ifunc_extern;
                 // On ppc64 ELFv1 an `STT_FUNC` `st_value` addresses an `.opd`
-                // descriptor, not code, and `st_size` measures that descriptor.
-                // Following one therefore drops the size too: bounding the lift
-                // to the 24-byte triple would cut every function short.
+                // descriptor. Its `st_size` is the code's unless a dot symbol
+                // names the code or the size is a descriptor's (16 or 24).
                 let followed = opd
                     .as_ref()
                     .filter(|_| is_function && matches!(place, SymbolPlace::Defined))
                     .and_then(|t| t.entry_at(declared));
-                let (address, size) = match followed {
-                    Some(code) => (code, None),
-                    None => (declared, (sym.size() != 0).then(|| sym.size())),
+                let measures_opd = || {
+                    matches!(sym.size(), 16 | 24) || dot_names.contains(format!(".{name}").as_str())
                 };
+                let isa_bit = if arm && is_function && declared & 1 == 1 {
+                    IsaBit::Thumb
+                } else if mips
+                    && is_function
+                    && matches!(place, SymbolPlace::Defined)
+                    && is_mips16(&sym)
+                {
+                    IsaBit::Mips16
+                } else {
+                    IsaBit::None
+                };
+                let address = followed.unwrap_or(declared) | u64::from(isa_bit == IsaBit::Mips16);
+                let size =
+                    (sym.size() != 0 && !ifunc_extern && !(followed.is_some() && measures_opd()))
+                        .then(|| sym.size());
                 if !seen.insert((name.to_string(), address)) {
                     continue;
                 }
@@ -610,9 +779,15 @@ impl PyLoadedElf {
                     address,
                     size,
                     is_function,
-                    thumb: arm && is_function && address & 1 == 1,
+                    isa_bit,
+                    local_entry: match place {
+                        SymbolPlace::Defined => address
+                            .wrapping_add(strider_reader::elf::local_entry_offset(&file, &sym)),
+                        _ => address,
+                    },
                     region: None,
                 });
+                file_scope.push(sym.is_local().then_some(scope));
                 if matches!(place, SymbolPlace::Import(_)) {
                     imports.push((name.to_string(), ix));
                     continue;
@@ -635,11 +810,11 @@ impl PyLoadedElf {
         for (name, ix) in imports {
             by_name.entry(name).or_insert(ix);
         }
-        // Hand-supplied symbols land last, so a name any ELF already carries
-        // keeps the ELF's answer; `symbol_at` still sees these by address.
+        // Last, so an ELF keeps a colliding name.
         for extra in &self.extra_symbols {
             let ix = syms.len();
             syms.push(extra.clone());
+            file_scope.push(None);
             by_name.entry(extra.name.clone()).or_insert(ix);
         }
         for sym in &mut syms {
@@ -648,7 +823,37 @@ impl PyLoadedElf {
         let mut by_addr: Vec<usize> = (0..syms.len()).collect();
         by_addr.sort_by_key(|&i| syms[i].start());
         let extents: Vec<(u64, u64)> = syms.iter().map(|s| (s.start(), s.covered_end())).collect();
+        let functions = || syms.iter().enumerate().filter(|(_, s)| s.is_function);
+        let mut owners: HashMap<(&str, Option<usize>), Vec<usize>> = HashMap::new();
+        let mut any_named: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, sym) in functions() {
+            owners
+                .entry((sym.name.as_str(), file_scope[i]))
+                .or_default()
+                .push(i);
+            any_named.entry(sym.name.as_str()).or_default().push(i);
+        }
+        // `<f>.cold` is local to `f`'s object, but the linker moves cold code
+        // away and puts a hidden or LTO-private `f` in its own group. Owner:
+        // the local `f` of that object, else a global `f`, else every `f`.
+        let mut cold_fragments: HashMap<usize, Vec<std::ops::Range<u64>>> = HashMap::new();
+        for (i, sym) in functions() {
+            let (Some(base), Some(size)) = (cold_fragment_base(&sym.name), sym.size) else {
+                continue;
+            };
+            let owner = owners
+                .get(&(base, file_scope[i]))
+                .or_else(|| owners.get(&(base, None)))
+                .or_else(|| any_named.get(base));
+            for &o in owner.into_iter().flatten() {
+                cold_fragments
+                    .entry(o)
+                    .or_default()
+                    .push(sym.start()..sym.start().saturating_add(size));
+            }
+        }
         SymbolTable {
+            cold_fragments,
             extents: RegionIndex::from_ranges(&extents),
             syms,
             by_name,
@@ -657,10 +862,20 @@ impl PyLoadedElf {
     }
 }
 
-/// The symbol of `group` covering `address`. Aliases sharing an address are
-/// ranked by having a recorded extent first, then by being code, so a sized
-/// DATA alias outranks an unsized CODE one. `functions()` filters to code
-/// instead, so the two accessors can name different symbols at one address.
+/// `<base>` of `<base>.cold` or `<base>.cold.<digits>`. A `.part.N` /
+/// `.constprop.N` / `.isra.N` clone is a separate callee, not a fragment.
+fn cold_fragment_base(name: &str) -> Option<&str> {
+    let unnumbered = match name.rsplit_once('.') {
+        Some((head, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => name,
+    };
+    unnumbered
+        .strip_suffix(".cold")
+        .filter(|base| !base.is_empty())
+}
+
+/// The symbol of `group` covering `address`, ranking aliases by having a
+/// size, then by being code; so it can differ from `functions()`' pick.
 fn covering<'a>(group: impl Iterator<Item = &'a PySymbol>, address: u64) -> Option<&'a PySymbol> {
     let rank = |s: &PySymbol| (s.size.is_some(), s.is_function);
     let mut best: Option<&PySymbol> = None;
@@ -675,35 +890,30 @@ fn covering<'a>(group: impl Iterator<Item = &'a PySymbol>, address: u64) -> Opti
 
 #[pymethods]
 impl PyLoadedElf {
-    /// Re-stat every mapped file, erroring if one changed since it was mapped.
-    /// A rebuild between two operations is caught here; a change racing a read
-    /// already in progress is still a torn read or a SIGBUS.
+    /// Raise if a mapped file changed since it was mapped. A change racing a
+    /// read in progress is still a torn read or a SIGBUS.
     fn check_unchanged(&self) -> PyResult<()> {
-        // `symbol_elfs` too: `build_symbol_table` parses every one of them, and
-        // parsing a shortened mapping panics or takes a SIGBUS.
         for elf in self.elfs.iter().chain(&self.symbol_elfs) {
             elf.check_unchanged().map_err(into_strider_err)?;
         }
         Ok(())
     }
 
-    /// The instruction-fetch / raw-read `BufferReader` for this ELF.
-    fn reader(&self) -> PyBufferReader {
+    /// The instruction-fetch `BufferReader`.
+    pub(crate) fn reader(&self) -> PyBufferReader {
         self.mem.clone()
     }
 
-    /// The runtime-immutable `BufferReader` (code + read-only sections
-    /// only).
-    fn ro_reader(&self) -> PyBufferReader {
+    /// The ROM `BufferReader`: non-writable mappings, an object file's
+    /// synthetic GOT, and `.got` / `.data.rel.ro` under `relocated_got_is_rom`.
+    pub(crate) fn ro_reader(&self) -> PyBufferReader {
         self.rom.clone()
     }
 
-    /// The `Symbol` named `name`, taking the first ELF in load order that
-    /// defines it and preferring a code symbol over a data one of the same
-    /// name, else an undefined symbol that still has an address (a PLT stub,
-    /// or an object file's extern).  Raises `StriderError` when there is
-    /// neither.
-    fn symbol(&self, name: &str) -> PyResult<PySymbol> {
+    /// The `Symbol` named `name`: from the first ELF defining it, code over
+    /// data, else an undefined symbol with an address (a PLT stub or an
+    /// object file's extern). Raises `StriderError` when there is none.
+    pub(crate) fn symbol(&self, name: &str) -> PyResult<PySymbol> {
         self.symbol_opt(name)?.ok_or_else(|| {
             into_strider_err(anyhow::anyhow!(
                 "symbol {name:?} not found in any ELF loaded into this \
@@ -718,16 +928,13 @@ impl PyLoadedElf {
         self.with_symbols(|t| t.by_name.get(name).map(|&ix| t.syms[ix].clone()))
     }
 
-    /// The symbol covering `address`: the nearest one at or below it whose
-    /// recorded extent reaches `address`.  A symbol with no recorded size
-    /// covers only its own address, so a size-less one sitting inside a sized
-    /// function (every ARM `$a` / `$d` mapping symbol) does not hide it.
-    /// Aliases sharing an address resolve by recorded extent, then by being
-    /// code.  `None` when nothing covers `address`.
-    fn symbol_at(&self, address: u64) -> PyResult<Option<PySymbol>> {
+    /// The nearest symbol at or below `address` whose extent reaches it, or
+    /// `None`. An unsized symbol covers only its own address; aliases rank
+    /// by having a size, then by being code.
+    fn symbol_at(&self, address: crate::bigint::Addr) -> PyResult<Option<PySymbol>> {
+        let address = address.0;
         self.with_symbols(|t| {
-            // Every symbol covering `address`, highest start first: the nearest
-            // start's aliases are the leading run.
+            // Highest start first, so the nearest start's aliases lead.
             let mut hits = t.extents.covering(address, 1).peekable();
             let base = t.syms[*hits.peek()?].start();
             let mut group: Vec<usize> = hits.take_while(|&i| t.syms[i].start() == base).collect();
@@ -736,23 +943,29 @@ impl PyLoadedElf {
         })
     }
 
-    /// Whether the first loaded ELF sets ARM's `EF_ARM_BE8`: instructions are
-    /// stored little-endian while data stays big-endian.
-    ///
-    /// `EI_DATA` marks a BE8 image and a BE32 one alike, so the flag is the
-    /// only thing separating them. Reported, not acted on: nothing here selects
-    /// an arch from it. `False` off ARM.
+    /// Whether the first ELF sets ARM's `EF_ARM_BE8` (little-endian code,
+    /// big-endian data). Reported only; it selects no arch.
     #[getter]
     fn is_arm_be8(&self) -> PyResult<bool> {
-        // Guarded inside: reads the header out of the mapping.
         match self.elfs.first() {
             Some(elf) => elf.is_arm_be8().map_err(into_strider_err),
             None => Ok(false),
         }
     }
 
-    /// Every symbol across every loaded ELF as `dict[str, Symbol]`, keyed by
-    /// the name each one resolves under.
+    /// Whether the first loaded ELF's `EI_DATA` is little-endian.
+    #[getter]
+    fn is_little_endian(&self) -> PyResult<bool> {
+        match self.elfs.first() {
+            Some(elf) => Ok(object::read::Object::is_little_endian(
+                &elf.checked_file().map_err(into_strider_err)?,
+            )),
+            None => Ok(true),
+        }
+    }
+
+    /// Every symbol but ARM / AArch64 mapping symbols as `dict[str, Symbol]`,
+    /// keyed by the name it resolves under.
     fn symbols(&self) -> PyResult<HashMap<String, PySymbol>> {
         self.with_symbols(|t| {
             t.by_name
@@ -762,10 +975,8 @@ impl PyLoadedElf {
         })
     }
 
-    /// The function symbols in address order, one per address: aliases of an
-    /// address already listed are excluded, preferring the one whose size the
-    /// ELF records.  A function with no recorded size is still yielded, with
-    /// `Symbol.size` `None`.
+    /// Function symbols in address order, one per address, preferring a
+    /// sized alias. An unsized function is yielded with `size` `None`.
     fn functions(&self) -> PyResult<PySymbolIter> {
         let syms = self.with_symbols(|t| {
             let mut out: Vec<PySymbol> = Vec::new();
@@ -785,27 +996,22 @@ impl PyLoadedElf {
             }
             out
         })?;
-        Ok(PySymbolIter { syms, next: 0 })
+        Ok(PySymbolIter(syms.into_iter()))
     }
 
-    /// Every symbol pulled one at a time: a `Symbol` is built only when
-    /// pulled, so the Python objects are never all live at once.  The Rust
-    /// table is collected up front.
+    /// Iterate every symbol.
     fn iter_symbols(&self) -> PyResult<PySymbolIter> {
-        Ok(PySymbolIter {
-            syms: self.with_symbols(|t| t.syms.clone())?,
-            next: 0,
-        })
+        Ok(PySymbolIter(
+            self.with_symbols(|t| t.syms.clone())?.into_iter(),
+        ))
     }
 
-    /// ELF entry-point address from the first loaded ELF.
+    /// The first ELF's entry point.
     fn entry_point(&self) -> PyResult<u64> {
-        // `load_elf` always pushes one ELF, so `first()` is never `None`.
         self.elfs.first().map_or(Ok(0), |o| {
             o.checked_file()
                 .map(|f| {
-                    // `e_entry` is a descriptor too on ppc64 ELFv1, exactly as
-                    // an `STT_FUNC` `st_value` is.
+                    // `e_entry` addresses a descriptor on ppc64 ELFv1.
                     let entry = f.entry();
                     OpdTable::new(&f)
                         .and_then(|t| t.entry_at(entry))
@@ -815,233 +1021,99 @@ impl PyLoadedElf {
         })
     }
 
-    /// Read up to `size` raw bytes at `addr`.  Returns fewer bytes near a
-    /// region edge or before a relocation this loader does not compute, and
-    /// `None` when `addr` is unmapped or inside such a relocation's field.
+    /// Up to `size` bytes at `addr`, as `BufferReader.read`.
     fn read<'py>(
         &self,
         py: Python<'py>,
-        addr: u64,
-        size: usize,
+        addr: crate::bigint::Addr,
+        size: crate::bigint::Unsigned<usize>,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         self.mem.read(py, addr, size)
     }
 
-    /// Merge another ELF (e.g. a shared library) into this one, extending
-    /// the regions and symbol set.  The earlier-loaded ELF wins a name
-    /// collision.
-    ///
-    /// `apply_relocations` defaults to `True`, as it does on `load_elf`: a
-    /// merged ELF is normally the ET_DYN case relocations exist for, and it
-    /// also selects what is mapped, so `False` drops writable non-executable
-    /// sections rather than serving their on-disk bytes.
-    ///
-    /// `relocated_got_is_rom` is per image, and does not inherit the handle's:
-    /// the claim is about one shared object's link, so a RELRO main image says
-    /// nothing about a library merged into it.  With `apply_relocations=False`
-    /// it is refused, the two denying each other.
-    ///
-    /// Errors if the new ELF maps code over an address already loaded with
-    /// DIFFERENT bytes: `add_elf` places shared objects at distinct addresses,
-    /// so two ELFs linked at the same base cannot share one address space.
-    /// Re-merging an image already fully loaded, byte for byte, is allowed and
-    /// does nothing.
-    #[pyo3(signature = (path, apply_relocations=true, relocated_got_is_rom=false))]
-    fn add_elf(
-        &mut self,
-        path: &str,
-        apply_relocations: bool,
-        relocated_got_is_rom: bool,
-    ) -> PyResult<()> {
-        let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
-        let writable = obj
-            .writable_ranges(self.source.into())
-            .map_err(into_strider_err)?;
-        let rom_regions = without_ranges(
-            elf_to_rom_regions(&obj, self.source, apply_relocations, relocated_got_is_rom)?,
-            &self.writable,
-        );
-        if let Some((lo, hi)) =
-            differing_overlap(&self.mem.inner.lock_shared().regions, &mem_regions)
-        {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "add_elf: {path} maps [{lo:#x}, {hi:#x}) with bytes that differ from what is \
-                 already loaded there; add_elf merges shared objects at DISTINCT addresses, so \
-                 two ELFs linked at the same base cannot be merged into one address space"
-            )));
-        }
-        // An image already loaded: no byte it maps is new (the overlap check
-        // above makes the shared ones identical) and it bars nothing new from
-        // the read-only view, so its regions and symbols are the ones already
-        // here and a merge would append a second copy of both. An image
-        // mapping nothing still goes through, for its symbols.
-        if !mem_regions.is_empty()
-            && spans_covered(
-                &region_spans(&self.mem.inner.lock_shared().regions),
-                &region_spans(&mem_regions),
-            )
-            && spans_covered(&self.writable, &writable)
-        {
-            return Ok(());
-        }
-        invalidate_and_extend(&self.mem, mem_regions);
-        {
-            let mut rom = self.rom.inner.lock_shared();
-            let kept = without_ranges(std::mem::take(&mut rom.regions), &writable);
-            rom.regions = kept;
-        }
-        invalidate_and_extend(&self.rom, rom_regions);
-        self.writable.extend(writable);
-        self.elfs.push(obj);
-        self.symbol_table.lock_shared().take();
-        self.data_ranges.lock_shared().take();
-        Ok(())
-    }
-
-    /// Take the symbols of `path` and none of its bytes.
-    ///
-    /// This is how a separate debug or symbol file attaches: `objcopy
-    /// --only-keep-debug` output and distro debuginfo are linked at the same
-    /// addresses as the image they describe, so `add_elf` would refuse them as
-    /// an overlap. Both `.symtab` and `.dynsym` are read, as for any ELF.
-    ///
-    /// The already-loaded ELFs keep a colliding name; addresses that fall
-    /// outside every mapped region are still recorded, and simply have no
-    /// region attached.
+    /// Add the symbols, not the bytes, of a debug or symbol file for this
+    /// image. Loaded ELFs keep a colliding name.
     fn add_symbol_file(&mut self, path: &str) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         self.check_describes_a_loaded_image(&obj, path)?;
         self.symbol_elfs.push(obj);
-        self.symbol_table.lock_shared().take();
-        self.data_ranges.lock_shared().take();
+        self.memo = ElfMemo::default();
         Ok(())
     }
 
-    /// Add symbols directly, for names that live in no ELF at all: a map file,
-    /// a kernel `System.map`, a database, or your own naming.
-    ///
-    /// `symbols` maps a name to an address, or to a `(address, size)` pair
-    /// when the extent is known. `is_function` marks them all as code, which
-    /// is what `functions()` iterates. An ELF already carrying a name keeps
-    /// its own answer for that name.
+    /// Add symbols from a `{name: address | (address, size)}` dict.
+    /// `is_function` marks them all as code. An ELF keeps a colliding name.
     #[pyo3(signature = (symbols, *, is_function=true))]
     fn add_symbols(&mut self, symbols: &Bound<'_, PyDict>, is_function: bool) -> PyResult<()> {
-        // Extracted whole before anything is committed: a half-written batch
-        // would leave the entries before the bad one in `extra_symbols` while
-        // the cache below still holds a table without them, so a corrected
-        // retry adds each of those twice and `by_name` keeps the first.
-        //
-        // Snapshotted first, never iterated live: the per-entry `extract`
-        // below runs Python through `__index__`, and a dict that changes size
-        // or keys mid-iteration makes PyO3 PANIC, which surfaces as
-        // `PanicException`, a `BaseException` no `except Exception` catches.
-        // `iter` is `PyDict_Next` over raw storage and runs no Python, so the
-        // collect cannot be interrupted.  `copy` is not equivalent: its
-        // fast path is conditional on the subclass not overriding `__iter__`,
-        // and the `PyDict_Merge` fallback then honours an overridden `keys`.
+        // A failed batch adds nothing.
         let symbols: Vec<_> = symbols.iter().collect();
         let mut added = Vec::with_capacity(symbols.len());
         for (name, value) in symbols {
             let name: String = name.extract()?;
-            let (address, size) = if let Ok((a, n)) = value.extract::<(u64, u64)>() {
-                (a, (n != 0).then_some(n))
+            let (address, size) = if value.is_instance_of::<pyo3::types::PyTuple>() {
+                let (a, n): (crate::bigint::Addr, crate::bigint::Unsigned<u64>) =
+                    value.extract()?;
+                (a.0, (n.0 != 0).then_some(n.0))
             } else {
-                (value.extract::<u64>()?, None)
+                (value.extract::<crate::bigint::Addr>()?.0, None)
             };
             added.push(PySymbol {
                 name,
                 address,
                 size,
                 is_function,
-                thumb: false,
+                isa_bit: IsaBit::None,
+                local_entry: address,
                 region: None,
             });
         }
+        let has_cold_symbols = if added.iter().any(|s| cold_fragment_base(&s.name).is_some()) {
+            OnceLock::from(true)
+        } else {
+            std::mem::take(&mut self.memo.has_cold_symbols)
+        };
         self.extra_symbols.append(&mut added);
-        self.symbol_table.lock_shared().take();
+        // `$d` spans and TOCs come from the ELFs alone.
+        self.memo = ElfMemo {
+            data_ranges: std::mem::take(&mut self.memo.data_ranges),
+            has_cold_symbols,
+            entry_tocs: std::mem::take(&mut self.memo.entry_tocs),
+            ..ElfMemo::default()
+        };
         Ok(())
     }
 }
 
-fn load_elf_impl(
+/// Load the ELF at `path`, as `strider.lift.load_elf`.
+#[pyfunction]
+#[pyo3(name = "_load_elf", signature = (path, from_segments=true, apply_relocations=false, relocated_got_is_rom=false))]
+pub fn load_elf(
     path: &str,
-    source: ElfRegionSource,
+    from_segments: bool,
     apply_relocations: bool,
     relocated_got_is_rom: bool,
 ) -> PyResult<PyLoadedElf> {
-    let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, source, apply_relocations)?);
-    let rom = PyBufferReader::from_regions(elf_to_rom_regions(
-        &obj,
-        source,
-        apply_relocations,
-        relocated_got_is_rom,
-    )?);
-    let writable = obj
-        .writable_ranges(source.into())
-        .map_err(into_strider_err)?;
+    let source = if from_segments {
+        RegionSource::Auto
+    } else {
+        RegionSource::Sections
+    };
+    let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
+    let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
+    let image = elf.image(source, mode).map_err(into_strider_err)?;
     Ok(PyLoadedElf {
-        elfs: vec![obj],
-        writable,
+        elfs: vec![elf],
+        writable: image.writable,
         symbol_elfs: Vec::new(),
         extra_symbols: Vec::new(),
-        mem,
-        rom,
+        mem: PyBufferReader::from_regions(image.fetch),
+        rom: PyBufferReader::from_regions(image.rom),
         source,
-        symbol_table: Mutex::new(None),
-        data_ranges: Mutex::new(None),
+        memo: ElfMemo::default(),
     })
 }
 
-/// Load the ELF at `path`, collecting regions from PT_LOAD program
-/// headers (falling back to the section walker for header-less ET_REL).
-///
-/// Set `apply_relocations` for ET_DYN binaries (kernels, PIE userland)
-/// whose `.text` or function-pointer tables ship with unresolved
-/// relocations: section coverage widens to `.data.rel.ro` / `.got` and
-/// every understood relocation is applied.
-///
-/// `relocated_got_is_rom` additionally serves `.got` / `.data.rel.ro` as
-/// read-only memory, which constant-folds a load through them; see
-/// [`elf_to_rom_regions`].  `apply_relocations` defaults to `false` here, so
-/// it has to be passed alongside: the pair without it is refused.
-#[pyfunction]
-#[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
-pub fn load_elf_from_segments(
-    path: &str,
-    apply_relocations: bool,
-    relocated_got_is_rom: bool,
-) -> PyResult<PyLoadedElf> {
-    load_elf_impl(
-        path,
-        ElfRegionSource::Segments,
-        apply_relocations,
-        relocated_got_is_rom,
-    )
-}
-
-/// Load the ELF at `path`, collecting regions by walking section headers
-/// even when the binary carries PT_LOAD segments.
-/// Use for section-granular regions (`.text` / `.rodata` / `.plt` as
-/// separate mappings) instead of coalesced PT_LOAD ranges.
-#[pyfunction]
-#[pyo3(name = "_load_elf_from_sections", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
-pub fn load_elf_from_sections(
-    path: &str,
-    apply_relocations: bool,
-    relocated_got_is_rom: bool,
-) -> PyResult<PyLoadedElf> {
-    load_elf_impl(
-        path,
-        ElfRegionSource::Sections,
-        apply_relocations,
-        relocated_got_is_rom,
-    )
-}
-
-/// Instruction source backed by Python.  Subclass and override
-/// `read(addr, size)` to feed the pipeline from a custom data source.
+/// Instruction source backed by Python: subclass and override `read`.
 #[pyclass(name = "MemReader", module = "strider.reader", subclass)]
 pub struct PyMemReader;
 
@@ -1059,10 +1131,9 @@ impl PyMemReader {
     }
 
     /// Override to return up to `size` bytes at `addr`, or `None` for
-    /// unmapped.  The base raises `NotImplementedError`.
-    ///
-    /// An exception here fails the whole lift, chained as the `StriderError`'s
-    /// `__cause__`.  `ReadOnlyMemory.read` is the opposite: see its docstring.
+    /// unmapped. Raising, another type, or more than `size` bytes fails the
+    /// lift with `StriderError` (the exception as `__cause__`);
+    /// `KeyboardInterrupt` and `SystemExit` propagate.
     // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
     fn read<'py>(
@@ -1077,19 +1148,13 @@ impl PyMemReader {
     }
 
     fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
-        let name: String = slf.get_type().getattr("__name__")?.extract()?;
-        Ok(format!("{name}()"))
+        Ok(format!("{}()", slf.get_type().name()?))
     }
 }
 
-/// Shared `read`-callback prologue for both Python reader adapters, run
-/// inside the caller's `Python::with_gil`.
-///
-/// `KeyboardInterrupt` / `SystemExit` are STASHED, not `PyErr::restore`d:
-/// restoring leaves the error indicator set, so the next callback trips
-/// CPython's "returned a result with an exception set" guard and destroys
-/// the original.  A stash short-circuits every later call until the outer
-/// boundary drains the cell.
+/// `KeyboardInterrupt` / `SystemExit` are stashed, not `PyErr::restore`d
+/// (the next callback would destroy it); a stash short-circuits every later
+/// call until the outer boundary drains it.
 fn call_py_read<A>(
     py: Python<'_>,
     py_obj: &Py<PyAny>,
@@ -1119,12 +1184,30 @@ where
     }
 }
 
-/// Holds the user's Python reader object and implements
-/// `rsleigh::MemReader` by `Python::with_gil` per call.
-///
-/// The `Py<PyAny>` is shared, not cloned per adapter, so a `Lifter` can
-/// visit the same reference for cyclic-GC traversal
-/// (`PyLifter::__traverse__`) and a reader/lifter cycle stays collectable.
+/// `bytes`, a one-byte-item buffer, or a sequence of ints. A buffer of wider
+/// items raises `TypeError`: reading it per item would drop bytes.
+fn extract_bytes<'a>(bound: &'a Bound<'_, PyAny>) -> PyResult<std::borrow::Cow<'a, [u8]>> {
+    if let Ok(b) = bound.downcast::<PyBytes>() {
+        return Ok(b.as_bytes().into());
+    }
+    let Ok(view) = PyMemoryView::from_bound(bound) else {
+        return Ok(bound.extract::<Vec<u8>>()?.into());
+    };
+    let itemsize: usize = view.getattr("itemsize")?.extract()?;
+    if itemsize != 1 {
+        let format: String = view.getattr("format")?.extract()?;
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "a buffer of {itemsize}-byte items (format {format:?}) is not bytes; \
+             memoryview(x).cast('B') gives its raw bytes"
+        )));
+    }
+    let bytes = view.call_method0("tobytes")?;
+    Ok(bytes.downcast::<PyBytes>()?.as_bytes().to_vec().into())
+}
+
+/// Takes the GIL per call. The `Py<PyAny>` is shared so
+/// `PyLifter::__traverse__` visits it and a reader/lifter cycle stays
+/// collectable.
 #[derive(Clone)]
 pub struct PyMemReaderAdapter {
     pub py_obj: std::sync::Arc<Py<PyAny>>,
@@ -1134,59 +1217,52 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
     type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
+        let size = out_buf.len();
         Python::with_gil(|py| -> anyhow::Result<usize> {
-            let result = call_py_read(
-                py,
-                &self.py_obj,
-                (addr.off, out_buf.len()),
-                "MemReader.read",
-                |e| anyhow::anyhow!("PyMemReader.read raised: {e}"),
-            )?;
-            // `MemReader::read` has no unmapped variant, so None becomes an
-            // error.
-            if result.is_none(py) {
-                anyhow::bail!(
-                    "address {:#x} is not mapped (Python read returned None)",
-                    addr.off
-                );
-            }
-            // Every instruction fetch lands here, so `bytes` (the documented
-            // return) is read borrowed; anything else still converts.
-            let bound = result.bind(py);
-            let owned;
-            let bytes: &[u8] = match bound.downcast::<pyo3::types::PyBytes>() {
-                Ok(b) => b.as_bytes(),
-                Err(_) => {
-                    owned = bound
-                        .extract::<Vec<u8>>()
-                        .map_err(|e| anyhow::anyhow!("PyMemReader.read must return bytes: {e}"))?;
-                    &owned
+            // Fail the lift: Sleigh would read the error as unmapped.
+            let fail = |msg: String, cause: Option<PyErr>| {
+                if !crate::pattern::peek_pending_query_error() {
+                    crate::pattern::stash_pending_query_error(crate::errors::reader_failure(
+                        msg.clone(),
+                        cause,
+                    ));
                 }
+                anyhow::anyhow!(msg)
             };
-            // The `MemReader` contract allows a short read near a region
-            // edge, but an over-long return is a Python bug: reject it
-            // rather than silently dropping the excess.
-            if bytes.len() > out_buf.len() {
-                anyhow::bail!(
-                    "PyMemReader.read({:#x}, {}) returned {} bytes, more than requested",
-                    addr.off,
-                    out_buf.len(),
-                    bytes.len()
-                );
+            let call = format!("MemReader.read({:#x}, {size})", addr.off);
+            let result = call_py_read(py, &self.py_obj, (addr.off, size), "MemReader.read", |e| {
+                fail(format!("{call} raised: {e}"), Some(e))
+            })?;
+            if result.is_none(py) {
+                anyhow::bail!("{call} returned None");
+            }
+            let result = result.bind(py);
+            let bytes = extract_bytes(result).map_err(|e| {
+                let ty = result
+                    .get_type()
+                    .name()
+                    .map_or_else(|_| "?".into(), |n| n.to_string());
+                fail(
+                    format!("{call} must return bytes or None, got {ty}: {e}"),
+                    Some(e),
+                )
+            })?;
+            if bytes.len() > size {
+                return Err(fail(
+                    format!("{call} returned {} bytes, more than requested", bytes.len()),
+                    None,
+                ));
             }
             let n = bytes.len();
-            out_buf[..n].copy_from_slice(bytes);
+            out_buf[..n].copy_from_slice(&bytes);
             Ok(n)
         })
         .map_err(strider_reader::MemReadError::from)
     }
 }
 
-/// Read-only memory backed by Python, read by the constant-load fold
-/// (`LoadReadOnly`) and by the indirect-branch classifier's jump-table probes.
-/// Subclass and override `read(addr, size)` to return the raw bytes at
-/// `addr`.  Only RAM loads reach it, so subclasses need not filter on
-/// space.
+/// Read-only memory backed by Python: subclass and override `read`. Only RAM
+/// loads reach it.
 #[pyclass(name = "ReadOnlyMemory", module = "strider.reader", subclass)]
 pub struct PyReadOnlyMemory;
 
@@ -1203,14 +1279,9 @@ impl PyReadOnlyMemory {
         Self
     }
 
-    /// Override to return the `size` RAW bytes at `addr`, or `None` for
-    /// unmapped.  Bytes are not byte-swapped; the optimizer decodes them
-    /// per the run's endianness.  The base raises `NotImplementedError`.
-    ///
-    /// An exception here is swallowed: the constant-load fold declines and
-    /// analysis continues, indistinguishable from `None`.  Unlike
-    /// `MemReader.read`, whose exception fails the lift.  `KeyboardInterrupt`
-    /// and `SystemExit` are the exceptions that still stop the run.
+    /// Override to return the `size` raw (not byte-swapped) bytes at `addr`,
+    /// or `None` for unmapped. An exception, or another type or length, reads
+    /// as `None`; `KeyboardInterrupt` and `SystemExit` stop the run.
     // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
     fn read(&self, addr: u64, size: usize) -> PyResult<Option<Vec<u8>>> {
@@ -1220,54 +1291,61 @@ impl PyReadOnlyMemory {
     }
 
     fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
-        let name: String = slf.get_type().getattr("__name__")?.extract()?;
-        Ok(format!("{name}()"))
+        Ok(format!("{}()", slf.get_type().name()?))
     }
 }
 
-/// Wraps a Python `ReadOnlyMemory` subclass.  Shares one `Py<>` for the
-/// same cyclic-GC reason as [`PyMemReaderAdapter`].
+/// Shares one `Py<>` for the same cyclic-GC reason as
+/// [`PyMemReaderAdapter`].
 pub struct PyReadOnlyMemoryAdapter {
     pub py_obj: std::sync::Arc<Py<PyAny>>,
 }
 
-impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+impl PyReadOnlyMemoryAdapter {
+    /// Fills `buf`; `Ok(false)` when the reader returned `None` (unmapped).
+    fn fill(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<bool> {
         let size = buf.len();
-        Python::with_gil(|py| -> anyhow::Result<()> {
+        Python::with_gil(|py| {
             let result = call_py_read(py, &self.py_obj, (addr, size), "read", |e| {
                 anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}")
-            })?;
+            })
+            // Read as unmapped, so the exception is no later error's cause.
+            .inspect_err(|_| crate::errors::clear_callback_cause())?;
             if result.is_none(py) {
-                anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
+                return Ok(false);
             }
-            let bound = result.bind(py);
-            let owned;
-            let bytes: &[u8] = match bound.downcast::<pyo3::types::PyBytes>() {
-                Ok(b) => b.as_bytes(),
-                Err(_) => {
-                    owned = bound.extract::<Vec<u8>>().map_err(|e| {
-                        anyhow::anyhow!(
-                            "ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}"
-                        )
-                    })?;
-                    &owned
-                }
-            };
+            let bytes = extract_bytes(result.bind(py)).map_err(|e| {
+                anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}")
+            })?;
             if bytes.len() != size {
                 anyhow::bail!(
                     "ReadOnlyMemory.read({addr:#x}, {size}) returned {} bytes, expected {size}",
                     bytes.len()
                 );
             }
-            buf.copy_from_slice(bytes);
-            Ok(())
+            buf.copy_from_slice(&bytes);
+            Ok(true)
         })
     }
 }
 
-/// Unified `MemReader`: either a `PyBufferReader` snapshot or a callback
-/// into a Python subclass.  Both variants clone cheaply.
+impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        if !self.fill(addr, buf)? {
+            anyhow::bail!(
+                "ReadOnlyMemory.read({addr:#x}, {}) returned None (unmapped)",
+                buf.len()
+            );
+        }
+        Ok(())
+    }
+
+    /// Builds no error for the common `None`.
+    fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
+        matches!(self.fill(addr, buf), Ok(true))
+    }
+}
+
 #[derive(Clone)]
 pub enum AnyMemReader {
     Buffer(PyBufferReaderView),
@@ -1285,9 +1363,7 @@ impl rsleigh::MemReader for AnyMemReader {
     }
 }
 
-/// Point-in-time snapshot of a `PyBufferReader`'s region table: it does not
-/// observe later region changes.  Both `read` impls fill the caller buffer
-/// with RAW bytes, never byte-swapped.
+/// Point-in-time snapshot of a `PyBufferReader`'s regions.
 #[derive(Clone)]
 pub struct PyBufferReaderView {
     pub table: Arc<MemRegionsLookupTable>,
@@ -1297,9 +1373,7 @@ impl rsleigh::MemReader for PyBufferReaderView {
     type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
-        self.table
-            .read(addr.off, out_buf)
-            .ok_or_else(|| strider_reader::MemReadError::from(self.table.unmapped(addr.off)))
+        rsleigh::MemReader::read(&*self.table, addr, out_buf)
     }
 }
 
@@ -1308,63 +1382,58 @@ impl ReadOnlyMemory for PyBufferReaderView {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         self.table.read_exact(addr, buf)
     }
+
+    fn try_read(&self, addr: u64, buf: &mut [u8]) -> bool {
+        self.table.read(addr, buf) == Some(buf.len())
+    }
 }
 
-/// The memory argument every Python entry point accepts: either a
-/// `BufferReader` or any Python object with a `read(...)` method.
-pub enum MemInput {
-    Buffer(PyBufferReader),
-    Cb(std::sync::Arc<Py<PyAny>>),
+/// A `BufferReader` or any Python object with a `read(...)` method.
+pub struct MemInput {
+    pub obj: Arc<Py<PyAny>>,
+    /// `None` for a callback.
+    buffer: Option<PyBufferReader>,
 }
 
 impl<'py> FromPyObject<'py> for MemInput {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(m) = ob.extract::<PyBufferReader>() {
-            return Ok(MemInput::Buffer(m));
+        let buffer = ob.extract::<PyBufferReader>().ok();
+        if buffer.is_none() && !ob.hasattr("read")? {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "expected a BufferReader or an object with a `read(...)` method",
+            ));
         }
-        if ob.hasattr("read")? {
-            return Ok(MemInput::Cb(std::sync::Arc::new(ob.clone().unbind())));
-        }
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "expected a BufferReader or an object with a `read(...)` method",
-        ))
+        Ok(Self {
+            obj: Arc::new(ob.clone().unbind()),
+            buffer,
+        })
     }
 }
 
 impl MemInput {
-    /// The Python callback object backing this input, if any.  Shares the
-    /// exact reference the adapter holds, so registering it for cyclic-GC
-    /// traversal does not inflate the object's refcount.
-    pub fn py_callback(&self) -> Option<std::sync::Arc<Py<PyAny>>> {
-        match self {
-            MemInput::Cb(obj) => Some(std::sync::Arc::clone(obj)),
-            MemInput::Buffer(_) => None,
-        }
+    pub fn calls_python(&self) -> bool {
+        self.buffer.is_none()
     }
-}
 
-impl MemInput {
     /// This input in the rom role.
     pub fn into_box(self) -> Box<dyn ReadOnlyMemory> {
-        match self {
-            MemInput::Buffer(m) => Box::new(m.reader_view()),
-            MemInput::Cb(obj) => Box::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
+        match self.buffer {
+            Some(m) => Box::new(m.reader_view()),
+            None => Box::new(PyReadOnlyMemoryAdapter { py_obj: self.obj }),
         }
     }
 
     pub fn into_any(self) -> AnyMemReader {
-        match self {
-            MemInput::Buffer(m) => AnyMemReader::Buffer(m.reader_view()),
-            MemInput::Cb(obj) => AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj }),
+        match self.buffer {
+            Some(m) => AnyMemReader::Buffer(m.reader_view()),
+            None => AnyMemReader::Cb(PyMemReaderAdapter { py_obj: self.obj }),
         }
     }
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBufferReader>()?;
-    // `_LoadedElf` stays out of the module namespace; its methods are bound on
-    // the type object regardless, so `load_elf_from_*` still hands back a fully
-    // usable instance.
+    // `_LoadedElf` stays out of the namespace; `_load_elf` still returns one.
     m.add_class::<PySymbol>()?;
     m.add_class::<PySymbolIter>()?;
     m.add_class::<PyMemReader>()?;
@@ -1374,10 +1443,7 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Yields `Symbol`s one at a time.
 #[pyo3::pyclass(name = "SymbolIter", module = "strider.reader")]
-pub struct PySymbolIter {
-    syms: Vec<PySymbol>,
-    next: usize,
-}
+pub struct PySymbolIter(std::vec::IntoIter<PySymbol>);
 
 #[pyo3::pymethods]
 impl PySymbolIter {
@@ -1386,16 +1452,11 @@ impl PySymbolIter {
     }
 
     fn __next__(&mut self) -> Option<PySymbol> {
-        let out = self.syms.get(self.next).cloned();
-        if out.is_some() {
-            self.next += 1;
-        }
-        out
+        self.0.next()
     }
 
-    /// What is LEFT, not the total: CPython takes this as a length hint, so a
-    /// partly consumed iterator would over-allocate.
+    /// Symbols left.
     fn __len__(&self) -> usize {
-        self.syms.len() - self.next
+        self.0.len()
     }
 }

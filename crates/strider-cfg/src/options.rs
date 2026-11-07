@@ -1,37 +1,75 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
 
-/// What `Default` lends: it hands out a `&'a`, which it cannot borrow from a
-/// temporary.
-static NO_KNOWN_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
+/// An empty target table.
+pub static NO_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
+/// No local entries.
+pub static NO_LOCAL_ENTRIES: LocalEntries = LocalEntries(Vec::new());
+
+/// The extent of the function being built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FunctionBound {
+    /// `[start, start + n)`: a branch outside it and every fragment is a tail
+    /// call, and so is a sequential fall-through past its end, reported as
+    /// [`crate::Reason::PastFunctionEnd`].
+    Size(std::num::NonZeroU64),
+    /// No extent: a branch below the start and outside every fragment is a
+    /// tail call unless `code_before_start`.
+    Open { code_before_start: bool },
+}
+
+impl Default for FunctionBound {
+    fn default() -> Self {
+        Self::Open {
+            code_before_start: false,
+        }
+    }
+}
+
+impl FunctionBound {
+    /// [`Self::Size`].
+    ///
+    /// # Panics
+    ///
+    /// If `n` is 0.
+    #[must_use]
+    pub const fn size(n: u64) -> Self {
+        match std::num::NonZeroU64::new(n) {
+            Some(n) => Self::Size(n),
+            None => panic!("a function size bound must be > 0"),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CfgOptions<'a> {
-    /// `Some(n)`: an unconditional branch to `>= start + n` is a tail call.
-    /// `Some(0)` is coerced to unbounded by [`crate::Builder::for_arch`].
-    pub fn_max_size: Option<u64>,
-    /// When `false`, an unconditional branch *below* the function start is
-    /// a tail call rather than an edge to follow.  Read only while
-    /// `fn_max_size` is `None`: a set size fixes the extent, so a target below
-    /// the start is a tail call whatever this says.
-    pub allow_code_before_start_addr: bool,
-    /// A `BranchIndirect` listed here seats its cached terminator directly;
-    /// every other site defers via `UnresolvedIndirectBranch`.  Read through
-    /// [`CfgOptions::seated`], never indexed directly.
-    ///
-    /// Borrowed: a caller seeds a binary-wide table once and analyses one
-    /// function per call, so owning it is the whole table per call.
+    pub bound: FunctionBound,
+    /// More of this function's code outside `bound` (GCC `<name>.cold`): a
+    /// branch into one is an edge, a fall-through past its end
+    /// [`crate::Reason::PastFunctionEnd`].
+    pub fragment_ranges: DataRanges,
+    /// Caller-seeded answers per `BranchIndirect`, read through
+    /// [`CfgOptions::seated`]; an unlisted site defers.
     pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-    /// Caller classifications for user-op names, consulted before the built-in
-    /// tables.  One override governs both the region terminator and the
-    /// emitted node.
-    pub call_other_overrides: strider_target::call_other_abi::CallOtherOverrides,
-    /// Bytes the image marks as data (ELF `$d` mapping symbols), which the
-    /// builder decodes only for the instruction at the start address; see
-    /// [`crate::Cfg::undecodable_branch_targets`].
+    /// A resolver's own answers, keyed by the `BranchIndirect`'s exact p-code
+    /// address: one beats `known_targets` at that site, and
+    /// [`ResolvedTargets::Withdrawn`] defers it.
+    pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    /// Direct-call targets that never return (`exit`, `abort`), matched
+    /// through [`Self::local_entries`]; a call to one ends its region
+    /// `NoReturn`.
+    pub no_return_targets: &'a FxHashSet<u64>,
+    /// ppc64 ELFv2 local entries, so a table keyed by a callee's global entry
+    /// matches a call to its local entry too.
+    pub local_entries: &'a LocalEntries,
+    /// Caller classifications for user-op names, ahead of the built-in tables.
+    pub call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
+    /// Bytes the image marks as data (ELF `$d`), never decoded except at the
+    /// start address.
     pub data_ranges: DataRanges,
 }
 
@@ -55,6 +93,21 @@ impl DataRanges {
         Self(merged.into())
     }
 
+    /// [`Self::new`] over `(start, end)` pairs, refusing an empty range.
+    ///
+    /// # Errors
+    ///
+    /// The first pair ending at or below its start, described as option
+    /// `what`'s.
+    pub fn try_new(what: &str, ranges: Vec<(u64, u64)>) -> Result<Self, String> {
+        if let Some((start, end)) = ranges.iter().find(|(start, end)| end <= start) {
+            return Err(format!(
+                "{what}: ({start:#x}, {end:#x}) is empty; a range runs start..end with end > start"
+            ));
+        }
+        Ok(Self::new(ranges.into_iter().map(|(start, end)| start..end)))
+    }
+
     pub fn ranges(&self) -> &[std::ops::Range<u64>] {
         &self.0
     }
@@ -67,34 +120,88 @@ impl DataRanges {
     }
 }
 
+/// Sorted `(local entry, global entry)` pairs: where a ppc64 ELFv2 call
+/// sharing the callee's TOC enters it.
+#[derive(Clone, Default, Debug)]
+pub struct LocalEntries(Vec<(u64, u64)>);
+
+impl LocalEntries {
+    /// `(global, local)` pairs in any order; one whose entries are equal is
+    /// dropped.
+    pub fn new(entries: impl IntoIterator<Item = (u64, u64)>) -> Self {
+        let mut by_local: Vec<(u64, u64)> = entries
+            .into_iter()
+            .filter(|(global, local)| global != local)
+            .map(|(global, local)| (local, global))
+            .collect();
+        by_local.sort_unstable();
+        by_local.dedup();
+        Self(by_local)
+    }
+
+    /// `map`'s entry at `addr`, else at the lowest global entry `map` holds
+    /// whose local entry `addr` is.
+    pub fn get<'m, V>(&self, map: &'m FxHashMap<u64, V>, addr: u64) -> Option<&'m V> {
+        map.get(&addr)
+            .or_else(|| self.globals_of(addr).find_map(|global| map.get(&global)))
+    }
+
+    /// Whether `set` holds `addr` or a global entry whose local entry `addr`
+    /// is.
+    pub fn contains(&self, set: &FxHashSet<u64>, addr: u64) -> bool {
+        set.contains(&addr) || self.globals_of(addr).any(|global| set.contains(&global))
+    }
+
+    /// Ascending.
+    fn globals_of(&self, local: u64) -> impl Iterator<Item = u64> + '_ {
+        let from = self.0.partition_point(|&(l, _)| l < local);
+        self.0[from..]
+            .iter()
+            .take_while(move |&&(l, _)| l == local)
+            .map(|&(_, global)| global)
+    }
+}
+
 impl Default for CfgOptions<'_> {
     fn default() -> Self {
         Self {
-            fn_max_size: None,
-            allow_code_before_start_addr: false,
-            known_targets: &NO_KNOWN_TARGETS,
-            call_other_overrides: Default::default(),
+            bound: FunctionBound::default(),
+            fragment_ranges: DataRanges::default(),
+            known_targets: &NO_TARGETS,
+            derived_targets: &NO_TARGETS,
+            no_return_targets: &NO_NO_RETURN_TARGETS,
+            local_entries: &NO_LOCAL_ENTRIES,
+            call_other_overrides: &strider_target::call_other_abi::NO_OVERRIDES,
             data_ranges: DataRanges::default(),
         }
     }
 }
 
 impl CfgOptions<'_> {
-    /// The answer seated for `addr`, falling back to the machine address alone.
-    ///
-    /// An entry at p-code index 0 seats any `BranchIndirect` in that machine
-    /// instruction, so a caller holding only a machine address can spell a key;
-    /// a Python one only ever holds that, the bindings flattening every
-    /// reported site to its machine address. An exact key wins: it is the only
-    /// way to tell two `BranchIndirect`s in one instruction apart.
+    /// [`seated_from`] over `derived_targets` and `known_targets`.
     pub fn seated(&self, addr: PcodeInsnAddr) -> Option<&ResolvedTargets> {
-        self.known_targets.get(&addr).or_else(|| {
-            let start = PcodeInsnAddr::at_machine_start(addr.machine_addr.addr);
-            (start != addr)
-                .then_some(start)
-                .and_then(|start| self.known_targets.get(&start))
-        })
+        seated_from(self.derived_targets, self.known_targets, addr)
     }
+}
+
+/// The answer seated at `addr`: `derived` at its exact key, else
+/// [`seated_in`] over `known`.
+pub fn seated_from<'m>(
+    derived: &'m FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    known: &'m FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    addr: PcodeInsnAddr,
+) -> Option<&'m ResolvedTargets> {
+    derived.get(&addr).or_else(|| seated_in(known, addr))
+}
+
+/// The entry for `addr` in `map`: its exact key, else the key of its
+/// instruction's p-code index 0.
+pub fn seated_in(
+    map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    addr: PcodeInsnAddr,
+) -> Option<&ResolvedTargets> {
+    map.get(&addr)
+        .or_else(|| map.get(&PcodeInsnAddr::at_machine_start(addr.machine())))
 }
 
 #[cfg(test)]
@@ -128,48 +235,124 @@ mod tests {
         }
     }
 
-    /// Options built over a caller's table hold a borrow of it, so neither
-    /// building nor cloning them copies it.
+    /// An exact key answers for itself; a local entry answers through the
+    /// lowest global entry the table holds, one level deep.
     #[test]
-    fn options_borrow_the_callers_table() {
-        let known = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
-        let opts = opts_over(&known);
-        assert!(std::ptr::eq(opts.known_targets, &known));
-        assert!(std::ptr::eq(opts.clone().known_targets, &known));
+    fn local_entries_answer_through_the_lowest_global() {
+        let entries = LocalEntries::new([
+            (0x110, 0x118),
+            (0x10c, 0x110),
+            (0x114, 0x118),
+            (0x200, 0x200),
+        ]);
+        let map: FxHashMap<u64, char> = [(0x110, 'a'), (0x114, 'b')].into_iter().collect();
+        assert_eq!(entries.get(&map, 0x118), Some(&'a'));
+        assert_eq!(entries.get(&map, 0x110), Some(&'a'));
+        assert_eq!(entries.get(&map, 0x114), Some(&'b'));
+        let own: FxHashMap<u64, char> = [(0x114, 'b'), (0x118, 'c')].into_iter().collect();
+        assert_eq!(entries.get(&own, 0x118), Some(&'c'));
+        let deep: FxHashMap<u64, char> = [(0x10c, 'd')].into_iter().collect();
+        assert_eq!(entries.get(&deep, 0x110), Some(&'d'));
+        assert_eq!(entries.get(&deep, 0x118), None);
+        let set: FxHashSet<u64> = [0x114].into_iter().collect();
+        assert!(entries.contains(&set, 0x118));
+        assert!(!entries.contains(&set, 0x110));
     }
 
     #[test]
-    fn default_options_share_one_empty_table() {
-        let (a, b) = (CfgOptions::default(), CfgOptions::default());
-        assert!(a.known_targets.is_empty());
-        assert!(std::ptr::eq(a.known_targets, b.known_targets));
+    fn try_new_refuses_an_empty_range() {
+        let err = DataRanges::try_new("data_ranges", vec![(0x10, 0x18), (0x20, 0x20)]).unwrap_err();
+        assert!(err.contains("(0x20, 0x20) is empty"), "{err}");
+        let ok = DataRanges::try_new("data_ranges", vec![(0x10, 0x18)]).unwrap();
+        assert_eq!(ok.ranges().len(), 1);
+        assert_eq!((ok.ranges()[0].start, ok.ranges()[0].end), (0x10, 0x18));
     }
 
     #[test]
-    fn seated_falls_back_to_the_machine_start_key() {
+    #[should_panic(expected = "must be > 0")]
+    fn a_zero_size_bound_panics() {
+        let _ = FunctionBound::size(0);
+    }
+
+    #[test]
+    fn seated_in_falls_back_to_the_machine_start_key() {
         let known = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
-        let opts = opts_over(&known);
         let mid = PcodeInsnAddr {
             machine_addr: 0x1000.into(),
             insn_index: 3,
         };
-        assert_eq!(target_of(opts.seated(mid)), Some(0x2000));
+        assert_eq!(target_of(seated_in(&known, mid)), Some(0x2000));
         assert_eq!(
-            target_of(opts.seated(PcodeInsnAddr::at_machine_start(0x1004))),
+            target_of(seated_in(&known, PcodeInsnAddr::at_machine_start(0x1004))),
             None
         );
     }
 
     #[test]
-    fn seated_prefers_an_exact_key_over_the_machine_start_key() {
+    fn seated_in_prefers_an_exact_key_over_the_machine_start_key() {
         let start = PcodeInsnAddr::at_machine_start(0x1000);
         let mid = PcodeInsnAddr {
             machine_addr: 0x1000.into(),
             insn_index: 3,
         };
         let known = seated_over(&[(start, 0x2000), (mid, 0x3000)]);
+        assert_eq!(target_of(seated_in(&known, mid)), Some(0x3000));
+        assert_eq!(target_of(seated_in(&known, start)), Some(0x2000));
+    }
+
+    /// `seated` is `seated_in` over `known_targets`: an exact key, the
+    /// machine-start key, and a sibling `BranchIndirect` of that instruction.
+    #[test]
+    fn seated_reads_known_targets_through_seated_in() {
+        let start = PcodeInsnAddr::at_machine_start(0x1000);
+        let exact = PcodeInsnAddr {
+            machine_addr: 0x1000.into(),
+            insn_index: 3,
+        };
+        let sibling = PcodeInsnAddr {
+            machine_addr: 0x1000.into(),
+            insn_index: 5,
+        };
+        let known = seated_over(&[(start, 0x2000), (exact, 0x3000)]);
         let opts = opts_over(&known);
-        assert_eq!(target_of(opts.seated(mid)), Some(0x3000));
-        assert_eq!(target_of(opts.seated(start)), Some(0x2000));
+        for addr in [exact, start, sibling] {
+            assert_eq!(
+                target_of(opts.seated(addr)),
+                target_of(seated_in(&known, addr)),
+                "{addr:?}"
+            );
+        }
+        assert_eq!(target_of(opts.seated(sibling)), Some(0x2000));
+    }
+
+    /// A resolver's answer beats the caller's at its exact key, whichever key
+    /// the caller spelled, and leaves a sibling `BranchIndirect` of that
+    /// instruction the caller's machine-start seed.
+    #[test]
+    fn seated_prefers_a_derived_target_at_its_exact_key() {
+        let start = PcodeInsnAddr::at_machine_start(0x1000);
+        let exact = PcodeInsnAddr {
+            machine_addr: 0x1000.into(),
+            insn_index: 3,
+        };
+        let sibling = PcodeInsnAddr {
+            machine_addr: 0x1000.into(),
+            insn_index: 5,
+        };
+        let derived = seated_over(&[(exact, 0x3000)]);
+        for seed_key in [start, exact] {
+            let known = seated_over(&[(seed_key, 0x2000)]);
+            let opts = CfgOptions {
+                known_targets: &known,
+                derived_targets: &derived,
+                ..CfgOptions::default()
+            };
+            assert_eq!(target_of(opts.seated(exact)), Some(0x3000), "{seed_key:?}");
+            assert_eq!(
+                target_of(opts.seated(sibling)),
+                (seed_key == start).then_some(0x2000),
+                "{seed_key:?}"
+            );
+        }
     }
 }

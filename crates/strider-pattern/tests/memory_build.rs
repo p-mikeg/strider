@@ -26,12 +26,12 @@ fn store_captures_node() {
 /// (slot 0) is wired to the store's memory token.
 fn store_then_load(store_addr: u64, data: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let a1 = b.build_int_const(store_addr, ValueType::I64).unwrap();
-    let d = b.build_int_const(data, ValueType::I32).unwrap();
+    let a1 = b.build_int_const(store_addr, ValueType::int(64)).unwrap();
+    let d = b.build_int_const(data, ValueType::int(32)).unwrap();
     b.build_store(a1, d, rsleigh::VnSpace::RAM).unwrap();
-    let a2 = b.build_int_const(0x999u64, ValueType::I64).unwrap();
+    let a2 = b.build_int_const(0x999u64, ValueType::int(64)).unwrap();
     let v = b
-        .build_load(a2, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(a2, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
     b.build_return(Some(v), &[]).unwrap();
     b.build().unwrap()
@@ -54,9 +54,9 @@ fn load_mem_matches_region_mem_phi() {
     // A fresh region head carries a MemPhi as its initial memory token, so
     // the region's first load chains straight off it.
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x10u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x10u64, ValueType::int(64)).unwrap();
     let v = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
@@ -117,10 +117,10 @@ fn any_input_skips_a_slot_a_fixed_operand_pinned() {
 /// A `Call` whose memory token the following `Store` chains off.
 fn call_then_store() -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
+    let tgt = b.build_int_const(0x1234u64, ValueType::int(64)).unwrap();
     b.build_call_cc(tgt, None).unwrap();
-    let a = b.build_int_const(0x10u64, ValueType::I64).unwrap();
-    let d = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let a = b.build_int_const(0x10u64, ValueType::int(64)).unwrap();
+    let d = b.build_int_const(7u64, ValueType::int(32)).unwrap();
     b.build_store(a, d, rsleigh::VnSpace::RAM).unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()

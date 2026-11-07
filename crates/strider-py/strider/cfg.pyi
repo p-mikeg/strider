@@ -1,238 +1,164 @@
-"""Type stubs for strider.cfg: the control-flow graph and its options."""
+"""The control-flow graph and its options."""
 
 from __future__ import annotations
 
-from typing import Literal, Mapping, Optional, Sequence, Union
+from typing import Iterable, Literal, Mapping, Optional, Sequence, Union
 
 from .ir import Node
-from .lift import Lifter
+from .lift import Lifter, StrPath
 from .sleigh import CallOtherAbi
 
 __all__: list[str]
 
 #: Colour themes accepted by every `to_html` / `to_dot` renderer.
 DotStyle = Literal["dark", "dark_cfg", "empty"]
+#: Every `DotStyle`.
+DOT_STYLES: tuple[DotStyle, ...]
+
+#: Why `Cfg.incomplete` names an address.
+IncompleteReason = Literal[
+    "unresolved_branch",
+    "unverified_seed",
+    "isa_mode_conflict",
+    "interior_target",
+    "unmapped_target",
+    "undecodable_target",
+    "past_function_end",
+]
+#: Every `IncompleteReason`, in the order `Cfg.incomplete` sorts one address's.
+INCOMPLETE_REASONS: tuple[IncompleteReason, ...]
 
 class Cfg:
-    """Control-flow graph of a single function, produced by
-    `Lifter.build_cfg` and returned as `AnalyzeResult.cfg`."""
+    """Control-flow graph of one function, from `Lifter.build_cfg` or
+    `AnalyzeResult.cfg`."""
     @property
     def lifter(self) -> Lifter:
-        """The `Lifter` that built this CFG. Its `arch` / `reader()` / `rom()`
-        are what a second handle over the same memory is built from."""
+        """The `Lifter` that built this CFG."""
         ...
 
     def to_dot(
         self,
-        path: Optional[str] = ...,
+        path: Optional[StrPath] = ...,
         style: Optional[DotStyle] = ...,
-        *,
-        lifter: Optional[Lifter] = ...,
     ) -> Optional[str]:
-        """Render the CFG to DOT. Returns the DOT string when `path` is
-        `None`, otherwise writes it to `path` and returns `None`.
-        `style` selects the theme (default `"dark_cfg"`)."""
+        """Render to DOT: the string when `path` is `None`, else written to
+        `path`. `style` is the theme (default `"dark_cfg"`)."""
         ...
     def to_html(
-        self, path: Optional[str] = ..., style: Optional[DotStyle] = ...
+        self, path: Optional[StrPath] = ..., style: Optional[DotStyle] = ...
     ) -> Optional[str]:
-        """Render the CFG to a standalone HTML page. Returns the HTML string
-        when `path` is `None`, otherwise writes it and returns `None`.
-        `style` selects the theme (default `"dark_cfg"`).
-
-        Takes no `lifter=`, so it always renders through the owning handle and
-        raises off its thread; `to_dot(lifter=...)` is the escape hatch."""
+        """Render to a standalone HTML page: the string when `path` is
+        `None`, else written to `path`. `style` is the theme (default
+        `"dark_cfg"`)."""
         ...
     def pcode_at(self, addr: int) -> Optional[str]:
-        """The p-code lifted from the machine instruction at `addr`, joined
-        with `"; "`, or `None` when this CFG stored no decode for `addr`.
-
-        This is a lookup against decodes this CFG already made, so it is
-        correct even on architectures where decoding depends on accumulated
-        context (ARM/Thumb, MIPS16).
-
-        An instruction that lifts to zero p-code operations (`endbr64`, say)
-        leaves no trace here, so it is indistinguishable from an address that
-        was never decoded: both give `None`. `Lifter.pcode_at` re-decodes and
-        returns `""` for that case instead.
+        """The p-code ops this CFG decoded at `addr`, joined with `"; "`, or
+        `None`. Correct across an ISA-mode switch; on ARM or MIPS `addr`'s low
+        bit is ignored, as in `Lifter.pcode_at`. An instruction lifting to no
+        ops (`endbr64`) also gives `None`; `Lifter.pcode_at` returns `""`.
         """
         ...
     def fingerprint_pcode(self, node: Node) -> list[tuple[int, str]]:
-        """The asm addresses recorded on `node` paired with their p-code
-        text, sorted by address.
-
-        The lookup companion to `Node.asm_fingerprint()`, which gives the
-        addresses alone. An address not present in this CFG is skipped rather
-        than emitted with empty text. Structural nodes (Entry, InitialMemory,
-        InitialVar, Region, phis) carry no fingerprint and give `[]`.
+        """`node`'s asm addresses paired with their p-code, sorted, skipping
+        an address this CFG has no decode for. Structural nodes (Entry,
+        InitialMemory, InitialVar, Region, phis) give `[]`. Raises
+        `StriderError` for a `node` of another `Cfg`'s function.
         """
         ...
     def entry(self) -> int:
-        """The region index of the CFG entry, the default explorer center."""
+        """The region index of the CFG entry."""
         ...
     def neighborhood_dot(
         self,
         center: int,
         depth: int = ...,
         max_nodes: int = ...,
-        *,
-        lifter: Optional[Lifter] = ...,
     ) -> str:
-        """DOT for the regions within `depth` hops of region `center`
-        (predecessors and successors), capped at `max_nodes`."""
+        """DOT of the regions within `depth` edges of region `center`, capped
+        at `max_nodes`."""
         ...
-    def isa_mode_conflicts(self) -> list[int]:
-        """Machine addresses this CFG reached carrying two different ISA modes.
+    @property
+    def incomplete(self) -> list[tuple[int, IncompleteReason]]:
+        """Sorted `(machine_addr, reason)` pairs this CFG cannot vouch for;
+        empty is complete. Check it before trusting an absence ("no store to
+        X").
 
-        One region owns the bytes, decoded in whichever mode was reached first,
-        so the losing path's arm is not the instruction stream it believes. A
-        direct edge can cause this, not only a resolved indirect branch, which
-        is why it is reported here rather than in `unresolved`. Non-empty means
-        part of this CFG is decoded in a mode some path into it disagrees with.
+        Two reasons name a dispatch site:
 
-        Accumulated over every round `analyze` ran: a clash decodes the bytes
-        twice and costs the site, whose next round rebuilds without the edge
-        that raised it, so the final CFG alone would launder the report.
-        """
-        ...
-    def interior_branch_targets(self) -> list[int]:
-        """Branch targets interior to a region but off every boundary a region
-        can start at.
+        - `"unresolved_branch"`: an indirect branch with no complete successor
+          set, including a return not provably to the caller nor seeded
+          `"return"`.
+        - `"unverified_seed"`: a seated answer nothing verified (a
+          `known_targets` seat, a consumed tail call, a `"return"` seed).
 
-        No region can start there, since decoding from inside an instruction
-        yields a different stream; a branch into a MIPS delay slot is one, the
-        slot decoding as part of its branch. The edge is therefore seated on
-        the region that owns the bytes, whose instructions start earlier. A
-        direct edge can cause this,
-        not only a resolved indirect branch. Non-empty means this CFG claims a
-        successor the branch does not actually enter at.
+        Five name a branch target:
 
-        Accumulated over every round `analyze` ran: the inexact edge fed the
-        classifier, whose derived targets outlive it, so a later round that no
-        longer carries the edge does not undo what it cost.
-        """
-        ...
-    def unmapped_branch_targets(self) -> list[int]:
-        """Direct-branch targets and fall-throughs no byte of this image backs.
+        - `"isa_mode_conflict"`: reached in two ISA modes.
+        - `"interior_target"`: off every instruction boundary, or a region
+          start a later decode stepped over.
+        - `"unmapped_target"`: the image does not back the instruction there.
+        - `"undecodable_target"`: holds no instruction, or is in `data_ranges`.
+        - `"past_function_end"`: past `function_max_size` or a
+          `fragment_ranges` end.
 
-        Each is seated as an empty tail-call stub, so the branch keeps an edge
-        and every region that did decode survives; nothing past the stub is
-        known. A buffer whose window the branch leaves, a partially-mapped
-        image, an unrelocated `jmp`, a ROM built from a symbol subset, code
-        running off the end of the mapped bytes. A MIPS branch whose delay slot
-        is unmapped reports the branch itself. A direct edge produces these, so
-        they are reported here rather than in `unresolved`.
-
-        Accumulated over every round `analyze` ran.
-        """
-        ...
-    def undecodable_branch_targets(self) -> list[int]:
-        """Addresses a direct branch or a fall-through past a call reached that
-        hold no instruction: bytes Sleigh rejects, or a range
-        `CfgOptions.data_ranges` marks as data.
-
-        A direct branch there keeps an edge to an empty tail-call stub. A
-        fall-through past a call ends that call as no-return, which is what a
-        callee nobody marked no-return leaves behind (a literal pool, a
-        traceback table, a deliberately invalid word), though nothing proves it
-        never returns.
-
-        Accumulated over every round `analyze` ran.
-        """
-        ...
-    def unverified_seeded_sites(self) -> list[int]:
-        """Dispatch addresses nothing verified: a site seated with exactly the
-        `known_targets` you supplied and nothing the classifier derived, every
-        site the CFG consumed outright as a tail call, and a site consumed as a
-        return because YOUR `"return"` seat is what consumed it, which is also
-        where a FAILED re-check of that seat lands: the seat decided a CFG
-        edge, so the site is not reported as unresolved. A `Return` the
-        CLASSIFIER derived rides no channel once
-        `assumptions.return_slots_survive_untracked_writes` (default `True`)
-        carries its proof; clearing that claim and re-running is how you audit
-        one.
-
-        A fourth shape is not a dispatch you seeded: an arm a mode-less
-        re-derivation found at a site whose other arms all carry the flowing
-        ISA mode. It is seated on the mode a caller's seed gave its siblings,
-        and nobody evaluated that arm's own.
-
-        Not unresolved (nothing contradicts the answer), but nothing checked it.
-        Seating a seed changes the CFG the classifier reads, so a stale or
-        wrong seed can stop it deriving and take the site's real arms with it.
-        These are the sites where that cannot be ruled out. For a `build_cfg`
-        result it is every seed that build seated, since no classifier ran to
-        check any of them; a seed at an address the function dispatches from
-        nowhere seats nothing and is not reported.
-        """
-        ...
-    def is_complete(self) -> bool:
-        """Whether all six incompleteness channels are empty: the
-        `unresolved` of the `AnalyzeResult` this CFG came from,
-        `unverified_seeded_sites`, `isa_mode_conflicts`,
-        `interior_branch_targets`, `unmapped_branch_targets` and
-        `undecodable_branch_targets`.
-
-        The answer to "may this be incomplete?", which none of the six gives
-        alone. `False` is not always a loss: `unverified_seeded_sites` holds
-        answers that are complete but unverified, among them a site seated
-        with only your own `known_targets`. `False` over that channel alone
-        reads "complete but unverified", EXCEPT for a `"return"` seat whose
-        re-check failed, which lands there too. Read whichever channel is
-        non-empty to tell the cases apart.
-
-        On a `build_cfg` CFG `unresolved` is every indirect branch that build
-        left without an outgoing edge, since `build_cfg` resolves none of them,
-        and `unverified_seeded_sites` holds the seeds it seated.
+        A seeded arm whose own decode reaches unmapped or undecodable bytes,
+        or falls through past the end, is dropped unless a call precedes them,
+        which then ends the arm; one landing on a stub an earlier edge or
+        fall-through reported keeps it. From `analyze`, target
+        reasons accumulate over the resolver's rounds; site reasons are the
+        final round's.
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:
-        """The index of the region whose instruction range contains `addr`,
-        else `None`. The lowest index where regions overlap."""
+        """The region holding `addr`, else `None`; of overlapping ones, the
+        latest start."""
         ...
     def _region_texts(self) -> dict:
-        """Disassembly text for every region, keyed by region index. The
-        search corpus for the CFG explorer."""
+        """P-code text per region index."""
         ...
 
 class CfgOptions:
     """Options controlling how the CFG is built.
 
-    `function_max_size` bounds how far past the entry to decode; omit it for
-    unbounded (`0` raises `ValueError`). `allow_code_before_start_addr`
-    permits blocks below the entry address.
+    - `function_max_size`: how far past the entry to decode (omit for
+      unbounded); a fall-through past it is `"past_function_end"`.
+    - `allow_code_before_start_addr`: follow branches below the entry;
+      `ValueError` beside a size.
+    - `known_targets`: a dispatch address's targets, or `"return"` to seat
+      it as a function return. An empty list seats nothing. A Thumb or
+      MIPS16 target goes at `addr & ~1`; each decodes in the dispatch's mode.
+    - `call_other_abis`: Sleigh user-op names to a `CallOtherAbi`, over the
+      built-in table; a name the arch's sla does not declare is ignored, so
+      one table serves several arches.
+    - `no_return_targets`: direct-call targets that never return, a Thumb or
+      MIPS16 one at `addr & ~1`. On ppc64 ELFv2 a plain `Lifter` also needs
+      each `Symbol.local_entry`; `ElfLifter` adds it.
+    - `data_ranges`: `(start, end)` data ranges, end exclusive (an ARM
+      literal pool); a branch into one is `"undecodable_target"`, never
+      decoded, except at the entry.
+    - `fragment_ranges`: ranges outside the bound that are still this
+      function's code (GCC `<name>.cold`), followed on a branch; running past
+      one's end is `"past_function_end"`.
 
-    `call_other_abis` classifies Sleigh user-op names, winning over the
-    built-in table. Each value is a `strider.sleigh.CallOtherAbi`: one of
-    the four footprint-free classes, or `CallOtherAbi.custom(...)` naming
-    implicit registers.
-
-    `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
-    data rather than code (an ARM literal pool): a branch or fall-through into
-    one is reported through `Cfg.undecodable_branch_targets`, never decoded.
-    The instruction at the entry address decodes even inside one.
-    `ElfLifter.analyze` fills it from the ELF's mapping symbols when empty.
-    A range that ends at or below its start raises `StriderError`: it names no
-    address, and accepting it silently dropped the pool the caller meant to
-    mark.
+    `ElfLifter` fills empty `data_ranges` / `fragment_ranges` from the ELF's
+    `$d` and sized `<name>.cold[.N]` symbols. A range ending at or below its
+    start raises `ValueError`.
     """
 
-    # Read-only: these are getters with no setter, so a plain attribute
-    # declaration would let a type checker accept `o.x = ...`, which raises at
-    # runtime.
     @property
     def function_max_size(self) -> Optional[int]: ...
     @property
     def allow_code_before_start_addr(self) -> bool: ...
-    # The two tables are read-only VIEWS onto what the constructor stored,
-    # built once and handed out unchanged: a seeded table can hold tens of
-    # thousands of entries, and `analyze` reads it.
     @property
     def known_targets(self) -> Mapping[int, Union[tuple[int, ...], Literal["return"]]]: ...
     @property
     def call_other_abis(self) -> Mapping[str, CallOtherAbi]: ...
     @property
     def data_ranges(self) -> list[tuple[int, int]]: ...
+    @property
+    def fragment_ranges(self) -> list[tuple[int, int]]: ...
+    @property
+    def no_return_targets(self) -> frozenset[int]: ...
     def __init__(
         self,
         *,
@@ -241,18 +167,9 @@ class CfgOptions:
         known_targets: Mapping[int, Union[Sequence[int], Literal["return"]]] = ...,
         call_other_abis: Mapping[str, CallOtherAbi] = ...,
         data_ranges: Sequence[tuple[int, int]] = ...,
+        fragment_ranges: Sequence[tuple[int, int]] = ...,
+        no_return_targets: Iterable[int] = ...,
     ) -> None:
-        """Build the options. Raises `ValueError` for
-        `function_max_size=0`."""
-        ...
-    def with_function_max_size(self, function_max_size: int) -> "CfgOptions":
-        """These options with `function_max_size` set, sharing both tables.
-        Raises `ValueError` for `0`."""
-        ...
-    def with_data_ranges(self, data_ranges: Sequence[tuple[int, int]]) -> "CfgOptions":
-        """These options with `data_ranges` replaced, sharing both tables."""
-        ...
-    def _with_elf_data_ranges(self, elf: object) -> "CfgOptions":
-        """These options with `elf`'s mapping-symbol data ranges, unless
-        `data_ranges` already names some."""
+        """Raises `ValueError` for `function_max_size=0`, or a size with
+        `allow_code_before_start_addr=True`."""
         ...

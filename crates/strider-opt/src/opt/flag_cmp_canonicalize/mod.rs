@@ -1,9 +1,8 @@
-//! Collapses the multi-node "flag-tree" conditions that flag-register
-//! architectures emit for `cmp`-then-branch into a single
+//! Collapses the flag-tree conditions of a `cmp`-then-branch into a single
 //! [`strider_ir::IntCmpOp`] on the original `(a, b)` pair.
 //!
-//! AArch64 `cmp a, b` lifts (post `IntSub` / `IntLessEqual` canonicalisation)
-//! to four flags, and each cond code reads a fixed boolean tree of them:
+//! AArch64 `cmp a, b` lifts to four flags, and each cond code reads a fixed
+//! boolean tree of them:
 //!
 //! ```text
 //! diff = Add(a, Neg(b))
@@ -17,394 +16,322 @@
 //! VS/VC  OV                          GT/LE  BoolAnd(Xor(ZR, 1), Equal(NG, OV)) / dual
 //! ```
 //!
-//! `MI`/`PL` (bare `NG`) stays as lifted: `Sless(a-b, 0)` differs
-//! from `Sless(a, b)` when the subtraction overflows.  `CS`/`CC` and `VS`/`VC`
-//! are already in `(a, b)` form.
+//! Flags held in register slots are zero-extended, so `Equal(NG, OV)` is
+//! matched as `Equal(ZeroExtend(NG), ZeroExtend(OV))`.
 //!
-//! Run after `ConstantFold` (so `Xor(Xor(x, 1), 1) -> x` at `I1` has collapsed)
-//! and before `IfCondInversion` (so the cond carries at most one `Xor(_, 1)`
-//! layer).
+//! Bottom-up, `ZR` and the `GE` tree become `Equal(a, b)` and
+//! `Xor(Sless(a, b), 1)`, and a `cmn` / `adds` carry `Carry(a, N)` becomes
+//! `Xor(Less(a, -N), 1)`; then each cond code's tree of those collapses.
+//! `MI`/`PL` stays as lifted: `Sless(a-b, 0)` differs from `Sless(a, b)` on
+//! overflow.
+//!
+//! Also: `Equal(op(x), C)` solving, `Sless(x << C, 0)` as a bit test, and
+//! PowerPC CR-bit / Thumb flag tests (`canonicalize_cr_bit_test`).
 
-use crate::{BoxedRule, rewrite_rule};
-use strider_ir::IRViewer;
-use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeId, NodeKind, ValueId, ValueType};
+use crate::rewrite_rule::{Rule, RuleTable};
+use strider_ir::eval;
+use strider_ir::node::{
+    ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeId, NodeKind, ValueId, ValueType,
+};
+use strider_ir::{Function, IRViewer, UBig};
 use strider_pattern::{
-    Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_const,
-    int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_shl, int_slt, int_xor,
-    int_zero_extend, one_of, template, var,
+    Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_carry,
+    int_const, int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_scarry, int_shl, int_slt,
+    int_xor, int_zero_extend, template, var,
 };
 
-use crate::error::Result;
-use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder, first_matching_rule};
+use crate::Result;
+use crate::opt::width_guards::{int_type, same_width, shift_count_in_range};
+use crate::peephole::PeepholePass;
 
-#[derive(Clone)]
+/// Collapses cmp-then-branch flag trees to one comparison on the compared pair.
 pub struct FlagCmpCanonicalize;
 
 thread_local! {
-    /// Built once per thread, and held here rather than in the pass so the
-    /// pass stays `Send`; see `ConstantFold`.
-    static RULES: Vec<BoxedRule> = build_rules();
-}
-
-impl FlagCmpCanonicalize {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for FlagCmpCanonicalize {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Outside the pass so it stays `Sync`.
+    static RULES: RuleTable = RuleTable::new(build_rules());
 }
 
 impl PeepholePass for FlagCmpCanonicalize {
-    /// Every rule roots at a comparison, at the `And`/`Or`/`Xor` of a boolean
-    /// tree, or at the `Truncate` / `Xor` a CR-bit test reaches here as.
-    fn matches_kind(&self, kind: &NodeKind) -> bool {
-        matches!(
-            kind,
-            NodeKind::IntCmpOp(_)
-                | NodeKind::Truncate
-                | NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
-        )
-    }
+    type Sweep = ();
+    /// An atom's comparison is what the enclosing combiner reads.
+    const PROPAGATE: bool = true;
 
-    /// Outermost-first: a bottom-up seed would rewrite an inner sub-pattern and
-    /// destroy the enclosing flag-tree match.
-    fn seed_order(&self) -> SeedOrder {
-        SeedOrder::Postorder
+    fn matches_kind(&self, kind: &NodeKind) -> bool {
+        RULES.with(|rules| rules.admits(kind))
     }
 
     fn try_rewrite(
         &self,
+        _sweep: &mut (),
         edit: &mut crate::EditFunction<'_>,
-        _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+        _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
-    ) -> Result<PeepholeRewrite> {
-        // Killed by the `clean` below after an earlier rewrite orphaned it.
-        if !edit.is_live(root) {
-            return Ok(PeepholeRewrite::NoChange);
-        }
-        let rewrite = rewrite_at(edit, root)?;
-        if let PeepholeRewrite::Changed { .. } = rewrite {
-            // Outermost-first, a redirect lands on a value a later root
-            // redirects again, carrying every consumer the earlier ones moved
-            // onto it; merging twins and culling the orphaned cone now keeps a
-            // chain of nested flag tests linear.
-            edit.clean();
-        }
-        Ok(rewrite)
-    }
-
-    /// A collapsed `IntCmpOp` cannot expose a fresh flag-tree shape to its
-    /// consumers, so skip the re-enqueue.
-    fn propagate_to_consumers(&self) -> bool {
-        false
+    ) -> Result<Option<ValueId>> {
+        RULES.with(|rules| rules.first_match(edit, root))
     }
 }
 
-fn rewrite_at(edit: &mut crate::EditFunction<'_>, root: NodeId) -> Result<PeepholeRewrite> {
-    // Imperative arm: the variable-arity CR pack
-    // `Or(ShiftLeft(ZeroExtend(cmp_i), pos_i)...)` doesn't fit the
-    // fixed-shape `rewrite_rule` DSL.
-    if let Some(cmp) = canonicalize_cr_bit_test(edit, root)? {
-        return Ok(PeepholeRewrite::from_new_value(edit, Some(cmp)));
-    }
-    let opt = RULES.with(|rules| first_matching_rule(rules, edit, root))?;
-    Ok(PeepholeRewrite::from_new_value(edit, opt))
-}
-
-/// The width `width_src` binds, or `None` for a float and past the `u128` the
-/// const arithmetic here computes in.
-fn carrier_mask(binds: &Bindings, func: &strider_ir::Function, width_src: Capture) -> Option<u128> {
-    crate::opt::known_bits::type_mask_u128(binds.get_type(width_src, func)?)
-}
-
-/// Whether every listed capture carries one bit width.
-///
-/// The rules that move a constant across an operator boundary are an identity
-/// only when the whole shape evaluates at one width; the `Equal` root is `I1`,
-/// so the width to agree on is the compared value's.  `validate` rejects a
-/// mismatched node, but a rewrite can mint one mid-pipeline, where nothing has
-/// validated yet.
-fn same_width(binds: &Bindings, func: &strider_ir::Function, caps: &[Capture]) -> bool {
-    let mut widths = caps
-        .iter()
-        .map(|&c| binds.get_type(c, func).map(|t| t.bit_width()));
-    match widths.next() {
-        Some(Some(first)) => widths.all(|w| w == Some(first)),
-        _ => false,
-    }
-}
-
-/// `M == -N` at `width_src`'s width.  `false` unless all bindings resolve.
-fn neg_relation(
-    binds: &Bindings,
-    func: &strider_ir::Function,
-    m: Capture,
-    n: Capture,
+/// Every capture in `caps` as a `UBig`, with the integer type `width_src`
+/// carries. `None` unless all of them resolve.
+fn uints<const N: usize>(
+    b: &Bindings,
+    f: &Function,
+    caps: [Capture; N],
     width_src: Capture,
-) -> bool {
-    let (Some(m_val), Some(n_val), Some(width)) = (
-        binds.get_uint(m, func),
-        binds.get_uint(n, func),
-        carrier_mask(binds, func, width_src),
-    ) else {
+) -> Option<([UBig; N], ValueType)> {
+    let mut vals = [const { UBig::ZERO }; N];
+    for (val, cap) in vals.iter_mut().zip(caps) {
+        *val = b.get_uint(cap, f)?;
+    }
+    Some((vals, int_type(f, b, width_src)?))
+}
+
+/// `-v` at the integer `ty`; `None` for a float.
+fn negate(v: &UBig, ty: ValueType) -> Option<UBig> {
+    eval::int_unary(IntUnaryOp::Neg, v, ty)
+}
+
+/// `M == -N` at `width_src`'s width.
+fn neg_relation(b: &Bindings, f: &Function, m: Capture, n: Capture, width_src: Capture) -> bool {
+    let Some(([m, n], ty)) = uints(b, f, [m, n], width_src) else {
         return false;
     };
-    (m_val & width) == (n_val.wrapping_neg() & width)
+    Some(eval::mask(&m, ty)) == negate(&n, ty)
 }
 
-/// `M == C1 - N` at `width_src`'s width.  `false` unless all bindings resolve.
+/// `N` is not the signed minimum at `width_src`'s width, so `-N` is
+/// representable there.
+fn negation_fits(b: &Bindings, f: &Function, n: Capture, width_src: Capture) -> bool {
+    let Some(([n], ty)) = uints(b, f, [n], width_src) else {
+        return false;
+    };
+    eval::mask(&n, ty) != UBig::ONE << (ty.bit_width() - 1)
+}
+
+/// `N` is nonzero at `width_src`'s width.
+fn nonzero(b: &Bindings, f: &Function, n: Capture, width_src: Capture) -> bool {
+    uints(b, f, [n], width_src).is_some_and(|([n], ty)| eval::mask(&n, ty) != UBig::ZERO)
+}
+
+/// `M == minuend - subtrahend` at `width_src`'s width.
 fn sub_relation(
-    binds: &Bindings,
-    func: &strider_ir::Function,
+    b: &Bindings,
+    f: &Function,
     m: Capture,
-    n: Capture,
-    c1: Capture,
+    minuend: Capture,
+    subtrahend: Capture,
     width_src: Capture,
 ) -> bool {
-    let (Some(m_val), Some(n_val), Some(c1_val), Some(width)) = (
-        binds.get_uint(m, func),
-        binds.get_uint(n, func),
-        binds.get_uint(c1, func),
-        carrier_mask(binds, func, width_src),
-    ) else {
+    let Some(([m, minuend, subtrahend], ty)) = uints(b, f, [m, minuend, subtrahend], width_src)
+    else {
         return false;
     };
-    (m_val & width) == (c1_val.wrapping_sub(n_val) & width)
+    negate(&subtrahend, ty)
+        .is_some_and(|neg| eval::mask(&m, ty) == eval::mask(&(minuend + neg), ty))
 }
 
-fn build_rules() -> Vec<BoxedRule> {
-    // Captures may be shared across rules: each rule matches with fresh
-    // `Bindings`, so "same node everywhere" binds intra-rule only.
+fn build_rules() -> Vec<Rule> {
+    // Captures are shared across rules; each rule binds them afresh.
     let a = Capture::new();
     let b = Capture::new();
-    // The `Less` constant `N` and the `Add` constant `M`.
+    // The compared constant `N` and a second constant `M`.
     let n = Capture::new();
     let m = Capture::new();
     // The compare-base offset `C1` and the whole offset value `X = Add(b, C1)`.
     let c1 = Capture::new();
     let x = Capture::new();
 
-    // Emits an LS rule and its De-Morgan HI dual:
-    //   LS:  Or(less, eq)                  -> Xor(cmp, 1)
-    //   HI:  And(Xor(less, 1), Xor(eq, 1)) -> cmp
-    macro_rules! ls_hi_pair {
-        ($less:expr, $eq:expr, $guard:expr, $cmp:expr $(,)?) => {
-            [
-                rewrite_rule(
-                    bool_or($less, $eq).when_match($guard),
-                    template::bool_not($cmp),
-                ),
-                rewrite_rule(
-                    bool_and(bool_not($less), bool_not($eq)).when_match($guard),
-                    $cmp,
-                ),
-            ]
-        };
-    }
-
-    let mut rules: Vec<BoxedRule> = vec![
-        // EQ:  Equal(Add(a, Neg(b)), 0) -> Equal(a, b)
-        rewrite_rule(
+    // The atoms: flag terms to comparisons on `(a, b)`.
+    let mut rules: Vec<Rule> = vec![
+        // The variable-arity CR pack does not fit the fixed-shape DSL.
+        Rule::Fold {
+            roots: |k| {
+                matches!(
+                    k,
+                    NodeKind::Truncate | NodeKind::IntBinaryOp(IntBinaryOp::Xor)
+                )
+            },
+            fold: canonicalize_cr_bit_test,
+        },
+        // `!!x -> x`
+        Rule::rewrite(bool_not(bool_not(var(a))), var(a)),
+        // Z:  Equal(Add(a, Neg(b)), 0) -> Equal(a, b)
+        Rule::rewrite(
             int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128)),
             template::int_eq(var(a), var(b)),
         ),
-        // HI -> IntLess(b, a), in either arch shape:
-        //    raw NZCV:    BoolAnd(Xor(IntLess(a, b), 1), Xor(Equal(diff, 0), 1))
-        //    decomposed:  BoolAnd(Xor(Equal(a, b), 1), Xor(IntLess(a, b), 1))
-        rewrite_rule(
-            one_of![
-                bool_and(
-                    bool_not(int_lt(var(a), var(b))),
-                    bool_not(int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128))),
-                ),
-                bool_and(
-                    bool_not(int_eq(var(a), var(b))),
-                    bool_not(int_lt(var(a), var(b))),
-                ),
-            ],
-            template::int_lt(var(b), var(a)),
+        // The Thumb "false" flag test (BNE / BCC / BPL / BVC):
+        //    IntEqual(ZeroExtend(b), 0) -> Xor(b, 1)
+        // `zext(b) == 0` equals `!b` only for an `I1` `b`.
+        Rule::rewrite(
+            int_eq(int_zero_extend(var(b).of_width(1)), int_const(0u128)),
+            template::bool_not(var(b)),
         ),
-        // LS -> Xor(IntLess(b, a), 1), in either arch shape:
-        //    raw NZCV:    BoolOr(IntLess(a, b), Equal(diff, 0))
-        //    decomposed:  BoolOr(Equal(a, b), IntLess(a, b))
-        // The raw form requires ConstantFold to have already cancelled the
-        // `Xor(Xor(IntLess, 1), 1)` chain that `Xor(CY, 1)` produces.
-        rewrite_rule(
-            one_of![
-                bool_or(
-                    int_lt(var(a), var(b)),
-                    int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128)),
-                ),
-                bool_or(int_eq(var(a), var(b)), int_lt(var(a), var(b))),
-            ],
-            template::bool_not(template::int_lt(var(b), var(a))),
-        ),
-        // LT:  Xor(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))), 1) -> IntSless(a, b)
-        rewrite_rule(
-            bool_not(int_eq(
-                int_zero_extend(int_slt(int_add(var(a), int_neg(var(b))), int_const(0u128))),
-                int_zero_extend(int_sborrow(var(a), var(b))),
-            )),
-            template::int_slt(var(a), var(b)),
-        ),
-        // GE:  Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))) -> Xor(IntSless(a, b), 1)
-        rewrite_rule(
+        // GE:  Equal(ZeroExtend(Sless(Add(a, Neg(b)), 0)), ZeroExtend(Sborrow(a, b)))
+        //      -> Xor(Sless(a, b), 1)
+        Rule::rewrite(
             int_eq(
                 int_zero_extend(int_slt(int_add(var(a), int_neg(var(b))), int_const(0u128))),
                 int_zero_extend(int_sborrow(var(a), var(b))),
             ),
             template::bool_not(template::int_slt(var(a), var(b))),
         ),
-        // GT -> IntSless(b, a), in either arch shape:
-        //    raw NZCV:    BoolAnd(Xor(Equal(diff, 0), 1),
-        //                    Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))))
-        //    decomposed:  BoolAnd(Xor(Equal(a, b), 1), Xor(IntSless(a, b), 1))
-        rewrite_rule(
-            one_of![
-                bool_and(
-                    bool_not(int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128))),
-                    int_eq(
-                        int_zero_extend(int_slt(
-                            int_add(var(a), int_neg(var(b))),
-                            int_const(0u128)
-                        )),
-                        int_zero_extend(int_sborrow(var(a), var(b))),
-                    ),
-                ),
-                bool_and(
-                    bool_not(int_eq(var(a), var(b))),
-                    bool_not(int_slt(var(a), var(b))),
-                ),
-            ],
-            template::int_slt(var(b), var(a)),
-        ),
-        // LE -> Xor(IntSless(b, a), 1), in either arch shape:
-        //    raw NZCV:    BoolOr(Equal(diff, 0),
-        //                    Xor(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))), 1))
-        //    decomposed:  BoolOr(Equal(a, b), IntSless(a, b))
-        rewrite_rule(
-            one_of![
-                bool_or(
-                    int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128)),
-                    bool_not(int_eq(
-                        int_zero_extend(int_slt(
-                            int_add(var(a), int_neg(var(b))),
-                            int_const(0u128)
-                        )),
-                        int_zero_extend(int_sborrow(var(a), var(b))),
-                    )),
-                ),
-                bool_or(int_eq(var(a), var(b)), int_slt(var(a), var(b))),
-            ],
-            template::bool_not(template::int_slt(var(b), var(a))),
-        ),
-        // Thumb "false" flag test (BNE / BCC / BPL / BVC):
-        //    IntEqual(ZeroExtend(b), 0) -> Xor(b, 1)
-        // `of_width(1)` is load-bearing: `zext(b) == 0` equals `!b` only for an
-        // `I1` `b`.  Unguarded, a chained zero-extend (I1->I8->I32) binds `b` to
-        // the wider intermediate and yields a malformed complement.
-        rewrite_rule(
-            int_eq(int_zero_extend(var(b).of_width(1)), int_const(0u128)),
-            template::bool_not(var(b)),
-        ),
-        // Thumb "true" flag test (BEQ / BCS / BMI / BVS):
-        //    Xor(IntEqual(ZeroExtend(b), 0), 1) -> b
-        // Same `I1` guard as above.
-        rewrite_rule(
-            bool_not(int_eq(
-                int_zero_extend(var(b).of_width(1)),
-                int_const(0u128),
-            )),
-            var(b),
-        ),
     ];
-
-    // Constant compare operand (`cmp a, N; ja`/`jbe`), after ConstantFold
-    // collapsed `Equal(Add(a, Neg(N)), 0)` to `Equal(Add(a, M), 0)`, `M = -N`:
-    //   LS:  Or(Less(a, N), Equal(Add(a, M), 0))                 -> Xor(Less(N, a), 1)
-    //   HI:  And(Xor(Less(a, N), 1), Xor(Equal(Add(a, M), 0), 1)) -> Less(N, a)
-    // The guard pins `M == -N` mod width.
-    rules.extend(ls_hi_pair!(
-        int_lt(var(a), int_const(n)),
-        int_eq(int_add(var(a), int_const(m)), int_const(0u128)),
-        move |edit, _ty, binds| neg_relation(binds, edit.function(), m, n, a),
-        template::int_lt(var(n), var(a)),
+    // GE on a constant operand (`cmp a, N`), `M = -N`:
+    //   Equal(ZeroExtend(Sless(Add(a, M), 0)), ZeroExtend(Sborrow(a, N))) -> Xor(Sless(a, N), 1)
+    rules.push(Rule::rewrite(
+        int_eq(
+            int_zero_extend(int_slt(int_add(var(a), int_const(m)), int_const(0u128))),
+            int_zero_extend(int_sborrow(var(a), int_const(n))),
+        )
+        .when_match(move |edit, _ty, binds| neg_relation(binds, edit.function(), m, n, a)),
+        template::bool_not(template::int_slt(var(a), var(n))),
     ));
-    // Offset-base siblings, for a switch whose cases start at a nonzero base.
-    // The Less operand `X = Add(b, C1)` and the Equal base `Add(b, C2)` are
-    // DISTINCT nodes, so these key on the shared base `b`:
-    //   LS:  Or(Less(X, N), Equal(Add(b, C2), 0))                 -> Xor(Less(N, X), 1)
-    //   HI:  And(Xor(Less(X, N), 1), Xor(Equal(Add(b, C2), 0), 1)) -> Less(N, X)
-    // The guard pins `C2 == C1 - N`.
-    rules.extend(ls_hi_pair!(
-        int_lt(int_add(var(b), int_const(c1)).capture(x), int_const(n),),
-        int_eq(int_add(var(b), int_const(m)), int_const(0u128)),
-        move |edit, _ty, binds| sub_relation(binds, edit.function(), m, n, c1, b),
-        template::int_lt(var(n), var(x)),
-    ));
-
-    // Solve for x: `Equal(Add(x, C1), C2) -> Equal(x, C2 - C1)`.  Sound at any
-    // width/signedness, since fixed-width add wraps mod 2^W and `Equal` tests
-    // that residue.
-    //
-    // Must NOT run before the offset-base rules above, whose `Equal(diff, 0)`
-    // term it would consume.  Outermost-first seeding gives that: the `Or` root
-    // folds before this rule can reach the inner `Equal`.
-    rules.push(rewrite_rule(
-        int_eq(int_add(var(a), int_const(n)), int_const(m)).when_match(move |edit, _ty, binds| {
-            carrier_mask(binds, edit.function(), a).is_some()
-                && same_width(binds, edit.function(), &[a, n, m])
-        }),
-        template::int_eq(
+    // The `cmn a, N` sibling, a compare against `-N`:
+    //   Equal(ZeroExtend(Sless(Add(a, N), 0)), ZeroExtend(Scarry(a, N))) -> Xor(Sless(a, -N), 1)
+    // Guarded to `N != INT_MIN`, which has no `W`-bit negation.
+    rules.push(Rule::rewrite(
+        int_eq(
+            int_zero_extend(int_slt(int_add(var(a), int_const(n)), int_const(0u128))),
+            int_zero_extend(int_scarry(var(a), int_const(n))),
+        )
+        .when_match(move |edit, _ty, binds| negation_fits(binds, edit.function(), n, a)),
+        template::bool_not(template::int_slt(
             var(a),
-            // The fresh const takes `a`'s width, not the `Equal` root's `I1`.
-            capture_typed(a, int_const_with!([n: uint, m: uint] => m.wrapping_sub(n))),
-        ),
+            capture_typed(
+                a,
+                int_const_with!([n: uint, ty] => negate(&n, ty).ok_or_else(strider_pattern::skip)?),
+            ),
+        )),
     ));
-
-    // `Equal(Xor(x, C1), C2) -> Equal(x, C1 ^ C2)`: xor-with-C1 is a bijection,
-    // so applying it to both sides is value-preserving.
-    rules.push(rewrite_rule(
-        int_eq(int_xor(var(a), int_const(n)), int_const(m))
-            .when_match(move |edit, _ty, binds| same_width(binds, edit.function(), &[a, n, m])),
-        template::int_eq(
+    // C after `cmn a, N` / `adds a, N`, `a + N >= 2^W` exactly when
+    // `a >= -N`:
+    //   Carry(a, N) -> Xor(Less(a, -N), 1)
+    // Guarded to `N != 0`: `Carry(a, 0)` is clear, `!(a <u 0)` is set.
+    rules.push(Rule::rewrite(
+        int_carry(var(a), int_const(n))
+            .when_match(move |edit, _ty, binds| nonzero(binds, edit.function(), n, a)),
+        template::bool_not(template::int_lt(
             var(a),
-            capture_typed(a, int_const_with!([n: uint, m: uint] => n ^ m)),
-        ),
+            capture_typed(
+                a,
+                int_const_with!([n: uint, ty] => negate(&n, ty).ok_or_else(strider_pattern::skip)?),
+            ),
+        )),
+    ));
+    // Offset-base sibling, `cmp X, N` on `X = Add(b, C1)`, guarded to
+    // `C2 == C1 - N`:
+    //   Equal(ZeroExtend(Sless(Add(b, C2), 0)), ZeroExtend(Sborrow(X, N))) -> Xor(Sless(X, N), 1)
+    rules.push(Rule::rewrite(
+        int_eq(
+            int_zero_extend(int_slt(int_add(var(b), int_const(m)), int_const(0u128))),
+            int_zero_extend(int_sborrow(
+                int_add(var(b), int_const(c1)).capture(x),
+                int_const(n),
+            )),
+        )
+        .when_match(move |edit, _ty, binds| sub_relation(binds, edit.function(), m, c1, n, b)),
+        template::bool_not(template::int_slt(var(x), var(n))),
     ));
 
-    // `Equal(Neg(x), C) -> Equal(x, -C)`: two's-complement negation is a
-    // bijection, so it moves across `Equal` value-preservingly.
-    rules.push(rewrite_rule(
-        int_eq(int_neg(var(a)), int_const(m)).when_match(move |edit, _ty, binds| {
-            carrier_mask(binds, edit.function(), a).is_some()
-                && same_width(binds, edit.function(), &[a, m])
-        }),
-        template::int_eq(
-            var(a),
-            capture_typed(a, int_const_with!([m: uint] => m.wrapping_neg())),
-        ),
-    ));
+    // The combiners, unsigned and signed alike, where `less` binds `a < b`:
+    //   LS/LE:  Or(less, Equal(a, b))                  -> Xor(less(b, a), 1)
+    //   HI/GT:  And(Xor(less, 1), Xor(Equal(a, b), 1)) -> less(b, a)
+    // the absorptions, as `Equal(a, b)` implies `!less` (x86 `add; jbe` / `ja`):
+    //           Or(Xor(less, 1), Equal(a, b))          -> Xor(less, 1)
+    //           And(less, Xor(Equal(a, b), 1))         -> less
+    // and the offset-base form, `X = Add(b, C1)` against `N` with the Z term
+    // solved to `Equal(b, C3)`, guarded to `C3 == N - C1`.
+    let offset_guard = move |edit: &strider_pattern::Matcher, _ty, binds: &Bindings| {
+        sub_relation(binds, edit.function(), m, n, c1, b)
+    };
+    macro_rules! combiners {
+        ($less:ident) => {
+            rules.extend([
+                Rule::rewrite(
+                    bool_or($less(var(a), var(b)), int_eq(var(a), var(b))),
+                    template::bool_not(template::$less(var(b), var(a))),
+                ),
+                Rule::rewrite(
+                    bool_and(
+                        bool_not($less(var(a), var(b))),
+                        bool_not(int_eq(var(a), var(b))),
+                    ),
+                    template::$less(var(b), var(a)),
+                ),
+                Rule::rewrite(
+                    bool_or(bool_not($less(var(a), var(b))), int_eq(var(a), var(b))),
+                    template::bool_not(template::$less(var(a), var(b))),
+                ),
+                Rule::rewrite(
+                    bool_and($less(var(a), var(b)), bool_not(int_eq(var(a), var(b)))),
+                    template::$less(var(a), var(b)),
+                ),
+                Rule::rewrite(
+                    bool_or(
+                        $less(int_add(var(b), int_const(c1)).capture(x), int_const(n)),
+                        int_eq(var(b), int_const(m)),
+                    )
+                    .when_match(offset_guard),
+                    template::bool_not(template::$less(var(n), var(x))),
+                ),
+                Rule::rewrite(
+                    bool_and(
+                        bool_not($less(
+                            int_add(var(b), int_const(c1)).capture(x),
+                            int_const(n),
+                        )),
+                        bool_not(int_eq(var(b), int_const(m))),
+                    )
+                    .when_match(offset_guard),
+                    template::$less(var(n), var(x)),
+                ),
+            ]);
+        };
+    }
+    combiners!(int_lt);
+    combiners!(int_slt);
 
-    // `Sless(ShiftLeft(x, C), 0):I1 -> Xor(Equal(And(x, mask), 0), 1):I1`,
-    // mask = 1 << (W-1-C): a signed `< 0` on a left-shifted value tests bit
-    // (W-1-C) of `x`.  The `And`/mask/`0` are width `W` via `capture_typed(x,
-    // ..)`; the `Xor`/`1` are `I1`.  Guarded to `C < W`: at or above the width
-    // `x << C` is 0 and the test is const-false, a different rewrite.
-    rules.push(rewrite_rule(
+    // `Equal(op(x), C) -> Equal(x, op^-1(C))` for a bijective `op` at one
+    // width; the fresh const takes `x`'s width.
+    macro_rules! solve {
+        ($op_x:expr, [$($cap:expr),*], $inverse:expr $(,)?) => {
+            rules.push(Rule::rewrite(
+                int_eq($op_x, int_const(m)).when_match(move |edit, _ty, binds| {
+                    same_width(edit.function(), binds, &[a, $($cap,)* m]).is_some()
+                }),
+                template::int_eq(var(a), capture_typed(a, $inverse)),
+            ));
+        };
+    }
+    // `Equal(Add(x, C1), C2) -> Equal(x, C2 - C1)`
+    solve!(
+        int_add(var(a), int_const(n)),
+        [n],
+        int_const_with!([n: uint, m: uint, ty] =>
+            m + negate(&n, ty).ok_or_else(strider_pattern::skip)?),
+    );
+    // `Equal(Xor(x, C1), C2) -> Equal(x, C1 ^ C2)`.
+    solve!(
+        int_xor(var(a), int_const(n)),
+        [n],
+        int_const_with!([n: uint, m: uint] => n ^ m),
+    );
+    // `Equal(Neg(x), C) -> Equal(x, -C)`.
+    solve!(
+        int_neg(var(a)),
+        [],
+        int_const_with!([m: uint, ty] => negate(&m, ty).ok_or_else(strider_pattern::skip)?),
+    );
+
+    // `Sless(ShiftLeft(x, C), 0):I1 -> Xor(Equal(And(x, 1 << (W-1-C)), 0), 1):I1`,
+    // guarded to `C < W`.
+    rules.push(Rule::rewrite(
         int_slt(int_shl(var(x), int_const(n)), int_const(0u128)).when_match(move |edit, _ty, b| {
-            let (Some(c), Some(ty)) = (
-                b.get_uint(n, edit.function()),
-                b.get_type(x, edit.function()),
-            ) else {
-                return false;
-            };
-            ty.bit_width() <= 128 && c < ty.bit_width() as u128
+            let f = edit.function();
+            b.get_type(x, f)
+                .is_some_and(|ty| shift_count_in_range(f, b, ty, n))
         }),
         template::bool_not(template::int_eq(
             capture_typed(
@@ -413,11 +340,14 @@ fn build_rules() -> Vec<BoxedRule> {
                     var(x),
                     capture_typed(
                         x,
-                        // `ty` is this const's own width, `x`'s, which is the
-                        // width the guard bounds `n` against; the `Sless`
-                        // slot-0 type is a second width that only a validated
-                        // graph agrees with.
-                        int_const_with!([n: uint, ty] => 1u128 << (ty.bit_width() as u128 - 1 - n)),
+                        // `ty` is `x`'s width, the one the guard bounds `n` by.
+                        int_const_with!([n: uint, ty] => eval::ones_at(
+                            1,
+                            ty.bit_width()
+                                - 1
+                                - usize::try_from(&n)
+                                    .expect("the guard bounds the count by the width"),
+                        )),
                     ),
                 ),
             ),
@@ -428,236 +358,228 @@ fn build_rules() -> Vec<BoxedRule> {
     rules
 }
 
-/// Rewrites a PowerPC CR-bit test to the comparison sitting at the tested bit:
-/// `Truncate(ShiftRight(Or(ShiftLeft(ZeroExtend(cmp_i:I1), pos_i) ...), k)):I1`
-/// -> `cmp_i` where `pos_i == k`.  `None` on any shape it cannot prove a true
-/// identity for.
+/// Rewrites a CR-bit test (`Truncate(v):I1` of bit 0, or `Xor(Equal(v, 0),
+/// 1):I1` with all but one bit known zero) to the `I1` [`BitTracer`] proves
+/// sits at the tested bit: a PowerPC CR pack or the Thumb "true" flag test.
 fn canonicalize_cr_bit_test(
     edit: &mut crate::EditFunction<'_>,
     root: NodeId,
 ) -> Result<Option<ValueId>> {
-    let Some((cond_out, cmp)) = cr_bit_comparison(edit, root) else {
+    let mut tracer = BitTracer {
+        f: &*edit,
+        budget: MAX_BIT_VISITS,
+        proof: Vec::new(),
+    };
+    let Some((cond_out, cmp)) = tracer.tested_boolean(root) else {
         return Ok(None);
     };
-    // `replace_value` absorbs only the immediate `Truncate`'s fingerprint, so
-    // fold the rest of the pack in first; otherwise the `crset`/`cror`/`cmpwi`
-    // addresses vanish when the pack is culled, breaking the superset-only
-    // contract.
-    absorb_cr_pack_fingerprints(edit, cond_out, cmp);
-    edit.replace_value(cond_out, cmp)?;
+    // `replace_value` absorbs only the root's fingerprint; add the proof's.
+    let proof = tracer.proof;
+    let into = edit.producer(cmp);
+    for n in proof {
+        if n != into {
+            edit.absorb_node_fingerprint(into, n);
+        }
+    }
+    edit.replace_value(cond_out, cmp);
     Ok(Some(cmp))
 }
 
-/// The kinds [`cr_bit_comparison`] traverses between the tested bit and the
-/// comparisons at the pack's terms.  Everything else is a leaf: an `IntCmpOp`
-/// because below one are the compared values, and any other producer because
-/// `input_producers_iter` follows memory and control edges, which from the
-/// opaque operand of an `And(v, 2^p)` term reach `InitialMemory` / `Entry`.
-fn builds_a_cr_pack(kind: &NodeKind) -> bool {
-    matches!(
-        kind,
-        NodeKind::IntConst(_)
-            | NodeKind::Truncate
-            | NodeKind::Extend(_)
-            | NodeKind::IntBinaryOp(
-                IntBinaryOp::Or
-                    | IntBinaryOp::And
-                    | IntBinaryOp::Xor
-                    | IntBinaryOp::ShiftLeft
-                    | IntBinaryOp::ShiftRight
-            )
-    )
+/// Nodes one CR-bit test may trace through, every bit of a `!= 0` test
+/// included.
+const MAX_BIT_VISITS: usize = 512;
+
+/// One bit of a value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bit {
+    Zero,
+    One,
+    /// Equal to this `I1`.
+    Is(ValueId),
+    Unknown,
 }
 
-/// Folds every CR-pack interior node's asm-fingerprint into the surviving
-/// comparison.  The descent is confined to [`builds_a_cr_pack`].
-fn absorb_cr_pack_fingerprints(
-    edit: &mut crate::EditFunction<'_>,
-    cond_out: ValueId,
-    cmp: ValueId,
-) {
-    let into = edit.producer(cmp);
-    let mut stack = vec![edit.producer(cond_out)];
-    let mut visited: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-    let mut interior: Vec<NodeId> = Vec::new();
-    while let Some(n) = stack.pop() {
-        if !visited.insert(n) {
-            continue;
-        }
-        interior.push(n);
-        if builds_a_cr_pack(edit.node_kind(n)) {
-            stack.extend(crate::peephole::input_producers_iter(edit, n));
-        }
-    }
-    for n in interior {
-        if n != into {
-            edit.function_mut()
-                .side_tables_mut()
-                .extend_asm_fingerprint_from(into, n);
-        }
-    }
+/// Traces single bits down through casts, constant shifts and bitwise ops,
+/// recording every node it reads as the proof.
+struct BitTracer<'a, V: IRViewer + ?Sized> {
+    f: &'a V,
+    budget: usize,
+    proof: Vec<NodeId>,
 }
 
-/// The value `root` tests, paired with whether it observes EVERY bit of that
-/// value rather than bit 0 alone.
-///
-/// Two spellings reach here: the `Truncate(_):I1` narrowing, which is bit 0,
-/// and the `Xor(IntEqual(_, 0), 1):I1` that the `cond != 0` branch lowering
-/// emits, which is the OR of every bit.  A peeled `And(y, 1)` layer selects
-/// bit 0 under both, so it settles the flag either way.
-fn bit_zero_source(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, bool)> {
-    let (src, whole_value) = match f.node_kind(root) {
-        NodeKind::Truncate => {
-            let [inner] = f.node_inputs_exact::<1>(root).ok()?;
-            (inner, false)
+impl<V: IRViewer + ?Sized> BitTracer<'_, V> {
+    /// `(root's output, the I1 it equals)` for a CR-bit test at `root`.
+    fn tested_boolean(&mut self, root: NodeId) -> Option<(ValueId, ValueId)> {
+        let f = self.f;
+        let cond_out = *f.node_outputs(root).first()?;
+        if f.value_type_opt(cond_out) != Some(ValueType::I1) {
+            return None;
         }
-        NodeKind::IntBinaryOp(IntBinaryOp::Xor) => {
-            let [l, r] = f.node_inputs_exact::<2>(root).ok()?;
-            let eq = const_operand_is(f, l, r, 1)?;
-            if !matches!(f.kind_of_value(eq), NodeKind::IntCmpOp(IntCmpOp::Equal)) {
-                return None;
+        let found = match f.node_kind(root) {
+            NodeKind::Truncate => {
+                let [v] = f.node_inputs_exact::<1>(root).ok()?;
+                self.bit(v, 0)
             }
-            let [a, b] = f.producer_inputs_exact::<2>(eq).ok()?;
-            (const_operand_is(f, a, b, 0)?, true)
+            // `v != 0` is the boolean when every other bit is zero.
+            NodeKind::IntBinaryOp(IntBinaryOp::Xor) => {
+                let eq = self.operand_beside(root, 1)?;
+                if !matches!(f.kind_of_value(eq), NodeKind::IntCmpOp(IntCmpOp::Equal)) {
+                    return None;
+                }
+                let v = self.operand_beside(f.producer(eq), 0)?;
+                self.proof.push(f.producer(eq));
+                let width = f.value_type_opt(v)?.bit_width();
+                let mut found = Bit::Zero;
+                for k in 0..u32::try_from(width).ok()? {
+                    match (found, self.bit(v, k)) {
+                        (_, Bit::Zero) => {}
+                        (Bit::Zero, Bit::Is(b)) => found = Bit::Is(b),
+                        _ => return None,
+                    }
+                }
+                found
+            }
+            _ => return None,
+        };
+        match found {
+            Bit::Is(b) => Some((cond_out, b)),
+            _ => None,
         }
-        _ => return None,
+    }
+
+    /// The operand of the two-input `node` whose sibling is the constant
+    /// `c`, recording the constant.
+    fn operand_beside(&mut self, node: NodeId, c: u128) -> Option<ValueId> {
+        let [l, r] = self.f.node_inputs_exact::<2>(node).ok()?;
+        let (v, k) = if self.f.int_const_u128(r) == Some(c) {
+            (l, r)
+        } else if self.f.int_const_u128(l) == Some(c) {
+            (r, l)
+        } else {
+            return None;
+        };
+        self.proof.push(self.f.producer(k));
+        Some(v)
+    }
+
+    /// Bit `k` of `v`; [`Bit::Unknown`] once the budget is spent.
+    fn bit(&mut self, v: ValueId, k: u32) -> Bit {
+        let f = self.f;
+        let Some(ty) = f.value_type_opt(v) else {
+            return Bit::Unknown;
+        };
+        if eval::shift_out_of_range(k.into(), ty) {
+            return Bit::Zero;
+        }
+        let Some(budget) = self.budget.checked_sub(1) else {
+            return Bit::Unknown;
+        };
+        self.budget = budget;
+        let node = f.producer(v);
+        if let Some(c) = f.int_const_u128(v) {
+            self.proof.push(node);
+            return if c.checked_shr(k).is_some_and(|s| s & 1 == 1) {
+                Bit::One
+            } else {
+                Bit::Zero
+            };
+        }
+        if ty == ValueType::I1 {
+            return Bit::Is(v);
+        }
+        self.proof.push(node);
+        let width = ty.bit_width();
+        match *f.node_kind(node) {
+            NodeKind::Truncate => match f.node_inputs_exact::<1>(node) {
+                Ok([src]) => self.bit(src, k),
+                Err(_) => Bit::Unknown,
+            },
+            NodeKind::Extend(op) => {
+                let Ok([src]) = f.node_inputs_exact::<1>(node) else {
+                    return Bit::Unknown;
+                };
+                let Some(src_width) = f.value_type_opt(src).map(ValueType::bit_width) else {
+                    return Bit::Unknown;
+                };
+                match (op, u32::try_from(src_width)) {
+                    (_, Ok(w)) if k < w => self.bit(src, k),
+                    (ExtendOp::ZeroExtend, _) => Bit::Zero,
+                    (ExtendOp::SignExtend, Ok(w)) if w > 0 => self.bit(src, w - 1),
+                    (ExtendOp::SignExtend, _) => Bit::Unknown,
+                }
+            }
+            NodeKind::IntBinaryOp(op @ (IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight)) => {
+                let Ok([x, count]) = f.node_inputs_exact::<2>(node) else {
+                    return Bit::Unknown;
+                };
+                let Some(c) = f.int_const_u128(count) else {
+                    return Bit::Unknown;
+                };
+                self.proof.push(f.producer(count));
+                if eval::shift_out_of_range(c, ty) {
+                    return Bit::Zero;
+                }
+                let c = c as u32;
+                match op {
+                    IntBinaryOp::ShiftLeft if k < c => Bit::Zero,
+                    IntBinaryOp::ShiftLeft => self.bit(x, k - c),
+                    _ if u128::from(k) + u128::from(c) >= width as u128 => Bit::Zero,
+                    _ => self.bit(x, k + c),
+                }
+            }
+            NodeKind::IntBinaryOp(op @ (IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)) => {
+                let Ok([mut a, mut b]) = f.node_inputs_exact::<2>(node) else {
+                    return Bit::Unknown;
+                };
+                if f.int_const_u128(b).is_some() {
+                    std::mem::swap(&mut a, &mut b);
+                }
+                // An absorbing bit decides alone; only its trace is proof.
+                let absorbing = match op {
+                    IntBinaryOp::And => Bit::Zero,
+                    IntBinaryOp::Or => Bit::One,
+                    _ => Bit::Unknown,
+                };
+                let mark = self.proof.len();
+                let x = self.bit(a, k);
+                if x == absorbing && x != Bit::Unknown {
+                    return x;
+                }
+                let mid = self.proof.len();
+                let y = self.bit(b, k);
+                if y == absorbing && y != Bit::Unknown {
+                    self.proof.drain(mark..mid);
+                    return y;
+                }
+                combine(op, x, y)
+            }
+            _ => Bit::Unknown,
+        }
+    }
+}
+
+/// Bit `op` of two traced bits.
+fn combine(op: IntBinaryOp, x: Bit, y: Bit) -> Bit {
+    use Bit::{One, Unknown, Zero};
+    let (identity, absorbing) = match op {
+        IntBinaryOp::And => (One, Zero),
+        IntBinaryOp::Or => (Zero, One),
+        _ => (Zero, Unknown),
     };
-    if let NodeKind::IntBinaryOp(IntBinaryOp::And) = f.kind_of_value(src)
-        && let Ok([a, b]) = f.producer_inputs_exact::<2>(src)
-        && let Some(y) = const_operand_is(f, a, b, 1)
-    {
-        return Some((y, false));
-    }
-    Some((src, whole_value))
-}
-
-/// The one of `l` / `r` whose sibling is the constant `c`.
-fn const_operand_is(f: &impl IRViewer, l: ValueId, r: ValueId, c: u128) -> Option<ValueId> {
-    if f.int_const_u128(r) == Some(c) {
-        Some(l)
-    } else if f.int_const_u128(l) == Some(c) {
-        Some(r)
-    } else {
-        None
-    }
-}
-
-/// The `(condition-output, comparison)` pair for a CR-bit test.  `Some` only
-/// when every OR term is a provable single-bit value at a DISTINCT position and
-/// the one at the tested bit carries a comparison; only then does that bit equal
-/// the comparison for all inputs.
-fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueId)> {
-    let cond_out = *f.node_outputs(root).first()?;
-    if f.value_type_opt(cond_out) != Some(ValueType::I1) {
-        return None;
-    }
-    let (inner, whole_value) = bit_zero_source(f, root)?;
-    // Bit 0 of `inner` is under test, so a `ShiftRight(x, k)` there means the
-    // tested bit is bit k of `x`.
-    let (pack, bit) = match *f.kind_of_value(inner) {
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
-            let [x, amt] = f.producer_inputs_exact::<2>(inner).ok()?;
-            let k = u32::try_from(f.int_const_u128(amt)?).ok()?;
-            // At or past the width the shift is 0, so no bit is under test.
-            let width = u32::try_from(f.value_type_opt(inner)?.bit_width()).ok()?;
-            if k >= width {
-                return None;
-            }
-            (x, k)
-        }
-        _ => (inner, 0),
-    };
-
-    let mut terms = Vec::new();
-    flatten_or(f, pack, &mut terms, 0);
-    let mut positions: Vec<u32> = Vec::new();
-    let mut found: Option<ValueId> = None;
-    for term in terms {
-        // A structural zero contributes no bit.
-        if f.int_const_u128(term) == Some(0) {
-            continue;
-        }
-        let (pos, cmp) = single_bit_term(f, term, 0)?;
-        if positions.contains(&pos) {
-            return None; // overlapping terms: `bit` can't be isolated
-        }
-        positions.push(pos);
-        if pos == bit {
-            // The tested bit must carry a comparison, not an opaque masked bit.
-            found = Some(cmp?);
-        }
-    }
-    // `src != 0` is true for a bit ABOVE the tested one too, where the
-    // comparison is false; a shift has already dropped everything below it.
-    if whole_value && positions.iter().any(|&p| p > bit) {
-        return None;
-    }
-    found.map(|cmp| (cond_out, cmp))
-}
-
-/// Flattens an `Or` tree into its terms.  A well-formed 4-bit CR pack is at
-/// most 3 `Or` nodes deep; anything past the cap is pushed as an opaque leaf.
-fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: u32) {
-    const MAX_OR_DEPTH: u32 = 4;
-    if depth <= MAX_OR_DEPTH
-        && let NodeKind::IntBinaryOp(IntBinaryOp::Or) = f.kind_of_value(value)
-        && let Ok([a, b]) = f.producer_inputs_exact::<2>(value)
-    {
-        flatten_or(f, a, out, depth + 1);
-        flatten_or(f, b, out, depth + 1);
-        return;
-    }
-    out.push(value);
-}
-
-/// Classifies a CR-pack term as `(bit position, comparison at that bit)`,
-/// proving structurally that it sets ONLY that bit; `None` for anything not
-/// provably single-bit.  The comparison is `Some` for a bare `IntCmpOp` leaf
-/// or a `ZeroExtend` of one.
-fn single_bit_term(
-    f: &impl IRViewer,
-    value: ValueId,
-    depth: u32,
-) -> Option<(u32, Option<ValueId>)> {
-    const MAX_DEPTH: u32 = 32;
-    if depth > MAX_DEPTH {
-        return None;
-    }
-    match *f.kind_of_value(value) {
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
-            let [v, amt] = f.producer_inputs_exact::<2>(value).ok()?;
-            let pos = u32::try_from(f.int_const_u128(amt)?).ok()?;
-            // p-code yields 0 once the shift reaches the output width, so a
-            // term shifted that far carries no bit to name.
-            let width = u32::try_from(f.value_type_opt(value)?.bit_width()).ok()?;
-            let (q, cmp) = single_bit_term(f, v, depth + 1)?;
-            let bit = q.checked_add(pos)?;
-            (bit < width).then_some((bit, cmp))
-        }
-        // Zero-fill above the source leaves the set-bit position unchanged.
-        NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            let [src] = f.producer_inputs_exact::<1>(value).ok()?;
-            match f.value_type_opt(src) {
-                Some(ValueType::I1) => Some((
-                    0,
-                    matches!(f.kind_of_value(src), NodeKind::IntCmpOp(_)).then_some(src),
-                )),
-                _ => single_bit_term(f, src, depth + 1),
+    match (x, y) {
+        _ if x == absorbing || y == absorbing => absorbing,
+        _ if x == identity => y,
+        _ if y == identity => x,
+        // `p & p == p | p == p`, `p ^ p == 0`.
+        (Bit::Is(p), Bit::Is(q)) if p == q => {
+            if op == IntBinaryOp::Xor {
+                Zero
+            } else {
+                x
             }
         }
-        // `And(v, single-bit const)` keeps that bit; its value stays unknown.
-        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            let [a, b] = f.producer_inputs_exact::<2>(value).ok()?;
-            let mask = f.int_const_u128(a).or_else(|| f.int_const_u128(b))?;
-            mask.is_power_of_two()
-                .then(|| (mask.trailing_zeros(), None))
-        }
-        NodeKind::IntCmpOp(_) => Some((0, Some(value))),
-        NodeKind::IntConst(_) => {
-            let c = f.int_const_u128(value)?;
-            c.is_power_of_two().then(|| (c.trailing_zeros(), None))
-        }
-        _ => None,
+        (One, One) => Zero,
+        _ => Unknown,
     }
 }
 

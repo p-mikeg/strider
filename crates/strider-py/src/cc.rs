@@ -3,28 +3,30 @@ use pyo3::types::PyType;
 
 use crate::macros::forall_preset;
 
-/// `Preset` resolves its static register names against a Sleigh lazily, at
-/// consumption time.  `Custom` is resolved eagerly instead, so typos and
-/// ABI-invariant violations in user-supplied names surface at construction.
-#[derive(Clone)]
+/// `Preset` resolves its register names at use; `Custom` at construction,
+/// so a bad name raises there.
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) enum CcImpl {
     Preset(strider_target::CallingConvention),
     Custom(Box<strider_target::BuiltCallingConvention>),
 }
 
-/// A calling convention.  Construct via a preset classmethod (e.g.
-/// `CallingConvention.x86_64_systemv()`) or `CallingConvention.custom(...)`
-/// for a binary whose ABI matches no built-in preset.
-#[pyclass(name = "CallingConvention", module = "strider.sleigh", frozen)]
-#[derive(Clone)]
+/// A calling convention: a preset (e.g. `CallingConvention.x86_64_systemv()`)
+/// or `CallingConvention.custom(...)`. Equal when built by the same
+/// constructor calls; a `custom` never equals a preset.
+#[pyclass(
+    name = "CallingConvention",
+    module = "strider.sleigh",
+    frozen,
+    eq,
+    hash
+)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyCallingConvention {
     pub(crate) inner: CcImpl,
     pub(crate) preset_name: &'static str,
-    /// The arch a `custom(...)` convention resolved its register names
-    /// against; `None` for a preset, which resolves at consumption time.
-    pub(crate) source_arch: Option<crate::strider_cls::SourceArch>,
-    /// Only meaningful when this CC is resolved as a per-address override.
-    pub(crate) no_return: bool,
+    /// `None` for a preset.
+    pub(crate) source_arch: Option<strider_target::SleighArch>,
 }
 
 forall_preset!(
@@ -48,15 +50,42 @@ forall_preset!(
     ]
 );
 
+impl PyCallingConvention {
+    pub(crate) fn from_preset(p: &'static strider_target::CcPreset) -> Self {
+        Self {
+            inner: CcImpl::Preset(p.cc),
+            preset_name: p.name,
+            source_arch: None,
+        }
+    }
+
+    /// `preserves_all` or `preserves_regs` for those variants.
+    fn variant(&self) -> Option<&'static str> {
+        let (all_regs, memory) = match &self.inner {
+            CcImpl::Preset(cc) => (cc.preserves_all_registers, cc.preserves_memory),
+            CcImpl::Custom(cc) => (cc.preserves_all_registers, cc.preserves_memory),
+        };
+        all_regs.then_some(if memory {
+            "preserves_all"
+        } else {
+            "preserves_regs"
+        })
+    }
+
+    fn vn_name(&self, arch: strider_target::SleighArch, vn: rsleigh::Vn) -> PyResult<&'static str> {
+        arch.names().regs().vn_to_name(vn).ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "CallingConvention.to_dict: no register name for {vn:?}"
+            ))
+        })
+    }
+}
+
 #[pymethods]
 impl PyCallingConvention {
-    /// A variant of this convention that clobbers nothing: every register
-    /// callee-saved and memory unchanged, with no arguments or return value.
-    /// The stack/link-register geometry of the original is kept.
-    ///
-    /// Use as a per-address CC override for a transparent hook that observes
-    /// no caller state changes (Linux-kernel `__fentry__` / `mcount`), e.g.
-    /// `CallingConvention.x86_64_systemv().preserves_all()`.
+    /// A variant that clobbers nothing: every register callee-saved, memory
+    /// unchanged, no arguments or return value; stack geometry kept. For a
+    /// transparent hook (`__fentry__` / `mcount`).
     fn preserves_all(&self) -> Self {
         Self {
             inner: match &self.inner {
@@ -65,16 +94,11 @@ impl PyCallingConvention {
             },
             preset_name: self.preset_name,
             source_arch: self.source_arch,
-            no_return: self.no_return,
         }
     }
 
-    /// Like `preserves_all` but leaves memory clobberable: registers are all
-    /// preserved, memory is not.
-    ///
-    /// The argument registers and stack arguments survive, unlike under
-    /// `preserves_all`, so a call still carries its arguments: a callee that
-    /// writes memory has to be seen taking a frame address.
+    /// Like `preserves_all`, but memory may be clobbered, so the call keeps its
+    /// arguments.
     fn preserves_regs(&self) -> Self {
         Self {
             inner: match &self.inner {
@@ -83,59 +107,11 @@ impl PyCallingConvention {
             },
             preset_name: self.preset_name,
             source_arch: self.source_arch,
-            no_return: self.no_return,
         }
     }
 
-    /// A copy of this convention marked no-return, for a callee that never
-    /// returns (`exit` / `abort` / `panic` / `__stack_chk_fail`).
-    ///
-    /// Use it as a per-address CC override, e.g.
-    /// `CallingConvention.x86_64_systemv().no_return()`.  A call to such a
-    /// target terminates its region, so the unreachable fall-through is not
-    /// lifted.
-    fn no_return(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            preset_name: self.preset_name,
-            source_arch: self.source_arch,
-            no_return: true,
-        }
-    }
-
-    /// Build a calling convention from explicit register-name lists, for a
-    /// binary whose ABI matches no built-in preset.  Names are resolved and
-    /// ABI invariants checked here, so a bad one raises `StriderError` at
-    /// construction rather than at first use.
-    ///
-    /// Args:
-    ///     sleigh: The `Sleigh` instance to resolve register names against.
-    ///     arg_passing_regs: Register names passing positional args, in ABI order.
-    ///     callee_saved_regs: Registers the callee must preserve.  When
-    ///         `link_register` is set, it MUST appear here.
-    ///     ret_val_regs: Integer return-value registers, in ABI order.
-    ///     ret_val_regs_float: Float return-value registers, in ABI order.
-    ///     stack_pointer: Register name of the hardware stack pointer.
-    ///     stack_arg_base: Byte offset from call-time SP of the first
-    ///         positional stack arg (after register args are exhausted), or
-    ///         `None` if the convention passes no args on the stack.
-    ///     stack_arg_increment: Byte stride between successive positional
-    ///         stack args (used only when `stack_arg_base` is set).
-    ///     ret_stack_pop: Net byte change `ret` inflicts on caller SP
-    ///         (typically 4/8 on stack-push ISAs, 0 on link-register ISAs).
-    ///     link_register: Optional register name of the link register
-    ///         (ARM/AArch64/MIPS/PowerPC); pass `None` on x86/x86_64.
-    ///     preserves_memory: `True` for transparent hooks
-    ///         (`__fentry__`/`mcount`-style) that preserve memory.
-    ///     arg_passing_regs_float: Float/vector argument registers, in ABI
-    ///         order.  Appended after `arg_passing_regs` in a `Call`'s
-    ///         argument list, so the first one is `arg(len(arg_passing_regs))`.
-    ///
-    /// The frozen varnodes belong to `sleigh`'s architecture, so the result is
-    /// usable only with a `Lifter` for that same arch; any other raises
-    /// `StriderError` at `analyze` time.
-    ///
-    /// Chain `.no_return()` on the result to mark the callee as never-returning.
+    /// A convention from register names resolved against `sleigh`; an unknown
+    /// name or a broken ABI invariant raises `StriderError`.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,
@@ -150,59 +126,57 @@ impl PyCallingConvention {
         link_register=None,
         preserves_memory=false,
         arg_passing_regs_float=Vec::new(),
+        reg_args_adjoin_stack_args=false,
+        entry_address=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn custom(
         _cls: &Bound<'_, PyType>,
-        py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
+        sleigh: crate::arch::PySleighArch,
         arg_passing_regs: Vec<String>,
         callee_saved_regs: Vec<String>,
         ret_val_regs: Vec<String>,
         ret_val_regs_float: Vec<String>,
         stack_pointer: String,
-        stack_arg_base: Option<i128>,
-        stack_arg_increment: i128,
-        ret_stack_pop: i64,
+        stack_arg_base: Option<crate::bigint::Ranged<i128>>,
+        stack_arg_increment: crate::bigint::Ranged<i128>,
+        ret_stack_pop: crate::bigint::Ranged<i64>,
         link_register: Option<String>,
         preserves_memory: bool,
         arg_passing_regs_float: Vec<String>,
+        reg_args_adjoin_stack_args: bool,
+        entry_address: Option<String>,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        let source_arch = sleigh_borrow.source_arch;
-        drop(sleigh_borrow);
-        let resolve = |name: &str| {
-            regs.name_to_vn(name).ok_or_else(|| {
-                crate::errors::into_strider_err(anyhow::anyhow!(
-                    "CallingConvention.custom: unknown register name {name:?}"
-                ))
-            })
+        let source_arch = sleigh.inner;
+        let regs = source_arch.names().regs();
+        let in_field = |field: &str, e: anyhow::Error| {
+            crate::errors::into_strider_err(e.context(format!("CallingConvention.custom: {field}")))
         };
-        let resolve_list = |names: &[String]| -> PyResult<Vec<rsleigh::Vn>> {
-            names.iter().map(|n| resolve(n)).collect()
+        let list = |field: &str, names: &[String]| {
+            strider_target::calling_convention::regs_to_vns(regs, names)
+                .map_err(|e| in_field(field, e))
         };
-        let arg_vns = resolve_list(&arg_passing_regs)?;
-        let arg_float_vns = resolve_list(&arg_passing_regs_float)?;
-        let callee_vns = resolve_list(&callee_saved_regs)?;
-        let ret_vns = resolve_list(&ret_val_regs)?;
-        let ret_float_vns = resolve_list(&ret_val_regs_float)?;
-        let sp_vn = resolve(&stack_pointer)?;
-        let lr_vn = link_register.as_deref().map(resolve).transpose()?;
-        // A stack-pushing convention (no link register) has `call` push a
-        // pointer-size return address; a smaller `ret_stack_pop` drifts SP.
-        let ptr_size = i64::from(sp_vn.size);
-        if lr_vn.is_none() && ret_stack_pop < ptr_size {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "custom(): a stack-pushing convention (link_register=None) needs \
-                 ret_stack_pop >= {ptr_size} to account for the return address \
-                 `call` pushes (x86: 4, x86-64: 8); got {ret_stack_pop}. A \
-                 link-register arch (ARM/MIPS/PPC) uses 0 but must set link_register."
-            )));
-        }
-        let stack_args = stack_arg_base.map(|base_offset| strider_target::StackArgs {
-            base_offset,
-            increment: stack_arg_increment,
+        let one = |field: &str, name: &str| {
+            strider_target::calling_convention::vn_for_name(regs, name)
+                .map_err(|e| in_field(field, e))
+        };
+        let arg_vns = list("arg_passing_regs", &arg_passing_regs)?;
+        let arg_float_vns = list("arg_passing_regs_float", &arg_passing_regs_float)?;
+        let callee_vns = list("callee_saved_regs", &callee_saved_regs)?;
+        let ret_vns = list("ret_val_regs", &ret_val_regs)?;
+        let ret_float_vns = list("ret_val_regs_float", &ret_val_regs_float)?;
+        let sp_vn = one("stack_pointer", &stack_pointer)?;
+        let lr_vn = link_register
+            .as_deref()
+            .map(|name| one("link_register", name))
+            .transpose()?;
+        let entry_vn = entry_address
+            .as_deref()
+            .map(|name| one("entry_address", name))
+            .transpose()?;
+        let stack_args = stack_arg_base.map(|base| strider_target::StackArgs {
+            base_offset: base.0,
+            increment: stack_arg_increment.0,
         });
         let built = strider_target::BuiltCallingConvention {
             arg_passing_regs: arg_vns,
@@ -210,45 +184,125 @@ impl PyCallingConvention {
             callee_saved_regs: callee_vns,
             ret_val_regs: ret_vns,
             ret_val_regs_float: ret_float_vns,
-            stack_vn: sp_vn,
+            stack_ptr: sp_vn,
             stack_args,
-            ret_stack_pop,
-            link_register_vn: lr_vn,
+            ret_stack_pop: ret_stack_pop.0,
+            link_register: lr_vn,
             preserves_memory,
             preserves_all_registers: false,
-            no_return: false,
-            // A custom convention makes no entry-register promise; only the
-            // presets that carry an ABI guarantee do.
-            entry_address_vn: None,
+            entry_address: entry_vn,
+            reg_args_adjoin_stack_args,
         };
+        built.validate().map_err(crate::errors::into_strider_err)?;
         built
-            .validate()
-            .map_err(|e| crate::errors::into_strider_err(e.into()))?;
+            .check_addr_size(source_arch.names().ram_addr_size())
+            .map_err(crate::errors::into_strider_err)?;
         Ok(Self {
             inner: CcImpl::Custom(Box::new(built)),
             preset_name: "custom",
             source_arch: Some(source_arch),
-            no_return: false,
         })
     }
 
-    /// The preset name this convention was constructed from (e.g.
-    /// `"x86_64_systemv"`), or `"custom"` for a `custom(...)`-built one.
-    fn name(&self) -> &'static str {
-        self.preset_name
+    /// The preset named `name` (one of `strider.sleigh.CC_PRESETS`). Raises
+    /// `StriderError` for an unknown name.
+    #[classmethod]
+    fn preset(_cls: &Bound<'_, PyType>, name: &str) -> PyResult<Self> {
+        strider_target::CallingConvention::presets()
+            .find(|p| p.name == name)
+            .map(Self::from_preset)
+            .ok_or_else(|| {
+                let known: Vec<_> = strider_target::CallingConvention::presets()
+                    .map(|p| p.name)
+                    .collect();
+                crate::errors::into_strider_err(anyhow::anyhow!(
+                    "unknown calling convention preset {name:?}; known: {}",
+                    known.join(", ")
+                ))
+            })
     }
 
-    /// `CallingConvention.<preset>()` for a preset.  A `custom(...)` one has
-    /// no argument-free reproduction, so it renders as a plain description
-    /// naming the arch its registers were resolved against.
+    /// The keyword arguments of `custom` other than `sleigh`:
+    /// `CallingConvention.custom(arch, **cc.to_dict())` rebuilds it. Raises
+    /// `StriderError` for a `preserves_all()` / `preserves_regs()` variant.
+    fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        match &self.inner {
+            CcImpl::Preset(cc) => dict(py, cc, Ok),
+            CcImpl::Custom(cc) => {
+                let arch = self.source_arch.expect("custom has a source arch");
+                dict(py, cc, |vn| self.vn_name(arch, vn))
+            }
+        }
+    }
+
+    /// The preset name (e.g. `"x86_64_systemv"`) or `"custom"`, suffixed
+    /// `.preserves_all` / `.preserves_regs` for those variants.
+    pub(crate) fn name(&self) -> String {
+        match self.variant() {
+            Some(v) => format!("{}.{v}", self.preset_name),
+            None => self.preset_name.to_string(),
+        }
+    }
+
     fn __repr__(&self) -> String {
+        let variant = self.variant().map_or(String::new(), |v| format!(".{v}()"));
         match self.source_arch {
-            Some(arch) => format!("<CallingConvention custom for {}>", arch.name),
-            None => format!("CallingConvention.{}()", self.preset_name),
+            Some(arch) => format!(
+                "<CallingConvention custom{variant} for {}>",
+                arch.preset().name()
+            ),
+            None => format!("CallingConvention.{}(){variant}", self.preset_name),
         }
     }
 }
 
-pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyCallingConvention>()
+/// `name` spells each register.
+fn dict<'py, R: Copy, L: AsRef<[R]>>(
+    py: Python<'py>,
+    cc: &strider_target::calling_convention::Cc<R, L>,
+    name: impl Fn(R) -> PyResult<&'static str>,
+) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    if cc.preserves_all_registers {
+        return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+            "CallingConvention.to_dict: a preserves_all() / preserves_regs() \
+             variant is not expressible through custom(...)"
+        )));
+    }
+    let names = |regs: &L| {
+        regs.as_ref()
+            .iter()
+            .map(|&r| name(r))
+            .collect::<PyResult<Vec<_>>>()
+    };
+    let d = pyo3::types::PyDict::new_bound(py);
+    d.set_item("arg_passing_regs", names(&cc.arg_passing_regs)?)?;
+    d.set_item("callee_saved_regs", names(&cc.callee_saved_regs)?)?;
+    d.set_item("ret_val_regs", names(&cc.ret_val_regs)?)?;
+    d.set_item("ret_val_regs_float", names(&cc.ret_val_regs_float)?)?;
+    d.set_item("stack_pointer", name(cc.stack_ptr)?)?;
+    d.set_item("stack_arg_base", cc.stack_args.map(|s| s.base_offset))?;
+    d.set_item(
+        "stack_arg_increment",
+        cc.stack_args.map_or(0, |s| s.increment),
+    )?;
+    d.set_item("ret_stack_pop", cc.ret_stack_pop)?;
+    d.set_item("link_register", cc.link_register.map(&name).transpose()?)?;
+    d.set_item("preserves_memory", cc.preserves_memory)?;
+    d.set_item("arg_passing_regs_float", names(&cc.arg_passing_regs_float)?)?;
+    d.set_item("reg_args_adjoin_stack_args", cc.reg_args_adjoin_stack_args)?;
+    d.set_item("entry_address", cc.entry_address.map(&name).transpose()?)?;
+    Ok(d)
+}
+
+pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyCallingConvention>()?;
+    m.add(
+        "CC_PRESETS",
+        pyo3::types::PyTuple::new_bound(
+            py,
+            strider_target::CallingConvention::presets()
+                .map(|p| p.name)
+                .collect::<Vec<_>>(),
+        ),
+    )
 }

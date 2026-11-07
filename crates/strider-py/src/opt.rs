@@ -1,208 +1,79 @@
 use pyo3::prelude::*;
 use pyo3::types::PyType;
-use std::sync::Mutex;
+use strider_orchestrator::opt::OptimizerPipeline;
 
 use crate::errors::into_strider_err;
 
-/// A type-erased fixed-point pass.
-pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer + Send>;
+pub(crate) type ErasedPass = &'static dyn strider_orchestrator::opt::Optimizer;
 
-/// A type-erased post-pass, run once after the fixed-point loop.
-pub(crate) type ErasedPostPass = Box<dyn strider_orchestrator::opt::PostOptimizer + Send>;
-
-// `OptimizerPipeline::add` is generic, so a type-erased box cannot be fed back
-// into it.  These forwarders satisfy the bound.
-struct ForwardPass(ErasedPass);
-
-impl Clone for ForwardPass {
-    fn clone(&self) -> Self {
-        // `clone_box` preserves the concrete pass type; cloning the `Box`
-        // itself would not.
-        ForwardPass(self.0.clone_box())
-    }
-}
-
-impl strider_orchestrator::opt::Optimizer for ForwardPass {
-    fn apply(
-        &self,
-        edit: &mut strider_opt::EditFunction<'_>,
-        ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
-    ) -> strider_orchestrator::opt::Result<strider_orchestrator::opt::OptimizationResult> {
-        self.0.apply(edit, ctx)
-    }
-}
-
-struct ForwardPostPass(ErasedPostPass);
-
-impl Clone for ForwardPostPass {
-    fn clone(&self) -> Self {
-        ForwardPostPass(self.0.clone_box())
-    }
-}
-
-impl strider_orchestrator::opt::PostOptimizer for ForwardPostPass {
-    fn apply(
-        &self,
-        edit: &mut strider_opt::EditFunction<'_>,
-        ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
-    ) -> strider_orchestrator::opt::Result<()> {
-        self.0.apply(edit, ctx)
-    }
-}
-
-/// Lets a Python caller register an ordinary fixed-point pass via
-/// `OptimizerPipeline.add_post(...)`: runs it once, discarding its
-/// `Change`/`NoChange`.
-struct OptAsPostPass(ErasedPass);
-
-impl Clone for OptAsPostPass {
-    fn clone(&self) -> Self {
-        OptAsPostPass(self.0.clone_box())
-    }
-}
-
-impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
-    fn apply(
-        &self,
-        edit: &mut strider_opt::EditFunction<'_>,
-        ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
-    ) -> strider_orchestrator::opt::Result<()> {
-        let _ = self.0.apply(edit, ctx)?;
-        Ok(())
-    }
-
-    /// The WRAPPED pass's name. Reporting the wrapper's would put a type name
-    /// no caller can construct into `post_passes`, breaking the round trip
-    /// `add_post` documents.
-    fn name(&self) -> &'static str {
-        self.0.name()
-    }
-}
-
-struct PipelineState {
-    passes: Vec<ErasedPass>,
-    post_passes: Vec<ErasedPostPass>,
-}
-
-impl PipelineState {
-    fn new() -> Self {
-        Self {
-            passes: Vec::new(),
-            post_passes: Vec::new(),
-        }
-    }
-
-    fn snapshot_from(pipeline: &strider_orchestrator::opt::OptimizerPipeline) -> Self {
-        let mut s = Self::new();
-        for pass in pipeline.passes() {
-            s.passes.push(pass.clone_box());
-        }
-        for pass in pipeline.post_passes() {
-            s.post_passes.push(pass.clone_box());
-        }
-        s
-    }
-}
-
-/// Builder for an optimizer pipeline.  Construct via `empty()` or
-/// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
-/// `Lifter.optimize(function, pipeline)`.  Applying a pipeline copies its
-/// passes, so one pipeline drives any number of calls.
+/// An ordered list of optimizer passes plus post-passes that run once at the
+/// end. Applying a pipeline copies it, so one object serves any number of
+/// calls.
 #[pyclass(name = "OptimizerPipeline", module = "strider.opt")]
 pub struct PyOptimizerPipeline {
-    /// A `Mutex` and not a `RefCell`: a `#[pyclass]` that is not
-    /// `unsendable` requires `Send`.
-    state: Mutex<PipelineState>,
+    inner: OptimizerPipeline,
 }
 
 impl PyOptimizerPipeline {
-    fn new_with(state: PipelineState) -> Self {
-        Self {
-            state: Mutex::new(state),
-        }
-    }
-
-    /// Every caller holds the GIL, so the lock never contends.
-    fn borrow_state(&self) -> std::sync::MutexGuard<'_, PipelineState> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    pub(crate) fn new_full_default() -> Self {
-        let pipeline = strider_orchestrator::opt::default_pipeline();
-        Self::new_with(PipelineState::snapshot_from(&pipeline))
-    }
-
-    /// A real pipeline holding a copy of the wrapper's passes, leaving the
-    /// wrapper usable again.
-    pub(crate) fn build_pipeline(&self) -> strider_orchestrator::opt::OptimizerPipeline {
-        let state = self.borrow_state();
-        let mut pipe = strider_orchestrator::opt::OptimizerPipeline::new();
-        for p in &state.passes {
-            pipe.add(ForwardPass(p.clone_box()));
-        }
-        for p in &state.post_passes {
-            pipe.add_post_pass(ForwardPostPass(p.clone_box()));
-        }
-        pipe
+    pub(crate) fn build_pipeline(&self) -> OptimizerPipeline {
+        self.inner.clone()
     }
 }
 
 #[pymethods]
 impl PyOptimizerPipeline {
-    /// A pipeline with no passes; build one up with `add` / `add_post`.
+    /// A pipeline with no passes.
     #[classmethod]
     fn empty(_cls: &Bound<'_, PyType>) -> Self {
-        Self::new_with(PipelineState::new())
+        Self {
+            inner: OptimizerPipeline::new(),
+        }
     }
 
-    /// The canonical default pipeline (every built-in pass).
+    /// The pipeline `analyze` runs when given none: every built-in pass.
     #[classmethod]
     fn default(_cls: &Bound<'_, PyType>) -> Self {
-        Self::new_full_default()
+        Self {
+            inner: strider_orchestrator::opt::default_pipeline(),
+        }
     }
 
-    /// Append a `strider.opt.*` pass to the main list, which runs repeatedly
-    /// until the graph stops changing.  A single-shot post-pass is rejected
-    /// here; use `add_post` instead.
-    fn add(&self, pass_obj: PyOptPass) -> PyResult<()> {
-        let erased = pass_obj.into_erased()?;
-        let mut state = self.borrow_state();
-        state.passes.push(erased);
+    /// Append a pass to the main list, run until the graph stops changing.
+    /// Raises `StriderError` for a post-pass.
+    fn add(&mut self, pass_obj: PyOptPass) -> PyResult<()> {
+        self.inner.add(pass_obj.into_erased()?);
         Ok(())
     }
 
-    /// Append a post-pass, run once after the main passes finish. A
-    /// fixed-point pass is accepted here too, and runs once.
-    fn add_post(&self, pass_obj: PyOptPass) {
-        self.borrow_state()
-            .post_passes
-            .push(pass_obj.into_erased_post());
+    /// Append a post-pass, run once after the main passes. A main pass is
+    /// accepted too, and runs once.
+    fn add_post(&mut self, pass_obj: PyOptPass) {
+        self.inner.add_post_pass(pass_obj.into_erased_post());
     }
 
-    /// Names of the main (repeated) passes currently registered, in order.
+    /// The main passes' names, in order.
     #[getter]
     fn passes(&self) -> Vec<String> {
-        let state = self.borrow_state();
-        state.passes.iter().map(|p| p.name().to_string()).collect()
+        self.inner
+            .passes()
+            .iter()
+            .map(|p| p.name().to_string())
+            .collect()
     }
 
     fn __repr__(&self) -> String {
-        let state = self.borrow_state();
         format!(
             "OptimizerPipeline({} passes, {} post)",
-            state.passes.len(),
-            state.post_passes.len()
+            self.inner.passes().len(),
+            self.inner.post_passes().len()
         )
     }
 
-    /// Names of the post-passes currently registered, in order.
+    /// The post-passes' names, in order.
     #[getter]
     fn post_passes(&self) -> Vec<String> {
-        let state = self.borrow_state();
-        state
-            .post_passes
+        self.inner
+            .post_passes()
             .iter()
             .map(|p| p.name().to_string())
             .collect()
@@ -229,9 +100,8 @@ macro_rules! pure_pass_class {
     };
 }
 
-/// The pass catalogue in two sections: a `main` row joins the fixed-point
-/// list, a `post` row runs once after that loop converges and is rejected by
-/// `add`. Each row is `"PythonName" => WrapperType = pass constructor, doc`.
+/// Rows are `"PythonName" => WrapperType = pass, doc`; `post` rows are
+/// rejected by `add`.
 macro_rules! opt_passes {
     (
         main { $($mn:literal => $mty:ident = $mctor:expr, $mdoc:literal;)* }
@@ -240,10 +110,7 @@ macro_rules! opt_passes {
         $( pure_pass_class!($mn => $mty, $mdoc); )*
         $( pure_pass_class!($pn => $pty, $pdoc); )*
 
-        /// Aggregates every pass-wrapper class so `add` / `add_post` accept
-        /// any of them via PyO3 enum dispatch.
-        // Variants are named for their wrapper types, which the crate prefixes
-        // `Py`; `annotation` is what a failed extraction reports.
+        /// Any pass-wrapper class.
         #[allow(clippy::enum_variant_names)]
         #[derive(FromPyObject)]
         pub enum PyOptPass {
@@ -252,10 +119,10 @@ macro_rules! opt_passes {
         }
 
         impl PyOptPass {
-            /// Erase to a fixed-point pass; a post-pass-only kind is an error.
+            /// The pass for `add`; a post-pass is an error.
             fn into_erased(self) -> PyResult<ErasedPass> {
                 Ok(match self {
-                    $( PyOptPass::$mty(_) => Box::new($mctor), )*
+                    $( PyOptPass::$mty(_) => &$mctor, )*
                     $( PyOptPass::$pty(_) )|* => {
                         return Err(into_strider_err(anyhow::anyhow!(
                             "{} are post-passes (they run once after the fixed-point \
@@ -267,17 +134,11 @@ macro_rules! opt_passes {
                 })
             }
 
-            /// Real post-passes erase to their concrete `PostOptimizer`;
-            /// anything else goes through [`OptAsPostPass`] so it runs once
-            /// after convergence.
-            fn into_erased_post(self) -> ErasedPostPass {
+            /// The pass for `add_post`.
+            fn into_erased_post(self) -> ErasedPass {
                 match self {
-                    $( PyOptPass::$pty(_) => Box::new($pctor), )*
-                    other => Box::new(OptAsPostPass(
-                        other
-                            .into_erased()
-                            .expect("non-post pass always erases to a fixed-point pass"),
-                    )),
+                    $( PyOptPass::$mty(_) => &$mctor, )*
+                    $( PyOptPass::$pty(_) => &$pctor, )*
                 }
             }
         }
@@ -285,61 +146,68 @@ macro_rules! opt_passes {
         fn register_passes(m: &Bound<'_, PyModule>) -> PyResult<()> {
             $( m.add_class::<$mty>()?; )*
             $( m.add_class::<$pty>()?; )*
+            // `setattr`, not `add`: `add` would list them in `__all__`.
+            m.setattr("_MAIN_PASS_NAMES", pyo3::types::PyTuple::new_bound(m.py(), [$($mn),*]))?;
+            m.setattr("_POST_PASS_NAMES", pyo3::types::PyTuple::new_bound(m.py(), [$($pn),*]))?;
             Ok(())
         }
     };
 }
 
+// Each text equals its class docstring in `strider/opt.pyi` (`test_docstrings.py`).
 opt_passes! {
     main {
-        "ConstantFold" => PyConstantFold = strider_orchestrator::opt::ConstantFold::new(),
-            "Constant-folds the IR: evaluates constant ops and applies algebraic \
-             identities (`x+0->x`, `x^x->0`, AND-mask merging, ...).";
+        "ConstantFold" => PyConstantFold = strider_orchestrator::opt::ConstantFold,
+            "Evaluates constant expressions and applies algebraic identities (`x+0` \
+             to `x`, `x^x` to `0`, AND-mask merging).";
         "KnownBits" => PyKnownBits = strider_orchestrator::opt::KnownBits,
-            "Bit-level known-zeros / known-ones lattice propagation, simplifying \
-             ops whose result bits are statically determined.";
+            "Tracks which bits are known to be zero or one and simplifies \
+             operations whose result is fully determined.";
         "PhiCollapse" => PyPhiCollapse = strider_orchestrator::opt::PhiCollapse,
-            "Braun trivial-phi elimination: collapses a `Phi` / `MemPhi` whose \
-             non-self-referential value inputs all resolve to a single value, and \
-             a strongly connected group of phis whose only outside input is one \
-             value (destructive).";
+            "Removes trivial phis: a `Phi` / `MemPhi`, or a strongly connected group \
+             of them, whose inputs other than themselves are one value is replaced by \
+             that value. An `and` of a phi with a constant mask becomes the value \
+             every arm agrees on under that mask.";
         "RegionCollapse" => PyRegionCollapse = strider_orchestrator::opt::RegionCollapse,
-            "Collapses a single-control-input `Region` join, rewiring its control \
-             consumers to its lone predecessor (destructive).";
+            "Collapses a `Region` with exactly one control input into that \
+             predecessor, replacing each phi over it with its lone value input.";
         "DeadBranchElimination" => PyDeadBranchElimination =
             strider_orchestrator::opt::DeadBranchElimination,
-            "Folds a branch with a constant selector (an `If` on a constant `I1`, \
-             a `Switch` on a constant dispatch address), wiring the live successor \
-             past it and killing the branch node (destructive).";
-        "CfgDetach" => PyCfgDetach = strider_orchestrator::opt::CfgDetach,
-            "Removes dead `Region`-predecessor slots (and the matching `Phi` / \
-             `MemPhi` value slots) once a folded `If` makes a predecessor \
-             control-unreachable (destructive).";
+            "Folds an `If` or `Switch` whose constant selector names an arm to that \
+             arm, when the arm still reaches a terminator, then strips the `Region` \
+             predecessors entry can no longer reach, with their `Phi` / `MemPhi` \
+             slots.";
         "FlagCmpCanonicalize" => PyFlagCmpCanonicalize =
-            strider_orchestrator::opt::FlagCmpCanonicalize::new(),
-            "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
-             `IntCmpOp`.";
-        "IfCondInversion" => PyIfCondInversion = strider_orchestrator::opt::IfCondInversion::new(),
-            "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into \
-             a branch on the plain condition with its two arms swapped.";
-        "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward::default(),
-            "Forwards a store's value to a later load of the same location when \
-             no intervening write, call or control merge can clobber it.";
+            strider_orchestrator::opt::FlagCmpCanonicalize,
+            "Folds an architecture's condition-flag tree into a single direct \
+             comparison node.";
+        "IfCondInversion" => PyIfCondInversion = strider_orchestrator::opt::IfCondInversion,
+            "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) \
+             into a branch on the plain condition with its two arms swapped.";
+        "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward,
+            "Forwards a store's value to a later load when the nearest may-aliasing \
+             memory definition is a store to the same address covering the whole \
+             load. A partial overlap, `InitialMemory`, a `MemPhi` whose arms \
+             disagree, or a call the assumptions cannot see through blocks it.";
         "LoadReadOnly" => PyLoadReadOnly = strider_orchestrator::opt::LoadReadOnly,
-            "`LoadReadOnly()` folds constant-address loads against the rom supplied \
-             via `strider.lift.lifter(arch, mem, rom=mem)` or \
-             `strider.lift.load_elf(...)`. No change when no rom is available.";
+            "Folds a load from a constant address into a constant read from the \
+             read-only memory image (`rom=`); a no-op without one.\n\nThe fold \
+             ignores the load's memory chain, so the rom must map only memory \
+             the program never writes: code, `.rodata`, and a relocated GOT only \
+             under `relocated_got_is_rom`.";
     }
     post {
-        "StackOffsetDetect" => PyStackOffsetDetect = strider_orchestrator::opt::StackOffsetDetect,
-            "Stamps every SP-relative Store/Load with its concrete offset.";
         "FunctionArgDetect" => PyFunctionArgDetect = strider_orchestrator::opt::FunctionArgDetect,
-            "Post-pass that records which values carry each incoming stack-passed \
-             argument. Register arguments are recorded at lift time.";
+            "Numbers the incoming stack arguments the entry-SP loads read, after \
+             the register arguments: one ordinal per run of slots one load spans, \
+             up to the first slot no clean load reads (a slot a store or call may \
+             have overwritten is not clean). A `long long` read as two 4-byte \
+             loads takes two. Register arguments are recorded at lift time.";
         "CallStackArgCollect" => PyCallStackArgCollect =
             strider_orchestrator::opt::CallStackArgCollect,
-            "Post-pass that wires positional stack arguments into `Call` nodes per \
-             the calling convention's stack-arg layout.";
+            "Wires the stores into a call's outgoing argument slots in as its \
+             positional arguments, up to the first slot no whole store reaches or a \
+             prologue save; incidental stores just above can come along.";
     }
 }
 

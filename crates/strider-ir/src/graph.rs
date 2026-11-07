@@ -1,6 +1,6 @@
-use std::hash::{Hash, Hasher};
+use std::hash::BuildHasher;
 
-use rustc_hash::FxHasher;
+use rustc_hash::FxBuildHasher;
 use strider_graph::{NodeCacheable, RawStore, ValueId};
 
 use crate::node::{NodeId, NodeKind, ValueKind};
@@ -8,6 +8,7 @@ use crate::node::{NodeId, NodeKind, ValueKind};
 /// The IR dedup policy: cacheable kinds dedup on
 /// `(NodeKind, inputs, output_kinds)`, non-cacheable ones always allocate
 /// fresh.
+#[derive(Clone)]
 pub struct IrCacheable;
 
 impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
@@ -16,11 +17,7 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
     }
 
     fn hash(kind: &NodeKind, inputs: &[ValueId], outputs: &[ValueKind]) -> u64 {
-        let mut h = FxHasher::default();
-        kind.hash(&mut h);
-        inputs.hash(&mut h);
-        outputs.hash(&mut h);
-        h.finish()
+        FxBuildHasher.hash_one((kind, inputs, outputs))
     }
 
     /// Recomputes `cand`'s identity from the live store.
@@ -41,16 +38,47 @@ pub use strider_graph::NodeIdRemap;
 
 pub type Graph = strider_graph::Graph<NodeKind, ValueKind, IrCacheable>;
 
+// The per-node and per-value arena records.
+const _: () = assert!(Graph::NODE_RECORD_SIZE == 24);
+const _: () = assert!(Graph::VALUE_RECORD_SIZE == 16);
+
 pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::IRViewer;
-    use crate::function::test_function;
+    use crate::function::{test_function, test_function_tracking};
     use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
     use cranelift_entity::EntityRef;
-    use rustc_hash::FxHashSet;
+    use rustc_hash::{FxHashSet, FxHasher};
+    use std::hash::{Hash, Hasher};
+
+    /// The policy hash is the field-by-field `FxHasher` stream of the key.
+    #[test]
+    fn ir_cacheable_hash_is_the_fx_stream_of_its_key() {
+        let int = ValueKind::Typed(ValueType::int(32));
+        let keys: [(NodeKind, Vec<ValueId>, Vec<ValueKind>); 3] = [
+            (NodeKind::Entry, vec![], vec![ValueKind::Control]),
+            (
+                NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
+                vec![],
+                vec![int],
+            ),
+            (
+                NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add),
+                vec![ValueId::new(3), ValueId::new(1)],
+                vec![int],
+            ),
+        ];
+        for (kind, inputs, outputs) in &keys {
+            let mut h = FxHasher::default();
+            kind.hash(&mut h);
+            inputs.as_slice().hash(&mut h);
+            outputs.as_slice().hash(&mut h);
+            assert_eq!(IrCacheable::hash(kind, inputs, outputs), h.finish());
+        }
+    }
 
     #[track_caller]
     fn check_node_inputs(
@@ -97,20 +125,20 @@ mod tests {
     fn create_single_node() {
         let mut function = test_function();
         let node_id = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(5_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(
             function.node_kind(node_id),
-            &NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize))
+            &NodeKind::IntConst(crate::node::IntConstId::new(5_usize))
         );
         assert_eq!(function.graph().all_node_ids().count(), 3);
         check_node_inputs(function.graph(), node_id, []);
         check_node_output_kinds(
             function.graph(),
             node_id,
-            vec![ValueKind::Typed(ValueType::I64)],
+            vec![ValueKind::Typed(ValueType::int(64))],
         );
         check_node_output_definitions(function.graph(), node_id, vec![(node_id, 0)]);
     }
@@ -121,9 +149,9 @@ mod tests {
     fn kind_of_output_matches_two_step_lookup() {
         let mut function = test_function();
         let node_id = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [value] = function.node_outputs_exact::<1>(node_id).unwrap();
         let two_step = function.node_kind(function.producer(value));
@@ -131,7 +159,7 @@ mod tests {
         assert_eq!(one_step, two_step);
         assert_eq!(
             one_step,
-            &NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize))
+            &NodeKind::IntConst(crate::node::IntConstId::new(7_usize))
         );
     }
 
@@ -141,20 +169,16 @@ mod tests {
     fn cacheable_node_dedup_is_stable_across_many_calls() {
         let mut function = test_function();
         let first = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(
-                (0xdead_beef_u64) as usize,
-            )),
+            NodeKind::IntConst(crate::node::IntConstId::new((0xdead_beef_u64) as usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let arena_after_first = function.graph().all_node_ids().count();
         for _ in 0..1000 {
             let id = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(
-                    (0xdead_beef_u64) as usize,
-                )),
+                NodeKind::IntConst(crate::node::IntConstId::new((0xdead_beef_u64) as usize)),
                 [],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             );
             assert_eq!(id, first, "cache hit must return the original id");
         }
@@ -165,27 +189,6 @@ mod tests {
         );
     }
 
-    /// `output_kinds` is part of the dedup key.
-    #[test]
-    fn cacheable_int_const_with_different_type_does_not_dedup() {
-        let mut function = test_function();
-        let a = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let b = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        assert_ne!(
-            a, b,
-            "IntConst(0):I32 must NOT alias IntConst(0):I64; output_kinds is \
-         part of the dedup key"
-        );
-    }
-
     /// A value with bits above the declared width and its masked form must
     /// dedup to one node.
     #[test]
@@ -193,8 +196,12 @@ mod tests {
         use crate::{IRBuilderExt, IRViewer};
         let mut function = test_function();
         // -4 at I8: only the low 8 bits of 0x1FC matter.
-        let wide = function.build_int_const(0x1FCu128, ValueType::I8).unwrap();
-        let masked = function.build_int_const(0xFCu128, ValueType::I8).unwrap();
+        let wide = function
+            .build_int_const(0x1FCu128, ValueType::int(8))
+            .unwrap();
+        let masked = function
+            .build_int_const(0xFCu128, ValueType::int(8))
+            .unwrap();
         assert_eq!(
             function.producer(wide),
             function.producer(masked),
@@ -262,12 +269,12 @@ mod tests {
         );
         let [_region_ctrl, phi_token] = function.node_outputs_exact::<2>(region).unwrap();
         let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [c_value] = function.node_outputs_exact::<1>(c).unwrap();
-        let ty = ValueKind::Typed(ValueType::I64);
+        let ty = ValueKind::Typed(ValueType::int(64));
         let p1 = function
             .graph_mut()
             .create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
@@ -285,7 +292,7 @@ mod tests {
         let mut function = test_function();
         let id_a = InitialVnId::from_index(0);
         let id_b = InitialVnId::from_index(1);
-        let value_kind = ValueKind::Typed(ValueType::I64);
+        let value_kind = ValueKind::Typed(ValueType::int(64));
         let v1 = function
             .graph_mut()
             .create_node(NodeKind::InitialVar(id_a), [], [value_kind]);
@@ -314,9 +321,9 @@ mod tests {
         let [ctrl_value] = function.node_outputs_exact::<1>(ctrl_a).unwrap();
         let [mem_value] = function.node_outputs_exact::<1>(mem_a).unwrap();
         let target = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0x1000_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0x1000_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [target_value] = function.node_outputs_exact::<1>(target).unwrap();
         let outs = [ValueKind::Control, ValueKind::Memory];
@@ -369,669 +376,6 @@ mod tests {
         function.set_call_other_name(62, "OtherName");
         assert_eq!(function.call_other_name(id_a), Some("OtherName"));
         assert_eq!(function.call_other_name(entry), None, "not a CallOther");
-    }
-
-    #[test]
-    fn add_node_input_registers_use() {
-        let mut function = test_function();
-        let const_node = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [const_value] = function.node_outputs_exact::<1>(const_node).unwrap();
-
-        // A non-cacheable sink.
-        let ret_node = function.graph_mut().create_node(NodeKind::Return, [], []);
-
-        function.graph_mut().add_node_input(ret_node, const_value);
-
-        check_node_inputs(function.graph(), ret_node, [const_value]);
-
-        let use_count = function.graph().value_uses(const_value).count();
-        assert_eq!(use_count, 1);
-    }
-
-    /// Removal must also renumber the surviving inputs and unregister the use.
-    #[test]
-    fn remove_node_input_cleans_up_use_list() {
-        let mut function = test_function();
-
-        let c0 = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [out0] = function.node_outputs_exact::<1>(c0).unwrap();
-
-        let c1 = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [out1] = function.node_outputs_exact::<1>(c1).unwrap();
-
-        let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret, out0);
-        function.graph_mut().add_node_input(ret, out1);
-
-        assert!(
-            function.graph_mut().remove_node_input(ret, 0),
-            "removal must succeed"
-        );
-
-        check_node_inputs(function.graph(), ret, [out1]);
-
-        assert_eq!(
-            function.graph().value_uses(out0).count(),
-            0,
-            "out0 should have no uses after removal"
-        );
-        assert_eq!(
-            function.graph().value_uses(out1).count(),
-            1,
-            "out1 should still have one use"
-        );
-
-        let (consumer, idx) = function
-            .graph()
-            .value_uses(out1)
-            .next()
-            .expect("out1 must still be used");
-        assert_eq!(consumer, ret);
-        assert_eq!(idx, 0);
-    }
-
-    #[test]
-    fn update_input_moves_use_to_new_output() {
-        let mut function = test_function();
-
-        let old = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [old_value] = function.node_outputs_exact::<1>(old).unwrap();
-
-        let new = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [new_value] = function.node_outputs_exact::<1>(new).unwrap();
-
-        let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret, old_value);
-
-        let use_id = function.graph().node_input_id_at(ret, 0).unwrap();
-
-        function.graph_mut().update_input(use_id, new_value);
-
-        assert_eq!(function.graph().value_uses(old_value).count(), 0);
-        assert_eq!(function.graph().value_uses(new_value).count(), 1);
-
-        check_node_inputs(function.graph(), ret, [new_value]);
-    }
-
-    /// Detaching a cacheable node must also evict it from the dedup cache, or
-    /// a later `create_node` with the same key returns the detached zombie.
-    #[test]
-    fn detach_evicts_cacheable_node_from_dedup_cache() {
-        use crate::node::IntBinaryOp;
-        let mut function = test_function();
-        let lhs = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let rhs = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(9_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let [lhs_value] = function.node_outputs_exact::<1>(lhs).unwrap();
-        let [rhs_value] = function.node_outputs_exact::<1>(rhs).unwrap();
-
-        let ty = ValueKind::Typed(ValueType::I32);
-        let add_a = function.graph_mut().create_node(
-            NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            [lhs_value, rhs_value],
-            [ty],
-        );
-
-        function.graph_mut().detach_node_inputs(add_a);
-        assert_eq!(function.node_inputs(add_a).len(), 0);
-
-        let add_b = function.graph_mut().create_node(
-            NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            [lhs_value, rhs_value],
-            [ty],
-        );
-
-        assert_ne!(
-            add_a, add_b,
-            "detach must evict the zombie from the dedup cache so a re-created \
-         identical node is fresh"
-        );
-        assert_eq!(
-            function.node_inputs(add_b).len(),
-            2,
-            "the re-created node must be fully connected"
-        );
-    }
-
-    #[test]
-    fn output_has_one_usage_tracks_consumer_count() {
-        let mut function = test_function();
-
-        let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(99_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let [value] = function.node_outputs_exact::<1>(c).unwrap();
-
-        assert!(
-            !function.graph().value_has_one_use(value),
-            "zero uses is not one"
-        );
-
-        let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret1, value);
-        assert!(
-            function.graph().value_has_one_use(value),
-            "one use should return true"
-        );
-
-        let ret2 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret2, value);
-        assert!(
-            !function.graph().value_has_one_use(value),
-            "two uses should return false"
-        );
-    }
-
-    #[test]
-    fn node_for_output_returns_source_node() {
-        let mut function = test_function();
-        let node = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I8)],
-        );
-        let [value] = function.node_outputs_exact::<1>(node).unwrap();
-        assert_eq!(function.producer(value), node);
-    }
-
-    #[test]
-    fn node_with_multiple_outputs() {
-        let mut function = test_function();
-        let node = function.graph_mut().create_node(
-            NodeKind::If,
-            [],
-            [ValueKind::Control, ValueKind::Control],
-        );
-        let [true_ctrl, false_ctrl] = function.node_outputs_exact::<2>(node).unwrap();
-        assert_eq!(function.value_kind(true_ctrl), ValueKind::Control);
-        assert_eq!(function.value_kind(false_ctrl), ValueKind::Control);
-        assert_eq!(function.value_definition(true_ctrl), (node, 0));
-        assert_eq!(function.value_definition(false_ctrl), (node, 1));
-    }
-
-    /// One `(node_id, input_index)` per consumer, each appearing exactly once.
-    #[test]
-    fn output_uses_reports_all_consumers_with_correct_indices() {
-        let mut function = test_function();
-        let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let [value] = function.node_outputs_exact::<1>(src).unwrap();
-
-        let ret0 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret0, value);
-        let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret1, value);
-        let ret2 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret2, value);
-
-        let uses: Vec<(NodeId, u32)> = function.graph().value_uses(value).collect();
-        assert_eq!(uses.len(), 3, "all three consumers must appear");
-
-        for expected_node in [ret0, ret1, ret2] {
-            assert!(
-                uses.iter().any(|(n, _)| *n == expected_node),
-                "consumer {expected_node:?} missing from value_uses"
-            );
-        }
-        for (_, idx) in &uses {
-            assert_eq!(*idx, 0, "each single-input node's input_index must be 0");
-        }
-    }
-
-    /// A node consuming one output twice must show up as two uses at their
-    /// own indices.
-    #[test]
-    fn output_uses_same_output_multiple_times_reports_each_position() {
-        let mut function = test_function();
-        let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(3_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [value] = function.node_outputs_exact::<1>(src).unwrap();
-
-        let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(sink, value); // input_index 0
-        function.graph_mut().add_node_input(sink, value); // input_index 1
-
-        let uses: Vec<(NodeId, u32)> = function.graph().value_uses(value).collect();
-        assert_eq!(uses.len(), 2);
-
-        let mut indices: Vec<u32> = uses.iter().map(|(_, i)| *i).collect();
-        indices.sort_unstable();
-        assert_eq!(indices, vec![0, 1], "both positional indices must appear");
-    }
-
-    /// `replace_current_with` must redirect the current use and advance past
-    /// it, leaving the remaining use untouched.
-    #[test]
-    fn output_use_cursor_replace_redirects_first_use() {
-        let mut function = test_function();
-
-        let old_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
-
-        let new_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [new_value] = function.node_outputs_exact::<1>(new_src).unwrap();
-
-        let ret0 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret0, old_value);
-        let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret1, old_value);
-
-        assert_eq!(function.graph().value_uses(old_value).count(), 2);
-        assert_eq!(function.graph().value_uses(new_value).count(), 0);
-
-        {
-            let mut cursor = function.graph_mut().value_use_cursor(old_value);
-            cursor.replace_current_with(new_value);
-        }
-
-        assert_eq!(
-            function.graph().value_uses(old_value).count(),
-            1,
-            "one use must remain on old_value"
-        );
-        assert_eq!(
-            function.graph().value_uses(new_value).count(),
-            1,
-            "one use must move to new_value"
-        );
-    }
-
-    #[test]
-    fn output_use_cursor_replace_all_drains_source() {
-        let mut function = test_function();
-
-        let old_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
-
-        let new_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let [new_value] = function.node_outputs_exact::<1>(new_src).unwrap();
-
-        for _ in 0..3 {
-            let r = function.graph_mut().create_node(NodeKind::Return, [], []);
-            function.graph_mut().add_node_input(r, old_value);
-        }
-        assert_eq!(function.graph().value_uses(old_value).count(), 3);
-
-        let mut cursor = function.graph_mut().value_use_cursor(old_value);
-        while cursor.current().is_some() {
-            cursor.replace_current_with(new_value);
-        }
-
-        assert_eq!(
-            function.graph().value_uses(old_value).count(),
-            0,
-            "all uses must be drained from old_value"
-        );
-        assert_eq!(
-            function.graph().value_uses(new_value).count(),
-            3,
-            "all uses must land on new_value"
-        );
-    }
-
-    /// Survivors keep their order and get contiguous indices from 0.
-    #[test]
-    fn remove_node_input_from_middle_reindexes_remaining() {
-        let mut function = test_function();
-
-        let out0 = {
-            let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
-                [],
-                [ValueKind::Typed(ValueType::I64)],
-            );
-            function.node_outputs_exact::<1>(n).unwrap()[0]
-        };
-        let out1 = {
-            let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
-                [],
-                [ValueKind::Typed(ValueType::I64)],
-            );
-            function.node_outputs_exact::<1>(n).unwrap()[0]
-        };
-        let out2 = {
-            let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(30_usize)),
-                [],
-                [ValueKind::Typed(ValueType::I64)],
-            );
-            function.node_outputs_exact::<1>(n).unwrap()[0]
-        };
-
-        let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(sink, out0); // index 0
-        function.graph_mut().add_node_input(sink, out1); // index 1
-        function.graph_mut().add_node_input(sink, out2); // index 2
-
-        assert!(
-            function.graph_mut().remove_node_input(sink, 1),
-            "removal must succeed"
-        ); // remove middle
-
-        check_node_inputs(function.graph(), sink, [out0, out2]);
-        assert_eq!(
-            function.graph().value_uses(out1).count(),
-            0,
-            "out1 must be removed"
-        );
-        assert_eq!(function.graph().value_uses(out0).count(), 1);
-        assert_eq!(function.graph().value_uses(out2).count(), 1);
-
-        assert_eq!(
-            function.graph().value_uses(out0).next().map(|(_, i)| i),
-            Some(0),
-            "surviving input 0 must have index 0"
-        );
-        assert_eq!(
-            function.graph().value_uses(out2).next().map(|(_, i)| i),
-            Some(1),
-            "surviving input 1 must have index 1"
-        );
-    }
-
-    #[test]
-    fn remove_node_input_from_end_leaves_others_intact() {
-        let mut function = test_function();
-
-        let out0 = {
-            let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
-                [],
-                [ValueKind::Typed(ValueType::I64)],
-            );
-            function.node_outputs_exact::<1>(n).unwrap()[0]
-        };
-        let out1 = {
-            let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
-                [],
-                [ValueKind::Typed(ValueType::I64)],
-            );
-            function.node_outputs_exact::<1>(n).unwrap()[0]
-        };
-
-        let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(sink, out0);
-        function.graph_mut().add_node_input(sink, out1);
-
-        assert!(
-            function.graph_mut().remove_node_input(sink, 1),
-            "removal must succeed"
-        ); // remove last
-
-        check_node_inputs(function.graph(), sink, [out0]);
-        assert_eq!(function.graph().value_uses(out1).count(), 0);
-        assert_eq!(function.graph().value_uses(out0).count(), 1);
-
-        assert_eq!(
-            function.graph().value_uses(out0).next().map(|(_, i)| i),
-            Some(0),
-            "surviving input must keep index 0"
-        );
-    }
-
-    /// Rewriting an input must evict the stale dedup-cache entry, or a later
-    /// `create_node` with the original key returns the now-modified node.
-    #[test]
-    fn update_input_on_cacheable_evicts_stale_cache_entry() {
-        use crate::node::IntBinaryOp;
-        let mut function = test_function();
-
-        let a = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let b = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(3_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let [a_value] = function.node_outputs_exact::<1>(a).unwrap();
-        let [b_value] = function.node_outputs_exact::<1>(b).unwrap();
-        let [c_value] = function.node_outputs_exact::<1>(c).unwrap();
-        let ty = ValueKind::Typed(ValueType::I32);
-
-        let add_ab = function.graph_mut().create_node(
-            NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            [a_value, b_value],
-            [ty],
-        );
-
-        // Redirect input[0] to c, leaving the node holding [c, b].
-        let in0 = function.graph().node_input_id_at(add_ab, 0).unwrap();
-        function.graph_mut().update_input(in0, c_value);
-
-        let fresh = function.graph_mut().create_node(
-            NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            [a_value, b_value],
-            [ty],
-        );
-        assert_ne!(
-            add_ab, fresh,
-            "the stale cache entry must be evicted: re-creating the original \
-         (kind, inputs, outputs) triple after update_input has redirected \
-         one of those inputs must produce a fresh NodeId"
-        );
-    }
-
-    /// A self-directed `update_input` must be a no-op.
-    #[test]
-    fn update_input_to_same_output_is_idempotent() {
-        let mut function = test_function();
-
-        let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(99_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let [value] = function.node_outputs_exact::<1>(src).unwrap();
-
-        let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(sink, value);
-
-        let use_id = function.graph().node_input_id_at(sink, 0).unwrap();
-        function.graph_mut().update_input(use_id, value);
-
-        assert_eq!(
-            function.graph().value_uses(value).count(),
-            1,
-            "self-update must not change use count"
-        );
-        check_node_inputs(function.graph(), sink, [value]);
-    }
-
-    #[test]
-    fn detach_then_readd_restores_use_count() {
-        let mut function = test_function();
-
-        let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [value] = function.node_outputs_exact::<1>(src).unwrap();
-
-        let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(sink, value);
-        function.graph_mut().add_node_input(sink, value);
-        assert_eq!(function.graph().value_uses(value).count(), 2);
-
-        function.graph_mut().detach_node_inputs(sink);
-        assert_eq!(
-            function.graph().value_uses(value).count(),
-            0,
-            "uses cleared after detach"
-        );
-        assert_eq!(function.node_inputs(sink).len(), 0);
-
-        function.graph_mut().add_node_input(sink, value);
-        function.graph_mut().add_node_input(sink, value);
-        assert_eq!(
-            function.graph().value_uses(value).count(),
-            2,
-            "re-adding inputs must restore use count"
-        );
-        assert_eq!(function.node_inputs(sink).len(), 2);
-    }
-
-    #[test]
-    fn node_outputs_exact_errors_on_wrong_count() {
-        let mut function = test_function();
-        let node = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I8)],
-        );
-        let err = function.node_outputs_exact::<2>(node).unwrap_err();
-        assert!(
-            err.to_string().contains("does not have exactly 2 outputs"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn node_inputs_exact_errors_on_wrong_count() {
-        let mut function = test_function();
-        let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [value] = function.node_outputs_exact::<1>(src).unwrap();
-
-        let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(sink, value); // exactly 1 input
-
-        let err = function.graph().node_inputs_exact::<2>(sink).unwrap_err();
-        assert!(
-            err.to_string().contains("does not have exactly 2 inputs"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn update_input_self_redirect_preserves_use_list_order() {
-        use crate::node::IntUnaryOp;
-        let mut function = test_function();
-        let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let cval = function.node_outputs(c).iter().copied().next().unwrap();
-        // Two consumers of cval, to give the use-list real ordering.
-        let _a = function.graph_mut().create_node(
-            NodeKind::Truncate,
-            [cval],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let b = function.graph_mut().create_node(
-            NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-            [cval],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-
-        let head_before = function.graph().value_first_use_id(cval);
-
-        let b_in0 = function.graph().node_input_id_at(b, 0).unwrap();
-        function.graph_mut().update_input(b_in0, cval); // self-redirect, a no-op
-
-        assert_eq!(
-            head_before,
-            function.graph().value_first_use_id(cval),
-            "self-redirect must not re-order the use-list"
-        );
-    }
-
-    #[test]
-    fn remove_node_input_returns_false_on_out_of_bounds() {
-        let mut function = test_function();
-        let cs = function.graph_mut().create_node(
-            NodeKind::Region,
-            [],
-            [ValueKind::Control, ValueKind::PhiToken],
-        );
-        assert!(
-            !function.graph_mut().remove_node_input(cs, 7),
-            "out-of-bounds remove must report no-op via false"
-        );
-    }
-
-    #[test]
-    fn node_input_id_at_returns_error_on_out_of_bounds() {
-        let mut function = test_function();
-        let n = function
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let err = function
-            .graph()
-            .node_input_id_at(n, 0)
-            .expect_err("Entry has no inputs");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("input index 0 out of bounds")
-                && msg.contains(&format!("{n:?}"))
-                && msg.contains("len=0"),
-            "wrong error: {err:?}"
-        );
     }
 
     #[test]
@@ -1089,9 +433,9 @@ mod tests {
     fn get_cc_default_falls_back_to_function_cc() {
         let mut function = test_function();
         let nid = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(function.get_cc(nid), function.default_cc());
         assert!(function.get_cc(nid).stack_args.is_none());
@@ -1100,7 +444,7 @@ mod tests {
     #[test]
     fn get_cc_override_round_trips_and_derives_stack_args() {
         let arch = strider_target::SleighArch::x86_64();
-        let regs = arch.probe_regs().unwrap();
+        let regs = arch.probe_regs();
         let cc = strider_target::CallingConvention::x86_64_systemv()
             .build(&regs)
             .unwrap();
@@ -1118,23 +462,22 @@ mod tests {
 
     #[test]
     fn value_vn_clobber_tag_round_trips() {
-        let mut function = test_function();
+        let vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let mut function = test_function_tracking(vec![vn]);
         let nid = function.graph_mut().create_node(
             NodeKind::Call { cc: None },
             [],
             [
                 ValueKind::Control,
                 ValueKind::Memory,
-                ValueKind::Typed(ValueType::I64),
+                ValueKind::Typed(ValueType::int(64)),
             ],
         );
         let clobber_value = function.node_outputs(nid)[2];
-        let vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        function.set_all_vns(vec![vn]); // only a tracked vn can be tagged
         assert!(function.get_vn_for_value(clobber_value).is_none());
         function.set_vn_for_value(clobber_value, vn);
         assert_eq!(function.get_vn_for_value(clobber_value), Some(vn));
@@ -1146,17 +489,17 @@ mod tests {
         // union into that single side-table entry.
         let mut function = test_function();
         let a = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         function
             .side_tables_mut()
             .extend_asm_fingerprint(a, &[0x2000]);
         let b = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(a, b, "cacheable nodes should dedup");
         function

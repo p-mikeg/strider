@@ -123,3 +123,49 @@ def test_no_stub_teaches_bare_strings_as_pattern_operands():
         if "used inline in a pattern" in text:
             offenders.append(str(path))
     assert not offenders, f"pre-0.2.0 bare-string rule survives in: {offenders}"
+
+
+def test_each_pass_doc_is_its_stub_text():
+    """A pass's runtime `__doc__` (`help()`) and its stub docstring (an
+    editor's) are one text, up to line wrapping."""
+    src = (pathlib.Path(strider.__file__).parent / "opt.pyi").read_text()
+    stubs = {
+        n.name: " ".join((ast.get_docstring(n) or "").split())
+        for n in ast.parse(src).body
+        if isinstance(n, ast.ClassDef)
+    }
+    names = strider.opt._MAIN_PASS_NAMES + strider.opt._POST_PASS_NAMES
+    differ = {
+        name: (" ".join((getattr(strider.opt, name).__doc__ or "").split()), stubs.get(name))
+        for name in names
+        if " ".join((getattr(strider.opt, name).__doc__ or "").split()) != stubs.get(name)
+    }
+    assert not differ, differ
+
+
+def test_each_value_op_doc_is_its_stub_text():
+    """A value-op builder's runtime `__doc__` is its stub docstring, up to
+    line wrapping, in both `strider.pattern` and `strider.template`."""
+    import strider.template
+
+    pkg = pathlib.Path(strider.__file__).parent
+    differ = {}
+    for mod, stub in (
+        (strider.pattern, pkg / "pattern" / "__init__.pyi"),
+        (strider.template, pkg / "template.pyi"),
+    ):
+        stubs = {
+            n.name: " ".join((ast.get_docstring(n) or "").split())
+            for n in ast.parse(stub.read_text()).body
+            if isinstance(n, ast.FunctionDef)
+        }
+        for name in stubs:
+            if not name.startswith(("int_", "bool_", "float_")) or name in (
+                "int_const", "int_const_any_width", "bool_const", "float_const",
+                "int_binary", "bool_binary", "float_binary", "bool_inputs",
+            ):
+                continue
+            runtime = " ".join((getattr(mod, name).__doc__ or "").split())
+            if runtime != stubs[name]:
+                differ[f"{mod.__name__}.{name}"] = (runtime, stubs[name])
+    assert not differ, differ

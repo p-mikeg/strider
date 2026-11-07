@@ -4,26 +4,20 @@
 //! opaque result.
 
 use strider_ir::{IRViewer, IRWalker};
-use strider_lift::LiftOptions;
 
 fn lift(
     arch: strider_target::SleighArch,
     cc: strider_target::CallingConvention,
     bytes: Vec<u8>,
 ) -> strider_ir::Function {
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))
+            .expect("lifter");
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
-    let opts = LiftOptions::default();
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
         .expect("cfg");
-    lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function
+    lifter.build_ir(&cfg, cc).expect("ir").function
 }
 
 /// The result slot of the one `CallOther`, and whether the value the function
@@ -77,7 +71,7 @@ fn an_x86_sub_register_intrinsic_output_preserves_the_rest() {
     let (ty, preserved) = result_type_and_preserved(&f);
     assert_eq!(
         ty,
-        strider_ir::ValueType::I16,
+        strider_ir::ValueType::int(16),
         "the result slot is the explicit output's width",
     );
     assert!(
@@ -104,7 +98,7 @@ fn an_aarch64_sub_register_intrinsic_output_stays_the_container() {
         .expect("a CallOther node");
     assert_eq!(
         f.value_kind(f.node_outputs(node)[2]),
-        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::I128),
+        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::int(128)),
         "the result slot is q0's width, not d0's",
     );
 }
@@ -128,7 +122,7 @@ fn an_x86_mmx_intrinsic_output_stays_the_x87_container() {
     let result = f.node_outputs(node)[2];
     assert_eq!(
         f.value_kind(result),
-        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::I80),
+        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::int(80)),
         "the result slot is ST0's width, not MM0's",
     );
     let ret = f

@@ -40,9 +40,9 @@ def _serve_bg(target_kind, port, code=b"\x75\x01\x90\xc3", **kw):
             target = cfg
         else:
             target = lift.analyze(
-                0x1000, strider.sleigh.CallingConvention.x86_64_systemv()
+                0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
             ).function
-        lift.visualize(target, port=port, **kw)
+        strider.explore.visualize(target, port=port, **kw)
 
     # Non-daemon: a daemon thread lets the interpreter exit with the server
     # still running (the abort above), while a non-daemon one turns that leak
@@ -57,7 +57,7 @@ def _stop(port, thread):
     thread.join(timeout=10)
     assert not thread.is_alive(), (
         "explorer thread survived shutdown(); a thread left parked inside "
-        "the Rust visualize frame aborts the interpreter at finalization"
+        "visualize aborts the interpreter at finalization"
     )
 
 
@@ -174,6 +174,29 @@ def test_visualize_depth_seeds_the_depth_control():
         )
     finally:
         _stop(port, t)
+
+
+class _Index:
+    """An integer by `__index__` alone, as numpy's scalars are."""
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __index__(self) -> int:
+        return self.n
+
+
+def test_visualize_depth_takes_an_index_and_clamps_it():
+    """An `__index__` integer seeds the control as an `int`, which
+    `/controls` serialises, and a seed past the control's max is clamped."""
+    for port, depth, seeded in ((8928, _Index(3), 3), (8929, 10**9, 4096)):
+        t = _serve_bg("ir", port, code=_BUSY, depth=depth)
+        try:
+            control = _controls(port)["depth"]
+            assert control["default"] == seeded
+            assert control["max"] == 4096
+        finally:
+            _stop(port, t)
 
 
 def test_absent_control_falls_back_to_the_strider_default():
@@ -339,7 +362,7 @@ def test_interpreter_exit_with_a_parked_explorer_does_not_abort():
                 strider.sleigh.SleighArch.x86_64(),
                 strider.reader.BufferReader(0x1000, b"\\x75\\x01\\x90\\xc3"),
             )
-            lift.visualize(lift.build_cfg(0x1000), port=0)
+            strider.explore.visualize(lift.build_cfg(0x1000), port=0)
         threading.Thread(target=run, daemon=True).start()
         time.sleep(2)
         """
@@ -374,7 +397,7 @@ def test_a_non_daemon_explorer_thread_does_not_hang_interpreter_exit():
                 strider.sleigh.SleighArch.x86_64(),
                 strider.reader.BufferReader(0x1000, b"\\x75\\x01\\x90\\xc3"),
             )
-            lift.visualize(lift.build_cfg(0x1000), port=0)
+            strider.explore.visualize(lift.build_cfg(0x1000), port=0)
         threading.Thread(target=run).start()   # non-daemon on purpose
         time.sleep(2)
         """
@@ -401,7 +424,10 @@ def _busy_pair():
         strider.sleigh.SleighArch.x86_64(),
         strider.reader.BufferReader(0x1000, _BUSY),
     )
-    res = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
+    res = lift.analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+    )
     return res.cfg, res.function
 
 

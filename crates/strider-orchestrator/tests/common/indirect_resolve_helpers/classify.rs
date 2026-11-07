@@ -41,7 +41,7 @@ use super::orchestrator::{run_pipeline_x86_64, target_value_input};
 /// `DataUnavailErr` on the buffered memory reader; the terminator ends
 /// the region, so the pad bytes are never reachable from the analysed
 /// function.
-pub(crate) fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
+fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
     let mut bytes: Vec<u8> = Vec::new();
     for (encoding, _asm) in insns {
         bytes.extend_from_slice(encoding);
@@ -66,7 +66,9 @@ pub(crate) fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
 /// `UnresolvedIndirectBranch`.  After the full optimiser pipeline runs
 /// (including `LoadForward`), the loaded value folds to `IntConst(k)`,
 /// exactly the shape the IR-level resolver's IntConst arm classifies.
-pub(crate) fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_ir::Value) {
+pub(crate) fn build_int_const_target_scenario_via_stack(
+    k: u64,
+) -> (Function, strider_ir::node::ValueId) {
     // The `pop rax` step gives the optimiser an SP-rooted load that
     // `LoadForward` can simplify back to the pushed constant K; the cfg
     // builder cannot classify the target and defers it.
@@ -90,7 +92,7 @@ pub(crate) fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, st
 /// On x86_64 there is no architectural link register, so the
 /// "InitialVar(target_vn) == InitialVar(lr_vn)" arm in the classifier
 /// returns `None` here regardless of caller-supplied lr.
-pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Value) {
+pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::node::ValueId) {
     let bytes = x86_64_snippet(&[(&[0xff, 0xe0], "jmp rax")]);
     let (function, target, _lr) = run_pipeline_x86_64(bytes);
     (function, target)
@@ -108,7 +110,7 @@ pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_i
 /// (same offset, no aliasing stores in between); the classifier's
 /// LinkRegister arm matches the resulting shape.
 pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
--> (Function, strider_ir::Value, rsleigh::Vn) {
+-> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::sp_frame;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
@@ -131,9 +133,9 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
 
     // The push-lr slot: sp - 4.
     let sp_v = b.read_variable(&sp).expect("read sp");
-    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let store_addr = b
-        .build_sub_as_add_neg(sp_v, four, ValueType::I32)
+        .build_sub_as_add_neg(sp_v, four, ValueType::int(32))
         .expect("sp - 4");
     let lr_v = b.read_variable(&lr).expect("read lr");
     b.build_store(store_addr, lr_v, rsleigh::VnSpace::RAM)
@@ -142,12 +144,12 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
     // Structurally identical address (sp - 4), so LoadForward folds this
     // load directly to lr_v.
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
-    let four2 = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four2 = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let load_addr = b
-        .build_sub_as_add_neg(sp_v2, four2, ValueType::I32)
+        .build_sub_as_add_neg(sp_v2, four2, ValueType::int(32))
         .expect("sp - 4 (load)");
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(32))
         .expect("load");
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
@@ -160,23 +162,20 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
     // the production pipeline (`default_pipeline()` includes PhiCollapse)
     // produces in real-binary integration tests.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(strider_orchestrator::opt::PhiCollapse);
-    pipeline.add(strider_orchestrator::opt::RegionCollapse);
-    pipeline.add(LoadForward::default());
+    pipeline.add(&ConstantFold);
+    pipeline.add(&strider_orchestrator::opt::PhiCollapse);
+    pipeline.add(&strider_orchestrator::opt::RegionCollapse);
+    pipeline.add(&LoadForward);
     // PhiCollapse again post-LoadForward to collapse any
     // single-input VarPhi the forward inserts (e.g. wrapping
     // the loaded InitialVar(lr) in a phi at the merge region).
-    pipeline.add(strider_orchestrator::opt::PhiCollapse);
-    pipeline.add(strider_orchestrator::opt::RegionCollapse);
+    pipeline.add(&strider_orchestrator::opt::PhiCollapse);
+    pipeline.add(&strider_orchestrator::opt::RegionCollapse);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    let mut found: Option<strider_ir::Value> = None;
+    let mut found: Option<strider_ir::node::ValueId> = None;
     for nid in fg.walk() {
         if !matches!(fg.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
@@ -189,25 +188,13 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
     (fg, target, lr)
 }
 
-/// Build a `Graph` modelling the soundness-critical
-/// `push 0xK; pop pc` tail-call shape.  Same SP slot manipulation
-/// as `build_pop_pc_via_stack_load_forward_scenario`, but the
-/// stored value is an IntConst rather than `InitialVar(lr)`.
-///
-/// Distinguishing this case from a real pop-pc is the soundness gate: a naive
-/// "Load(InitialVar(sp)+K) means return" classifier marks this as
-/// LinkRegister, sending the analyser down the wrong edge set.  The
-/// IR-level resolver avoids that
-/// trap because LoadForward folds the load to the **stored constant** K,
-/// not to InitialVar(lr); the IntConst arm then classifies it as
-/// Single(K).
-///
-/// Also returns the `lr` VN we added to the tracked-vars set so
-/// callers can pass it to `classify_target` and verify the
-/// LinkRegister arm doesn't false-positive.
+/// The `push 0xK; pop pc` tail call: as
+/// `build_pop_pc_via_stack_load_forward_scenario`, but storing an `IntConst`
+/// rather than `InitialVar(lr)`, so it must classify `Single(K)`, not
+/// `LinkRegister`. Also returns the tracked `lr` VN.
 pub(crate) fn build_push_target_pop_pc_scenario(
     k: u64,
-) -> (Function, strider_ir::Value, rsleigh::Vn) {
+) -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::sp_frame;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
@@ -228,21 +215,21 @@ pub(crate) fn build_push_target_pop_pc_scenario(
         .expect("build_fn_single_region");
 
     let sp_v = b.read_variable(&sp).expect("read sp");
-    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let store_addr = b
-        .build_sub_as_add_neg(sp_v, four, ValueType::I32)
+        .build_sub_as_add_neg(sp_v, four, ValueType::int(32))
         .expect("sp - 4");
-    let stored_const = b.build_int_const(k, ValueType::I32).unwrap();
+    let stored_const = b.build_int_const(k, ValueType::int(32)).unwrap();
     b.build_store(store_addr, stored_const, rsleigh::VnSpace::RAM)
         .expect("store K");
 
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
-    let four2 = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four2 = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let load_addr = b
-        .build_sub_as_add_neg(sp_v2, four2, ValueType::I32)
+        .build_sub_as_add_neg(sp_v2, four2, ValueType::int(32))
         .expect("sp - 4 (load)");
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(32))
         .expect("load");
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
@@ -250,16 +237,13 @@ pub(crate) fn build_push_target_pop_pc_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(LoadForward::default());
+    pipeline.add(&ConstantFold);
+    pipeline.add(&LoadForward);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    let mut found: Option<strider_ir::Value> = None;
+    let mut found: Option<strider_ir::node::ValueId> = None;
     for nid in fg.walk() {
         if !matches!(fg.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
@@ -299,7 +283,7 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     base: u64,
     stride: u64,
     idx_mask: u64,
-) -> (Function, strider_ir::Value) {
+) -> (Function, strider_ir::node::ValueId) {
     use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
@@ -319,20 +303,20 @@ pub(crate) fn build_jump_table_known_bits_scenario(
         .expect("build_fn_single_region");
 
     let raw_idx = b.read_variable(&idx_var).expect("read idx");
-    let mask_c = b.build_int_const(idx_mask, ValueType::I32).unwrap();
+    let mask_c = b.build_int_const(idx_mask, ValueType::int(32)).unwrap();
     let masked = b
-        .build_int_binary_operation(raw_idx, mask_c, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(raw_idx, mask_c, IntBinaryOp::And, ValueType::int(32))
         .expect("idx & mask");
-    let stride_c = b.build_int_const(stride, ValueType::I32).unwrap();
+    let stride_c = b.build_int_const(stride, ValueType::int(32)).unwrap();
     let mul = b
-        .build_int_binary_operation(masked, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .build_int_binary_operation(masked, stride_c, IntBinaryOp::Mul, ValueType::int(32))
         .expect("mul");
-    let base_c = b.build_int_const(base, ValueType::I32).unwrap();
+    let base_c = b.build_int_const(base, ValueType::int(32)).unwrap();
     let addr = b
-        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::int(32))
         .expect("add");
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
         .expect("load");
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
@@ -344,34 +328,23 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     // orchestrator iteration hands the jump-table classifier, so the
     // fixture's shape matches production.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
+    pipeline.add(&ConstantFold);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let target = target_value_input(&fg).expect("target");
     (fg, target)
 }
 
-/// Build a placeholder `IndirectBranch(load)` whose load is jump-table-shaped
-/// with the index bounded by a *predecessor* `If(idx < bound)`: the
-/// dispatch region is on the true branch.  The stable optimiser subset runs
-/// without PhiCollapse, so the trivial-phi rule leaves the entry
-/// merge-region's structure intact.
-///
-/// Topology:
-///   entry  ──[if idx < bound: true]── dispatch (loads + Returns)
-///         └──[false]─────────────────── exit (early Return)
-///
-/// The dispatch's placeholder IndirectBranch is the target we return.
+/// A jump-table-shaped `IndirectBranch(load)` whose index a predecessor
+/// `If(idx < bound)` bounds: the dispatch is on the true branch, an early
+/// `Return` on the false one. Returns the placeholder.
 pub(crate) fn build_jump_table_predecessor_if_scenario(
     base: u64,
     stride: u64,
     bound: u64,
-) -> (Function, strider_ir::Value) {
+) -> (Function, strider_ir::node::ValueId) {
     use strider_ir::node::ValueType;
     use strider_ir::{IntBinaryOp, IntCmpOp};
     use strider_ir_test_utils::RegisterSet;
@@ -394,25 +367,30 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
     // Entry: build `idx < bound`, branch to dispatch on true / exit on false.
     b.set_region(entry);
     let raw_idx_at_entry = b.read_variable(&idx_var).expect("read idx (entry)");
-    let bound_c = b.build_int_const(bound, ValueType::I32).unwrap();
+    let bound_c = b.build_int_const(bound, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(raw_idx_at_entry, bound_c, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(
+            raw_idx_at_entry,
+            bound_c,
+            IntCmpOp::Less,
+            ValueType::int(32),
+        )
         .expect("idx < bound");
     b.build_if(cond, dispatch, exit).expect("if dispatch");
 
     // Dispatch: build the jump-table-shaped load.
     b.set_region(dispatch);
     let idx = b.read_variable(&idx_var).expect("read idx (dispatch)");
-    let stride_c = b.build_int_const(stride, ValueType::I32).unwrap();
+    let stride_c = b.build_int_const(stride, ValueType::int(32)).unwrap();
     let mul = b
-        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::int(32))
         .expect("mul");
-    let base_c = b.build_int_const(base, ValueType::I32).unwrap();
+    let base_c = b.build_int_const(base, ValueType::int(32)).unwrap();
     let addr = b
-        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::int(32))
         .expect("add");
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
         .expect("load");
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
@@ -427,14 +405,11 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&PhiCollapse);
+    pipeline.add(&RegionCollapse);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let target = target_value_input(&fg).expect("target");
@@ -448,7 +423,7 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
 pub(crate) fn build_jump_table_unbounded_scenario(
     base: u64,
     stride: u64,
-) -> (Function, strider_ir::Value) {
+) -> (Function, strider_ir::node::ValueId) {
     use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
@@ -465,16 +440,16 @@ pub(crate) fn build_jump_table_unbounded_scenario(
         .expect("build_fn_single_region");
 
     let idx = b.read_variable(&idx_var).expect("read idx");
-    let stride_c = b.build_int_const(stride, ValueType::I32).unwrap();
+    let stride_c = b.build_int_const(stride, ValueType::int(32)).unwrap();
     let mul = b
-        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::int(32))
         .expect("mul");
-    let base_c = b.build_int_const(base, ValueType::I32).unwrap();
+    let base_c = b.build_int_const(base, ValueType::int(32)).unwrap();
     let addr = b
-        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::int(32))
         .expect("add");
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
         .expect("load");
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
@@ -482,23 +457,17 @@ pub(crate) fn build_jump_table_unbounded_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
+    pipeline.add(&ConstantFold);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let target = target_value_input(&fg).expect("target");
     (fg, target)
 }
 
-/// Build a placeholder `IndirectBranch(load)` whose load is NOT jump-table
-/// shaped; used to verify the classifier's Load arm falls through
-/// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
-/// a simple global read).
-pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
+/// An `IndirectBranch(load)` whose load is not jump-table shaped.
+pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::node::ValueId) {
     use strider_ir::node::ValueType;
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
 
@@ -508,9 +477,9 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
 
-    let addr = b.build_int_const(0x1234_u64, ValueType::I32).unwrap();
+    let addr = b.build_int_const(0x1234_u64, ValueType::int(32)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
         .expect("load");
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
@@ -518,45 +487,21 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
+    pipeline.add(&ConstantFold);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let target = target_value_input(&fg).expect("target");
     (fg, target)
 }
 
-/// Build a placeholder `IndirectBranch(load)` whose load is a
-/// **stack-array dispatch**: at function entry, `N` constants are
-/// stored at contiguous SP-relative offsets (`sp + base_offset +
-/// i*stride` for `i in 0..N`), and the dispatch loads from
-/// `sp + base_offset + (idx & MASK) * stride` where `MASK` is the
-/// power-of-two-minus-one bound that lets `KnownBits` derive the
-/// per-arm `bound = MASK + 1`.
+/// A stack-array dispatch: the `N` `targets` (a power of 2, so `KnownBits`
+/// bounds `idx & (N - 1)` at `N`) stored at `sp + base_offset + i * stride`,
+/// and an `IndirectBranch` loading `sp + base_offset + (arg & (N - 1)) *
+/// stride`. Returns the function, the load and the SP varnode.
 ///
-/// `N` must be `> 0` and `< MAX_TABLE_ENTRIES` (currently 4096), and
-/// must be a power of 2 so the `idx & (N - 1)` mask lets the range
-/// analysis derive bound = `N` via KnownBits.  Returns
-/// the graph, the target (load output), and the SP varnode the
-/// caller passes to `classify_target`.
-///
-/// The fixture mirrors the existing `build_two_target_array`
-/// fixture in `crates/strider-opt/src/post_opt/indirect_branch_resolve/table_tests.rs`,
-/// generalised to N targets.  The stack pointer is a fake 8-byte
-/// register at offset `0x40`; the index argument is a fake 8-byte
-/// register at offset `0x38` (matches sysv argument register
-/// width); the dispatch is `Load[(sp + base_offset) + ((arg & N-1)
-/// * stride)]`.
-///
-/// Pipeline run: `ConstantFold + KnownBits + PhiCollapse + RegionCollapse`.
-/// The pipeline runs without `LoadForward`, which would forward the Load to
-/// the matching IntConst directly, eliminating the Load and turning the target
-/// into an IntConst: the Single-target arm rather than the stack-array one
-/// under test.
+/// The pipeline omits `LoadForward`, which would fold the load to a constant.
 pub(crate) fn build_stack_array_dispatch_scenario(
     targets: &[u64],
     base_offset: i64,
@@ -598,11 +543,11 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     for (i, &target_addr) in targets.iter().enumerate() {
         let off = base_offset
             + i64::try_from(i).expect("i fits") * i64::try_from(stride).expect("stride fits");
-        let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
+        let off_const = b.build_int_const(off as u64, ValueType::int(64)).unwrap();
         let addr = b
-            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::int(64))
             .expect("addr");
-        let target_v = b.build_int_const(target_addr, ValueType::I64).unwrap();
+        let target_v = b.build_int_const(target_addr, ValueType::int(64)).unwrap();
         b.build_store(addr, target_v, rsleigh::VnSpace::RAM)
             .expect("store target");
     }
@@ -612,7 +557,7 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     let arg_u32_node = b.function_mut().graph_mut().create_node(
         strider_ir::node::NodeKind::Truncate,
         [arg_val],
-        [ValueKind::Typed(ValueType::I32)],
+        [ValueKind::Typed(ValueType::int(32))],
     );
     // Direct `graph_mut().create_node` bypasses FunctionBuilder's
     // auto-stamping; manually attribute these nodes to the sentinel
@@ -621,37 +566,47 @@ pub(crate) fn build_stack_array_dispatch_scenario(
         .side_tables_mut()
         .extend_asm_fingerprint(arg_u32_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
-    let mask_c = b.build_int_const(mask, ValueType::I32).unwrap();
+    let mask_c = b.build_int_const(mask, ValueType::int(32)).unwrap();
     let masked = b
-        .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, ValueType::int(32))
         .expect("idx & mask");
     let idx_u64_node = b.function_mut().graph_mut().create_node(
         strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend),
         [masked],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     b.function_mut()
         .side_tables_mut()
         .extend_asm_fingerprint(idx_u64_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
-    let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
+    let stride_const = b.build_int_const(stride, ValueType::int(64)).unwrap();
     let idx_scaled = b
-        .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, ValueType::I64)
+        .build_int_binary_operation(
+            idx_u64_out,
+            stride_const,
+            IntBinaryOp::Mul,
+            ValueType::int(64),
+        )
         .expect("idx*stride");
 
     // Address = (sp + base_offset) + idx*stride.  Two-Add shape so the
     // classifier's flatten_add_tree exercises both terms.
     let base_const = b
-        .build_int_const(base_offset as u64, ValueType::I64)
+        .build_int_const(base_offset as u64, ValueType::int(64))
         .unwrap();
     let sp_plus_base = b
-        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::int(64))
         .expect("sp + base");
     let load_addr = b
-        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(
+            sp_plus_base,
+            idx_scaled,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )
         .expect("addr");
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .expect("load");
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
@@ -659,16 +614,13 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     let mut fg = b.build().expect("build");
 
     let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
+    p.add(&ConstantFold);
+    p.add(&KnownBits);
+    p.add(&PhiCollapse);
+    p.add(&RegionCollapse);
     // LoadForward stays out of this pipeline; see the doc comment above.
-    p.run(
-        &mut fg,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-    )
-    .expect("opt pipeline");
+    p.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("opt pipeline");
 
     // After the partial pipeline, the placeholder's target IS the surviving
     // Load: `target_value_input` returns inputs[2], the Load output.
@@ -676,23 +628,12 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     (fg, target, sp)
 }
 
-/// Build a function whose only indirect branch resolves to
-/// `InitialVar(lr_vn)` after the optimiser runs.  Returns the
-/// link-register VN as the third tuple element so the caller can
-/// pass it to `classify_target`.
+/// An AArch64 `mov x0, x30; br x0`, whose target optimises to
+/// `InitialVar(lr)`. Returns the function, the target and the `lr` VN.
 ///
-/// AArch64 rather than 32-bit ARM because Sleigh's ARM (LE/BE-32)
-/// lifter wraps every register-indirect dispatch in a
-/// thumb-interworking AND-mask (`reg & 0xfffffffe`), which leaves
-/// the optimised IR's producer as `IntBinaryOp(And)` instead of
-/// `InitialVar(lr_vn)`, matching no classifier arm.
-/// AArch64 has no thumb interworking, so `mov x0, x30; br x0`
-/// lifts cleanly to `Copy + BranchIndirect` and the optimiser folds
-/// `r0 = x30 = InitialVar(lr_vn)` directly.
-///
-/// The cfg builder defers the `br x0` via `UnresolvedIndirectBranch`, so the
-/// IR-level indirect-branch resolver sees the cleaned-up shape.
-pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
+/// AArch64 because ARM masks every register-indirect target with
+/// `& 0xfffffffe`, leaving an `And`.
+pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
     //   mov x0, x30  ->  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
     //   br  x0       ->  00 00 1f d6
@@ -701,35 +642,27 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::V
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
     let arch = SleighArch::aarch64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh =
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
 
-    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
+    let mut strider = Lifter::new(arch, reader).expect("Lifter::new");
     let cc = CallingConvention::aarch64_aapcs64()
         .build(strider.sleigh_regs())
         .expect("build cc");
-    let lr_vn = cc
-        .link_register_vn
-        .expect("AArch64 AAPCS has a link register");
+    let lr_vn = cc.link_register.expect("AArch64 AAPCS has a link register");
 
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(base),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg build");
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
     let mut function = outcome.function;
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-    )
-    .expect("optimizer pipeline");
+    p.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("optimizer pipeline");
 
     assert_eq!(
-        outcome.unresolved_branches.len(),
+        outcome.sites.unresolved_branches.len(),
         1,
         "bx lr fixture must have exactly one IR-level placeholder",
     );

@@ -7,9 +7,9 @@ use strider_pattern::{MatchPat, Matcher, int_const};
 #[test]
 fn matches_add_const_via_builder() {
     let f = make_empty_fn(|b| {
-        let x = b.build_int_const(5u64, ValueType::I64)?;
-        let k = b.build_int_const(1u64, ValueType::I64)?;
-        b.build_int_binary_operation(x, k, IntBinaryOp::Add, ValueType::I64)
+        let x = b.build_int_const(5u64, ValueType::int(64))?;
+        let k = b.build_int_const(1u64, ValueType::int(64))?;
+        b.build_int_binary_operation(x, k, IntBinaryOp::Add, ValueType::int(64))
     })
     .unwrap();
 
@@ -29,9 +29,9 @@ fn multi_sink_pattern_is_buildable_but_match_returns_err() {
     // matcher cannot match one, and must say so with an Err rather than
     // panicking or silently matching nothing.
     let f = make_empty_fn(|b| {
-        let x = b.build_int_const(5u64, ValueType::I64)?;
-        let k = b.build_int_const(1u64, ValueType::I64)?;
-        b.build_int_binary_operation(x, k, IntBinaryOp::Add, ValueType::I64)
+        let x = b.build_int_const(5u64, ValueType::int(64))?;
+        let k = b.build_int_const(1u64, ValueType::int(64))?;
+        b.build_int_binary_operation(x, k, IntBinaryOp::Add, ValueType::int(64))
     })
     .unwrap();
 
@@ -49,9 +49,9 @@ fn multi_sink_pattern_is_buildable_but_match_returns_err() {
 fn commutative_swap_matches_add_const_other_order() {
     // IR `Add(IntConst(1), IntConst(5))` against pattern `int_add(anything, const(5))`.
     let f = make_empty_fn(|b| {
-        let k = b.build_int_const(1u64, ValueType::I64)?;
-        let x = b.build_int_const(5u64, ValueType::I64)?;
-        b.build_int_binary_operation(k, x, IntBinaryOp::Add, ValueType::I64)
+        let k = b.build_int_const(1u64, ValueType::int(64))?;
+        let x = b.build_int_const(5u64, ValueType::int(64))?;
+        b.build_int_binary_operation(k, x, IntBinaryOp::Add, ValueType::int(64))
     })
     .unwrap();
 
@@ -70,9 +70,9 @@ fn force_ordered_disables_commutative_swap() {
     // `int_add(const(5), const(1))` against IR `Add(const(1), const(5))` would only
     // match via a swap, which force_ordered disables.
     let f = make_empty_fn(|b| {
-        let a = b.build_int_const(1u64, ValueType::I64)?;
-        let c = b.build_int_const(5u64, ValueType::I64)?;
-        b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)
+        let a = b.build_int_const(1u64, ValueType::int(64))?;
+        let c = b.build_int_const(5u64, ValueType::int(64))?;
+        b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::int(64))
     })
     .unwrap();
 
@@ -89,19 +89,16 @@ fn force_ordered_disables_commutative_swap() {
 
 #[test]
 fn cast_walk_through_matches_under_extend() {
-    // IR is `Add(ZeroExtend(var:I32):I64, const:I64)`; the operand is a var read
-    // rather than a const because a const would fold instead of producing an
-    // `Extend`. Pinning the `anything` leaf to the var's I32 width makes the cast
-    // load-bearing: without walk-through the matcher sees the I64 ZeroExtend
-    // output, with EXTEND walk-through it unwraps to the I32 inner value.
+    // `Add(ZeroExtend(var:I32):I64, const:I64)`, a var since a const would fold. The leaf is
+    // pinned to I32, so only an EXTEND walk-through reaches it.
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::reg_vn;
 
     let var = reg_vn(0x10, 4);
     let (f, _x) = strider_ir_test_utils::make_fn_with_var(var, |b, x| {
-        let widened = b.extend_if_needed(x, ValueType::I64, ExtendOp::ZeroExtend)?;
-        let k = b.build_int_const(1u64, ValueType::I64)?;
-        b.build_int_binary_operation(widened, k, IntBinaryOp::Add, ValueType::I64)
+        let widened = b.extend_if_needed(x, ValueType::int(64), ExtendOp::ZeroExtend)?;
+        let k = b.build_int_const(1u64, ValueType::int(64))?;
+        b.build_int_binary_operation(widened, k, IntBinaryOp::Add, ValueType::int(64))
     })
     .unwrap();
 

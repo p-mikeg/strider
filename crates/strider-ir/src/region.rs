@@ -3,8 +3,10 @@ use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{SecondaryMap, entity_impl};
 
 use crate::IRViewer;
-use crate::builder::FunctionBuilder;
-use crate::error::Result;
+use crate::Result;
+use crate::builder::checks::require_memory_kind;
+use crate::builder::{FunctionBuilder, IRBuilder};
+use crate::graph::Graph;
 use crate::node::InitialVnId;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
@@ -12,14 +14,13 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 pub struct RegionId(u32);
 entity_impl!(RegionId);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Region {
     terminated: bool,
     control_node: NodeId,
     memory_node: NodeId,
     /// Advances through Call and CallOther.
     cur_ctrl: ValueId,
-    /// Advances through Store, Call, and CallOther.
+    /// Advances through Store, Call, and a memory-clobbering CallOther.
     cur_memory: ValueId,
     /// Current SSA value per variable. Unset means no definition reaches here.
     variables: SecondaryMap<InitialVnId, PackedOption<ValueId>>,
@@ -34,18 +35,11 @@ pub(crate) struct TerminatedRegion {
 }
 
 impl FunctionBuilder {
-    /// Errors unless `res`'s control and memory edges both have their expected
-    /// kind.
-    pub(crate) fn require_terminator_kinds(&self, res: &TerminatedRegion) -> Result<()> {
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)
-    }
-
     /// Errors if no region is set or the region is already terminated.
     pub(crate) fn require_cur_region(&self) -> Result<RegionId> {
-        let region_id = self.cur_region.ok_or_else(|| {
-            anyhow!("no current region is set; call set_region or set_entry_region first")
-        })?;
+        let region_id = self
+            .cur_region
+            .ok_or_else(|| anyhow!("no current region is set; call set_region first"))?;
         if self.regions[region_id].terminated {
             let id = region_id.as_u32();
             return Err(anyhow!("attempted to insert into terminated region {id}"));
@@ -62,14 +56,13 @@ impl FunctionBuilder {
     }
 
     pub(crate) fn advance_cur_region_ctrl(&mut self, ctrl: ValueId) -> Result<()> {
-        self.require_control_kind(ctrl)?;
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_ctrl = ctrl;
         Ok(())
     }
 
     pub fn advance_cur_region_memory(&mut self, memory: ValueId) -> Result<()> {
-        self.require_memory_kind(memory)?;
+        require_memory_kind(self.function(), memory)?;
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_memory = memory;
         Ok(())
@@ -77,9 +70,11 @@ impl FunctionBuilder {
 
     pub(crate) fn terminate_cur_region(&mut self) -> Result<TerminatedRegion> {
         let region_id = self.require_cur_region()?;
-        let control = self.regions[region_id].cur_ctrl;
-        let memory = self.regions[region_id].cur_memory;
-        self.regions[region_id].terminated = true;
+        let r = &mut self.regions[region_id];
+        r.terminated = true;
+        let (control, memory) = (r.cur_ctrl, r.cur_memory);
+        debug_assert!(self.function().value_kind(control).is_control());
+        debug_assert!(self.function().value_kind(memory).is_memory());
         Ok(TerminatedRegion {
             control,
             memory,
@@ -92,67 +87,17 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Appends one operand per `region` phi, taken from `variables`. Operand
-    /// order follows the call order, pairing `phi.operand[i]` with `region`'s
-    /// i-th control predecessor.
-    ///
-    /// `variables` is read raw, an absent entry yielding `ValueId(0)`, so the
-    /// callers pass the entry region's complete `InitialVar` seed.
+    /// Appends one operand per `region` phi from `variables`; the i-th call
+    /// pairs with the i-th control predecessor. An absent entry reads as
+    /// `ValueId(0)`, so `variables` must be complete.
     pub(crate) fn link_region_variables(
         &mut self,
         region: RegionId,
         variables: &SecondaryMap<InitialVnId, ValueId>,
     ) -> Result<()> {
-        let operands: Vec<ValueId> = self.regions[region]
-            .phis
-            .iter()
-            .map(|&(var_id, _)| variables[var_id])
-            .collect();
-        self.append_phi_operands(region, &operands)
-    }
-
-    /// One operand per `region` phi, read out of `source`'s current values.
-    ///
-    /// Errors on a variable `source` has no value for, which is a region the
-    /// rename walk never reached: `translate_regions` walks the dominator
-    /// pre-order, which excludes the regions unreachable from the entry, while
-    /// `link_region_edges` walks every CFG edge.
-    fn reaching_phi_operands(&self, region: RegionId, source: RegionId) -> Result<Vec<ValueId>> {
-        self.regions[region]
-            .phis
-            .iter()
-            .map(|&(var_id, _)| {
-                self.regions[source].variables[var_id]
-                    .expand()
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "no definition of variable {var_id:?} reaches region {} on its edge \
-                             into region {}",
-                            source.as_u32(),
-                            region.as_u32()
-                        )
-                    })
-            })
-            .collect()
-    }
-
-    fn append_phi_operands(&mut self, region: RegionId, operands: &[ValueId]) -> Result<()> {
-        let phis = self.regions[region].phis.len();
-        if operands.len() != phis {
-            return Err(anyhow!(
-                "region {} carries {phis} phis but the incoming edge supplies {} operands",
-                region.as_u32(),
-                operands.len()
-            ));
-        }
-        for (i, &operand) in operands.iter().enumerate() {
-            let phi_value = self.regions[region].phis[i].1;
-            let phi_node = self.function().producer(phi_value);
-            self.function_mut()
-                .graph_mut()
-                .add_node_input(phi_node, operand);
-        }
-        Ok(())
+        append_phi_operands(self.function.graph_mut(), &self.regions[region].phis, |v| {
+            Ok(variables[v])
+        })
     }
 
     /// Mints a `Region` / `MemPhi` pair plus one `Phi` per `phi_vars` entry,
@@ -166,7 +111,6 @@ impl FunctionBuilder {
             [ValueKind::Control, ValueKind::PhiToken],
         );
         let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
-        // PhiToken goes in MemPhi.inputs[0] exactly as it does for a Phi.
         self.function_mut()
             .graph_mut()
             .add_node_input(memory_node, phi_token);
@@ -175,13 +119,13 @@ impl FunctionBuilder {
         let mut variables = SecondaryMap::new();
         for &vn_id in phi_vars {
             let var = self.function().initial_vn(vn_id);
-            let value = self.build_vn_phi(var, phi_token, &[])?;
+            let value = self.build_vn_phi(var, phi_token)?;
             phis.push((vn_id, value));
             variables[vn_id] = value.into();
         }
 
-        self.require_memory_kind(memory)?;
-        self.require_control_kind(control)?;
+        debug_assert!(self.function().value_kind(memory).is_memory());
+        debug_assert!(self.function().value_kind(control).is_control());
         Ok(self.regions.push(Region {
             terminated: false,
             control_node,
@@ -197,39 +141,30 @@ impl FunctionBuilder {
     /// a phi placed at `region`. Requires `idom` to be complete, so call in
     /// dominator-tree order.
     pub fn inherit_variables(&mut self, region: RegionId, idom: RegionId) {
-        let mut variables = self.regions[idom].variables.clone();
-        for &(var_id, value) in &self.regions[region].phis {
-            variables[var_id] = value.into();
-        }
-        self.regions[region].variables = variables;
+        self.seed_variables(region, self.regions[idom].variables.clone());
     }
 
-    /// Overwrites `region`'s current-value map wholesale.
-    pub(crate) fn set_region_variables(
+    /// Sets `region`'s current-value map to `base`, with each phi-carrying
+    /// variable at its own `Phi` output.
+    pub(crate) fn seed_variables(
         &mut self,
         region: RegionId,
-        variables: SecondaryMap<InitialVnId, ValueId>,
+        base: SecondaryMap<InitialVnId, PackedOption<ValueId>>,
     ) {
-        let mut packed = SecondaryMap::new();
-        for (var_id, &value) in variables.iter() {
-            packed[var_id] = value.into();
-        }
-        self.regions[region].variables = packed;
-    }
-
-    /// Repoints every phi-carrying variable's current value at its own `Phi`
-    /// output, undoing a blanket [`Self::set_region_variables`]: the value that
-    /// seed supplied is one of the phi's operands, not the region's current
-    /// value.
-    pub(crate) fn seed_phi_vars_from_phis(&mut self, region: RegionId) {
-        let r = &mut self.regions[region];
-        for i in 0..r.phis.len() {
-            let (var_id, value) = r.phis[i];
-            r.variables[var_id] = value.into();
+        let Region {
+            variables, phis, ..
+        } = &mut self.regions[region];
+        *variables = base;
+        for &(var_id, value) in &*phis {
+            variables[var_id] = value.into();
         }
     }
 
-    pub fn write_variable_from_id(&mut self, var_id: InitialVnId, value: ValueId) -> Result<()> {
+    pub(crate) fn write_variable_from_id(
+        &mut self,
+        var_id: InitialVnId,
+        value: ValueId,
+    ) -> Result<()> {
         let region_id = self.require_cur_region()?;
         self.regions[region_id].variables[var_id] = value.into();
         Ok(())
@@ -247,26 +182,13 @@ impl FunctionBuilder {
             })
     }
 
-    pub(crate) fn link_control_regions(
-        &mut self,
-        region: RegionId,
-        control: ValueId,
-    ) -> Result<()> {
-        self.require_control_kind(control)?;
-        let control_node = self.regions[region].control_node;
-        self.function_mut()
-            .graph_mut()
-            .add_node_input(control_node, control);
-        Ok(())
-    }
-
-    pub(crate) fn link_memory_regions(&mut self, region: RegionId, memory: ValueId) -> Result<()> {
-        self.require_memory_kind(memory)?;
-        let memory_node = self.regions[region].memory_node;
-        self.function_mut()
-            .graph_mut()
-            .add_node_input(memory_node, memory);
-        Ok(())
+    /// Appends `control` to `region`'s `Region` and `memory` to its `MemPhi`.
+    pub(crate) fn link_edges(&mut self, region: RegionId, control: ValueId, memory: ValueId) {
+        let r = &self.regions[region];
+        let (control_node, memory_node) = (r.control_node, r.memory_node);
+        let graph = self.function.graph_mut();
+        graph.add_node_input(control_node, control);
+        graph.add_node_input(memory_node, memory);
     }
 
     pub(crate) fn link_region(
@@ -276,13 +198,24 @@ impl FunctionBuilder {
         memory: ValueId,
         cur_region: RegionId,
     ) -> Result<()> {
-        self.link_control_regions(region, control)?;
-        self.link_memory_regions(region, memory)?;
-        // `cur_region`'s current variable map, so a self-loop (`cur_region ==
-        // region`, an entry that is its own loop header) takes the values
-        // reaching the back edge.
-        let operands = self.reaching_phi_operands(region, cur_region)?;
-        self.append_phi_operands(region, &operands)
+        self.link_edges(region, control, memory);
+        // A self-loop takes the values reaching the back edge. An unset
+        // variable means the rename walk never reached `cur_region`.
+        let reaching = &self.regions[cur_region].variables;
+        append_phi_operands(
+            self.function.graph_mut(),
+            &self.regions[region].phis,
+            |var_id| {
+                reaching[var_id].expand().ok_or_else(|| {
+                    anyhow!(
+                        "no definition of variable {var_id:?} reaches region {} on its edge \
+                         into region {}",
+                        cur_region.as_u32(),
+                        region.as_u32()
+                    )
+                })
+            },
+        )
     }
 
     /// Links `child_region` as the fallthrough successor of `parent_region`.
@@ -298,4 +231,19 @@ impl FunctionBuilder {
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl
     }
+}
+
+/// Appends `operand(var)` to each of `phis` in order, stopping at the first
+/// error.
+fn append_phi_operands(
+    graph: &mut Graph,
+    phis: &[(InitialVnId, ValueId)],
+    mut operand: impl FnMut(InitialVnId) -> Result<ValueId>,
+) -> Result<()> {
+    for &(var_id, phi_value) in phis {
+        let value = operand(var_id)?;
+        let phi_node = graph.producer(phi_value);
+        graph.add_node_input(phi_node, value);
+    }
+    Ok(())
 }

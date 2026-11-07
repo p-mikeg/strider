@@ -38,6 +38,20 @@ fn load_elf_rejects_garbage_bytes() {
     );
 }
 
+/// `object` also parses COFF and Mach-O: neither may load as an empty image.
+#[test]
+fn parse_refuses_a_non_elf_object() {
+    use object::write::Object as Writer;
+    use object::{Architecture, BinaryFormat};
+    for format in [BinaryFormat::Coff, BinaryFormat::MachO] {
+        let bytes = Writer::new(format, Architecture::X86_64, Endianness::Little)
+            .write()
+            .unwrap();
+        let err = strider_reader::OwnedElf::parse(bytes).unwrap_err();
+        assert!(err.to_string().contains("not an ELF"), "{format:?}: {err}");
+    }
+}
+
 #[test]
 fn load_elf_missing_path_is_io_error() {
     let err = strider_reader::load_elf("/definitely/not/a/real/path/for/tests").unwrap_err();
@@ -65,4 +79,66 @@ fn load_elf_reads_no_further_than_the_stat_size() {
         err.to_string().contains("failed to parse ELF"),
         "got: {err}"
     );
+}
+
+/// An image is the region sets its mode names, from one parse, and its
+/// writable set is the same under every mode.
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "release only: loads every fixture six ways"
+)]
+fn an_image_is_the_region_sets_its_mode_names() {
+    use strider_reader::elf::{LoadFilter as F, RegionSource, RelocationMode as M};
+    let files = common::fixture_images();
+    assert!(!files.is_empty(), "no fixtures; run `make -C fixtures`");
+    for path in files {
+        let elf = strider_reader::load_elf(&path).expect("load");
+        for source in [RegionSource::Auto, RegionSource::Sections] {
+            let writable = elf
+                .image(source, M::Unapplied)
+                .expect("image")
+                .writable
+                .as_slice()
+                .to_vec();
+            for (mode, fetch, rom, relocate) in [
+                (M::Unapplied, F::CodeAndReadOnly, F::ImmutableOnly, false),
+                (
+                    M::Applied { got_is_rom: false },
+                    F::AllAllocatable,
+                    F::ImmutableOnly,
+                    true,
+                ),
+                (
+                    M::Applied { got_is_rom: true },
+                    F::AllAllocatable,
+                    F::ImmutableAndRelocatedGot,
+                    true,
+                ),
+            ] {
+                let image = elf.image(source, mode).expect("image");
+                let regions = |filter| {
+                    format!(
+                        "{:?}",
+                        elf.regions(source, filter, relocate).expect("regions")
+                    )
+                };
+                assert_eq!(
+                    format!("{:?}", image.fetch),
+                    regions(fetch),
+                    "{path:?} {mode:?}"
+                );
+                assert_eq!(
+                    format!("{:?}", image.rom),
+                    regions(rom),
+                    "{path:?} {mode:?}"
+                );
+                assert_eq!(
+                    image.writable.as_slice(),
+                    writable,
+                    "{path:?} {mode:?}: every mode sees the same writable mappings"
+                );
+            }
+        }
+    }
 }

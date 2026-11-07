@@ -5,6 +5,7 @@ covered by the Rust suite; this pins the Python API."""
 from __future__ import annotations
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, int_mul, load, store, var
 
 from .conftest import built_function
@@ -25,12 +26,10 @@ def test_noalias_allocators_defaults_empty():
 
 
 def test_heap_only_builds_on_load_and_store():
-    # heap_only() produces a valid pattern the matcher accepts. With no
-    # allocators configured the fixture has no heap-classified access, so the
-    # result is an empty list rather than an error.
+    # With no allocators configured the fixture has no heap-classified access.
     g = built_function("x86", "memory", "array_sum")
-    assert isinstance(g.find_all(load().heap_only()), list)
-    assert isinstance(g.find_all(store().heap_only()), list)
+    assert g.find_all(load().heap_only()) == []
+    assert g.find_all(store().heap_only()) == []
 
 
 # x86-64: `call 0x1100; mov qword [rax], 42; ret`.  With 0x1100 declared a pure
@@ -66,7 +65,7 @@ def test_rewrite_keeps_the_allocator_set_analyze_ran_under():
     _lift, g = _heap_function()
     assert len(g.find_all(store().heap_only())) == 1
     x, y = Capture(), Capture()
-    assert g.rewrite(find=int_mul(var(x), var(y)), replace=var(x)) == 0
+    assert g.rewrite(find=int_mul(var(x), var(y)), replace=tpl.var(x)) == 0
     assert len(g.find_all(store().heap_only())) == 1, (
         "a rewrite that fires nothing must not drop the store's heap class"
     )
@@ -76,25 +75,48 @@ def test_clone_keeps_the_allocator_set_for_rewrite():
     _lift, g = _heap_function()
     clone = g.clone()
     x, y = Capture(), Capture()
-    clone.rewrite(find=int_mul(var(x), var(y)), replace=var(x))
+    clone.rewrite(find=int_mul(var(x), var(y)), replace=tpl.var(x))
     assert len(clone.find_all(store().heap_only())) == 1
 
 
+def test_optimize_keeps_the_allocator_set_analyze_ran_under():
+    """`optimize` without `assumptions` adds no claim and keeps the ones
+    `analyze` ran under, so the store stays `heap_only`."""
+    lift, g = _heap_function()
+    g.optimize()
+    assert len(g.find_all(store().heap_only())) == 1
+
+
 def test_optimize_updates_the_allocator_set_rewrite_uses():
-    """`optimize` is the other writer of the remembered assumptions: a set
-    handed to it must reach a later `rewrite`, even though `analyze` ran
-    without one."""
+    """`optimize` merges the set it is given into the function's: an
+    allocator it adds reaches a later `rewrite`, though `analyze` ran without
+    one."""
     lift, g = _heap_function(allocators=())
     assert g.find_all(store().heap_only()) == []
-    lift.optimize(
-        g,
-        opts=strider.lift.LifterOptions(
-            assumptions=strider.lift.AssumptionOptions(
-                noalias_allocators=[_HEAP_ALLOCATOR]
-            )
-        ),
-    )
+    g.optimize(assumptions=strider.lift.AssumptionOptions(noalias_allocators=[_HEAP_ALLOCATOR]))
     assert len(g.find_all(store().heap_only())) == 1
     x, y = Capture(), Capture()
-    g.rewrite(find=int_mul(var(x), var(y)), replace=var(x))
+    g.rewrite(find=int_mul(var(x), var(y)), replace=tpl.var(x))
     assert len(g.find_all(store().heap_only())) == 1
+
+
+def test_the_last_region_filter_called_wins():
+    """One region filter, set in call order: `stack_only` after `heap_only`
+    selects the return-address push (`sp - 8`), not the heap store. Both
+    select one store, so only the node ids tell them apart."""
+    _lift, g = _heap_function()
+
+    def roots(p):
+        return [m.root for m in g.find_all(p)]
+
+    heap, stack = roots(store().heap_only()), roots(store().stack_only())
+    assert len(heap) == 1 and len(stack) == 1 and heap != stack
+    assert roots(store().heap_only().stack_only()) == stack
+    assert roots(store().stack_only().heap_only()) == heap
+    assert roots(store().heap_only().stack_offset(-8)) == stack
+    # `stack_only` keeps an offset an earlier `stack_offset` pinned.
+    assert roots(store().stack_offset(-8).stack_only()) == stack
+    assert roots(store().stack_offset(0).stack_only()) == []
+    assert roots(store().non_stack()) == heap
+    assert roots(store().stack_only().non_stack()) == heap
+    assert roots(store().non_stack().stack_only()) == stack

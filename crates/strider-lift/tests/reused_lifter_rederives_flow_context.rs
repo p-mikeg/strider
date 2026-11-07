@@ -1,10 +1,8 @@
 //! A reused `Lifter` decodes a function exactly as a fresh one does.
 //!
-//! Pins the production wiring: `Lifter::build_cfg` lends
-//! `SleighArch::flow_commit_vars` to the builder, so a value a previous
-//! `build_cfg` committed on this engine is re-derived rather than believed.
-//! Dropping that lend leaves the whole flow-commit mechanism inert, which no
-//! test over a hand-built `Builder` can see.
+//! Pins the production wiring: every `DecodeEngine::build_cfg` re-derives the
+//! vars `SleighArch::flow_commit_vars` names, so a value a previous
+//! `build_cfg` committed on this engine is not believed.
 //!
 //! One case per flow class: `condit` is `noflow`, `TEEMode` flows.
 
@@ -21,26 +19,20 @@ fn bytes() -> Vec<u8> {
     v
 }
 
-fn lifter() -> strider_lift::lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+fn lifter() -> strider_lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
     let arch = strider_target::SleighArch::arm_thumb();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(bytes(), BASE),
-    )
-    .expect("sleigh");
-    strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter")
+    strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes(), BASE))
+        .expect("lifter")
 }
 
 /// Every machine instruction a build decoded, as opcode names per address.
 fn build(
-    l: &mut strider_lift::lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
+    l: &mut strider_lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
     at: u64,
 ) -> strider_cfg::Cfg {
     l.build_cfg(
         strider_cfg::MachineInsnAddr { addr: at },
         &Default::default(),
-        &rustc_hash::FxHashMap::default(),
     )
     .expect("build_cfg")
 }
@@ -87,15 +79,13 @@ fn thumbee_bytes() -> Vec<u8> {
     v
 }
 
-fn thumbee_lifter() -> strider_lift::lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+fn thumbee_lifter() -> strider_lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
     let arch = strider_target::SleighArch::arm_thumb();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    strider_lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(thumbee_bytes(), BASE),
     )
-    .expect("sleigh");
-    strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter")
+    .expect("lifter")
 }
 
 /// A region owning `at` that records no p-code op and spans `span` bytes,

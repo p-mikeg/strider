@@ -1,11 +1,10 @@
-use rsleigh::MemReader;
-use rustc_hash::{FxHashMap, FxHashSet};
+use ::dot::GraphDotDumper as _;
+use rustc_hash::FxHashMap;
 
 use crate::IRViewer;
 use crate::function::Function;
-use crate::graph::Graph;
+use crate::node::signature::{SlotRole, expected_signature};
 use crate::node::{NodeId, NodeKind, ValueId};
-use crate::node_signature::{SlotRole, expected_signature};
 
 pub(crate) mod label;
 mod neighborhood;
@@ -14,120 +13,97 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
+/// Graphviz shape and dark-theme fill color.
+pub(super) fn node_style(kind: &NodeKind) -> (&'static str, &'static str) {
     match kind {
-        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "Mdiamond",
-
-        NodeKind::Region => "invhouse",
-        NodeKind::Phi | NodeKind::MemPhi => "house",
-
-        NodeKind::If => "diamond",
-
-        NodeKind::Load(_) | NodeKind::Store(_) => "box3d",
-
-        NodeKind::Call { .. } => "rarrow",
-        NodeKind::CallOther { .. } => "doubleoctagon",
-        NodeKind::CPoolRef => "folder",
-        NodeKind::New => "component",
-
-        NodeKind::Return | NodeKind::IndirectBranch => "doublecircle",
-        // Every other control kind is distinctive, so these two were the only
-        // ones falling to the catch-all and drawing as a plain value box.
-        NodeKind::Switch(_) => "trapezium",
-        NodeKind::Unreachable => "Msquare",
-
-        NodeKind::IntConst(_) | NodeKind::FloatConst(_) => "ellipse",
-
-        _ => "box",
-    }
-}
-
-/// Dark-theme fill color.
-pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "#1a3a5c",
-
-        NodeKind::Region => "#2a1a4a",
-
-        NodeKind::Phi | NodeKind::MemPhi => "#163030",
-
-        NodeKind::If => "#3a2a10",
-
-        NodeKind::Load(_) | NodeKind::Store(_) => "#102030",
-
-        NodeKind::Call { .. } => "#3a1010",
-        NodeKind::CallOther { .. } => "#3a2810", // amber: opaque intrinsic
-        NodeKind::CPoolRef => "#2a1a3a",         // violet: JVM metadata
-        NodeKind::New => "#103a2a",              // dark green: allocation
-
-        NodeKind::Return | NodeKind::IndirectBranch | NodeKind::Switch(_) => "#103a10",
-        NodeKind::Unreachable => "#3a1030", // magenta: a sink control cannot leave
-
-        NodeKind::FloatConst(_)
-        | NodeKind::FloatBinaryOp(_)
-        | NodeKind::FloatUnaryOp(_)
-        | NodeKind::FloatCmpOp(_) => "#1a3020", // dark green
-
+        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => {
+            ("Mdiamond", "#1a3a5c")
+        }
+        NodeKind::Region => ("invhouse", "#2a1a4a"),
+        NodeKind::Phi | NodeKind::MemPhi => ("house", "#163030"),
+        NodeKind::If => ("diamond", "#3a2a10"),
+        NodeKind::Load(_) | NodeKind::Store(_) => ("box3d", "#102030"),
+        NodeKind::Call { .. } => ("rarrow", "#3a1010"),
+        NodeKind::CallOther { .. } => ("doubleoctagon", "#3a2810"),
+        NodeKind::CPoolRef => ("folder", "#2a1a3a"),
+        NodeKind::New => ("component", "#103a2a"),
+        NodeKind::Return | NodeKind::IndirectBranch => ("doublecircle", "#103a10"),
+        NodeKind::Switch(_) => ("trapezium", "#103a10"),
+        NodeKind::Unreachable => ("Msquare", "#3a1030"),
+        NodeKind::IntConst(_) => ("ellipse", "#2d2d2d"),
+        NodeKind::FloatConst(_) => ("ellipse", "#1a3020"),
+        NodeKind::IntUnaryOp(_)
+        | NodeKind::IntBinaryOp(_)
+        | NodeKind::IntCmpOp(_)
+        | NodeKind::Truncate
+        | NodeKind::Popcount
+        | NodeKind::Lzcount
+        | NodeKind::Extend(_) => ("box", "#2d2d2d"),
+        NodeKind::FloatBinaryOp(_) | NodeKind::FloatUnaryOp(_) | NodeKind::FloatCmpOp(_) => {
+            ("box", "#1a3020")
+        }
         NodeKind::IntToFloat
         | NodeKind::FloatToInt
         | NodeKind::FloatToFloat
         | NodeKind::IntBitsToFloat
-        | NodeKind::FloatBitsToInt => "#302018", // dark amber
-
-        _ => "#2d2d2d",
+        | NodeKind::FloatBitsToInt => ("box", "#302018"),
     }
 }
 
 pub(super) fn role_color(role: SlotRole) -> &'static str {
     match role {
-        SlotRole::Control => "#00cccc",                              // aqua
-        SlotRole::Memory => "#cc88aa",                               // pink
-        SlotRole::Phi | SlotRole::In => "#dddddd",                   // white
-        SlotRole::Lhs => "#4488ff",                                  // blue
-        SlotRole::Rhs => "#ff4444",                                  // red
-        SlotRole::Val | SlotRole::Ret => "#88cc88",                  // green
-        SlotRole::Addr => "#cc88ff",                                 // purple
-        SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "#ff8800", // orange
-        SlotRole::Target | SlotRole::Sp => "#ffdd44",                // yellow
-        SlotRole::Cond => "#ff44ff",                                 // magenta
+        SlotRole::Control => "#00cccc",
+        SlotRole::Memory => "#cc88aa",
+        SlotRole::Phi | SlotRole::In => "#dddddd",
+        SlotRole::Lhs => "#4488ff",
+        SlotRole::Rhs => "#ff4444",
+        SlotRole::Val | SlotRole::Ret => "#88cc88",
+        SlotRole::Addr => "#cc88ff",
+        SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "#ff8800",
+        SlotRole::Target | SlotRole::Sp => "#ffdd44",
+        SlotRole::Cond => "#ff44ff",
     }
 }
 
-/// `(label, color)` for the edge into `consumer`'s `input_idx`-th slot, both
-/// driven by the consumer's expected signature.
-pub(super) fn edge_style<R: MemReader>(
-    dumper: &FunctionDotDumper<'_, R>,
-    consumer: NodeId,
+/// `(label, ordinal within a repeating tail, color)` of the edge into slot
+/// `input_idx` of `consumer`, from its expected signature.
+pub(super) fn edge_style(
+    consumer: &NodeKind,
     input_idx: usize,
-) -> (&'static str, &'static str) {
-    let kind = dumper.function.node_kind(consumer);
-    let sig = expected_signature(kind);
-    match sig.inputs.at(input_idx) {
-        Some(slot) => (slot.name, role_color(slot.role)),
-        None => ("", "#cccccc"),
+) -> (&'static str, Option<usize>, &'static str) {
+    let sig = expected_signature(consumer);
+    match sig.inputs.at_indexed(input_idx) {
+        Some((slot, tail_idx)) => (slot.name, tail_idx, role_color(slot.role)),
+        None => ("", None, "#cccccc"),
     }
 }
 
-pub struct FunctionDotDumper<'a, R: MemReader> {
-    pub(crate) entry: NodeId,
-    pub(crate) function: &'a Function,
-    pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
-    /// Resolved once: `Sleigh::regs` rebuilds the whole table per call, and a
-    /// render names a varnode per label.
-    pub(crate) regs: std::borrow::Cow<'a, rsleigh::SleighRegs>,
-    /// Carrier node -> arg tags.
-    pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
-    /// Restrict the render to the induced subgraph over these nodes; `None`
-    /// renders everything reachable from `entry`.
-    pub(crate) nodes: Option<FxHashSet<NodeId>>,
-    /// Focus of a neighbourhood render, drawn with a highlight border.
-    pub(crate) center: Option<NodeId>,
+impl Function {
+    /// The pretty renderer, naming registers and spaces through `names`.
+    pub fn dot_dumper<'a>(&'a self, names: &'a strider_target::ArchNames) -> FunctionDotDumper<'a> {
+        FunctionDotDumper {
+            function: self,
+            names,
+            arg_labels: arg_labels(self),
+            view: None,
+        }
+    }
+}
+
+pub struct FunctionDotDumper<'a> {
+    function: &'a Function,
+    /// The arch's register and space names, all a label reads.
+    names: &'a strider_target::ArchNames,
+    /// Carrier node -> its arg tags, joined.
+    arg_labels: FxHashMap<NodeId, String>,
+    /// A neighbourhood render; `None` renders everything reachable from entry.
+    view: Option<::dot::View<NodeId>>,
 }
 
 /// A carrier's argument annotation. The integer and float index spaces are
 /// separate, so the class is part of the label.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum ArgTag {
+enum ArgTag {
     Int(u32),
     Float(u32),
 }
@@ -141,7 +117,8 @@ impl std::fmt::Display for ArgTag {
     }
 }
 
-pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<ArgTag>> {
+/// Carrier node -> its arg tags, sorted and `", "`-joined.
+fn arg_labels(function: &Function) -> FxHashMap<NodeId, String> {
     let mut map: FxHashMap<NodeId, Vec<ArgTag>> = FxHashMap::default();
     let side = function.side_tables();
     let tags = side
@@ -157,13 +134,16 @@ pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Ve
             map.entry(node).or_default().push(tag);
         }
     }
-    // Sort so label output is deterministic.
-    for v in map.values_mut() {
-        v.sort_unstable();
-    }
-    map
+    map.into_iter()
+        .map(|(node, mut tags)| {
+            tags.sort_unstable();
+            let joined: Vec<String> = tags.iter().map(ToString::to_string).collect();
+            (node, joined.join(", "))
+        })
+        .collect()
 }
 
+#[derive(Default)]
 pub struct FunctionDotDumperState {
     /// Virtual DOT nodes inserted between a producer output and its consumers,
     /// keyed by the `ValueId` they stand for.
@@ -173,19 +153,16 @@ pub struct FunctionDotDumperState {
     #[cfg(test)]
     pub(super) dot_to_node: FxHashMap<String, NodeId>,
     pub(super) next_unique_id: u32,
-    /// Focus of a neighbourhood render.
-    pub(super) center: Option<NodeId>,
 }
 
 impl FunctionDotDumperState {
-    /// Test-only: `None` for a virtual (`If` branch / `Call` clobber) box,
-    /// which has no `NodeId`.
+    /// `None` for a virtual (`If` branch / `Call` clobber) box.
     #[cfg(test)]
     pub fn node_of_dot_id(&self, dot_id: &str) -> Option<NodeId> {
         self.dot_to_node.get(dot_id).copied()
     }
 
-    /// Test-only: the full emitted-id -> `NodeId` mapping.
+    /// The full emitted-id -> `NodeId` mapping.
     #[cfg(test)]
     pub fn dot_to_node(&self) -> impl Iterator<Item = (&str, NodeId)> {
         self.dot_to_node.iter().map(|(k, &v)| (k.as_str(), v))
@@ -201,23 +178,25 @@ impl FunctionDotDumperState {
     pub(super) fn alloc_virtual_id(&mut self) -> String {
         self.fresh_id('v')
     }
+}
 
+impl FunctionDotDumper<'_> {
     /// Whether `node` draws a private box beside each consumer instead of one
-    /// shared box.  True for constants, except the neighbourhood centre.
-    pub(super) fn renders_per_use(&self, graph: &Graph, node: NodeId) -> bool {
-        graph.node_kind(node).is_const() && self.center != Some(node)
+    /// shared box. True for constants, except the neighbourhood centre.
+    fn renders_per_use(&self, node: NodeId) -> bool {
+        self.function.node_kind(node).is_const() && !self.is_center(node)
     }
 
     /// The DOT id for `node`: its bare `NodeId`, or a fresh `c`-prefixed
     /// counter for a [per-use](Self::renders_per_use) constant.
-    pub(super) fn get_dot_id(&mut self, graph: &Graph, node_id: NodeId) -> String {
-        let s = if self.renders_per_use(graph, node_id) {
-            self.fresh_id('c')
+    fn dot_id(&self, state: &mut FunctionDotDumperState, node_id: NodeId) -> String {
+        let s = if self.renders_per_use(node_id) {
+            state.fresh_id('c')
         } else {
             node_id.as_u32().to_string()
         };
         #[cfg(test)]
-        self.dot_to_node.insert(s.clone(), node_id);
+        state.dot_to_node.insert(s.clone(), node_id);
         s
     }
 }

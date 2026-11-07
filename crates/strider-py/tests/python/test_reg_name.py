@@ -1,4 +1,4 @@
-"""Reverse varnode to register-name lookup: `Sleigh.reg_name(vn)`.
+"""Reverse varnode to register-name lookup: `SleighArch.reg_name(vn)`.
 
 Without it a REGISTER-space `Vn` off a lifted function reprs as
 `%[0x4]:4`, which reads like a stack slot and misleads.
@@ -11,9 +11,7 @@ from .conftest import fixture_path
 
 
 def _x86_64_sleigh():
-    arch = strider.sleigh.SleighArch.x86_64()
-    mem = strider.reader.BufferReader(0x1000, b"\x90")
-    return strider.sleigh.Sleigh(arch, mem)
+    return strider.sleigh.SleighArch.x86_64()
 
 
 def test_reg_name_round_trips_forward_lookup():
@@ -40,7 +38,7 @@ def test_reg_name_decodes_initial_var_varnodes_of_a_lifted_function():
     for m in fn.find_all(p.initial_var()):
         vn = fn.node(m.root).vn()
         assert vn is not None, "an InitialVar node always names a varnode"
-        name = lifter.reg_name(vn)
+        name = lifter.arch.reg_name(vn)
         if name is not None:
             names.add(name)
 
@@ -48,3 +46,9 @@ def test_reg_name_decodes_initial_var_varnodes_of_a_lifted_function():
     # RDX motivated the method: it lifts as `%[0x10]:8`, whose small offset
     # reads like a stack slot until decoded.
     assert {"RDI", "RSI", "RDX"} <= names
+
+
+def test_register_lookups_live_on_the_arch_alone():
+    """`Lifter` answered from the same table, so its copies are gone."""
+    assert not hasattr(strider.lift.Lifter, "reg")
+    assert not hasattr(strider.lift.Lifter, "reg_name")

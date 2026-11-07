@@ -1,5 +1,5 @@
 //! The side-table is stamped manually via `set_stack_slot` instead of by
-//! running `StackOffsetDetect`, keeping these tests on matcher behaviour.
+//! running a pipeline, keeping these tests on matcher behaviour.
 
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};
@@ -13,10 +13,10 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let mut t = Tb::empty();
     let addr_stack = t.u64(0x1000);
     let addr_heap = t.u64(0x2000);
-    let v_stack = t.load_ram(addr_stack, ValueType::I64);
-    let v_heap = t.load_ram(addr_heap, ValueType::I64);
+    let v_stack = t.load_ram(addr_stack, ValueType::int(64));
+    let v_heap = t.load_ram(addr_heap, ValueType::int(64));
     let sum = t.add(v_stack, v_heap);
-    let mut function = t.ret_val(sum);
+    let function = t.ret_val(sum);
 
     let loads: Vec<NodeId> = function
         .walk()
@@ -43,12 +43,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let stack_base = function.node_inputs(stack_node)[1];
     let heap_base = function.node_inputs(heap_node)[1];
     // The slot is value-keyed on the address; `stack_offset(node)` derives from it.
-    function
-        .side_tables_mut()
-        .set_stack_slot(stack_base, stack_base, 0x10);
-    function
-        .side_tables_mut()
-        .set_heap_slot(heap_base, heap_base, 0);
+    function.set_stack_slot(stack_base, stack_base, 0x10);
+    function.set_heap_slot(heap_base, heap_base, 0);
     (function, stack_node, heap_node)
 }
 
@@ -61,8 +57,8 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let data = t.u64(0xAB);
     t.store_ram(addr_stack, data);
     t.store_ram(addr_heap, data);
-    let v = t.load_ram(addr_stack, ValueType::I64);
-    let mut function = t.ret_val(v);
+    let v = t.load_ram(addr_stack, ValueType::int(64));
+    let function = t.ret_val(v);
 
     let stores: Vec<NodeId> = function
         .walk()
@@ -88,12 +84,8 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let stack_base = function.node_inputs(stack_store)[1];
     let heap_base = function.node_inputs(heap_store)[1];
     // The slot is value-keyed on the address; `stack_offset(node)` derives from it.
-    function
-        .side_tables_mut()
-        .set_stack_slot(stack_base, stack_base, 0x10);
-    function
-        .side_tables_mut()
-        .set_heap_slot(heap_base, heap_base, 0);
+    function.set_stack_slot(stack_base, stack_base, 0x10);
+    function.set_heap_slot(heap_base, heap_base, 0);
     (function, stack_store, heap_store)
 }
 
@@ -104,12 +96,12 @@ fn loads_stack_heap_plain() -> (strider_ir::Function, NodeId, NodeId, NodeId) {
     let a_stack = t.u64(0x1000);
     let a_heap = t.u64(0x2000);
     let a_plain = t.u64(0x3000);
-    let v0 = t.load_ram(a_stack, ValueType::I64);
-    let v1 = t.load_ram(a_heap, ValueType::I64);
-    let v2 = t.load_ram(a_plain, ValueType::I64);
+    let v0 = t.load_ram(a_stack, ValueType::int(64));
+    let v1 = t.load_ram(a_heap, ValueType::int(64));
+    let v2 = t.load_ram(a_plain, ValueType::int(64));
     let s0 = t.add(v0, v1);
     let sum = t.add(s0, v2);
-    let mut function = t.ret_val(sum);
+    let function = t.ret_val(sum);
 
     let by_addr = |want: u128| -> NodeId {
         function
@@ -121,12 +113,8 @@ fn loads_stack_heap_plain() -> (strider_ir::Function, NodeId, NodeId, NodeId) {
     let (stack_load, heap_load, plain_load) = (by_addr(0x1000), by_addr(0x2000), by_addr(0x3000));
     let stack_base = function.node_inputs(stack_load)[1];
     let heap_base = function.node_inputs(heap_load)[1];
-    function
-        .side_tables_mut()
-        .set_stack_slot(stack_base, stack_base, 0x10);
-    function
-        .side_tables_mut()
-        .set_heap_slot(heap_base, heap_base, 0x20);
+    function.set_stack_slot(stack_base, stack_base, 0x10);
+    function.set_heap_slot(heap_base, heap_base, 0x20);
     (function, stack_load, heap_load, plain_load)
 }
 
@@ -241,11 +229,7 @@ fn capture_then_read_stack_offset_via_side_table_load() {
     assert_eq!(offset, 0x10_i128);
 }
 
-/// `.filter()` must COMPOSE with the builder's own constraint, not replace it.
-///
-/// A node carries one predicate slot, and `NodePat` installs its core
-/// constraint there, so a `.filter()` layered on top has to narrow
-/// `stack_only`'s region check rather than take the slot from it.
+/// `.filter()` must COMPOSE with `stack_only`'s region check, not replace it.
 #[test]
 fn filter_composes_with_stack_only_rather_than_replacing_it() {
     let (g, _stack, _heap, _plain) = loads_stack_heap_plain();
@@ -280,7 +264,7 @@ fn filter_composes_with_stack_only_rather_than_replacing_it() {
 fn non_stack_rejects_an_undecomposed_access() {
     let mut t = Tb::empty();
     let addr = t.u64(0x1000);
-    let v = t.load_ram(addr, ValueType::I64);
+    let v = t.load_ram(addr, ValueType::int(64));
     let function = t.ret_val(v);
     let matcher = Matcher::new(&function);
     assert!(

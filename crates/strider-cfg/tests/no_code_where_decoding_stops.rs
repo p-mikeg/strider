@@ -4,17 +4,17 @@
 //! gcc traceback table) and a range the image marks as data (an ARM literal
 //! pool after a call to an unmarked no-return function).
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{
-    Builder, Cfg, CfgOptions, DataRanges, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
+    Cfg, CfgOptions, DataRanges, DecodeEngine, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
 };
 use strider_target::SleighArch;
 
 fn build(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> anyhow::Result<Cfg> {
     let reader = BufMemReader::new(bytes, start);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    Builder::for_arch(arch, &mut sleigh, start, opts).build()
+    DecodeEngine::new(*arch, reader)
+        .expect("decode engine")
+        .build_cfg(start.into(), opts)
 }
 
 fn be_words(words: &[u32]) -> Vec<u8> {
@@ -32,7 +32,7 @@ fn at(addr: u64) -> PcodeInsnAddr {
 fn decoded_addrs(cfg: &Cfg) -> Vec<u64> {
     let mut v: Vec<u64> = cfg
         .regions()
-        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine_addr.addr))
+        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine()))
         .collect();
     v.sort_unstable();
     v.dedup();
@@ -41,7 +41,7 @@ fn decoded_addrs(cfg: &Cfg) -> Vec<u64> {
 
 fn bounded(size: u64) -> CfgOptions<'static> {
     CfgOptions {
-        fn_max_size: Some(size),
+        bound: strider_cfg::FunctionBound::size(size),
         ..CfgOptions::default()
     }
 }
@@ -64,7 +64,12 @@ fn an_undecodable_word_after_a_call_ends_the_call_as_no_return() {
         cfg.region_graph()[cfg.entry()].terminator,
         RegionTerminator::NoReturn
     );
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1004)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1004)]
+    );
     assert!(!decoded_addrs(&cfg).contains(&0x1004));
 }
 
@@ -83,6 +88,17 @@ fn an_undecodable_word_past_anything_but_a_call_still_fails_the_function() {
 }
 
 #[test]
+fn a_zero_pcode_op_run_no_call_falls_into_still_fails_the_function() {
+    // mov eax, 1 ; nop ; bad
+    let bytes = vec![0xb8, 0x01, 0x00, 0x00, 0x00, 0x90, 0x06, 0x06, 0x06, 0x06];
+    let err = build(&SleighArch::x86_64(), bytes, 0x1000, &CfgOptions::default());
+    assert!(
+        err.is_err(),
+        "a nop between the fall-through and the bad bytes changes nothing"
+    );
+}
+
+#[test]
 fn a_direct_branch_to_an_undecodable_word_is_reported_not_fatal() {
     let cfg = build(
         &SleighArch::ppc32be(),
@@ -91,7 +107,12 @@ fn a_direct_branch_to_an_undecodable_word_is_reported_not_fatal() {
         &bounded(0xc),
     )
     .expect("a branch to a word that does not decode must not fail the function");
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1008)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1008)]
+    );
     let stub = cfg
         .regions()
         .find(|r| r.start_addr == at(0x1008))
@@ -118,8 +139,51 @@ fn a_zero_pcode_op_run_between_a_call_and_bad_bytes_still_ends_the_call() {
         cfg.region_graph()[cfg.entry()].terminator,
         RegionTerminator::NoReturn
     );
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1006)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1006)]
+    );
     assert!(!decoded_addrs(&cfg).contains(&0x1006));
+}
+
+/// Code decoded past the zero-pcode-op run (a literal pool's words) does not
+/// hide the call either.
+#[test]
+fn code_past_a_zero_pcode_op_run_after_a_call_still_ends_the_call() {
+    // 0x1000 call 0x2000 ; 0x1005 nop ; 0x1006 inc eax (ff c0) ; 0x1008 bad.
+    let x86 = vec![
+        0xe8, 0xfb, 0x0f, 0x00, 0x00, 0x90, 0xff, 0xc0, 0x06, 0x06, 0x06, 0x06,
+    ];
+    // armhf glibc `dlsym` tail: 0x58d7a bl 0xbdf24 ; 0x58d7e nop ;
+    // 0x58d80 literal pool, decoding until 0x58d94.
+    let hex = "65f0d3f800bf0c530c008c000000e8000000f6520c0078010000a9ffffffba520c00a0520c00";
+    let thumb = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    for (arch, bytes, base, entry, bad) in [
+        (SleighArch::x86_64(), x86, 0x1000, 0x1000, 0x1008),
+        (SleighArch::arm(), thumb, 0x58d7a, 0x58d7b, 0x58d94),
+    ] {
+        let cfg = DecodeEngine::new(arch, BufMemReader::new(bytes, base))
+            .expect("decode engine")
+            .build_cfg(u64::into(entry), &CfgOptions::default())
+            .unwrap_or_else(|e| panic!("{base:#x}: {e:#}"));
+        assert_eq!(
+            cfg.region_graph()[cfg.entry()].terminator,
+            RegionTerminator::NoReturn,
+            "{base:#x}"
+        );
+        assert_eq!(
+            cfg.incomplete()
+                .of(strider_cfg::Reason::UndecodableTarget)
+                .collect::<Vec<_>>(),
+            &[at(bad)]
+        );
+        assert_eq!(decoded_addrs(&cfg), &[base], "{base:#x}");
+    }
 }
 
 /// A branch landing on one of those zero-pcode-op instructions still has a
@@ -137,7 +201,12 @@ fn a_branch_into_the_zero_pcode_op_run_past_a_call_keeps_a_successor() {
         &CfgOptions::default(),
     )
     .expect("build");
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1008)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1008)]
+    );
     let nop = cfg
         .region_ids()
         .find(|&id| cfg.region_graph()[id].start_addr == at(0x1007))
@@ -145,9 +214,51 @@ fn a_branch_into_the_zero_pcode_op_run_past_a_call_keeps_a_successor() {
     assert_eq!(cfg.region_graph().neighbors(nop).count(), 1);
     let call = cfg
         .regions()
-        .find(|r| r.insns.iter().any(|i| i.addr.machine_addr.addr == 0x1002))
+        .find(|r| r.insns.iter().any(|i| i.addr.machine() == 0x1002))
         .expect("the call decodes");
     assert_eq!(call.terminator, RegionTerminator::NoReturn);
+}
+
+/// Which predecessor reaches the zero-pcode-op run first does not change the
+/// verdict: a branch into the run explored before the call's fall-through.
+#[test]
+fn a_zero_pcode_op_run_into_bad_bytes_is_decided_whichever_edge_comes_first() {
+    // test eax, eax ; je 0x1009 ; call 0x2000 ; 0x1009 nop ; 0x100a bad
+    let call_first = [
+        0x85, 0xc0, 0x74, 0x05, 0xe8, 0xf7, 0x0f, 0x00, 0x00, 0x90, 0x06, 0x06, 0x06, 0x06,
+    ];
+    // test eax, eax ; jne 0x1006 ; jmp 0x100b ; call 0x2000 ; 0x100b nop ; 0x100c bad
+    let branch_first = [
+        0x85, 0xc0, 0x75, 0x02, 0xeb, 0x05, 0xe8, 0xf5, 0x0f, 0x00, 0x00, 0x90, 0x06, 0x06, 0x06,
+        0x06,
+    ];
+    for (bytes, call, bad) in [
+        (&call_first[..], 0x1004, 0x100a),
+        (&branch_first[..], 0x1006, 0x100c),
+    ] {
+        let cfg = build(
+            &SleighArch::x86_64(),
+            bytes.to_vec(),
+            0x1000,
+            &CfgOptions::default(),
+        )
+        .expect("a nop run into bad bytes must not fail the function");
+        assert_eq!(
+            cfg.incomplete()
+                .of(strider_cfg::Reason::UndecodableTarget)
+                .collect::<Vec<_>>(),
+            &[at(bad)]
+        );
+        let call = cfg
+            .regions()
+            .find(|r| r.insns.iter().any(|i| i.addr.machine() == call))
+            .expect("the call decodes");
+        assert_eq!(
+            call.terminator,
+            RegionTerminator::NoReturn,
+            "call at {call:?}"
+        );
+    }
 }
 
 /// The same for a literal pool a `$d` mapping symbol marks, which is what real
@@ -163,7 +274,12 @@ fn a_zero_pcode_op_run_between_a_call_and_a_data_range_still_ends_the_call() {
         cfg.region_graph()[cfg.entry()].terminator,
         RegionTerminator::NoReturn
     );
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1008)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1008)]
+    );
     assert!(
         cfg.regions()
             .all(|r| !matches!(r.terminator, RegionTerminator::TailCall { .. })),
@@ -221,10 +337,15 @@ fn a_literal_pool_after_a_call_is_never_decoded() {
     );
     let call_region = cfg
         .regions()
-        .find(|r| r.insns.iter().any(|i| i.addr.machine_addr.addr == 0x100c))
+        .find(|r| r.insns.iter().any(|i| i.addr.machine() == 0x100c))
         .expect("the call decodes");
     assert_eq!(call_region.terminator, RegionTerminator::NoReturn);
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1010)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1010)]
+    );
 }
 
 #[test]
@@ -235,7 +356,12 @@ fn a_direct_branch_into_a_data_range_is_reported_not_decoded() {
     opts.data_ranges = DataRanges::new(std::iter::once(0x1008..0x100c));
     let cfg = build(&SleighArch::arm(), le_words(&words), 0x1000, &opts).expect("build");
     assert!(!decoded_addrs(&cfg).contains(&0x1008));
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1008)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1008)]
+    );
 }
 
 #[test]
@@ -245,7 +371,7 @@ fn a_seeded_arm_into_a_data_range_is_an_undecodable_seeded_target() {
     let site = PcodeInsnAddr::at_machine_start(0x1000);
     let known = rustc_hash::FxHashMap::from_iter([(
         site,
-        ResolvedTargets::Multiple(vec![0x1004.into(), 0x1008.into()]),
+        ResolvedTargets::table(vec![0x1004.into(), 0x1008.into()]),
     )]);
     let opts = CfgOptions {
         data_ranges: DataRanges::new(std::iter::once(0x1008..0x100c)),
@@ -257,7 +383,7 @@ fn a_seeded_arm_into_a_data_range_is_an_undecodable_seeded_target() {
     assert_eq!(
         cfg.undecodable_seeded_targets()
             .iter()
-            .map(|u| u.target.machine_addr.addr)
+            .map(|u| u.target.machine())
             .collect::<Vec<_>>(),
         vec![0x1008]
     );
@@ -281,7 +407,12 @@ fn one_data_address_two_edges_reach_is_reported_once() {
     let mut opts = bounded(0x18);
     opts.data_ranges = DataRanges::new(std::iter::once(0x1014..0x1018));
     let cfg = build(&SleighArch::arm(), le_words(&words), 0x1000, &opts).expect("build");
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1014)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1014)]
+    );
 }
 
 // ARM kernel entries written as `.word` under a `$d` mapping symbol.
@@ -302,7 +433,12 @@ fn an_entry_instruction_inside_a_data_range_is_decoded() {
     )
     .expect("the entry instruction decodes whatever the data ranges say");
     assert_eq!(decoded_addrs(&cfg), vec![0x1000]);
-    assert!(cfg.undecodable_branch_targets().is_empty());
+    assert!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .next()
+            .is_none()
+    );
 
     let cfg = build(
         &SleighArch::arm(),
@@ -326,7 +462,12 @@ fn a_data_range_past_the_entry_instruction_still_governs_its_fall_through() {
     )
     .expect("build");
     assert_eq!(decoded_addrs(&cfg), vec![0x1000]);
-    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1004)]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x1004)]
+    );
 }
 
 #[test]
@@ -337,4 +478,51 @@ fn data_ranges_answer_half_open_overlap_across_overlapping_inputs() {
     assert!(!ranges.overlaps(0x101c, 0x1020));
     assert!(!ranges.overlaps(0x1000, 0x1010));
     assert!(ranges.overlaps(0x2003, 0x2004));
+}
+
+/// aarch64 `-mcmodel=large`: `bl die` to a no-return function, its literal
+/// pool, then `die` itself. With no size bound the call stays a call, cut
+/// where the pool begins, not a jump into the next function.
+#[test]
+fn a_call_before_a_literal_pool_and_the_next_function_stays_a_reported_call() {
+    const WORDS: [u32; 13] = [
+        0x7100_0c1f, // cmp w0, #3
+        0x5400_00cd, // b.le .+0x18
+        0x2a00_03e1, // mov w1, w0
+        0x9000_0000, // adrp x0, ...
+        0xf942_fc00, // ldr x0, [x0, #0x5f8]
+        0xb861_d800, // ldr w0, [x0, w1, sxtw #2]
+        0xd65f_03c0, // ret
+        0xa9bf_7bfd, // stp x29, x30, [sp, #-16]!
+        0x9100_03fd, // mov x29, sp
+        0x9400_0003, // bl 0x400600 <die>
+        0x0041_1030, // literal pool
+        0x0000_0000,
+        0x1400_0000, // die: b .
+    ];
+    let cfg = build(
+        &SleighArch::aarch64(),
+        le_words(&WORDS),
+        0x40_05d0,
+        &CfgOptions::default(),
+    )
+    .expect("cfg");
+    let call_region = cfg
+        .regions()
+        .find(|r| r.insns.iter().any(|i| i.addr.machine() == 0x40_05f4))
+        .expect("the bl is decoded");
+    assert_eq!(call_region.terminator, RegionTerminator::NoReturn);
+    assert!(
+        call_region
+            .insns
+            .iter()
+            .any(|i| i.addr.machine() == 0x40_05f4 && i.insn.opcode == rsleigh::Opcode::Call)
+    );
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
+        &[at(0x40_05f8)]
+    );
+    assert!(!decoded_addrs(&cfg).contains(&0x40_0600));
 }

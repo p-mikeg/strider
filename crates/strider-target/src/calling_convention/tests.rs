@@ -1,9 +1,5 @@
 use super::*;
 
-fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
-    arch.probe_regs().unwrap()
-}
-
 /// Float / vector register lists shared by the rows below, each cited where
 /// the preset names it.
 const NONE: &[&str] = &[];
@@ -14,16 +10,15 @@ const XMM0_7: &[&str] = &[
 /// COMPLEX_X87 imaginary half in ST1.
 const X64_RET_F: &[&str] = &["XMM0", "XMM1", "ST0", "ST1"];
 /// Intel386 psABI: every float argument is stack-passed (the SSE argument
-/// class is a documented omission); X87 / COMPLEX_X87 return in ST0/ST1 and
-/// the SSE class in XMM0.
-const X86_RET_F: &[&str] = &["ST0", "ST1", "XMM0"];
+/// class is a documented omission); X87 returns in ST0 and the SSE class in
+/// XMM0; `_Complex double` returns through memory.
+const X86_RET_F: &[&str] = &["ST0", "XMM0"];
 /// AAPCS64 6.4.1 / 6.4.2: v0-v7 in, a 4-member HFA back in v0-v3.
 const Q0_7: &[&str] = &["q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7"];
 const Q0_3: &[&str] = &["q0", "q1", "q2", "q3"];
-/// AAPCS-VFP (IHI 0042 6.1.2.1): the double carriers d0-d7, a 4-member HFA
-/// back in d0-d3.
+/// AAPCS-VFP (IHI 0042 6.1.2.1): the double carriers d0-d7, a 4-member
+/// vector aggregate back in q0-q3.
 const D0_7: &[&str] = &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"];
-const D0_3: &[&str] = &["d0", "d1", "d2", "d3"];
 /// AAPCS 5.1.2.1 / AAPCS64 6.1.2: d8-d15, AAPCS64 preserving the low 64 bits
 /// only, so these name the `d` views and never `q8`-`q15`.
 const D8_D15: &[&str] = &["d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15"];
@@ -54,9 +49,9 @@ const PPC64_ARG_F: &[&str] = &[
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "vs34",
     "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
 ];
-/// `long double` is IBM double-double in the f1:f2 pair; a vector, and an
-/// IEEE `__float128`, come back in v2.
-const PPC_RET_F: &[&str] = &["f1", "f2", "vs34"];
+/// `long double` is IBM double-double in the f1:f2 pair and its `_Complex` in
+/// f1-f4; a vector, and an IEEE `__float128`, come back in v2.
+const PPC_RET_F: &[&str] = &["f1", "f2", "f3", "f4", "vs34"];
 /// ELFv2 2.2.3.3 returns a homogeneous float aggregate in f1-f8 and a
 /// homogeneous vector aggregate in v2-v9.
 const PPC_ELFV2_RET_F: &[&str] = &[
@@ -69,7 +64,7 @@ const PPC32_ARG_F_KERNEL: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", 
 const PPC64_ARG_F_KERNEL: &[&str] = &[
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
 ];
-const PPC_RET_F_KERNEL: &[&str] = &["f1", "f2"];
+const PPC_RET_F_KERNEL: &[&str] = &["f1", "f2", "f3", "f4"];
 const PPC_ELFV2_RET_F_KERNEL: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
 
 /// One supported convention plus everything `build()` should produce for it.
@@ -88,17 +83,15 @@ struct Case {
     args_float: &'static [&'static str],
     saved_float: &'static [&'static str],
     ret_float: &'static [&'static str],
-    /// Neither GPR nor float: PowerPC's non-volatile condition fields, which
-    /// are 1 byte each and sit after the floats.
+    /// Neither GPR nor float, after the floats: PowerPC's non-volatile
+    /// condition fields (1 byte each) and ARM's `cpsr_mode`.
     callee_saved_cond_count: usize,
     /// PowerPC's non-volatile vector registers, 16 bytes each, last in the
     /// list.
     callee_saved_vec_count: usize,
     ret_count: usize,
     reg_size_bytes: u32,
-    stack_ptr_name: &'static str,
     stack_args: Option<StackArgs>,
-    ret_stack_pop: i64,
 }
 
 fn cases() -> Vec<Case> {
@@ -116,12 +109,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "RSP",
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 8,
             }),
-            ret_stack_pop: 8,
         },
         Case {
             name: "x86 cdecl",
@@ -136,12 +127,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "ESP",
             stack_args: Some(StackArgs {
                 base_offset: 4,
                 increment: 4,
             }),
-            ret_stack_pop: 4,
         },
         Case {
             name: "ARM AAPCS",
@@ -151,24 +140,22 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             args_float: D0_7,
             saved_float: D8_D15,
-            ret_float: D0_3,
-            callee_saved_cond_count: 0,
+            ret_float: D0_7,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "AArch64 AAPCS64",
             cc: CallingConvention::aarch64_aapcs64,
             arch: crate::arch::SleighArch::aarch64,
             arg_count: 8,
-            callee_saved_count: 12,
+            callee_saved_count: 13,
             args_float: Q0_7,
             saved_float: D8_D15,
             ret_float: Q0_3,
@@ -176,12 +163,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "MIPS O32 (LE)",
@@ -196,12 +181,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 16,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "MIPS O32 (BE)",
@@ -216,12 +199,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 16,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "MIPS N64 (LE)",
@@ -236,12 +217,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "MIPS N64 (BE)",
@@ -256,12 +235,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC SysV 32 (BE)",
@@ -275,14 +252,12 @@ fn cases() -> Vec<Case> {
             ret_float: PPC_RET_F,
             callee_saved_cond_count: 3,
             callee_saved_vec_count: 12,
-            ret_count: 2,
+            ret_count: 4, // r3..r6
             reg_size_bytes: 4,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC SysV 32 (LE)",
@@ -295,14 +270,12 @@ fn cases() -> Vec<Case> {
             ret_float: PPC_RET_F,
             callee_saved_cond_count: 3,
             callee_saved_vec_count: 12,
-            ret_count: 2,
+            ret_count: 4,
             reg_size_bytes: 4,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC ELFv1 (BE)",
@@ -319,14 +292,12 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "r1",
             // 48-byte linkage area + the 8-doubleword r3-r10 parameter save
             // area; the first stack-ONLY argument is above both.
             stack_args: Some(StackArgs {
                 base_offset: 112,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC ELFv2 (LE)",
@@ -342,21 +313,19 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "r1",
             // 32-byte linkage area + the same parameter save area.  Measured:
             // a 16-argument call stores arguments 9..16 at r1+96..152.
             stack_args: Some(StackArgs {
                 base_offset: 96,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "AArch64 AAPCS64 (BE)",
             cc: CallingConvention::aarch64_aapcs64,
             arch: crate::arch::SleighArch::aarch64be,
             arg_count: 8,
-            callee_saved_count: 12,
+            callee_saved_count: 13,
             args_float: Q0_7,
             saved_float: D8_D15,
             ret_float: Q0_3,
@@ -364,12 +333,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "ARM AAPCS (Thumb)",
@@ -379,17 +346,15 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             args_float: D0_7,
             saved_float: D8_D15,
-            ret_float: D0_3,
-            callee_saved_cond_count: 0,
+            ret_float: D0_7,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "ARM AAPCS (BE)",
@@ -399,17 +364,15 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             args_float: D0_7,
             saved_float: D8_D15,
-            ret_float: D0_3,
-            callee_saved_cond_count: 0,
+            ret_float: D0_7,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         // BE8 ARM: the register conventions are byte-order independent, so the
         // same preset has to resolve on this spec too.
@@ -421,17 +384,15 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             args_float: D0_7,
             saved_float: D8_D15,
-            ret_float: D0_3,
-            callee_saved_cond_count: 0,
+            ret_float: D0_7,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         // `-mfloat-abi=soft` / `softfp` passes and returns floats in the core
         // registers, so naming the VFP bank would seed d0-d7 on every function
@@ -447,16 +408,14 @@ fn cases() -> Vec<Case> {
             args_float: NONE,
             saved_float: D8_D15,
             ret_float: NONE,
-            callee_saved_cond_count: 0,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "sp",
             stack_args: Some(StackArgs {
                 base_offset: 0,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         // The kernel rows: x86 32-bit differs from its userland counterpart in
         // the integer argument registers (regparm-3), PowerPC in the vector
@@ -475,12 +434,10 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 0,
             ret_count: 2, // EAX, EDX
             reg_size_bytes: 4,
-            stack_ptr_name: "ESP",
             stack_args: Some(StackArgs {
                 base_offset: 4,
                 increment: 4,
             }),
-            ret_stack_pop: 4,
         },
         Case {
             name: "PowerPC SysV 32 Linux kernel",
@@ -495,19 +452,17 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 4,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC ELFv1 Linux kernel",
             cc: CallingConvention::powerpc64_elf_v1_linux_kernel,
             arch: crate::arch::SleighArch::ppc64be,
             arg_count: 8,
-            callee_saved_count: 21,
+            callee_saved_count: 20,
             args_float: PPC64_ARG_F_KERNEL,
             saved_float: PPC_F14_F31,
             ret_float: PPC_RET_F_KERNEL,
@@ -515,19 +470,17 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 112,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
         Case {
             name: "PowerPC ELFv2 Linux kernel",
             cc: CallingConvention::powerpc64_elf_v2_linux_kernel,
             arch: crate::arch::SleighArch::ppc64le,
             arg_count: 8,
-            callee_saved_count: 21,
+            callee_saved_count: 20,
             args_float: PPC64_ARG_F_KERNEL,
             saved_float: PPC_F14_F31,
             ret_float: PPC_ELFV2_RET_F_KERNEL,
@@ -535,18 +488,16 @@ fn cases() -> Vec<Case> {
             callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
-            stack_ptr_name: "r1",
             stack_args: Some(StackArgs {
                 base_offset: 96,
                 increment: 8,
             }),
-            ret_stack_pop: 0,
         },
     ]
 }
 
 fn build_case(case: &Case) -> (BuiltCallingConvention, rsleigh::SleighRegs) {
-    let regs = regs_for((case.arch)());
+    let regs = (case.arch)().probe_regs();
     let built = (case.cc)()
         .build(&regs)
         .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", case.name));
@@ -613,7 +564,7 @@ fn presets_resolve_correct_register_sets() {
 }
 
 /// Every resolved register, SP included, must be the arch's natural word
-/// size.  SP matters because `StackOffsetDetect` and the stack-arg machinery
+/// size.  SP matters because the memory analysis and the stack-arg machinery
 /// assume an SP-sized address: an undersized SP silently miscomputes offsets
 /// downstream with no diagnostic from this crate.
 #[test]
@@ -628,7 +579,7 @@ fn presets_resolved_registers_have_expected_size() {
             .iter()
             .chain(saved_int)
             .chain(&built.ret_val_regs)
-            .chain(std::iter::once(&built.stack_vn))
+            .chain(std::iter::once(&built.stack_ptr))
         {
             assert_eq!(
                 vn.size, c.reg_size_bytes,
@@ -666,47 +617,54 @@ fn presets_resolved_registers_have_expected_size() {
     }
 }
 
-/// The SP varnode resolves to the arch's SP register and appears in none of
-/// the resolved register lists: on stack-push ISAs the callee's `ret` pops the
-/// return address so SP is not preserved, and on link-register ISAs the call
-/// leaves SP alone but SP is still modelled not-callee-saved for uniformity
-/// (with `ret_stack_pop = 0`).  Stack-arg offsets and `ret_stack_pop` must
-/// round-trip unchanged from the preset.
+/// `preserves_all` / `preserves_regs` are written once on the name form and
+/// once on the built one; either order gives the same convention.
 #[test]
-fn presets_stack_pointer_and_arg_offsets() {
+fn preserves_transforms_commute_with_build() {
     for c in cases() {
-        let (built, regs) = build_case(&c);
-        let sp = regs
-            .name_to_vn(c.stack_ptr_name)
-            .unwrap_or_else(|| panic!("{}: {} must resolve", c.name, c.stack_ptr_name));
-        assert_eq!(built.stack_vn, sp, "{}: stack_vn", c.name);
-        for (label, set) in [
-            ("arg_passing_regs", &built.arg_passing_regs),
-            ("callee_saved_regs", &built.callee_saved_regs),
-            ("ret_val_regs", &built.ret_val_regs),
-        ] {
-            assert!(
-                !set.contains(&built.stack_vn),
-                "{}: stack pointer must not appear in {label}",
-                c.name,
-            );
-        }
-        assert_eq!(built.stack_args, c.stack_args, "{}: stack_args", c.name,);
+        let regs = (c.arch)().probe_regs();
+        let cc = (c.cc)();
+        let built = cc.build(&regs).expect("build");
         assert_eq!(
-            built.ret_stack_pop, c.ret_stack_pop,
-            "{}: ret_stack_pop",
-            c.name,
+            cc.preserves_all().build(&regs).expect("build"),
+            built.clone().preserves_all(),
+            "{}: preserves_all",
+            c.name
         );
+        assert_eq!(
+            cc.preserves_regs().build(&regs).expect("build"),
+            built.preserves_regs(),
+            "{}: preserves_regs",
+            c.name
+        );
+    }
+}
+
+/// The register homes start the incoming-argument memory where the ABI
+/// keeps them contiguous with the stack arguments.
+#[test]
+fn presets_incoming_args_start() {
+    for c in cases() {
+        let (built, _) = build_case(&c);
+        let want = match c.name {
+            n if n.starts_with("ARM AAPCS") => Some(-16),
+            n if n.starts_with("MIPS O32") => Some(0),
+            n if n.starts_with("MIPS N64") => Some(-64),
+            n if n.starts_with("PowerPC ELFv1") => Some(48),
+            n if n.starts_with("PowerPC ELFv2") => Some(32),
+            _ => c.stack_args.map(|s| s.base_offset),
+        };
+        assert_eq!(built.incoming_args_start(), want, "{}", c.name);
     }
 }
 
 /// An unknown register name in any category errors, on any architecture.
 #[test]
 fn build_returns_error_for_unknown_register_name() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     for bad_name in &["NOTAREG", "", "rax_FAKE"] {
         let cc = CallingConvention {
-            stack_ptr_reg_name: "RSP",
+            stack_ptr: "RSP",
             arg_passing_regs: std::slice::from_ref(bad_name),
             arg_passing_regs_float: &[],
             callee_saved_regs: &[],
@@ -714,10 +672,11 @@ fn build_returns_error_for_unknown_register_name() {
             ret_val_regs_float: &[],
             stack_args: None,
             ret_stack_pop: 0,
-            link_register_reg_name: None,
+            link_register: None,
             preserves_memory: false,
             preserves_all_registers: false,
-            entry_address_reg_name: None,
+            entry_address: None,
+            reg_args_adjoin_stack_args: false,
         };
         let result = cc.build(&regs);
         let err = result.expect_err("expected UnknownRegName error");
@@ -733,9 +692,9 @@ fn build_returns_error_for_unknown_register_name() {
 /// the remaining valid ones.
 #[test]
 fn build_returns_error_even_when_some_names_are_valid() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let cc = CallingConvention {
-        stack_ptr_reg_name: "RSP",
+        stack_ptr: "RSP",
         arg_passing_regs: &["RDI", "NOT_A_REG", "RSI"],
         arg_passing_regs_float: &[],
         callee_saved_regs: &[],
@@ -743,10 +702,11 @@ fn build_returns_error_even_when_some_names_are_valid() {
         ret_val_regs_float: &[],
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_reg_name: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        entry_address_reg_name: None,
+        entry_address: None,
+        reg_args_adjoin_stack_args: false,
     };
     assert!(
         cc.build(&regs).is_err(),
@@ -754,168 +714,39 @@ fn build_returns_error_even_when_some_names_are_valid() {
     );
 }
 
-/// Expected link-register Sleigh name per preset, `None` for stack-push ISAs
-/// that hold the return address on the stack.  Drives every link-register
-/// test below; adding a preset means adding one row.
-struct LinkRegCase {
-    name: &'static str,
-    cc: fn() -> CallingConvention,
-    arch: fn() -> crate::arch::SleighArch,
-    expected_lr_name: Option<&'static str>,
-}
-
-fn link_reg_cases() -> Vec<LinkRegCase> {
-    vec![
-        LinkRegCase {
-            name: "ARM AAPCS",
-            cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm,
-            expected_lr_name: Some("lr"),
-        },
-        LinkRegCase {
-            name: "ARM AAPCS (Thumb)",
-            cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm_thumb,
-            expected_lr_name: Some("lr"),
-        },
-        LinkRegCase {
-            name: "ARM AAPCS (BE)",
-            cc: CallingConvention::arm_aapcs,
-            arch: crate::arch::SleighArch::arm_be,
-            expected_lr_name: Some("lr"),
-        },
-        LinkRegCase {
-            name: "AArch64 AAPCS64",
-            cc: CallingConvention::aarch64_aapcs64,
-            arch: crate::arch::SleighArch::aarch64,
-            expected_lr_name: Some("x30"),
-        },
-        LinkRegCase {
-            name: "AArch64 AAPCS64 (BE)",
-            cc: CallingConvention::aarch64_aapcs64,
-            arch: crate::arch::SleighArch::aarch64be,
-            expected_lr_name: Some("x30"),
-        },
-        LinkRegCase {
-            name: "MIPS O32 (LE)",
-            cc: CallingConvention::mips_o32,
-            arch: crate::arch::SleighArch::mipsle32,
-            expected_lr_name: Some("ra"),
-        },
-        LinkRegCase {
-            name: "MIPS O32 (BE)",
-            cc: CallingConvention::mips_o32,
-            arch: crate::arch::SleighArch::mipsbe32,
-            expected_lr_name: Some("ra"),
-        },
-        LinkRegCase {
-            name: "MIPS N64 (LE)",
-            cc: CallingConvention::mips_n64,
-            arch: crate::arch::SleighArch::mipsle64,
-            expected_lr_name: Some("ra"),
-        },
-        LinkRegCase {
-            name: "MIPS N64 (BE)",
-            cc: CallingConvention::mips_n64,
-            arch: crate::arch::SleighArch::mipsbe64,
-            expected_lr_name: Some("ra"),
-        },
-        LinkRegCase {
-            name: "PowerPC SysV 32 (BE)",
-            cc: CallingConvention::powerpc_sysv32,
-            arch: crate::arch::SleighArch::ppc32be,
-            expected_lr_name: Some("LR"),
-        },
-        LinkRegCase {
-            name: "PowerPC SysV 32 (LE)",
-            cc: CallingConvention::powerpc_sysv32,
-            arch: crate::arch::SleighArch::ppc32le,
-            expected_lr_name: Some("LR"),
-        },
-        LinkRegCase {
-            name: "PowerPC ELFv1 (BE)",
-            cc: CallingConvention::powerpc64_elf_v1,
-            arch: crate::arch::SleighArch::ppc64be,
-            expected_lr_name: Some("LR"),
-        },
-        LinkRegCase {
-            name: "PowerPC ELFv2 (LE)",
-            cc: CallingConvention::powerpc64_elf_v2,
-            arch: crate::arch::SleighArch::ppc64le,
-            expected_lr_name: Some("LR"),
-        },
-        LinkRegCase {
-            name: "x86-64 SysV",
-            cc: CallingConvention::x86_64_systemv,
-            arch: crate::arch::SleighArch::x86_64,
-            expected_lr_name: None,
-        },
-        LinkRegCase {
-            name: "x86 cdecl",
-            cc: CallingConvention::x86_cdecl,
-            arch: crate::arch::SleighArch::x86,
-            expected_lr_name: None,
-        },
-    ]
-}
-
-/// Every link-register ISA preset resolves `link_register_vn` to the arch's
-/// LR under the documented Sleigh name.  Pinning all of them catches a typo or
-/// rename in any one `link_register_reg_name`.
+/// Every preset on every arch it names resolves `link_register` to its
+/// family's LR, none on stack-push x86.
 #[test]
-fn link_register_vn_set_for_link_register_presets() {
-    for c in link_reg_cases() {
-        let Some(expected_name) = c.expected_lr_name else {
-            continue;
-        };
-        let regs = regs_for((c.arch)());
-        let built = (c.cc)()
-            .build(&regs)
-            .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
-        let expected_vn = regs.name_to_vn(expected_name).unwrap_or_else(|| {
-            panic!(
-                "{}: expected LR name {:?} must resolve in arch's Sleigh regs",
-                c.name, expected_name,
-            )
-        });
-        assert_eq!(
-            built.link_register_vn,
-            Some(expected_vn),
-            "{}: link_register_vn must be the {:?} varnode",
-            c.name,
-            expected_name,
-        );
-    }
-}
-
-/// Stack-push ISAs (x86, x86_64) keep the return address on the stack.
-#[test]
-fn link_register_vn_none_for_stack_push_presets() {
-    for c in link_reg_cases() {
-        if c.expected_lr_name.is_some() {
-            continue;
+fn every_preset_names_its_familys_link_register() {
+    for cc in CallingConvention::presets() {
+        for &preset in cc.arches {
+            let regs = preset.arch().probe_regs();
+            let built = cc
+                .cc
+                .build(&regs)
+                .unwrap_or_else(|e| panic!("{}/{preset:?}: {e:?}", cc.name));
+            let lr = match preset.family_name() {
+                "x86" => None,
+                "arm32" => Some("lr"),
+                "aarch64" => Some("x30"),
+                "mips" => Some("ra"),
+                "ppc" => Some("LR"),
+                other => panic!("no link-register row for family {other}"),
+            };
+            let want = lr.map(|name| regs.name_to_vn(name).expect(name));
+            assert_eq!(built.link_register, want, "{}/{preset:?}", cc.name);
         }
-        let regs = regs_for((c.arch)());
-        let built = (c.cc)()
-            .build(&regs)
-            .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
-        assert!(
-            built.link_register_vn.is_none(),
-            "{}: link_register_vn must be None on stack-push ISAs, got {:?}",
-            c.name,
-            built.link_register_vn,
-        );
     }
 }
 
-/// An unknown `stack_ptr_reg_name` errors like any other unknown register.
+/// An unknown `stack_ptr` errors like any other unknown register.
 /// The SP name has its own lookup path in `build()`, separate from
 /// `regs_to_vns`.
 #[test]
 fn build_returns_error_for_unknown_stack_pointer_name() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let cc = CallingConvention {
-        stack_ptr_reg_name: "NOT_A_SP",
+        stack_ptr: "NOT_A_SP",
         arg_passing_regs: &[],
         arg_passing_regs_float: &[],
         callee_saved_regs: &[],
@@ -923,10 +754,11 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         ret_val_regs_float: &[],
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_reg_name: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        entry_address_reg_name: None,
+        entry_address: None,
+        reg_args_adjoin_stack_args: false,
     };
     let result = cc.build(&regs);
     let err = result.expect_err("expected UnknownRegName error");
@@ -954,33 +786,17 @@ fn preserves_all_sets_both_flags_regs_keeps_memory() {
     );
 }
 
+/// Only `preserves_all` opts a convention out of clobbering memory.
 #[test]
-fn standard_presets_have_preserves_memory_false() {
-    // Standard presets keep the default so their Call nodes correctly clobber
-    // memory.  Only preserves_all / preserves_regs opt out.
-    let presets: &[(&str, CallingConvention)] = &[
-        ("x86_64_systemv", CallingConvention::x86_64_systemv()),
-        ("x86_cdecl", CallingConvention::x86_cdecl()),
-        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64()),
-        ("arm_aapcs", CallingConvention::arm_aapcs()),
-        ("arm_aapcs_soft", CallingConvention::arm_aapcs_soft()),
-        ("mips_o32", CallingConvention::mips_o32()),
-        ("mips_n64", CallingConvention::mips_n64()),
-        ("powerpc_sysv32", CallingConvention::powerpc_sysv32()),
-        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1()),
-        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2()),
-    ];
-    for (name, cc) in presets {
-        assert!(
-            !cc.preserves_memory,
-            "{name}: standard presets must have preserves_memory = false"
-        );
+fn no_preset_preserves_memory() {
+    for cc in CallingConvention::presets() {
+        assert!(!cc.cc.preserves_memory, "{}", cc.name);
     }
 }
 
 #[test]
 fn positional_arg_layout_empty_has_no_stack() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let cc = CallingConvention::x86_64_systemv()
         .preserves_all()
         .build(&regs)
@@ -1130,23 +946,14 @@ fn stack_args_slot_math_degrades_on_overflow_not_panics() {
 /// offset decoded from a crafted binary.
 #[test]
 fn validate_rejects_negative_stack_arg_base_offset() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let sp = regs.name_to_vn("RSP").expect("x86_64 has RSP");
     let cc = BuiltCallingConvention {
-        arg_passing_regs: vec![],
-        callee_saved_regs: vec![],
-        ret_val_regs: vec![],
-        ret_val_regs_float: vec![],
-        stack_vn: sp,
+        stack_ptr: sp,
         stack_args: Some(StackArgs {
             base_offset: -8,
             increment: 8,
         }),
-        ret_stack_pop: 0,
-        link_register_vn: None,
-        preserves_memory: false,
-        preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     assert!(
@@ -1155,14 +962,14 @@ fn validate_rejects_negative_stack_arg_base_offset() {
     );
 }
 
-/// GHIDRA's ARM sla lays `d0`-`d3` inside `q0`/`q1` (`q0` and `d0` share
+/// Ghidra's ARM sla lays `d0`-`d3` inside `q0`/`q1` (`q0` and `d0` share
 /// offset 0x300), so a function touching `q0`/`q1` tracks those as the
 /// containers.  Mapping the return list through `container_of` then yields
 /// `q0, q0, q1, q1`, which the lifter concatenates into a `Call`'s output
 /// varnodes and `validate_call_output_vns` rejects.
 #[test]
 fn aliased_float_ret_regs_collapse_to_one_container_each() {
-    let regs = regs_for(crate::arch::SleighArch::arm());
+    let regs = crate::arch::SleighArch::arm().probe_regs();
     let built = CallingConvention::arm_aapcs()
         .build(&regs)
         .expect("arm_aapcs must build");
@@ -1198,7 +1005,7 @@ fn float_arg_regs_may_overlap_returns_but_not_callee_saved() {
         ),
     ] {
         let built = cc_fn()
-            .build(&regs_for(arch_fn()))
+            .build(&arch_fn().probe_regs())
             .unwrap_or_else(|e| panic!("{name}: build failed: {e:?}"));
         assert!(
             built
@@ -1238,7 +1045,7 @@ fn container_in(tracked: &[rsleigh::Vn], v: &rsleigh::Vn) -> rsleigh::Vn {
 /// to trash its upper half, so the container belongs in the clobber set.
 #[test]
 fn aarch64_tracked_q8_is_clobbered() {
-    let regs = regs_for(crate::arch::SleighArch::aarch64());
+    let regs = crate::arch::SleighArch::aarch64().probe_regs();
     let built = CallingConvention::aarch64_aapcs64()
         .build(&regs)
         .expect("aarch64_aapcs64 must build");
@@ -1264,7 +1071,7 @@ fn aarch64_tracked_q8_is_clobbered() {
 /// function tracking the 128-bit container keeps it out of the clobber set.
 #[test]
 fn arm_tracked_q4_stays_preserved() {
-    let regs = regs_for(crate::arch::SleighArch::arm());
+    let regs = crate::arch::SleighArch::arm().probe_regs();
     let built = CallingConvention::arm_aapcs()
         .build(&regs)
         .expect("arm_aapcs must build");
@@ -1274,7 +1081,7 @@ fn arm_tracked_q4_stays_preserved() {
     assert_eq!(
         container_in(&[q4], &d8),
         q4,
-        "d8 sits in q4 in GHIDRA's ARM register table",
+        "d8 sits in q4 in Ghidra's ARM register table",
     );
     assert_eq!(container_in(&[q4], &d9), q4, "d9 sits in q4");
     let r4 = vn_for_name(&regs, "r4").expect("ARM sla defines r4");
@@ -1292,7 +1099,7 @@ fn arm_tracked_q4_stays_preserved() {
 /// |callee_saved| * |tracked| per call, 42 * |tracked| on PPC64.
 #[test]
 fn ret_and_clobber_vns_does_not_map_the_callee_saved_list() {
-    let regs = regs_for(crate::arch::SleighArch::ppc64be());
+    let regs = crate::arch::SleighArch::ppc64be().probe_regs();
     let cc = CallingConvention::powerpc64_elf_v1();
     let built = cc.build(&regs).expect("powerpc64_elf_v1 must build");
     let tracked: Vec<rsleigh::Vn> = built
@@ -1373,10 +1180,10 @@ fn only_elfv2_and_mips_carry_an_entry_address_register() {
         ),
     ];
     for &(name, arch, cc, expected) in cases {
-        let regs = regs_for(arch());
+        let regs = arch().probe_regs();
         let built = cc().build(&regs).expect(name);
         assert_eq!(
-            built.entry_address_vn,
+            built.entry_address,
             expected.map(|r| vn_for_name(&regs, r).expect(r)),
             "{name}",
         );
@@ -1388,7 +1195,7 @@ fn only_elfv2_and_mips_carry_an_entry_address_register() {
 /// make every call region a def site for all of them.
 #[test]
 fn tracked_unique_temporaries_are_not_call_clobbers() {
-    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let regs = crate::arch::SleighArch::x86_64().probe_regs();
     let built = CallingConvention::x86_64_systemv()
         .build(&regs)
         .expect("x86_64_systemv must build");

@@ -43,8 +43,6 @@ def test_store_with_addr_and_data():
 def test_reserved_name_via_capture_string_raises():
     with pytest.raises(strider.StriderError):
         int_add(Capture("x"), Capture("y")).capture("_")
-    with pytest.raises(strider.StriderError):
-        int_add(Capture("x"), Capture("y")).capture("any_")
 
 
 def test_capture_method_on_pat():

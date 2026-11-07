@@ -8,13 +8,11 @@ exclude = ["externals/rsleigh"]
 
 [workspace.package]
 edition = "2024"
-version = "0.2.0"
+version = "0.3.0"
 license = "MIT"
 repository = "https://github.com/p-mikeg/strider"
-# Above edition 2024's own 1.85 floor: `u32::is_multiple_of` needs 1.87. Naming
-# it turns a syntax explosion on an older toolchain into a real error message.
-# The 1.91 floor is what `pyo3-stub-gen` needed; with that dependency gone the
-# floor is untested below 1.91 rather than known to be required.
+# 1.91 is the tested floor (`u32::is_multiple_of` alone needs 1.87). Naming it
+# turns a syntax explosion on an older toolchain into a clear error.
 rust-version = "1.91"
 # Publishing needs every workspace dependency to carry a version, and rsleigh is
 # a path dependency on a fork that is not on crates.io. Lift this per crate if
@@ -39,8 +37,7 @@ strider-pattern = { path = "crates/strider-pattern" }
 vn-container = { path = "crates/vn-container" }
 rsleigh = { path = "externals/rsleigh" }
 
-cranelift-bitset = "0.112.2"
-cranelift-entity = "0.112.2"
+cranelift-entity = "0.128"
 smallvec = { version = "1.13.2", default-features = false, features = [
     "const_new",
 ] }
@@ -49,11 +46,18 @@ memmap2 = "0.9.11"
 
 petgraph = "0.8.3"
 rustc-hash = "2"
+# The IR's integer-constant storage: a small-value-optimised arbitrary-
+# precision unsigned integer. MSRV 1.68, below the workspace's 1.91.
+dashu-int = "0.4.3"
 thiserror = "2.0.18"
 anyhow = "1.0"
+either = { version = "1.15.0", default-features = false }
 itertools = { version = "0.13.0", default-features = false }
 expect-test = "1.5.0"
 proptest = "1.5.0"
+# Tests only: strider-target's Ghidra oracle parses the vendored .cspec and
+# .ldefs files. Already in the lock as rsleigh's build dependency.
+roxmltree = "0.20.0"
 hashbrown = "0.16"
 bitflags = "2"
 # Benchmarks only.  Default features off: drops `plotters` (no plot generation

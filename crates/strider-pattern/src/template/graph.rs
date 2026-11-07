@@ -1,144 +1,94 @@
-//! Every template node is either a [`Build`](TmplNodeKind::Build) declaring a
-//! [`TemplateKind`], or a [`Capture`](TmplNodeKind::Capture) leaf marker whose
-//! [`ValueCapture`](TmplValue::ValueCapture) output resolves through the LHS
-//! [`Bindings`](crate::Bindings) at instantiation, so a `Template` is
-//! buildable by construction.
-
+use rustc_hash::FxHashSet;
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
 use crate::capture::Capture;
 use crate::graph_ext::HasInputSlots;
-use crate::matcher::OutputKindSpec;
 use crate::template::{TemplateKind, TemplateTy};
 
-/// A capture is split across both vertex enums. The node side is a
-/// payload-less marker saying only "this leaf is a capture, do not synthesise
-/// it"; the capture id and its value resolution live on the produced
-/// [`TmplValue::ValueCapture`].
-pub struct TmplNode {
-    pub kind: TmplNodeKind,
-    /// Parallel to the generic graph's input order; see `graph_ext` for why
-    /// the slot rides on the node payload.
-    pub input_slots: Vec<usize>,
+pub(crate) struct TmplNode {
+    pub(crate) kind: TmplNodeKind,
+    /// Parallel to the graph's input order; see `graph_ext`.
+    pub(crate) input_slots: Vec<usize>,
 }
 
 impl HasInputSlots for TmplNode {
+    type Slot = usize;
     fn input_slots(&self) -> &[usize] {
         &self.input_slots
     }
 }
 
-pub enum TmplNodeKind {
-    /// Synthesised as fresh IR from a concrete `NodeKind` or a dynamic `Fn`.
+pub(crate) enum TmplNodeKind {
+    /// Built as fresh IR.
     Build(TemplateKind),
-    /// A leaf resolving through its
-    /// [`ValueCapture`](TmplValue::ValueCapture) output to the LHS-bound
-    /// value, as in `int_add(x, 0) -> x`. Never synthesised, never has inputs.
+    /// A leaf standing for the LHS value bound to the capture its output's type
+    /// names (`int_add(x, 0) -> x`). Has no inputs.
     Capture,
 }
 
-/// The value side of the build graph.
-pub enum TmplValue {
-    /// A built node's output: slot, kind and type.
-    TmplOutput(TmplOutput),
-    /// Resolves to `bindings.get_value(c)` at instantiation.
-    ValueCapture(Capture),
+/// An output at a slot of its node.
+#[derive(Clone, Copy)]
+pub(crate) struct TmplValue {
+    pub(crate) slot: usize,
+    /// `None` for a memory token.
+    pub(crate) ty: Option<TemplateTy>,
 }
 
-/// One slot of a materialised node's output signature. Declaring the kind
-/// (value / memory / control / phi-token) is what lets a multi-output interior
-/// node, such as a `Store` or `Call` whose memory token a later node consumes,
-/// wire the right slot.
-pub struct TmplOutput {
-    pub slot: usize,
-    pub kind: OutputKindSpec,
-    /// Resolved at instantiation, and meaningful only for value outputs;
-    /// memory / control / phi-token slots ignore it.
-    pub ty: TemplateTy,
-}
-
-impl TmplOutput {
-    /// Inherits the rewrite root's type.
-    pub fn value(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::AnyValue,
-            ty: TemplateTy::InheritRoot,
-        }
-    }
-
-    pub fn memory(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::Memory,
-            ty: TemplateTy::InheritRoot,
-        }
-    }
-}
-
-/// Materialised by [`instantiate`](crate::template::instantiate).
+/// A rewrite's build side, materialised by [`instantiate`](crate::template::instantiate).
 pub struct Template {
     pub(crate) graph: Graph<TmplNode, TmplValue, NeverCacheable>,
-    /// Captures a `*_const_with!` closure reads at instantiation. They have no
-    /// vertex, so only the declaration makes them visible to the coverage
-    /// check.
-    declared_captures: Vec<Capture>,
+    /// Captures a closure requires; they have no vertex.
+    pub(crate) declared_captures: Vec<Capture>,
+    /// Captures a closure reads as an `Option`.
+    pub(crate) optional_captures: Vec<Capture>,
+    /// The builder's refusal, reported by [`Self::root`].
+    pub(crate) rejected: Option<String>,
 }
 
 impl Template {
-    /// For `TemplateBuilder::finish`, once the staging core has sealed the
-    /// staged DAG.
-    pub(crate) fn from_graph(
-        graph: Graph<TmplNode, TmplValue, NeverCacheable>,
-        declared_captures: Vec<Capture>,
-    ) -> Self {
-        Self {
-            graph,
-            declared_captures,
-        }
-    }
-
-    /// The build root is the unique sink, recovered structurally.
+    /// The build root: the unique sink.
     ///
     /// # Errors
-    /// Unless there is exactly one sink: zero means rootless or cyclic, more
-    /// than one means multi-rooted.
+    /// If the builder refused a verb, or there is not exactly one sink.
     pub fn root(&self) -> anyhow::Result<NodeId> {
+        if let Some(why) = &self.rejected {
+            anyhow::bail!("{why}");
+        }
         crate::graph_ext::derive_root(&self.graph)
     }
 
-    /// Drives the rewrite engine's construction-time coverage check, which
-    /// confirms the LHS binds every capture the RHS references.
-    pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
+    /// Captures the RHS cannot instantiate without: those an output's type
+    /// inherits from (incl. capture leaves) and the non-`Option` declarations.
+    fn required_captures(&self) -> impl Iterator<Item = Capture> + '_ {
         self.graph
             .all_value_ids()
-            .filter_map(|v| match self.graph.value_kind_ref(v) {
-                TmplValue::ValueCapture(cap) => Some(*cap),
-                // A capture reached only through `capture_typed` lives in the
-                // output's TYPE, not as a value vertex. Unreported, an
-                // unbound one resolves to `root_ty` and the rewrite builds a
-                // node at the wrong width instead of failing the check.
-                TmplValue::TmplOutput(o) => match o.ty {
-                    crate::template::TemplateTy::InheritBinding(cap) => Some(cap),
-                    _ => None,
-                },
+            .filter_map(|v| match self.graph.value_kind_ref(v).ty {
+                Some(TemplateTy::InheritBinding(cap)) => Some(cap),
+                _ => None,
             })
             .chain(self.declared_captures.iter().copied())
+    }
+
+    /// Every capture the RHS references, for the coverage check.
+    pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
+        self.required_captures()
+            .chain(self.optional_captures.iter().copied())
+    }
+
+    /// The referenced captures no use requires, which the LHS need bind on only
+    /// some alternation arms.
+    pub fn optional_captures(&self) -> impl Iterator<Item = Capture> + '_ {
+        let required: FxHashSet<Capture> = self.required_captures().collect();
+        self.optional_captures
+            .iter()
+            .copied()
+            .filter(move |c| !required.contains(c))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn output_vertex_carries_build_type_not_node() {
-        let o = TmplOutput::value(0);
-        assert!(matches!(o.ty, TemplateTy::InheritRoot));
-    }
-
-    /// `bool_not(var(c))` seals into `int_xor(var(c), IntConst(1)):I1`: the xor,
-    /// its const operand and the captured var, so three node vertices.
+    /// `bool_not(var(c))` is `int_xor(var(c), IntConst(1)):I1`: three nodes.
     #[test]
     fn bool_not_template_builds_three_node_graph() {
         use crate::{Capture, TemplatePat, var};

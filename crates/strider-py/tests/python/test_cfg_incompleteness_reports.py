@@ -1,5 +1,5 @@
-"""`Cfg`'s incompleteness channels report what `analyze` accumulated, not what
-the last round happens to still carry.
+"""`Cfg.incomplete` reports what `analyze` accumulated, not what the last round
+happens to still carry.
 
 The resolver re-lifts until the induced edge set converges, and a round that
 raised a report can be rebuilt away: seating a clashing arm costs the site, so
@@ -10,7 +10,6 @@ launders that round, and Python would then claim a completeness Rust does not.
 from __future__ import annotations
 
 import struct
-from typing import List
 
 import strider
 
@@ -59,7 +58,10 @@ def _arm_program() -> bytes:
 def _analyze_arm() -> strider.lift.AnalyzeResult:
     mem = strider.reader.BufferReader(BASE, _arm_program())
     lift = strider.lift.lifter(strider.sleigh.SleighArch.arm(), mem, rom=mem)
-    return lift.analyze(BASE, strider.sleigh.CallingConvention.arm_aapcs())
+    return lift.analyze(
+        BASE,
+        strider.sleigh.CallingConvention.arm_aapcs(),
+    )
 
 
 def test_a_mode_clash_is_reported_after_its_round_is_rebuilt_away() -> None:
@@ -70,10 +72,9 @@ def test_a_mode_clash_is_reported_after_its_round_is_rebuilt_away() -> None:
     assert result.cfg.region_at(CLASH) == result.cfg.region_at(0x1041), (
         f"precondition: {CLASH:#x} must be interior to the Thumb arm's region"
     )
-    assert result.cfg.isa_mode_conflicts() == [CLASH]
+    assert [a for a, r in result.cfg.incomplete if r == "isa_mode_conflict"] == [CLASH]
     # The clash costs its own arm; the dispatch stays a live placeholder.
     assert result.unresolved == [0x1010]
-    assert not result.cfg.is_complete()
 
 
 def _x86_interior_program() -> bytes:
@@ -89,18 +90,17 @@ def _x86_lifter() -> strider.lift.Lifter:
 
 def test_an_interior_branch_target_reaches_python() -> None:
     result = _x86_lifter().analyze(
-        BASE, strider.sleigh.CallingConvention.x86_64_systemv()
+        BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
     )
-    assert result.cfg.interior_branch_targets() == [0x1005]
+    assert result.cfg.incomplete == [(0x1005, "interior_target")]
 
 
 def test_build_cfg_reports_the_one_build_it_ran() -> None:
     """No resolver runs, so that build's own reports are the whole answer;
-    only `unverified_seeded_sites` has nothing to say."""
+    with no dispatch, no site reason has anything to say."""
     cfg = _x86_lifter().build_cfg(BASE)
-    assert cfg.interior_branch_targets() == [0x1005]
-    assert cfg.isa_mode_conflicts() == []
-    assert cfg.unverified_seeded_sites() == []
+    assert cfg.incomplete == [(0x1005, "interior_target")]
 
 
 def test_a_clean_analysis_reports_nothing() -> None:
@@ -108,30 +108,12 @@ def test_a_clean_analysis_reports_nothing() -> None:
     mem = strider.reader.BufferReader(BASE, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     result = lift.analyze(BASE, strider.sleigh.CallingConvention.x86_64_systemv())
-    empty: List[int] = []
-    assert result.cfg.isa_mode_conflicts() == empty
-    assert result.cfg.interior_branch_targets() == empty
-    assert result.cfg.is_complete()
+    assert result.cfg.incomplete == []
 
 
-def test_is_complete_reads_the_unresolved_channel_too() -> None:
-    """`unresolved` rides on the `AnalyzeResult`, not on any `Cfg` getter, so
-    a `Cfg` reading only its own three would call this complete."""
-    code = bytes([0x48, 0x8B, 0x07, 0xFF, 0xE0])  # mov rax, [rdi] ; jmp rax
-    mem = strider.reader.BufferReader(BASE, code)
-    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    result = lift.analyze(BASE, strider.sleigh.CallingConvention.x86_64_systemv())
-    empty: List[int] = []
-    assert result.unresolved == [0x1003]
-    assert result.cfg.isa_mode_conflicts() == empty
-    assert result.cfg.interior_branch_targets() == empty
-    assert result.cfg.unverified_seeded_sites() == empty
-    assert not result.cfg.is_complete()
-
-
-def test_a_complete_but_unverified_answer_is_not_complete() -> None:
-    """`False` covers the caveat as well as the loss: seating a `Return` here
-    answers the dispatch outright, and `unresolved` stays empty."""
+def test_a_return_seed_answers_the_dispatch_unverified() -> None:
+    """Seating a `Return` here answers the dispatch outright, so `unresolved`
+    stays empty and the seat alone is reported."""
     code = bytes([0xB8, 0x08, 0x10, 0x00, 0x00, 0xFF, 0xE0, 0x90, 0xC3])
     dispatch = 0x1005
     mem = strider.reader.BufferReader(BASE, code)
@@ -140,15 +122,84 @@ def test_a_complete_but_unverified_answer_is_not_complete() -> None:
         BASE,
         strider.sleigh.CallingConvention.x86_64_systemv(),
         strider.lift.LifterOptions(
-            cfg=strider.cfg.CfgOptions(known_targets={dispatch: "return"})
+            cfg=strider.cfg.CfgOptions(known_targets={dispatch: "return"}),
         ),
     )
     assert result.unresolved == []
-    assert result.cfg.unverified_seeded_sites() == [dispatch]
-    assert not result.cfg.is_complete()
+    assert result.cfg.incomplete == [(dispatch, "unverified_seed")]
 
 
-def test_build_cfg_has_no_unresolved_channel() -> None:
-    """No resolver runs, so the unresolved channel is empty by construction and
-    `is_complete` answers on the four the build itself filled."""
-    assert not _x86_lifter().build_cfg(BASE).is_complete()
+def test_a_return_seed_vouches_for_an_unproven_ret() -> None:
+    """A `"return"` seed over a `ret` whose target is not the caller's moves
+    it from `"unresolved_branch"` to `"unverified_seed"`."""
+    code = bytes([0x50, 0xC3])  # push rax ; ret
+    mem = strider.reader.BufferReader(BASE, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
+    assert lift.analyze(BASE, cc).cfg.incomplete == [(0x1001, "unresolved_branch")]
+    seeded = lift.analyze(
+        BASE,
+        cc,
+        strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(known_targets={0x1001: "return"}),
+        ),
+    )
+    assert seeded.unresolved == []
+    assert seeded.cfg.incomplete == [(0x1001, "unverified_seed")]
+
+
+_REASONS = (
+    "unresolved_branch",
+    "unverified_seed",
+    "isa_mode_conflict",
+    "interior_target",
+    "unmapped_target",
+    "undecodable_target",
+    "past_function_end",
+)
+
+
+def test_incomplete_reasons_are_the_seven_in_order() -> None:
+    assert strider.cfg.INCOMPLETE_REASONS == _REASONS
+
+
+def test_incomplete_lists_each_site_with_its_reason() -> None:
+    code = bytes([0x48, 0x8B, 0x07, 0xFF, 0xE0])  # mov rax, [rdi] ; jmp rax
+    mem = strider.reader.BufferReader(BASE, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    result = lift.analyze(
+        BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+    )
+    assert result.cfg.incomplete == [(0x1003, "unresolved_branch")]
+    assert result.unresolved == [0x1003]
+
+
+def test_build_cfg_incomplete_names_the_dispatch_it_left() -> None:
+    code = bytes([0x48, 0x8B, 0x07, 0xFF, 0xE0])
+    mem = strider.reader.BufferReader(BASE, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    cfg = lift.build_cfg(BASE)
+    assert cfg.incomplete == [(0x1003, "unresolved_branch")]
+
+
+def test_a_fall_through_past_the_size_is_a_reported_tail_call() -> None:
+    # xor eax, eax; then a lock cmpxchg past the 2-byte size, never decoded
+    code = bytes([0x31, 0xC0, 0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58])
+    mem = strider.reader.BufferReader(BASE, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    opts = strider.cfg.CfgOptions(function_max_size=2)
+    result = lift.analyze(
+        BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(cfg=opts),
+    )
+    assert result.cfg.incomplete == [(BASE + 2, "past_function_end")]
+    assert lift.build_cfg(BASE, opts).incomplete == [(BASE + 2, "past_function_end")]
+
+
+def test_incomplete_sorts_by_address_across_reasons() -> None:
+    reasons = [r for _, r in _analyze_arm().cfg.incomplete]
+    sites = [a for a, _ in _analyze_arm().cfg.incomplete]
+    assert sites == sorted(sites)
+    assert {"isa_mode_conflict", "unresolved_branch"} <= set(reasons)

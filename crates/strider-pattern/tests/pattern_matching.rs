@@ -62,9 +62,6 @@ mod memory_chain;
 #[path = "pattern_matching/bit_width.rs"]
 mod bit_width;
 
-#[path = "pattern_matching/get_vn_call_other_clobber.rs"]
-mod get_vn_call_other_clobber;
-
 #[path = "pattern_matching/load_store_stack_only.rs"]
 mod load_store_stack_only;
 
@@ -74,8 +71,8 @@ mod first_of_alternation;
 #[path = "pattern_matching/memory_alternation.rs"]
 mod memory_alternation;
 
-#[path = "pattern_matching/if_branch_captures.rs"]
-mod if_branch_captures;
+#[path = "pattern_matching/if_edge_joins.rs"]
+mod if_edge_joins;
 
-#[path = "pattern_matching/if_branch_anchor.rs"]
-mod if_branch_anchor;
+#[path = "pattern_matching/oracle.rs"]
+mod oracle;

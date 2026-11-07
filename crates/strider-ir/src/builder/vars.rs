@@ -3,8 +3,8 @@ use cranelift_entity::SecondaryMap;
 
 use super::FunctionBuilder;
 use crate::IRViewer;
+use crate::Result;
 use crate::builder::IRBuilderExt;
-use crate::error::Result;
 use crate::node::{InitialVnId, NodeKind, ValueId};
 use crate::region::RegionId;
 
@@ -27,18 +27,18 @@ impl FunctionBuilder {
         self.write_variable_from_id(var_id, value)
     }
 
-    /// Wires `region_id` as the function entry, taking the freshly built
-    /// `InitialVar`s as its current variable values.
-    ///
-    /// Errors when a tracked variable's byte size has no matching
+    /// Wires `region_id` as the entry, its current values the new
+    /// `InitialVar`s. Errors on a variable size with no
     /// [`crate::node::ValueType`].
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
         let initial_variables = self.wire_entry_and_build_initial_vars(region_id)?;
-        self.set_region_variables(region_id, initial_variables.clone());
-        // The entry carries phis when it is also a join (a loop header). Each
-        // `InitialVar` is then that phi's entry-edge operand, appended by
-        // `link_region_variables` below.
-        self.seed_phi_vars_from_phis(region_id);
+        let mut packed = SecondaryMap::new();
+        for (var_id, &value) in initial_variables.iter() {
+            packed[var_id] = value.into();
+        }
+        // An entry that is also a loop header gets each `InitialVar` as its
+        // phis' entry-edge operand.
+        self.seed_variables(region_id, packed);
         self.link_region_variables(region_id, &initial_variables)
     }
 
@@ -51,23 +51,18 @@ impl FunctionBuilder {
         let entry_node = self.function.entry();
         let [entry_control] = self.function().node_outputs_exact(entry_node)?;
         let entry_memory = self.entry_memory;
-        self.link_control_regions(region_id, entry_control)?;
-        self.link_memory_regions(region_id, entry_memory)?;
+        self.link_edges(region_id, entry_control, entry_memory);
 
-        // A `vn_id` doubles as SSA-variable key and `InitialVar` payload, so
-        // no index translation is needed.
+        // A `vn_id` is both the variable key and the `InitialVar` payload.
         let vn_ids: Vec<_> = self.function().vn_ids().collect();
         let mut initial_variables = SecondaryMap::new();
         for vn_id in vn_ids {
             let var = self.function().initial_vn(vn_id);
-            let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
+            let output_type = crate::node::ValueType::int_from_bytes(var.size)?;
             let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
             initial_variables[vn_id] = value;
             let node_id = self.function().producer(value);
-            self.function_mut()
-                .side_tables_mut()
-                .initial_var_index
-                .insert(vn_id, node_id);
+            self.function_mut().side_tables_mut().initial_var_index[vn_id] = Some(node_id);
         }
         Ok(initial_variables)
     }

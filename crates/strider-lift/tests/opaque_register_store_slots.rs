@@ -21,13 +21,11 @@ const BYTES: [u8; 16] = [
 #[test]
 fn opaque_register_store_gives_colliding_registers_distinct_slots() {
     let arch = strider_target::SleighArch::ppc32be();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(BYTES.to_vec(), 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let cr0 = lifter.sleigh_regs().name_to_vn("cr0").expect("cr0");
     let xer_so = lifter.sleigh_regs().name_to_vn("xer_so").expect("xer_so");
     assert_eq!(cr0.size, 1);
@@ -41,11 +39,10 @@ fn opaque_register_store_gives_colliding_registers_distinct_slots() {
     let cc = strider_target::CallingConvention::powerpc_sysv32()
         .build(lifter.sleigh_regs())
         .expect("cc");
-    let opts = strider_lift::LiftOptions::default();
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
         .expect("cfg");
-    let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
+    let f = lifter.build_ir(&cfg, cc).expect("ir").function;
 
     let slot_of = |off: u64| {
         f.graph().all_node_ids().find(|&id| {
@@ -53,7 +50,7 @@ fn opaque_register_store_gives_colliding_registers_distinct_slots() {
                 && f.int_const_u128(f.load_addr(id)) == Some(u128::from(off))
                 && f.value_type(f.node_outputs(id)[0])
                     .expect("load output type")
-                    == strider_ir::ValueType::I8
+                    == strider_ir::ValueType::int(8)
         })
     };
     let cr0_load = slot_of(cr0.addr_off).expect("cr0 re-read at its full offset");

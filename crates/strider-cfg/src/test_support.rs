@@ -1,9 +1,9 @@
 use rsleigh::mem_readers::BufMemReader;
 use strider_target::SleighArch;
 
-use crate::CfgOptions;
 use crate::builder::Builder;
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
+use crate::{CfgOptions, DecodeEngine};
 
 pub(crate) type TestReader = BufMemReader<Vec<u8>>;
 
@@ -38,28 +38,26 @@ pub(crate) fn make_region(addrs: &[(u64, u64)]) -> Region {
         start_addr: start,
         insns,
         empty_span_len: 0,
+        isa_mode: None,
         terminator: RegionTerminator::Unconditional,
     }
 }
 
-/// A [`crate::Cfg`] over a hand-built region graph, every incompleteness
-/// channel empty and no ISA mode.
+/// A [`crate::Cfg`] over a hand-built region graph, complete and with no ISA
+/// mode.
 pub(crate) fn make_cfg(
     region_graph: crate::types::RegionGraph,
     entry: petgraph::graph::NodeIndex,
 ) -> crate::Cfg {
+    let mut index = crate::region_index::RegionIndex::default();
+    for id in region_graph.node_indices() {
+        index.insert(&region_graph, id);
+    }
     crate::Cfg {
         region_graph,
         entry,
-        undecodable_seeded: Vec::new(),
-        isa_mode_conflicts: Vec::new(),
-        interior_branch_targets: Vec::new(),
-        unmapped_branch_targets: Vec::new(),
-        undecodable_branch_targets: Vec::new(),
-        link_register_seated: Vec::new(),
-        tail_call_seated: Vec::new(),
-        function_isa_bit: None,
-        flowing_isa_bits: std::collections::BTreeMap::new(),
+        index,
+        report: crate::BuildReport::default(),
         space_ids: rsleigh::SpaceIds::default(),
     }
 }
@@ -68,27 +66,35 @@ pub(crate) fn make_cfg(
 pub(crate) fn make_sleigh_over(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<TestReader> {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh")
+    arch.sleigh(reader).expect("create Sleigh")
 }
 
-pub(crate) fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
-    make_sleigh_over(Vec::new(), 0x0)
+/// [`make_sleigh_over`] as an engine.
+pub(crate) fn make_engine_over(bytes: Vec<u8>, base: u64) -> DecodeEngine<TestReader> {
+    DecodeEngine::new(SleighArch::x86_64(), BufMemReader::new(bytes, base))
+        .expect("x86-64 decode engine")
 }
 
-pub(crate) fn make_builder<'a>(
+pub(crate) fn make_engine() -> DecodeEngine<TestReader> {
+    make_engine_over(Vec::new(), 0x0)
+}
+
+pub(crate) fn make_builder(
     start_addr: u64,
-    sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-) -> Builder<'a, TestReader> {
+    engine: &mut DecodeEngine<TestReader>,
+) -> Builder<'_, TestReader> {
     static DEFAULT_OPTIONS: std::sync::LazyLock<CfgOptions<'static>> =
         std::sync::LazyLock::new(CfgOptions::default);
-    make_builder_opts(start_addr, sleigh, &DEFAULT_OPTIONS)
+    make_builder_opts(start_addr, engine, &DEFAULT_OPTIONS)
 }
 
+/// The builder production gets: the entry pinned on `engine`.
 pub(crate) fn make_builder_opts<'a>(
     start_addr: u64,
-    sleigh: &'a mut rsleigh::Sleigh<TestReader>,
+    engine: &'a mut DecodeEngine<TestReader>,
     options: &'a CfgOptions<'a>,
 ) -> Builder<'a, TestReader> {
-    let arch = SleighArch::x86_64();
-    Builder::for_arch(&arch, sleigh, start_addr, options)
+    engine
+        .builder(start_addr.into(), options)
+        .expect("pin the entry")
 }

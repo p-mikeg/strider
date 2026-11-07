@@ -1,18 +1,13 @@
 # Using the Python API
 
-A practical walkthrough of the Python interface: set up a handle, analyze
-functions, write queries, read results, relate and rewrite them, and draw the
-graph. It assumes the terms from [vocabulary.md](vocabulary.md).
-
-## Install
-
-Follow [Install](../README.md#install) in the README. Then `import strider`
-works inside `uv run python ...`.
+A walkthrough of the Python interface, assuming the terms in
+[vocabulary.md](vocabulary.md).
 
 ## The handle: one object per binary
 
-Everything starts from a *lifter handle*. For an ELF file, `load_elf` builds
-one and detects the CPU and calling convention for you:
+Everything starts from a *lifter handle*. `load_elf` builds one for an ELF
+(an executable, a shared library or an unlinked `.o`), detecting the CPU and
+calling convention:
 
 ```python
 import strider
@@ -20,63 +15,47 @@ import strider
 prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 ```
 
-`prog` knows the binary's symbols and memory:
-
-```python
-prog.symbol("array_sum")     # a Symbol: name, address, size, end, is_function, is_thumb, region
-prog.symbols()               # {name: Symbol} for all of them
-prog.functions()             # one Symbol per function address, address order
-prog.symbol_at(0x401234)     # the Symbol covering an address, or None
-prog.entry_point()           # the ELF entry point
-prog.read(addr, 16)          # raw bytes, or None if unmapped
-```
-
-A stripped image has no symbol table, so name its functions from somewhere
-else: `prog.add_symbol_file(path)` reads the symbols of a separate file (a
-debug object, a `vmlinux`) and `prog.add_symbols({name: addr})` takes a map of
-your own. `prog.add_elf(path)` merges a second image's bytes and symbols.
+`prog.symbol("array_sum")` returns a `Symbol` (name, address, size, ...);
+[ElfLifter metadata](python-api.md#elflifter-metadata) lists the other
+symbol and memory reads. For a stripped image, `prog.add_symbol_file(path)`
+reads symbols from another file (a debug object, a `vmlinux`) and
+`prog.add_symbols({name: addr})` takes your own. `prog.add_elf(path)` merges a
+second image's bytes and symbols.
 
 ## Analyzing a function
 
-`analyze` does the whole pipeline (CFG, lift, optimize, resolve branches) in one
-call. It takes a symbol name or an address:
+`analyze` runs the whole pipeline (CFG, lift, optimize, resolve branches) on a
+symbol name or an address:
 
 ```python
 cfg, function, unresolved = prog.analyze("array_sum")
 ```
 
-The result unpacks into three things:
+- `cfg`: the control flow graph.
+- `function`: the optimized IR you query.
+- `unresolved`: indirect branches Strider could not resolve, the
+  `"unresolved_branch"` entries of `cfg.incomplete`
+  ([python-api.md](python-api.md#12-the-cfg-stridercfg)).
 
-- `cfg`: the control flow graph the function was lifted from.
-- `function`: the lifted, optimized IR. This is what you query.
-- `unresolved`: addresses of indirect branches Strider could not resolve. An
-  empty list is the normal case; a non-empty one is information, not an error.
-  It is one of six channels, though: `cfg.is_complete()` is the one call that
-  reads all of them, and
-  [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each reports.
+Or keep the result whole: `result.cfg`, `result.function`, `result.unresolved`.
 
-You can also keep the result whole and use `result.cfg` / `result.function` /
-`result.unresolved`.
-
-**Options** go through `LifterOptions`. The common one is CFG behavior:
+**Options** go through `LifterOptions`:
 
 ```python
 opts = strider.lift.LifterOptions(
     cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
 )
-cfg, function, unresolved = prog.analyze("array_sum", opts=opts)
+addr = prog.symbol("array_sum").address
+cfg, function, unresolved = prog.analyze(addr, opts=opts)
 ```
 
-The other options worth knowing about, all covered in
-[python-api.md](python-api.md#2-analyzing-a-function):
-`assumptions=AssumptionOptions(...)` states claims about the code that the
-analysis cannot check, and `AssumptionOptions.none()` makes none of them;
-`CfgOptions(known_targets=...)` seats indirect-branch answers of your own,
-`call_other_abis=` classifies a Sleigh user-op strider has no ABI for, and
-`data_ranges=` marks bytes that are data; `per_address_ccs=` names a callee's
-convention; `pipeline=` replaces the optimizer pass list outright.
+By name, the symbol's size bounds the lift and `allow_code_before_start_addr`
+is ignored, so pass the address.
 
-**One handle analyzes many functions.** The handle is the fixed setup:
+Other options:
+[LifterOptions](python-api.md#liftlifteroptions-per-call-tuning).
+
+**One handle analyzes many functions:**
 
 ```python
 for sym in prog.functions():
@@ -84,66 +63,57 @@ for sym in prog.functions():
     ...
 ```
 
-**One handle per thread** if you want them in parallel. A handle decodes only
-on the thread that built it and raises `StriderError` elsewhere, but `analyze`
-drops the GIL, so a worker that builds its own handle over the same
-`prog.arch`, `prog.reader()` and `prog.rom()` runs alongside this one. A plain
-handle has no symbols and no default convention, so call
-`analyze(addr, prog.cc)` on it.
+**One handle per thread** for parallelism, each built over `prog.arch`,
+`prog.reader()` and `prog.rom()`; see
+[python-api.md](python-api.md#2-analyzing-a-function).
 
 ## Writing a query
 
 A query is a pattern plus captures:
 
 ```python
-from strider.pattern import load, int_add, call, var, Capture
+from strider.pattern import load, int_add, int_const, call, var, Capture
 ```
 
-A pattern describes a shape and leaves holes where you do not care. Captures are
-the holes you want to read back, made with `Capture("name")` (or `Capture()`
-for a fresh anonymous one). Two `Capture("off")` intern to one variable, and
-you read a capture back by the object or by its name string:
+Captures are the holes you read back: `Capture("name")`, or `Capture()` for
+an anonymous one. Two `Capture("off")` are one variable.
 
 ```python
-# Every load of the form `base + offset`; read the offset back.
+# Every load of the form `base + constant`; read the offset back.
 base, off = Capture("base"), Capture("off")
-for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
-    print("offset =", hit[off].uint_opt)   # None if it is not constant
+for hit in function.find_all(load(addr=int_add(base, int_const(off))), ignore_casts=True):
+    print("offset =", hit.uint(off))   # 4 and 8
 ```
 
-`ignore_casts=True` is `CastMask.all()`: the matcher walks through zero-extends,
-sign-extends, truncations, and the two bit reinterpretations
-`int_bits_to_float` / `float_bits_to_int`. Pass a `CastMask` instead of a bool
-to pick a subset.
-
-`find_all` returns every match. `find_unique` returns the single match and
-raises if there is not exactly one.
+`ignore_casts=True` (`CastMask.all()`) matches through extends, truncations,
+`int_bits_to_float` and `float_bits_to_int`; a `CastMask` picks a subset.
+`find_all` returns every match; `find_unique` raises unless there is exactly
+one.
 
 ### Reading a match
 
-A `Match` carries every capture. Each accessor raises if the capture is
-unbound or its node has no value of that kind; the `_opt` form returns `None`
-there instead. Guard with `hit.has("off")` when a capture may be absent.
+Each accessor raises if the capture is unbound or has no value of that kind;
+the `_opt` form returns `None`. `hit.has("off")` tests for a capture.
 
 ```python
-hit[off].uint                # unsigned integer constant (raises if not one)
-hit[off].uint_opt            # ... or None instead of raising
-hit[off].sint                # signed version
-hit[base].node               # the matched Node, for deeper inspection
-hit[base].asm_fingerprint    # machine addresses that produced it
-hit[base].op_opt             # operation name, e.g. "Add", or None
+hits = function.find_all(load(addr=int_add(base, off)), ignore_casts=True)
+hit = next(h for h in hits if h.uint_opt(off) is not None)   # a constant offset
+hit.uint(off)                # unsigned integer constant (raises if not one)
+hit.uint_opt(off)            # ... or None instead of raising
+hit.sint(off)                # signed version
+hit.node(base)               # the matched Node, for deeper inspection
+hit.asm_fingerprint(base)    # machine addresses recorded on it
+hit.op_opt(base)             # operation name, e.g. "Add", or None
 ```
 
-Index by the `Capture` object, or by its name when it has one (`hit["off"]`).
-[python-api.md](python-api.md#6-reading-a-match) lists every reader.
-
-A capture can land on a node with no operation, such as an `InitialVar` (a
-register as it stood at entry). Reach for `op_opt` unless you already know the
-shape.
+Pass the `Capture` or its name (`hit.uint("off")`);
+[python-api.md](python-api.md#6-reading-a-match) lists every reader. A capture
+on a node with no operation (an `InitialVar`) makes `op` raise; `op_opt` does
+not.
 
 ### Guards and joins
 
-Attach a Python predicate with `.when(...)` to filter on computed conditions:
+`.when(...)` filters on a Python predicate:
 
 ```python
 c = Capture()
@@ -154,9 +124,8 @@ def aligned(m):
 function.find_all(var(c).when(aligned))
 ```
 
-Pass a *list* of patterns to `find_all` to join them on shared captures: only
-bindings where all patterns match at once are returned, and each result is one
-merged match:
+A *list* of patterns joins them on shared captures; each result is one merged
+match:
 
 ```python
 from strider.pattern import int_const
@@ -170,32 +139,27 @@ for m in function.find_all(
     print("fields off one base, at", m.uint(o1), "and", m.uint(o2))
 ```
 
-A join constrains the patterns to agree on `base`; it does not make them pick
-different loads. On `array_sum` this prints four rows, two of which pair a
-field with itself (`4 and 4`, `8 and 8`). Compare the offsets yourself when
-you want distinct ones.
+A join does not make the patterns pick different nodes: on `array_sum` this
+prints four rows, two pairing a field with itself (`4 and 4`, `8 and 8`).
 
 ### One pattern, several shapes
 
-`one_of` matches any pattern in a list and reports every hit; `first_of`
-stops at the first that matches, for alternatives that overlap. Either can sit
-in any slot, so the alternation goes where the variation is rather than around
-the whole pattern:
+`one_of` reports every matching alternative; `first_of` stops at the first.
+Either can sit in any slot:
 
 ```python
 from strider.pattern import one_of, load, int_add, var, Capture
 
 base, off = Capture("base"), Capture("off")
-# A field read is `base + offset` in one function and a bare pointer in the
-# next; one query covers both.
+# `base + offset`, or a bare pointer.
 hits = function.find_all(
     load(addr=one_of([int_add(base, off), var(base)])),
     ignore_casts=True,
 )
 ```
 
-For a struct field, `field` is that alternation with a constant offset, and
-`f.offset(m)` reads 0 back for the bare arm:
+`field` is that alternation with a constant offset; `f.offset(m)` reads 0
+for the bare arm:
 
 ```python
 from strider.pattern import field, function_arg
@@ -206,25 +170,19 @@ for m in struct_fn.find_all(f.load()):
     print("reads p->field at", f.offset(m))   # 0, then 4
 ```
 
-`code_ptr(x)` is the same idea for a code pointer: `x`, or `x & -2`, the mask an
-ARM interworking or MIPS16 branch applies to clear the ISA-mode bit.
-
-Other shape helpers: `.ordered()` turns off commutative matching where you
-need the operands in the order you wrote them. `.any_input(p)` matches `p`
-against any input slot, for nodes whose arity you do not want to pin.
-`load().non_stack()` / `load().heap_only()` filter by what the address is
-rooted at, which separates spills from other memory traffic.
+`code_ptr(x)` matches `x` or `x & -2` (the ISA-mode-bit mask of ARM
+interworking and MIPS16). `.ordered()` turns off commutative matching.
+`.any_input(p)` matches `p` in any input slot. `load().non_stack()` /
+`load().heap_only()` filter by the address's root, separating spills from other
+traffic.
 
 ## Constraints: relating matches by control flow
 
-Joining on a shared capture ties patterns together by *identity* (the same node).
-Constraints tie them by *control-flow relationship* instead: does one thing always
-happen before another, which value does a phi pick on a given branch. Build them
-from `strider.pattern.constraints` and pass them alongside a pattern list.
+A shared capture ties patterns by identity; constraints from
+`strider.pattern.constraints` tie them by control flow.
 
-**Dominance.** `dominates(a, b)` holds when every path from entry to `b` first
-passes through `a` (see [dominator](vocabulary.md)). Capture the two nodes, then
-constrain them:
+**Dominance.** `dominates(a, b)` holds when every path from entry to `b` passes
+through `a` (see [dominator](vocabulary.md)):
 
 ```python
 from strider.pattern import call, Capture
@@ -239,39 +197,31 @@ for m in function.find_all(
     ...
 ```
 
-**Which value a phi picks on a branch.** `phi_input_from_edge(phi, edge, value)`
-holds when the value the `phi` merges along one branch `edge` equals the one bound
-to `value`. All three are captures that patterns in the list bind: capture the
-edge off an `if` with `capture_true` / `capture_false`, capture the phi, and bind
-the candidate value with its own pattern (here, any integer constant):
+**Which value a phi picks on a branch.** `phi().input_from(edge, value)`
+matches a phi whose input along `edge` is `value`; take the edge off an `if`
+with `capture_true` / `capture_false` and pass the phi's `constraints()`:
 
 ```python
 from strider.pattern import if_else, phi, int_const, Capture
-from strider.pattern.constraints import phi_input_from_edge
 
-edge, the_phi, v = Capture(), Capture(), Capture()
+edge, v = Capture(), Capture()
+merge = phi().input_from(edge, int_const(v))
 matches = function.find_all(
-    [if_else().capture_true(edge), phi().capture(the_phi), int_const(v)],
-    constraints=[phi_input_from_edge(the_phi, edge, v)],
+    [if_else().capture_true(edge), merge], constraints=merge.constraints()
 )
 for m in matches:
     print("on the taken branch the phi selects", m.uint(v))
 ```
 
-`input_from` on a `phi()` or `mem_phi()` builder writes the phi capture, the
-value capture and the constraint for you:
-
-```python
-merged = phi().input_from(edge, int_const())
-matches = function.find_all([if_else().capture_true(edge), merged],
-                            constraints=merged.constraints())
-```
+`mem_phi().input_from` is the memory form. Both build the constraint
+`phi_input_from_edge(phi, edge, value)`, which also takes three captures
+directly; but patterns tied only by a constraint join as a cross product, so
+prefer `input_from`.
 
 `negate(c)` keeps matches where `c` does *not* hold, and `any_of([...])` /
 `all_of([...])` combine several constraints.
 
-When control flow is not the relation you need, write the rule yourself.
-Subclass `JoinPredicate`, declare the captures it correlates, and return a bool:
+For your own rule, subclass `JoinPredicate`:
 
 ```python
 from strider.pattern import call, int_const, Capture
@@ -287,14 +237,12 @@ class MultipleOfEight(JoinPredicate):
 function.find_all([call().arg(0, int_const(n))], constraints=[MultipleOfEight()])
 ```
 
-`captures()` tells the matcher which bindings the rule reads, so it is only
-consulted once those are bound.
+[`JoinPredicate`](python-api.md#joinpredicate-your-own-logic) has the rules.
 
 ## Rewriting the graph
 
-`rewrite` replaces every match of a pattern with a new shape you build from the
-captures. The `find` side is a `strider.pattern` pattern; the `replace` side is
-a `strider.template` template, which covers the ops that can be built:
+`rewrite` replaces every match of a `strider.pattern` `find` with a
+`strider.template` `replace` built from the captures:
 
 ```python
 from strider.pattern import Capture, int_mul, int_const, var
@@ -307,49 +255,25 @@ n = function.rewrite(find=int_mul(var(x), int_const(4)),
 print("rewrote", n, "sites")   # 3, on array_sum
 ```
 
-Pick a shape the pipeline leaves behind. `analyze` hands you an optimized
-graph, so the algebraic identities are the one thing that is guaranteed absent:
-`find=int_add(var(x), int_const(0))` reports 0 sites because `ConstantFold`
-removed every one before you saw the function.
-
-A bare `strider.pattern.Pat` is accepted on the `replace` side for
-compatibility, but only its build-valid subset compiles.
-
-Both the `find` and `replace` sides use `Capture` objects. A rewrite can expose
-fresh simplifications, so re-run the optimizer afterwards to tidy up:
+Target a shape the pipeline leaves: `find=int_add(var(x), int_const(0))`
+finds 0 sites because `ConstantFold` already removed them. Re-run the
+optimizer after a rewrite:
 
 ```python
-prog.optimize(function)   # collapse phi / dead-branch noise the rewrite exposed
+function.optimize()   # collapse phi / dead-branch noise the rewrite exposed
 ```
 
-Use `rewrite_all([(find, replace), ...])` to stage several rules at once. One
-call walks the graph once, over a snapshot of the nodes, trying the rules at
-each node in order and stopping at the first that fires, so a node is rewritten
-by at most one rule. A rule whose output its own `find` side matches needs a
-second call.
-`function.clone()` gives you a copy to rewrite without touching the original.
-Example `03` walks through this end to end.
+`rewrite_all([(find, replace), ...])` walks a snapshot of the nodes once,
+applying the first rule that fires at each, so a node is rewritten at most once;
+a rule whose output its own `find` matches needs a second call.
+`function.clone()` gives a copy to rewrite. See example `03`.
 
 ## Looking at the graph
 
-`visualize` opens an interactive explorer on the whole graph, or with
-`whole=False` on the neighborhood around the entry, re-centering as you click.
-
-```python
-prog.visualize(function)                   # prints a local URL; blocks until interrupted
-prog.visualize(function, whole=False)      # a neighborhood, re-centering as you click
-port = prog.visualize(function, background=True)   # serve and keep querying
-strider.explore.shutdown(port)             # ...until you stop it
-```
-
-The keys, the toolbar and what its limits apply to are in
-[python-api.md](python-api.md#10-visualizing).
-
-For something to read or diff rather than look at, `function.to_text()` prints
-a header and then one line per node, stable across runs, so two analyses can be
-compared with `diff`.
-
-For a static picture, render the IR or the CFG to a self-contained HTML file:
+`strider.explore.visualize(function)` serves an interactive explorer at a
+local URL; [python-api.md](python-api.md#10-visualizing) has its options,
+keys and toolbar. `function.to_text()` prints a header and one line per node,
+stable across runs for `diff`. For a static, self-contained picture:
 
 ```python
 function.to_html("graph.html", pretty=True)   # the IR, register names resolved
@@ -357,10 +281,8 @@ function.to_dot("graph.dot")                   # Graphviz DOT instead
 cfg.to_html("cfg.html")                        # the control flow graph
 ```
 
-`pretty=True` inlines constants and resolves register names; omit it to see the
-graph exactly as stored, which is what you want when debugging why a pattern did
-not match. A full dump gets unwieldy on a big function, so render just the
-neighborhood around one node instead:
+Omit `pretty` to see the graph as stored, for debugging a non-matching
+pattern. For a big function, render one node's neighborhood:
 
 ```python
 dot = function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)
@@ -368,31 +290,25 @@ dot = function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)
 
 ## When a pattern does not match
 
-The usual reason is that optimization already rewrote the shape you expected;
-[optimizations.md](optimizations.md) lists what each pass reshapes. The three
-that trip people up most:
+Usually optimization rewrote the shape ([optimizations.md](optimizations.md)):
 
-- **Subtraction and "not equal" style ops are not primitives.** The lifter
-  lowers `a - b` to `a + (-b)`, and `a != b` to `not (a == b)`. Use the alias
-  constructors (`int_sub`, `int_le`, `float_ne`, ...) instead of building the raw
-  shape.
-- **Commutative ops try both orders for you**, and the rest keep the order
-  you wrote; [python-api.md](python-api.md#operators) lists which is which.
-- **`phi()` matches any phi**, whatever register it carries; `phi_for(vn)`
-  narrows to one. Use `mem_phi()` for the memory merge.
+- **Subtraction and "not equal" are not primitives**: `a - b` is `a + (-b)`,
+  `a != b` is `not (a == b)`. Use the aliases (`int_sub`, `int_le`, `float_ne`,
+  ...). `int_sub(x, 16)` also matches the folded `x + (-16)`; with a captured
+  constant, write `int_add(x, int_const(c))`, which binds `-16`.
+- **Commutative ops try both orders**; the rest keep yours
+  ([python-api.md](python-api.md#operators)).
+- **`phi()` matches any phi**; `phi_for(vn)` narrows to one register's.
+  `mem_phi()` matches the memory merge.
 
-When a pattern still comes up empty, dump the raw graph
-(`function.to_html("graph.html")` without `pretty`) and walk forward from the
-entry looking for the actual shape.
+Otherwise dump the raw graph (`function.to_html("graph.html")`) and look for
+the actual shape.
 
 ## Beyond ELF: custom code and data
 
-A lifter needs somewhere to read instruction bytes, and optionally a read-only
-image for constant data. You can supply both from Python, which is how you
-analyze firmware or any raw source.
-
-The simplest code source is a block of bytes at a base address. `BufferReader`
-takes `bytes`, a `bytearray` or a sequence of ints:
+A lifter reads code from a reader and, optionally, constant data from a
+read-only image; both can come from Python. `BufferReader` serves `bytes`, a
+`bytearray` or a sequence of ints at a base:
 
 ```python
 arch = strider.sleigh.SleighArch.x86_64()
@@ -403,36 +319,10 @@ lft = strider.lift.lifter(arch, mem)
 cfg, function, unresolved = lft.analyze(0x8000, cc)
 ```
 
-A plain lifter works by address and takes the calling convention on each
-`analyze` call; names come from an ELF, which a raw blob has none of.
+A plain lifter works by address and takes the convention per `analyze`. For
+computed bytes subclass `MemReader`, and pass a `ReadOnlyMemory` as `rom=` so
+`LoadReadOnly` folds fixed-address loads ([custom
+memory](python-api.md#custom-memory-readermemreader--readerreadonlymemory)).
 
-When the bytes are computed or streamed rather than a flat blob, subclass
-`MemReader` and override `read`:
-
-```python
-class MyCode(strider.reader.MemReader):
-    def read(self, addr, size):
-        # Your bytes here: return exactly `size` bytes at `addr`,
-        # or None if that range is unmapped.
-        ...
-
-lft = strider.lift.lifter(arch, MyCode())
-```
-
-To let the `LoadReadOnly` pass fold loads of fixed addresses (constants in
-`.rodata`, a vector table, ...) into constants, pass a read-only image as `rom`.
-Subclass `ReadOnlyMemory` the same way:
-
-```python
-class MyRodata(strider.reader.ReadOnlyMemory):
-    def read(self, addr, size):
-        # Your bytes here, but only where they are genuinely immutable:
-        # return `size` bytes at `addr`, or None if that range is not read-only.
-        ...
-
-lft = strider.lift.lifter(arch, MyCode(), rom=MyRodata())
-```
-
-Now a `Load` from a constant address inside that ROM shows up as a constant in
-the IR. Examples `02` (custom `MemReader`), `07` (ROM folding), and `08` (both
-together) in `crates/strider-py/examples/python/` show these end to end.
+Examples `02` (custom `MemReader`), `07` (ROM folding) and `08` (both) in
+`crates/strider-py/examples/python/` run these end to end.

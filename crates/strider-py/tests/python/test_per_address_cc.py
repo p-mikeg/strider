@@ -36,11 +36,13 @@ def test_per_address_ccs_default_empty_does_not_break_normal_calls():
     assert len(matches) == 1
 
 
-def test_preserves_all_keeps_preset_name():
-    cc = CallingConvention.x86_64_systemv().preserves_all()
-    assert cc.name() == "x86_64_systemv"
-    # preserves_regs is the memory-clobbering sibling; both exist and chain.
-    assert CallingConvention.x86_64_systemv().preserves_regs().name() == "x86_64_systemv"
+def test_a_variant_names_itself_apart_from_its_preset():
+    for base in ("x86_64_systemv", "aarch64_aapcs64"):
+        cc = CallingConvention.preset(base)
+        assert cc.name() == base
+        assert cc.preserves_all().name() == f"{base}.preserves_all"
+        assert cc.preserves_regs().name() == f"{base}.preserves_regs"
+        assert cc.preserves_regs().preserves_all().name() == f"{base}.preserves_all"
 
 
 import pytest

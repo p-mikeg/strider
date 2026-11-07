@@ -1,0 +1,25 @@
+digraph "G" {
+  graph [
+    rankdir="TB",
+    bgcolor="#1e1e1e",
+    fontcolor="white",
+  ];
+
+  node [
+    shape="box",
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor="white",
+    fontname="Courier",
+    margin="0.2",
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor="white",
+    penwidth="1.2",
+  ];
+
+  "0" [label="Instruction(addr=0x4010f0, idx=0)\n\l0x4010f0: IntAdd unique[0x7600]:4, 0x8:4, ESP\l0x4010f0: Load unique[0x17200]:4, ram, unique[0x7600]:4\l0x4010f0: Copy EAX, unique[0x17200]:4\l0x4010f4: IntAdd unique[0x7600]:4, 0x4:4, ESP\l0x4010f4: Load unique[0x17200]:4, ram, unique[0x7600]:4\l0x4010f4: IntCarry CF, EAX, unique[0x17200]:4\l0x4010f4: Load unique[0x17200]:4, ram, unique[0x7600]:4\l0x4010f4: IntScarry OF, EAX, unique[0x17200]:4\l0x4010f4: Load unique[0x17200]:4, ram, unique[0x7600]:4\l0x4010f4: IntAdd EAX, EAX, unique[0x17200]:4\l0x4010f4: IntSless SF, EAX, 0x0:4\l0x4010f4: IntEqual ZF, EAX, 0x0:4\l0x4010f4: IntAnd unique[0x49900]:4, EAX, 0xff:4\l0x4010f4: Popcount unique[0x49a00]:1, unique[0x49900]:4\l0x4010f4: IntAnd unique[0x49b00]:1, unique[0x49a00]:1, 0x1:1\l0x4010f4: IntEqual PF, unique[0x49b00]:1, 0x0:1\l0x4010f8: Load EIP, ram, ESP\l0x4010f8: IntAdd ESP, ESP, 0x4:4\l0x4010f8: Return EIP\l", shape="box", color="#ffcc00", penwidth="2.5"];
+}

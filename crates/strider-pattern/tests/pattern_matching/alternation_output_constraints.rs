@@ -1,5 +1,7 @@
 use super::support::{Tb, reg_vn, shapes};
 use strider_ir::IRViewer as _;
+use strider_ir::node::ValueKind;
+use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, MatchPat, Matcher, call, call_other, first_of, load, one_of, ret, value_of_width, var,
 };
@@ -51,10 +53,9 @@ fn one_of_arm_capture_is_never_reported_unbound() {
     }
 }
 
-/// A value-anchored arm must bind a value edge, never the control or memory
-/// edge of the same multi-output node.
+/// A root arm binds what the bare pattern binds: a `CallOther`'s memory token.
 #[test]
-fn one_of_arm_binds_only_value_edges() {
+fn one_of_arm_binds_what_the_bare_root_binds() {
     let out = reg_vn(0x10, 8);
     let mut t = Tb::with_vars(&[out]);
     let res = t
@@ -64,27 +65,60 @@ fn one_of_arm_binds_only_value_edges() {
 
     let m = Matcher::new(&f);
     let k = Capture::new();
-    let bare = m
-        .find_all(&call_other().name("getval").capture(k).into_pattern())
-        .unwrap();
-    let wrapped = m
-        .find_all(&one_of![call_other().name("getval").capture(k)].into_pattern())
-        .unwrap();
-
-    assert!(!bare.is_empty());
-    for hit in &wrapped {
-        let bound = hit.value(k).expect("a matching arm binds its capture");
-        assert!(
-            f.value_kind(bound).is_value(),
-            "one_of arm bound a {:?} edge",
-            f.value_kind(bound)
-        );
-    }
+    let bound = |pat| {
+        m.find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| h.value(k).expect("a match binds its capture"))
+            .collect::<Vec<_>>()
+    };
+    let bare = bound(call_other().name("getval").capture(k).build());
+    assert_eq!(bare.len(), 1);
     assert_eq!(
-        wrapped.len(),
-        bare.len(),
+        bound(one_of![call_other().name("getval").capture(k)].into_pattern()),
+        bare,
         "one_of![p] must match exactly where p does"
     );
+}
+
+/// A `Call` with a result and a clobber: a root matches once per call, on its memory token,
+/// whether sealed by `build`, `into_pattern` or a one-arm alternation.
+#[test]
+fn a_call_root_matches_once_per_call_under_every_seal() {
+    let (r0, r1) = (reg_vn(0, 8), reg_vn(8, 8));
+    let mut t = Tb::from_rs(RegisterSet::new().tracked(r0).tracked(r1).ret(r0));
+    let a = t.u64(5);
+    t.call_at(0x1000);
+    let f = t.ret_val(a);
+
+    let m = Matcher::new(&f);
+    let c = Capture::new();
+    let bound = |pat| {
+        m.find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| f.value_kind(h.value(c).expect("a match binds its capture")))
+            .collect::<Vec<_>>()
+    };
+    let bare = bound(call().capture(c).build());
+    assert_eq!(bare, [ValueKind::Memory]);
+    for (spelling, got) in [
+        (
+            "into_pattern",
+            bound(MatchPat::into_pattern(call().capture(c))),
+        ),
+        ("one_of!", bound(one_of![call().capture(c)].into_pattern())),
+        (
+            "first_of!",
+            bound(first_of![call().capture(c)].into_pattern()),
+        ),
+        (
+            "res() one_of!",
+            bound(one_of![call().res().capture(c)].into_pattern()),
+        ),
+    ] {
+        assert_eq!(got, bare, "{spelling}");
+    }
 }
 
 /// The mirror of the rule above: in a CONTROL slot the arms are retyped with
@@ -114,8 +148,7 @@ fn one_of_in_a_control_slot_matches_like_the_single_arm() {
 }
 
 /// A `Call` under a convention with no return or clobber registers produces
-/// only `[Control, Memory]`, so a value anchor has nothing to bind. Nothing
-/// consumes a root, so the anchor there falls back to that lone token.
+/// only `[Control, Memory]`; a root anchors on that token.
 #[test]
 fn a_root_matches_a_call_with_no_value_output() {
     let mut t = Tb::empty();
@@ -137,4 +170,22 @@ fn a_root_matches_a_call_with_no_value_output() {
             "{spelling} must match wherever call().build() does"
         );
     }
+}
+
+/// `res()` narrows only a value operand: as a control predecessor it still matches.
+#[test]
+fn res_has_no_effect_in_a_control_slot() {
+    let (r0, r1) = (reg_vn(0, 8), reg_vn(8, 8));
+    let mut t = Tb::from_rs(RegisterSet::new().tracked(r0).tracked(r1).ret(r0));
+    let a = t.u64(5);
+    t.call_at(0x1000);
+    let f = t.ret_val(a);
+
+    let m = Matcher::new(&f);
+    let plain = m.find_all(&ret().ctrl(call()).build()).unwrap();
+    assert_eq!(plain.len(), 1);
+    assert_eq!(
+        m.find_all(&ret().ctrl(call().res()).build()).unwrap().len(),
+        1
+    );
 }

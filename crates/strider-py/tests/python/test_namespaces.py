@@ -4,7 +4,7 @@ EXPECTED = {
     "ir": ["Function", "Node"],
     "lift": ["Lifter", "ElfLifter", "LifterOptions", "AnalyzeResult", "load_elf"],
     "cfg": ["Cfg", "CfgOptions"],
-    "sleigh": ["SleighArch", "CallingConvention", "Sleigh", "Vn", "VnSpace"],
+    "sleigh": ["SleighArch", "CallingConvention", "Vn", "VnSpace"],
     "reader": ["BufferReader", "MemReader", "ReadOnlyMemory"],
     "opt": ["OptimizerPipeline"],
     "pattern": ["Pat", "Capture", "Match"],
@@ -29,10 +29,10 @@ def test_top_level_is_just_error_and_submodules():
 def test_no_import_leaks_at_top_level():
     import strider
     public = {n for n in dir(strider) if not n.startswith("__")}
-    # `explore` is a real submodule, not a leak: `Lifter.visualize` imports
-    # it (binding it on the package), and `explore.shutdown(port)` is the
-    # supported way to stop an explorer running on another thread. A thread
-    # left parked in `visualize` aborts the interpreter at finalization.
+    # `explore` is a real submodule, not a leak: `explore.visualize` starts
+    # an explorer and `explore.shutdown(port)` is the supported way to stop
+    # one running on another thread. A thread left parked in `visualize`
+    # aborts the interpreter at finalization.
     allowed = {"StriderError", "ir", "lift", "cfg", "sleigh", "reader",
                "opt", "pattern", "template", "explore"}
     assert public <= allowed, f"unexpected top-level names: {public - allowed}"
@@ -46,3 +46,9 @@ def test_viz_standalone_js_is_private():
     import strider._strider as _ext
     assert hasattr(_ext, "_viz_standalone_js")
     assert not hasattr(_ext, "viz_standalone_js")
+
+
+def test_the_register_table_lives_on_the_arch():
+    """The arch carries the register table: no separate handle is built from
+    an arch and a reader."""
+    assert not hasattr(strider.sleigh, "Sleigh")

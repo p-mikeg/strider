@@ -26,21 +26,19 @@ REG_ABI_ADD = bytes.fromhex("89d801c8c3")
 IMAGE = SYSCALL_STUB.ljust(ADD_ENTRY - BASE, b"\x00") + REG_ABI_ADD + bytes(16)
 
 mem = reader.BufferReader(BASE, IMAGE)
-lft = strider.lift.lifter(sleigh.SleighArch.x86(), mem)
-# Register names resolve against a Sleigh, so both `custom` constructors need one.
-sl = sleigh.Sleigh(sleigh.SleighArch.x86(), mem)
+# Register names resolve against the arch, which both `custom` constructors take.
+x86 = sleigh.SleighArch.x86()
+lft = strider.lift.lifter(x86, mem)
 cdecl = sleigh.CallingConvention.x86_cdecl()
 
-
-# ---------------------------------------------------------------- discovery
 
 # Every user-op name this architecture can emit, indexed by user-op id.
 names = lft.user_op_names()
 print(f"x86 user-ops: {len(names)}, including 'swi' ({'swi' in names})")
 
-# What strider already believes about one. `int 0x80` lifts to `swi`, which
-# carries every x86 software interrupt, so the table can say only that memory
-# is clobbered: which registers a vector reads is the OS's convention.
+# `int 0x80` lifts to `swi`, which carries every x86 software interrupt, so the
+# table says only that memory is clobbered; the registers a vector reads are
+# the OS's convention.
 swi = lft.call_other_abi("swi")
 assert swi is not None
 print(
@@ -48,8 +46,7 @@ print(
     f"clobbers_memory={swi.clobbers_memory}"
 )
 
-# A footprint fixed by the architecture is in the table already: x86-64 has
-# one syscall convention, so `syscall` carries it.
+# x86-64 has one syscall convention, so the table carries it.
 x86_64 = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)
 syscall = x86_64.call_other_abi("syscall")
 assert syscall is not None
@@ -62,8 +59,6 @@ print(
 print(f"x86 sysenter: {lft.call_other_abi('sysenter')}")
 
 
-# ------------------------------------------------- CallOtherAbi.custom
-
 # Raw CallOther inputs are [ctrl, mem, implicit reads..., p-code operands...],
 # and `CallOtherPat.arg` indexes them unshifted.
 SLOTS = range(2, 7)
@@ -71,9 +66,7 @@ SLOTS = range(2, 7)
 
 def syscall_stub(abis: dict[str, sleigh.CallOtherAbi]) -> ir.Function:
     opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(
-            allow_code_before_start_addr=True, call_other_abis=abis
-        )
+        cfg=strider.cfg.CfgOptions(call_other_abis=abis)
     )
     _cfg, fn, _unresolved = lft.analyze(SYSCALL_ENTRY, cdecl, opts)
     return fn
@@ -98,7 +91,7 @@ default = syscall_stub({})
 # The Linux i386 convention: EAX = syscall number, EBX/ECX/EDX = arguments,
 # EAX = result. Stated per analysis, the way a calling convention is.
 int80 = sleigh.CallOtherAbi.custom(
-    sl,
+    x86,
     implicit_reads=["EAX", "EBX", "ECX", "EDX"],
     implicit_writes=["EAX"],
     clobbers_memory=True,
@@ -123,13 +116,11 @@ assert operands(overridden) == [4, 1, 0x2000, 12, 0x80]
 assert setup_constants(overridden) == 4
 
 
-# --------------------------------------------- CallingConvention.custom
-
 # EBX and ECX carry the arguments, EAX the result, and `ret` pops the 4-byte
-# return address x86's `call` pushed. An unknown register name, or a link
-# register missing from callee_saved_regs, raises StriderError here.
+# return address x86's `call` pushed. An unknown register name or a broken ABI
+# invariant raises StriderError here.
 reg_abi = sleigh.CallingConvention.custom(
-    sleigh=sl,
+    sleigh=x86,
     arg_passing_regs=["EBX", "ECX"],
     callee_saved_regs=["EBP", "ESI", "EDI"],
     ret_val_regs=["EAX"],
@@ -144,10 +135,7 @@ reg_abi = sleigh.CallingConvention.custom(
 
 
 def add_routine(cc: sleigh.CallingConvention) -> ir.Function:
-    opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-    )
-    _cfg, fn, _unresolved = lft.analyze(ADD_ENTRY, cc, opts)
+    _cfg, fn, _unresolved = lft.analyze(ADD_ENTRY, cc)
     return fn
 
 

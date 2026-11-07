@@ -19,7 +19,7 @@ def test_read_past_region_edge_truncates():
 
 
 def test_base_plus_len_overflow_rejected():
-    with pytest.raises(strider.StriderError):
+    with pytest.raises(ValueError):
         strider.reader.BufferReader(0xFFFFFFFFFFFFFFFE, b"\x00\x00\x00\x00")
 
 
@@ -88,3 +88,38 @@ def test_data_may_be_bytes_bytearray_or_a_list_of_ints():
     for data in (b"\x01\x02\x03", bytearray(b"\x01\x02\x03"), [1, 2, 3]):
         r = strider.reader.BufferReader(0x1000, data)
         assert r.read(0x1000, 3) == b"\x01\x02\x03"
+
+
+def _wide_buffers():
+    import array
+    yield array.array("H", [1, 2])
+    yield memoryview(b"\x01\x00\x00\x00\x02\x00\x00\x00").cast("I")
+
+
+@pytest.mark.parametrize("data", list(_wide_buffers()), ids=["array-H", "memoryview-I"])
+def test_buffer_of_wide_items_is_refused(data):
+    with pytest.raises(TypeError, match="-byte items"):
+        strider.reader.BufferReader(0, data)
+
+
+def test_byte_buffer_serves_its_raw_bytes():
+    import array
+    raw = b"\x01\x00\x02\x00"
+    for data in (memoryview(raw), array.array("B", raw), memoryview(raw)[::2]):
+        r = strider.reader.BufferReader(0, data)
+        assert r.read(0, 4) == bytes(data)
+
+
+@pytest.mark.parametrize("data", list(_wide_buffers()), ids=["array-H", "memoryview-I"])
+def test_mem_reader_returning_wide_items_fails_the_lift(data):
+    from strider.reader import MemReader
+    from strider.sleigh import CallingConvention, SleighArch
+
+    class Wide(MemReader):
+        def read(self, addr, size):
+            return data if addr == 0 else None
+
+    lift = strider.lift.lifter(SleighArch.x86_64(), Wide())
+    with pytest.raises(strider.StriderError, match="items") as excinfo:
+        lift.analyze(0, CallingConvention.x86_64_systemv())
+    assert isinstance(excinfo.value.__cause__, TypeError)

@@ -1,433 +1,390 @@
-// The enum and its `ALL` listing come from one variant list, so a new width
-// cannot reach the exhaustive matches without reaching `ALL`.
-macro_rules! value_types {
-    ($( $(#[$meta:meta])* $name:ident ),* $(,)?) => {
-        /// Integer variants name their width in bits; `I1` is one of them.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub enum ValueType {
-            $( $(#[$meta])* $name, )*
-        }
+use anyhow::anyhow;
 
-        impl ValueType {
-            /// Every variant, in declaration order (the floats follow the
-            /// ints, so this is not width order). The SSoT for any surface
-            /// enumerating the set, the Python bindings included.
-            pub const ALL: [Self; [$(value_types!(@unit $name)),*].len()] =
-                [$(Self::$name),*];
-        }
-    };
-    (@unit $name:ident) => { () };
+/// An integer or IEEE float type, by width in bits. Only [`Self::SUPPORTED`]
+/// widths are valid. Integers order before floats, each by width.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ValueType {
+    Int(u16),
+    Float(u16),
 }
 
-value_types! {
-    /// The boolean type: a comparison or logical-op result, 0 or 1.
-    I1,
-    I8,
-    I16,
-    /// x86 `SegmentLimit` result (`tmp:3`).
-    I24,
-    I32,
-    /// x86 `adcx`/`adox` 32-bit carry accumulator (`tmp:5`).
-    I40,
-    /// 6-byte varnode, seen on some ARM instructions.
-    I48,
-    /// AArch64 `sext(tmp:7)` in `cmpp` / `subp` (56-bit tagged pointers).
-    I56,
-    I64,
-    /// x86 `adcx`/`adox` 64-bit carry accumulator, AArch64 fixed-point
-    /// `ucvtf` (`tmp:9`).
-    I72,
-    /// The x87 ST0/STn bit-pattern view.
-    I80,
-    /// x86-64 `GDTR` / `IDTR`.
-    I96,
-    /// x86-64 `LDTR` / `TR`.
-    I112,
-    I128,
-    I256,
-    /// AVX-512 `zmm`.
-    I512,
-    /// IEEE half precision (AArch64 FPR16, ARM `vcvt.f16`).
-    F16,
-    F32,
-    F64,
-    /// x87 extended precision (Intel long double).
-    F80,
-    /// ARM's `vcvt.f32.f16 Qd,Dm` writes a 16-byte float destination.
-    F128,
+macro_rules! supported_widths {
+    (int: $($i:literal)*; float: $($f:literal)*) => {
+        impl ValueType {
+            /// Every type, in `Ord` order.
+            pub const SUPPORTED: [Self; [$($i,)* $($f,)*].len()] =
+                [$(Self::Int($i),)* $(Self::Float($f),)*];
+
+            #[inline]
+            pub(crate) const fn is_supported(self) -> bool {
+                match self {
+                    Self::Int(w) => matches!(w, $($i)|*),
+                    Self::Float(w) => matches!(w, $($f)|*),
+                }
+            }
+        }
+    };
+}
+
+// Every width some vendored sla spec gives a varnode or temporary (i24: x86
+// `tmp:3`, i72: x86 `adcx`, i80: x87 ST).
+supported_widths! {
+    int: 1 8 16 24 32 40 48 56 64 72 80 96 112 128 256 512;
+    float: 16 32 64 80 128
 }
 
 impl ValueType {
+    /// Boolean.
+    pub const I1: Self = Self::Int(1);
+
+    /// Panics on an unsupported width (a compile error in a `const`).
     #[inline]
-    pub fn as_str(self) -> &'static str {
+    pub const fn int(bits: u16) -> Self {
+        let ty = Self::Int(bits);
+        assert!(ty.is_supported(), "unsupported integer width");
+        ty
+    }
+
+    /// Panics on an unsupported width.
+    #[inline]
+    pub const fn float(bits: u16) -> Self {
+        let ty = Self::Float(bits);
+        assert!(ty.is_supported(), "unsupported float width");
+        ty
+    }
+
+    /// One byte is `I8`, never `I1`.
+    pub fn int_from_bytes(n: u32) -> crate::Result<Self> {
+        Self::from_bytes(n, Self::Int)
+            .ok_or_else(|| anyhow!("unsupported integer varnode size: {n} bytes"))
+    }
+
+    pub(crate) fn float_from_bytes(n: u32) -> crate::Result<Self> {
+        Self::from_bytes(n, Self::Float)
+            .ok_or_else(|| anyhow!("unsupported float varnode size: {n} bytes"))
+    }
+
+    fn from_bytes(n: u32, of_bits: impl Fn(u16) -> Self) -> Option<Self> {
+        let ty = of_bits(u16::try_from(n.checked_mul(8)?).ok()?);
+        ty.is_supported().then_some(ty)
+    }
+
+    #[inline]
+    pub const fn bit_width(self) -> usize {
         match self {
-            Self::I1 => "i1",
-            Self::I8 => "i8",
-            Self::I16 => "i16",
-            Self::I24 => "i24",
-            Self::I32 => "i32",
-            Self::I40 => "i40",
-            Self::I48 => "i48",
-            Self::I56 => "i56",
-            Self::I64 => "i64",
-            Self::I72 => "i72",
-            Self::I80 => "i80",
-            Self::I96 => "i96",
-            Self::I112 => "i112",
-            Self::I128 => "i128",
-            Self::I256 => "i256",
-            Self::I512 => "i512",
-            Self::F16 => "f16",
-            Self::F32 => "f32",
-            Self::F64 => "f64",
-            Self::F80 => "f80",
-            Self::F128 => "f128",
+            Self::Int(w) | Self::Float(w) => w as usize,
         }
     }
 
     /// `I1` and `I8` both occupy 1 byte.
     #[inline]
-    pub fn byte_size(self) -> usize {
+    pub const fn byte_size(self) -> usize {
+        self.bit_width().div_ceil(8)
+    }
+
+    #[inline]
+    pub const fn is_bool(self) -> bool {
+        matches!(self, Self::I1)
+    }
+
+    #[inline]
+    pub const fn is_integer(self) -> bool {
+        matches!(self, Self::Int(_))
+    }
+
+    #[inline]
+    pub const fn is_float(self) -> bool {
+        matches!(self, Self::Float(_))
+    }
+
+    /// The all-ones value. `None` for a float or past 128 bits.
+    #[inline]
+    pub const fn int_mask_u128(self) -> Option<u128> {
         match self {
-            Self::I1 | Self::I8 => 1,
-            Self::I16 | Self::F16 => 2,
-            Self::I24 => 3,
-            Self::I32 | Self::F32 => 4,
-            Self::I40 => 5,
-            Self::I48 => 6,
-            Self::I56 => 7,
-            Self::I64 | Self::F64 => 8,
-            Self::I72 => 9,
-            Self::I80 | Self::F80 => 10,
-            Self::I96 => 12,
-            Self::I112 => 14,
-            Self::I128 | Self::F128 => 16,
-            Self::I256 => 32,
-            Self::I512 => 64,
+            Self::Int(w) if w <= 128 => Some(crate::eval::mask_below(w as u32)),
+            Self::Int(_) | Self::Float(_) => None,
         }
     }
 
-    /// `byte_size * 8` for everything except `I1`, which is 1 bit in a byte.
-    #[inline]
-    pub fn bit_width(self) -> usize {
-        match self {
-            Self::I1 => 1,
-            Self::I8 => 8,
-            Self::I16 | Self::F16 => 16,
-            Self::I24 => 24,
-            Self::I32 | Self::F32 => 32,
-            Self::I40 => 40,
-            Self::I48 => 48,
-            Self::I56 => 56,
-            Self::I64 | Self::F64 => 64,
-            Self::I72 => 72,
-            Self::I80 | Self::F80 => 80,
-            Self::I96 => 96,
-            Self::I112 => 112,
-            Self::I128 | Self::F128 => 128,
-            Self::I256 => 256,
-            Self::I512 => 512,
-        }
-    }
-
-    #[inline]
-    pub fn is_bool(self) -> bool {
-        self == Self::I1
-    }
-
-    #[inline]
-    pub fn is_integer(self) -> bool {
-        !self.is_float()
-    }
-
-    #[inline]
-    pub fn is_float(self) -> bool {
-        matches!(
-            self,
-            Self::F16 | Self::F32 | Self::F64 | Self::F80 | Self::F128
-        )
-    }
-
-    /// An integer too wide for `u64`.
-    #[inline]
-    pub fn is_wide_int(self) -> bool {
-        self.is_integer() && self.byte_size() > 8
-    }
-
-    /// All-ones mask for this integer type. `I256` / `I512` return `u128::MAX`,
-    /// every bit the carrier holds rather than their real mask, so a consumer
-    /// that must not truncate has to special-case those two. Floats return 0,
-    /// so masking a float value yields 0.
-    pub fn bit_mask_u128(self) -> u128 {
-        if !self.is_integer() {
-            return 0;
-        }
-        low_bits_mask_u128(self.bit_width())
-    }
-
-    /// Masks a raw IEEE 754 pattern to this float type's width. Widths at or
-    /// past the `u64` carrier pass `bits` through unchanged.
+    /// Masks raw IEEE 754 bits to this width; 64 bits and wider pass through.
     pub fn mask_float_bits(self, bits: u64) -> u64 {
-        match self.bit_width() {
-            w if w < 64 => bits & ((1u64 << w) - 1),
-            _ => bits,
-        }
+        (u128::from(bits) & crate::eval::mask_below(self.bit_width() as u32)) as u64
     }
 
-    /// Masks `val` to this type's width, or `None` for floats and for widths
-    /// past the `u128` carrier.
-    pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
-        if !self.is_integer() {
-            return None;
-        }
-        if self.bit_width() > 128 {
-            return None;
-        }
-        Some(val & self.bit_mask_u128())
-    }
-
-    /// Sign-extends `val`, read as this type's narrow representation, to a
-    /// full `i128`. `None` for floats and for widths past the carrier.
+    /// Sign-extends `val` from this width to `i128`. `None` for floats and past
+    /// 128 bits.
     pub fn get_signed_int(self, val: u128) -> Option<i128> {
-        if !self.is_integer() {
+        let Self::Int(w @ 1..=128) = self else {
+            return None;
+        };
+        let spare = 128 - u32::from(w);
+        Some(((val << spare) as i128) >> spare)
+    }
+
+    /// Inverse of `Display`.
+    fn parse(s: &str) -> Option<Self> {
+        let (of_bits, digits): (fn(u16) -> Self, &str) = match s.split_at_checked(1)? {
+            ("i", digits) => (Self::Int, digits),
+            ("f", digits) => (Self::Float, digits),
+            _ => return None,
+        };
+        // `u16::from_str` also takes `+8` and `08`, which `Display` never writes.
+        if digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
-        let bits = self.bit_width();
-        if bits == 0 || bits > 128 {
-            return None;
-        }
-        let masked = val & self.bit_mask_u128();
-        if bits == 128 {
-            return Some(masked as i128);
-        }
-        let sign_bit = 1u128 << (bits - 1);
-        if (masked & sign_bit) != 0 {
-            let high_extension = !low_bits_mask_u128(bits);
-            Some((masked | high_extension) as i128)
-        } else {
-            Some(masked as i128)
+        let ty = of_bits(digits.parse().ok()?);
+        ty.is_supported().then_some(ty)
+    }
+}
+
+/// `I32` / `F64`.
+impl std::fmt::Debug for ValueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(w) => write!(f, "I{w}"),
+            Self::Float(w) => write!(f, "F{w}"),
         }
     }
 }
 
-/// Mask of the low `bits` bits. `bits >= 128` saturates to `u128::MAX`, the
-/// whole carrier, rather than the mask that width really names.
-#[inline]
-pub fn low_bits_mask_u128(bits: usize) -> u128 {
-    if bits >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << bits) - 1
-    }
-}
-
-impl ValueType {
-    /// Byte size 1 maps to `I8`, never `I1`.
-    pub fn int_for_byte_size(n: u32) -> crate::error::Result<Self> {
-        match n {
-            1 => Ok(Self::I8),
-            2 => Ok(Self::I16),
-            3 => Ok(Self::I24),
-            4 => Ok(Self::I32),
-            5 => Ok(Self::I40),
-            6 => Ok(Self::I48),
-            7 => Ok(Self::I56),
-            8 => Ok(Self::I64),
-            9 => Ok(Self::I72),
-            10 => Ok(Self::I80),
-            12 => Ok(Self::I96),
-            14 => Ok(Self::I112),
-            16 => Ok(Self::I128),
-            32 => Ok(Self::I256),
-            64 => Ok(Self::I512),
-            n => Err(anyhow::anyhow!("unsupported node output size: {n} bytes")),
-        }
-    }
-
-    pub fn float_for_byte_size(n: u32) -> crate::error::Result<Self> {
-        match n {
-            2 => Ok(Self::F16),
-            4 => Ok(Self::F32),
-            8 => Ok(Self::F64),
-            10 => Ok(Self::F80),
-            16 => Ok(Self::F128),
-            other => Err(anyhow::anyhow!(
-                "unsupported float varnode size {other} bytes (expected 2, 4, 8, 10, or 16)"
-            )),
-        }
-    }
-}
-
+/// `i32` / `f64`.
 impl std::fmt::Display for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        match self {
+            Self::Int(w) => write!(f, "i{w}"),
+            Self::Float(w) => write!(f, "f{w}"),
+        }
+    }
+}
+
+/// Inverse of `Display`, lowercase only.
+impl std::str::FromStr for ValueType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| {
+            let names = Self::SUPPORTED.map(|ty| ty.to_string());
+            anyhow!(
+                "unknown value type {s:?}: expected one of {}",
+                names.join(", ")
+            )
+        })
     }
 }
 
 /// The [`ValueType`] a varnode's byte size maps to.
 pub trait VnTypeExt {
-    fn int_type(&self) -> crate::error::Result<ValueType>;
+    fn int_type(&self) -> crate::Result<ValueType>;
 
-    fn float_type(&self) -> crate::error::Result<ValueType>;
+    fn float_type(&self) -> crate::Result<ValueType>;
 }
 
 impl VnTypeExt for rsleigh::Vn {
     #[inline]
-    fn int_type(&self) -> crate::error::Result<ValueType> {
-        ValueType::int_for_byte_size(self.size)
+    fn int_type(&self) -> crate::Result<ValueType> {
+        ValueType::int_from_bytes(self.size)
     }
 
     #[inline]
-    fn float_type(&self) -> crate::error::Result<ValueType> {
-        ValueType::float_for_byte_size(self.size)
+    fn float_type(&self) -> crate::Result<ValueType> {
+        ValueType::float_from_bytes(self.size)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::ValueType;
+
+    /// Every spelling and size fact agrees, type by type, and the list is
+    /// exactly the widths the vendored sla specs carry.
+    #[test]
+    fn supported_types_agree_on_spelling_and_size() {
+        let names: Vec<String> = ValueType::SUPPORTED
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            names.join(" "),
+            "i1 i8 i16 i24 i32 i40 i48 i56 i64 i72 i80 i96 i112 i128 i256 i512 \
+             f16 f32 f64 f80 f128"
+        );
+        assert!(ValueType::SUPPORTED.is_sorted());
+        for ty in ValueType::SUPPORTED {
+            assert_eq!(format!("{ty:?}").to_lowercase(), ty.to_string());
+            assert_eq!(ty.to_string().parse::<ValueType>().unwrap(), ty);
+            assert_eq!(ty.is_float(), ty.to_string().starts_with('f'));
+            assert_eq!(ty.is_integer(), !ty.is_float());
+            assert_eq!(ty.is_bool(), ty == ValueType::I1);
+            assert_eq!(ty.byte_size(), ty.bit_width().div_ceil(8));
+            let bits = u16::try_from(ty.bit_width()).unwrap();
+            let bytes = u32::try_from(ty.byte_size()).unwrap();
+            if ty.is_float() {
+                assert_eq!(ValueType::float(bits), ty);
+                assert_eq!(ValueType::float_from_bytes(bytes).unwrap(), ty);
+            } else {
+                assert_eq!(ValueType::int(bits), ty);
+                if !ty.is_bool() {
+                    assert_eq!(ValueType::int_from_bytes(bytes).unwrap(), ty);
+                }
+            }
+        }
+    }
+
+    /// The parser takes exactly the `Display` spelling; sizes off the list err.
+    #[test]
+    fn parse_and_from_bytes_refuse_unlisted_types() {
+        for bad in [
+            "", "i", "i12", "i08", "I32", "f8", "u32", "i32 ", "i+8", "i0", "i 8", "i8_", "f99999",
+            "\u{e9}8",
+        ] {
+            let err = bad.parse::<ValueType>().expect_err(bad);
+            let msg = err.to_string();
+            assert!(
+                msg.starts_with(&format!("unknown value type {bad:?}: ")),
+                "{msg}"
+            );
+            assert!(
+                msg.ends_with(
+                    "expected one of i1, i8, i16, i24, i32, i40, \
+                     i48, i56, i64, i72, i80, i96, i112, i128, i256, i512, f16, f32, f64, \
+                     f80, f128"
+                ),
+                "{bad:?}: {msg}"
+            );
+        }
+        for n in [0u32, 11, 13, 15, 17, 33, 65, u32::MAX] {
+            let err = ValueType::int_from_bytes(n).expect_err("unlisted size");
+            assert!(
+                err.to_string()
+                    .contains(&format!("unsupported integer varnode size: {n} bytes")),
+                "{err}"
+            );
+        }
+        for n in [0u32, 1, 3, 12, 32] {
+            let err = ValueType::float_from_bytes(n).expect_err("unlisted size");
+            assert!(
+                err.to_string()
+                    .contains(&format!("unsupported float varnode size: {n} bytes")),
+                "{err}"
+            );
+        }
+    }
+
+    /// A type is its kind and width; only the listed widths are supported.
+    #[test]
+    fn a_type_is_a_kind_and_a_width() {
+        assert_eq!(ValueType::int(32), ValueType::Int(32));
+        assert_eq!(ValueType::float(64), ValueType::Float(64));
+        assert_eq!(ValueType::I1, ValueType::Int(1));
+        assert_eq!(
+            format!("{:?} {:?}", ValueType::I1, ValueType::Float(80)),
+            "I1 F80"
+        );
+        assert!(ValueType::SUPPORTED.iter().all(|ty| ty.is_supported()));
+        for ty in [ValueType::Int(0), ValueType::Int(12), ValueType::Float(8)] {
+            assert!(!ty.is_supported(), "{ty:?}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported integer width")]
+    fn int_refuses_an_unsupported_width() {
+        let _ = ValueType::int(12);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported float width")]
+    fn float_refuses_an_unsupported_width() {
+        let _ = ValueType::float(8);
+    }
 
     /// Every byte size the vendored x86/ARM/AARCH64/MIPS/PowerPC specs can put
     /// on a p-code varnode.
     #[test]
     fn sleigh_varnode_widths_round_trip() {
         for n in [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 32, 64] {
-            let ty = ValueType::int_for_byte_size(n)
-                .unwrap_or_else(|e| panic!("int_for_byte_size({n}): {e}"));
+            let ty =
+                ValueType::int_from_bytes(n).unwrap_or_else(|e| panic!("int_from_bytes({n}): {e}"));
             assert_eq!(ty.byte_size(), n as usize);
             assert!(ty.is_integer());
         }
-        assert_eq!(ValueType::int_for_byte_size(1).unwrap(), ValueType::I8);
+        assert_eq!(ValueType::int_from_bytes(1).unwrap(), ValueType::int(8));
 
         for n in [2u32, 4, 8, 10, 16] {
-            let ty = ValueType::float_for_byte_size(n)
-                .unwrap_or_else(|e| panic!("float_for_byte_size({n}): {e}"));
+            let ty = ValueType::float_from_bytes(n)
+                .unwrap_or_else(|e| panic!("float_from_bytes({n}): {e}"));
             assert_eq!(ty.byte_size(), n as usize);
             assert!(ty.is_float());
         }
     }
 
     #[test]
-    fn bit_mask_u128_widths() {
-        assert_eq!(ValueType::I1.bit_mask_u128(), 0x1u128);
-        assert_eq!(ValueType::I8.bit_mask_u128(), 0xffu128);
-        assert_eq!(ValueType::I16.bit_mask_u128(), 0xffffu128);
-        assert_eq!(ValueType::I32.bit_mask_u128(), 0xffff_ffffu128);
-        assert_eq!(ValueType::I64.bit_mask_u128(), u64::MAX as u128);
-        assert_eq!(ValueType::I128.bit_mask_u128(), u128::MAX);
-        assert_eq!(ValueType::F32.bit_mask_u128(), 0);
-        assert_eq!(ValueType::F64.bit_mask_u128(), 0);
+    fn mask_float_bits_keeps_the_declared_width() {
+        assert_eq!(ValueType::float(16).mask_float_bits(u64::MAX), 0xffff);
+        assert_eq!(ValueType::float(32).mask_float_bits(u64::MAX), 0xffff_ffff);
+        for w in [64, 80, 128] {
+            assert_eq!(ValueType::float(w).mask_float_bits(u64::MAX), u64::MAX);
+        }
+        assert_eq!(ValueType::Float(0).mask_float_bits(u64::MAX), 0);
+        assert_eq!(ValueType::I1.mask_float_bits(u64::MAX), 1);
     }
 
+    /// Agrees with `eval::signed` at every width the carrier holds, on
+    /// unmasked inputs too; `None` past the carrier, at `Int(0)` and for a float.
     #[test]
-    fn get_unsigned_int_masks_to_width() {
-        assert_eq!(
-            ValueType::I16.get_unsigned_int(0x12345678u128),
-            Some(0x5678u128)
-        );
-        assert_eq!(
-            ValueType::I32.get_unsigned_int(0x12345678u128),
-            Some(0x12345678u128)
-        );
-        assert_eq!(ValueType::I128.get_unsigned_int(u128::MAX), Some(u128::MAX));
-        assert_eq!(ValueType::F32.get_unsigned_int(0x12345678u128), None);
-        // Every bit above the declared width clears.
-        assert_eq!(
-            ValueType::I8.get_unsigned_int(u128::MAX),
-            Some(u128::from(u8::MAX))
-        );
-        assert_eq!(
-            ValueType::I64.get_unsigned_int(u128::MAX),
-            Some(u128::from(u64::MAX))
-        );
-        // I1 masks to the low bit.
-        assert_eq!(ValueType::I1.get_unsigned_int(1), Some(1));
-        assert_eq!(ValueType::I1.get_unsigned_int(0), Some(0));
-        assert_eq!(ValueType::I1.get_unsigned_int(0xFE), Some(0));
+    fn get_signed_int_agrees_with_eval_signed() {
+        use dashu_int::UBig;
+        for ty in ValueType::SUPPORTED {
+            let w = ty.bit_width();
+            let sign = 1u128.checked_shl(w.saturating_sub(1) as u32).unwrap_or(0);
+            for v in [
+                0,
+                1,
+                sign,
+                sign.wrapping_sub(1),
+                ty.int_mask_u128().unwrap_or(0),
+                u128::MAX,
+            ] {
+                let want = match ty {
+                    ValueType::Int(1..=128) => {
+                        crate::eval::signed(&UBig::from(v), ty).map(|s| i128::try_from(s).unwrap())
+                    }
+                    ValueType::Int(_) | ValueType::Float(_) => None,
+                };
+                assert_eq!(ty.get_signed_int(v), want, "{ty} {v:#x}");
+            }
+        }
+        assert_eq!(ValueType::Int(0).get_signed_int(u128::MAX), None);
     }
 
+    /// The all-ones value up to the carrier, and nothing for a float or a
+    /// wider integer, never the saturated `u128::MAX`.
     #[test]
-    fn get_signed_int_sign_extends_negative_at_narrow_widths() {
-        let neg50_at_u32 = 0xffff_ffceu128;
-        assert_eq!(ValueType::I32.get_signed_int(neg50_at_u32), Some(-50i128));
-        assert_eq!(ValueType::I8.get_signed_int(0xceu128), Some(-50i128));
-        assert_eq!(ValueType::I32.get_signed_int(50u128), Some(50i128));
+    fn int_mask_u128_is_all_ones_up_to_the_carrier() {
+        for ty in ValueType::SUPPORTED {
+            let want = if ty.is_integer() && ty.bit_width() <= 128 {
+                Some(u128::MAX >> (128 - ty.bit_width()))
+            } else {
+                None
+            };
+            assert_eq!(ty.int_mask_u128(), want, "{ty:?}");
+        }
     }
 
+    /// The unsigned read has no carrier, so a > 128-bit width answers in
+    /// full; the signed one still fails loudly rather than return the low
+    /// 128 bits as a success.
     #[test]
-    fn get_signed_int_handles_full_u128_width() {
-        let neg1_at_u128 = u128::MAX;
-        assert_eq!(ValueType::I128.get_signed_int(neg1_at_u128), Some(-1i128));
-        let max_pos = i128::MAX as u128;
-        assert_eq!(ValueType::I128.get_signed_int(max_pos), Some(i128::MAX));
-    }
-
-    #[test]
-    fn bit_mask_u128_for_u80() {
-        let expected: u128 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::I80.bit_mask_u128(), expected);
-        assert_eq!(ValueType::F80.bit_mask_u128(), 0);
-    }
-
-    #[test]
-    fn get_unsigned_int_for_u80_masks_to_80_bits() {
-        let raw: u128 = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128;
-        let mask: u128 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::I80.get_unsigned_int(raw), Some(mask));
-        assert_eq!(
-            ValueType::I80.get_unsigned_int(0x12345678),
-            Some(0x12345678)
-        );
-    }
-
-    #[test]
-    fn get_signed_int_for_u80_sign_extends() {
-        let neg1_at_u80 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::I80.get_signed_int(neg1_at_u80), Some(-1i128));
-        assert_eq!(ValueType::I80.get_signed_int(50u128), Some(50i128));
-        let neg50 = ((1u128 << 80) - 1) ^ 49;
-        assert_eq!(ValueType::I80.get_signed_int(neg50), Some(-50i128));
-    }
-
-    #[test]
-    fn int_for_byte_size_10_is_i80() {
-        let ty = ValueType::int_for_byte_size(10).expect("10 must convert to I80");
-        assert_eq!(ty, ValueType::I80);
-    }
-
-    #[test]
-    fn int_for_byte_size_maps_widths() {
-        use super::ValueType as T;
-        assert_eq!(T::int_for_byte_size(1).unwrap(), T::I8);
-        assert_eq!(T::int_for_byte_size(6).unwrap(), T::I48);
-        assert_eq!(T::int_for_byte_size(8).unwrap(), T::I64);
-        assert_eq!(T::int_for_byte_size(64).unwrap(), T::I512);
-        assert_eq!(T::int_for_byte_size(3).unwrap(), T::I24);
-
-        // I48 fits u64, so it is not wide.
-        assert_eq!(T::I48.byte_size(), 6);
-        assert_eq!(T::I48.bit_width(), 48);
-        assert!(!T::I48.is_wide_int());
-        assert_eq!(T::I48.bit_mask_u128(), (1u128 << 48) - 1);
-        assert_eq!(T::I48.get_signed_int((1u128 << 48) - 1), Some(-1i128));
-    }
-
-    /// Pins the `bits >= 128` guard: past the carrier, the mask approximates.
-    #[test]
-    fn bit_mask_u128_for_u256_and_u512_is_u128_max() {
-        assert_eq!(ValueType::I256.bit_mask_u128(), u128::MAX);
-        assert_eq!(ValueType::I512.bit_mask_u128(), u128::MAX);
-    }
-
-    /// A > 128-bit query must fail loudly rather than return the low 128 bits
-    /// as a success.
-    #[test]
-    fn get_unsigned_int_i256_does_not_falsely_succeed() {
-        assert_eq!(ValueType::I256.get_unsigned_int(0xDEAD_BEEFu128), None);
-        assert_eq!(ValueType::I256.get_unsigned_int(u128::MAX), None);
-        assert_eq!(ValueType::I512.get_unsigned_int(42u128), None);
-        assert_eq!(ValueType::I256.get_signed_int(0xDEAD_BEEFu128), None);
-        assert_eq!(ValueType::I512.get_signed_int(42u128), None);
-        // Exactly 128 bits still fits the carrier.
-        assert_eq!(ValueType::I128.get_unsigned_int(u128::MAX), Some(u128::MAX));
+    fn past_the_carrier_only_the_signed_read_refuses() {
+        use crate::eval::mask;
+        use dashu_int::UBig;
+        let v = UBig::from(0xDEAD_BEEFu32);
+        assert_eq!(mask(&v, ValueType::int(256)), v);
+        let wide = UBig::ONE << 200usize;
+        assert_eq!(mask(&wide, ValueType::int(512)), wide);
+        assert_eq!(ValueType::int(256).get_signed_int(0xDEAD_BEEFu128), None);
+        assert_eq!(ValueType::int(512).get_signed_int(42u128), None);
+        // Exactly 128 bits still fits the signed carrier.
+        assert_eq!(ValueType::int(128).get_signed_int(u128::MAX), Some(-1));
     }
 }

@@ -1,13 +1,9 @@
-//! `p_filesz > p_memsz`: the FILE holds more bytes than the image MAPS.
-//!
-//! No toolchain emits it, but `object` parses it and strider's input domain is
-//! untrusted binaries. The mapped extent came from `p_filesz` while the
-//! writable/executable bookkeeping came from `p_memsz`, so the tail past
-//! `p_memsz` was served as if mapped, and, for a writable-and-executable
-//! PT_LOAD, served through a `ReadOnlyMemory` view whose whole contract is
-//! that nothing there can change under the analysis.
+//! `p_filesz > p_memsz`: the file holds more bytes than the image maps. Only
+//! `p_memsz` is served, the extent the writable / executable sets track, so
+//! the tail past it reaches neither view.
 
-use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
+use strider_reader::elf::RelocationMode;
+use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
 
 const BASE: u64 = 0x2000;
 /// Bytes the image maps.
@@ -55,8 +51,9 @@ fn elf_with_one_pt_load(p_flags: u32) -> Vec<u8> {
 fn bytes_past_p_memsz_are_not_mapped() {
     // PF_R | PF_X
     let image = elf_with_one_pt_load(0b101);
-    let obj = object::File::parse(&image[..]).expect("parse");
-    let reader = ElfFileMemReader::from_object(&obj).expect("from_object");
+    let elf = OwnedElf::parse(image).expect("parse");
+    let reader =
+        ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("ElfFileMemReader::new");
 
     let mut buf = [0u8; 8];
     reader
@@ -71,28 +68,53 @@ fn bytes_past_p_memsz_are_not_mapped() {
     );
 }
 
-/// The same shape on a WRITABLE-and-executable PT_LOAD. `ElfFileMemReader`'s
-/// ROM view is the fetch set minus the writable ranges, and the writable
-/// ranges stop at `p_memsz`, so the tail used to satisfy a read through a
-/// trait that promises the bytes cannot change.
+/// The same shape on a WRITABLE PT_LOAD, under the one ROM view that takes
+/// writable segments and cuts `writable` back out (`got_is_rom`): the cut
+/// stops at `p_memsz`, so neither the mapping nor the file's bytes past it
+/// may answer a read through a trait that promises the bytes cannot change.
 #[test]
-fn an_rwx_tail_is_not_served_as_read_only_memory() {
-    // PF_R | PF_W | PF_X
-    let image = elf_with_one_pt_load(0b111);
-    let obj = object::File::parse(&image[..]).expect("parse");
-    let reader = ElfFileMemReader::from_object(&obj).expect("from_object");
+fn a_writable_tail_is_not_served_as_read_only_memory() {
+    // PF_R | PF_W
+    let image = elf_with_one_pt_load(0b110);
+    let elf = OwnedElf::parse(image).expect("parse");
+    let reader = ElfFileMemReader::new(&elf, RelocationMode::Applied { got_is_rom: true })
+        .expect("ElfFileMemReader::new");
 
     let mut buf = [0u8; 8];
     assert!(
         reader.read(BASE, &mut buf).is_err(),
-        "an RWX mapping is not read-only memory, so even its prefix must be \
-         refused here",
+        "a writable mapping is not read-only memory, so even its prefix must \
+         be refused here",
     );
     let past = BASE + MEMSZ;
     assert!(
         reader.read(past, &mut buf).is_err(),
-        "{past:#x} is the tail of an RWX mapping past p_memsz; answering it \
-         lets a constant-address load fold to the file's initial value while \
-         a store to the same address is live",
+        "{past:#x} is the tail of a writable mapping past p_memsz; answering \
+         it lets a constant-address load fold to the file's initial value \
+         while a store to the same address is live",
     );
+}
+
+/// A PT_LOAD whose bytes run past the end of the file: the load is an error,
+/// never a window past the image nor a mapping that silently goes missing.
+#[test]
+fn a_pt_load_running_past_the_end_of_the_file_is_an_error() {
+    let mut image = elf_with_one_pt_load(0b101);
+    // Eight of the `p_filesz` bytes from offset 120 remain.
+    image.truncate(120 + 8);
+    let elf = OwnedElf::parse(image).expect("the headers still parse");
+    for err in [
+        ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect_err("the reader"),
+        elf.regions(
+            strider_reader::elf::RegionSource::Auto,
+            strider_reader::elf::LoadFilter::CodeAndReadOnly,
+            false,
+        )
+        .expect_err("the regions"),
+    ] {
+        assert!(
+            err.to_string().contains("failed to parse ELF"),
+            "got: {err}"
+        );
+    }
 }

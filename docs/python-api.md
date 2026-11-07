@@ -1,15 +1,12 @@
 # Python API reference
 
-The Python API by topic. The typed `.pyi` stubs under
-`crates/strider-py/strider/` list every name with its exact signature,
-including the arithmetic operators this page groups rather than enumerates.
-For the task-first walkthrough, read the [Python guide](python-guide.md).
+The Python API by topic. The `.pyi` stubs under `crates/strider-py/strider/`
+give every exact signature; the [Python guide](python-guide.md) is the
+task-first walkthrough. Whole-flow blocks run against the fixture ELFs under
+`fixtures/out/`; signature listings use placeholder names.
 
-Blocks showing a whole flow run against the committed fixture ELFs under
-`fixtures/out/`; the signature listings use placeholder names.
-
-The public surface is eight domain submodules plus one top-level error.
-`explore` is bound too, and backs `visualize`, but is outside `__all__`:
+Eight submodules plus one error are public; `explore` (the `visualize`
+explorer) is bound outside `__all__`:
 
 ```python
 import strider
@@ -18,59 +15,50 @@ strider.StriderError      # the analysis error; see Errors below
 strider.__version__
 ```
 
----
-
 ## 1. Loading a binary
 
 ### `lift.load_elf`, the common path
 
 ```python
 prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
-# Detects the architecture and calling convention from the ELF header. A
-# PowerPC kernel image is detected too, by an e_entry at or above KERNELBASE.
-# Override for another kernel ABI (x86's has no header bit to read) or a
-# custom one:
+# Architecture and calling convention come from the ELF header (a PowerPC
+# kernel is detected by e_entry >= KERNELBASE). Override with
 #   load_elf(path, arch=sleigh.SleighArch.x86_64(), cc=sleigh.CallingConvention.x86_64_systemv())
-# from_segments=True (default) walks PT_LOAD; False forces per-section regions.
-# apply_relocations=True (default) patches relocations in place, and also
-# selects what is mapped: False drops writable mappings rather than serving
-# their on-disk bytes. Exec beats write, so a single RWX PT_LOAD still maps.
-# relocated_got_is_rom=True additionally serves .got / .data.rel.ro as
-# READ-ONLY memory, so a load through a GOT slot folds. Off by default: it
-# claims no slot is rewritten once the loader has run, which nothing checks.
-# It is refused with apply_relocations=False, which denies that same claim:
-# the slots would read as their on-disk bytes, 0 on a PIE.
+# from_segments=True (default) walks PT_LOAD; False uses sections, writable
+# where their PT_LOAD is.
+# apply_relocations=True (default) patches relocations; False also drops
+# writable, non-executable mappings.
+# relocated_got_is_rom=True (needs apply_relocations=True) also serves .got
+# (PPC32 .got2) and .data.rel.ro as read-only, so a load through a GOT slot
+# folds; wrong for code that relocates its own GOT.
 ```
 
-`load_elf` returns an `ElfLifter`: a lifter that also carries the symbol table,
-the loaded memory, and a default calling convention.
+`load_elf` returns an `ElfLifter`: a lifter carrying the symbol table, the
+loaded memory and a default calling convention.
 
-The file is mapped, not copied. Writing into the loaded file, by copying over
-it or appending to it, raises `StriderError: mapped file ... changed on disk
-since it was mapped`; the check is the mapped inode's size and whole-second
-mtime, so a same-size rewrite within the second is missed. A rebuild or a `mv`
-that REPLACES the file leaves the mapping alone and keeps serving the image
-that was loaded, so re-open the handle to see a new build. `STRIDER_NO_MMAP=1`
-reads the file into memory instead, which a network or 9p mount also needs.
+The file is memory-mapped. Writing into it (same inode) raises
+`StriderError: mapped file ... changed on disk since it was mapped` (checked by
+size and whole-second mtime); replacing it (`mv`, a rebuild) keeps serving the
+loaded image, so re-open to see a new build. `STRIDER_NO_MMAP=1` reads the
+file instead, which a network or 9p mount needs.
 
-On ppc64 ELFv1 a `STT_FUNC` symbol addresses a 24-byte `.opd` descriptor rather
-than code. `load_elf` reads its first doubleword, so `symbol("f").address` and
-`analyze("f")` name the entry point; `size` is `None` there.
+On ppc64 ELFv1 a function symbol names its `.opd` descriptor; `load_elf`
+follows it, so `symbol("f").address` and `analyze("f")` name the code, and
+`analyze` at that code (by name or address) enters with `r2` holding the
+descriptor's TOC pointer.
 
-An unlinked object file (`ET_REL`) loads from sections whatever `from_segments`
-says. Its sections typically all sit at `sh_addr` 0, so strider gives each
-colliding section its own base the way a linker would. Every address you get
-back is that synthetic one, comparable only against other addresses from the
-same load. With `apply_relocations=True` the code relocations are applied on
-x86, x86-64, AArch64, ARM and Thumb, PowerPC and MIPS:
+An unlinked object (`ET_REL`) loads from sections, each colliding section at
+its own synthetic base; addresses are comparable only within one load. With
+`apply_relocations=True` its code relocations are applied on every supported
+arch:
 
-- An undefined or `SHN_COMMON` symbol resolves to a distinct address in an
-  unmapped range past the image, so a call to an external function targets
-  that address, and `prog.symbol("ext_fn").address` names it.
-- A GOT reference loads from a synthetic GOT slot holding the symbol's address.
-- A relocation strider does not compute leaves no bytes behind: outside a
-  writable mapping its field is a hole no read serves, so decoding stops there,
-  and a decode starting on it fails with an error naming the relocation type.
+- An undefined or `SHN_COMMON` symbol gets a distinct address in an unmapped
+  range past the image, which `prog.symbol("ext_fn").address` names.
+- A GOT reference loads from a synthetic slot holding the symbol's address.
+  The synthetic link binds every symbol locally, so the slot is read-only
+  whatever `relocated_got_is_rom` says.
+- A relocation strider does not compute is a hole outside writable data:
+  decoding stops there, with an error naming the relocation type.
 
 ### `lift.lifter`, raw bytes and no ELF
 
@@ -79,15 +67,19 @@ mem = strider.reader.BufferReader(0x1000, b"\x48\x01\xd8\xc3")  # add rax,rbx; r
 lft = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)      # rom=... optional
 ```
 
-`lifter(arch, mem, rom=None)` builds a plain `Lifter`. `mem` is the instruction
-source; `rom` is optional read-only memory for constant folding.
+`lifter(arch, mem, rom=None)` builds a plain `Lifter`: `mem` is the instruction
+source, `rom` the optional read-only memory for constant folding. The bytes
+`mem` serves must not change while the `Lifter` lives: decodes are cached by
+address, so patched code needs a fresh `Lifter`.
 `BufferReader(base_addr, data)` takes `bytes`, a `bytearray` or a sequence of
-ints. The guide's [Beyond ELF](python-guide.md#beyond-elf-custom-code-and-data)
-section walks through it.
+ints. No preset decodes microMIPS (a MIPS preset reads an odd address as
+MIPS16e); `load_elf` refuses a microMIPS image unless given both `arch=` and
+`cc=`, and a raw `lifter` cannot tell.
+See the guide's [Beyond ELF](python-guide.md#beyond-elf-custom-code-and-data).
 
 ### Custom memory: `reader.MemReader` / `reader.ReadOnlyMemory`
 
-Subclass and override `read(addr, size)` to feed the pipeline from anything:
+Subclass and override `read(addr, size)`:
 
 ```python
 class Firmware(strider.reader.MemReader):
@@ -100,24 +92,36 @@ blob = open("fixtures/out/arm/arithmetic.elf", "rb").read()
 fw = strider.lift.lifter(sleigh.SleighArch.arm(), Firmware(blob))
 ```
 
-`ReadOnlyMemory` is the same shape, used as the `rom=` argument so
-`LoadReadOnly` can fold loads from constant addresses. `BufferReader` works as
-either. The `reader.MemLike` / `reader.RomLike` type aliases name what each
-argument accepts.
+`ReadOnlyMemory` is the same shape, passed as `rom=` so `LoadReadOnly` can fold
+loads from constant addresses. `BufferReader` works as either; `reader.MemLike`
+/ `reader.RomLike` name what each argument accepts.
 
----
+Define a `MemReader`, `ReadOnlyMemory` or `JoinPredicate` subclass once, not
+in a loop: once instantiated, the class is never freed. A reader holding its
+own `Lifter` (tens of MB of decoder state) is a cycle only a cyclic GC pass
+frees; hold the `Lifter` through a `weakref`, or call `gc.collect()`.
 
 ## 2. Analyzing a function
 
-`analyze` lifts, optimizes, and resolves one function.
+`analyze` lifts, optimizes and resolves one function.
 
 ```python
 result = prog.analyze("dispatch_value")     # by symbol name (ElfLifter) or address
 cfg, function, unresolved = result           # an AnalyzeResult, a named 3-tuple
 result.cfg, result.function, result.unresolved   # or read the fields
 # unresolved: machine addresses of indirect branches that stayed unresolved
-# (a list, not an error).
 ```
+
+`analyze` reports what it cannot vouch for in `cfg.incomplete`, each address
+with its reason, rather than raising; check it before trusting an absence ("no
+store to X"). It raises `StriderError` only for:
+
+- an unmapped or undecodable entry;
+- a fall-through no call explains into bytes Sleigh rejects;
+- a Sleigh user-op with no `CallOtherAbi` (`lft.call_other_abi(name)` is
+  `None`; most x86 SIMD and x87 ops), which `call_other_abis` can classify.
+
+`build_cfg` raises for the first two.
 
 A plain `Lifter` needs an address and a calling convention:
 
@@ -125,21 +129,20 @@ A plain `Lifter` needs an address and a calling convention:
 _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 ```
 
-A handle decodes only on the thread that built it. `analyze`, `build_cfg`,
-`optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`, `user_op_names`
-and any renderer given `lifter=` raise
-`StriderError: this Lifter was built on another thread` anywhere else; the
-handle itself still moves and drops freely. A worker thread builds its own over
-the same `prog.arch`, `prog.reader()` and `prog.rom()`, and since `analyze`
-drops the GIL the two run in parallel. `optimize` holds the GIL for its whole
-run.
+A handle works on any thread. `analyze`, `build_cfg` and `add_elf` take it
+exclusively; a `Lifter` method called on it meanwhile raises `StriderError:
+this Lifter is already in use`, while the `ElfLifter` symbol, `read`,
+`endianness` and `cc` reads keep working. For parallelism use one handle per
+thread, each built over `prog.arch`, `prog.reader()` and `prog.rom()` (gathered
+before any analysis is in flight and after every `add_elf`), and call
+`analyze(addr, prog.cc)`. `analyze` drops the GIL unless a reader is a Python
+one (anything but a `BufferReader`); `Function.optimize` holds it.
 
 ### `lift.LifterOptions`, per-call tuning
 
 ```python
 opts = strider.lift.LifterOptions(
     cfg=strider.cfg.CfgOptions(
-        allow_code_before_start_addr=True,
         function_max_size=0x400,       # how far past the entry to decode; None is unbounded
         known_targets={0x1234: [0x2000, 0x2010],   # this branch goes to these
                        0x1250: "return"},          # and this one returns
@@ -153,62 +156,97 @@ opts = strider.lift.LifterOptions(
         noalias_allocators=[],            # callee addresses of malloc-like allocators
         distinct_sp_bases_disjoint=False,
         callee_preserves_stack_args=False,
+        msr_register_keeps_mode=True,
+        fp_rounding_mode_is_nearest=True,
     ),
     compact=True,                      # drop unreachable nodes at the end
-    resolve_indirect_branches=True,    # False leaves every site an IndirectBranch placeholder
-    per_address_ccs=None,              # {callee_addr: CallingConvention}; keyed by
-                                       # the direct-call TARGET, not the call site
-    pipeline=None,                      # replace the optimizer pipeline for this call
+    resolve_indirect_branches=True,    # False leaves every site an IndirectBranch
+    per_address_ccs=None,              # {callee_addr: CallingConvention}, keyed by
+                                       # the direct-call TARGET
+    pipeline=None,                     # replace the optimizer pipeline
 )
 prog.analyze("dispatch_value", opts=opts)
 ```
 
-`AssumptionOptions` holds claims about the analysed code that strider cannot
-check, so a wrong one can make the answer wrong. Each field's risky value is
-the positive one:
+`AssumptionOptions` holds claims strider cannot check; a wrong one makes the
+answer wrong. Each field's risky value is the positive one:
 
-- `stack_global_disjoint` (default on): no constant address equals `sp + K` at
+- `stack_global_disjoint` (on): no constant address equals `sp + K` at
   runtime.
-- `assume_incoming_args_survive_calls` (default on): a callee leaves an
-  incoming stack-argument slot as it found it, so an argument read after a
-  call is still found.
-- `return_slots_survive_untracked_writes` (default on): a RAM store whose
-  address strider cannot place on the entry stack, and any callee or user-op,
-  leave the slots the function saved its return address and entry stack
-  pointer in alone. Only return-target verification reads it; off, a return
-  after any call is reported as unverified, and a store through a pointer only
-  a guess reaches is checked against the slot.
-- `distinct_sp_bases_disjoint` (off): a store rooted at an SP base other than
-  the entry SP, such as an `sp & -16` frame local, does not alias an incoming
-  argument slot. Only incoming-argument detection reads it.
-- `escape_analysis` (off): when no stack address escapes the frame, a spill
-  load forwards across a call. An address escapes through a call argument, a
-  stored value, a return, or a register the call clobbers. The proof misses a
-  callee reading an address from a register its convention preserves, and
-  reads an alignment hole in the outgoing-argument window as the window's end.
+- `assume_incoming_args_survive_calls` (on): a callee leaves the incoming
+  stack-argument slots alone, so an argument read after a call is found.
+  Wrong when the function passes a callee a pointer into those slots or the
+  register-argument homes below them (detected; the slots then stay unknown),
+  when a callee reaches them through a pointer in a preserved register (not
+  detected), or when the code stores its entry SP (APCS frames: nothing is
+  found). A `CallingConvention.custom` whose ABI homes register arguments
+  next to the stack ones (ARM, MIPS, PPC64, riscv, Win64) must pass
+  `reg_args_adjoin_stack_args=True`.
+- `return_slots_survive_untracked_writes` (on): a store strider cannot place
+  on the entry stack, a callee or a user-op leaves the saved return address
+  and entry stack pointer alone. Only return-target verification reads it;
+  off, a return after such a write is reported unverified.
+- `distinct_sp_bases_disjoint` (off): a store off an SP base other than the
+  entry SP (an `sp & -16` local) does not alias an incoming argument slot.
+- `escape_analysis` (off): when no stack address escapes the frame (through a
+  call argument, a stored value, a return or a clobbered register), a spill
+  load forwards across a call and, under `stack_global_disjoint`, past a store
+  through a pointer strider cannot place. It misses a callee reading an address
+  from a preserved register or writing a stack argument above an unwritten
+  (alignment) slot, and is inert on a frame that stores its entry
+  stack pointer (every PowerPC frame, an ARM APCS frame).
 - `noalias_allocators` (empty): the listed callees return fresh pointers that
-  overlap no live allocation. Nothing models deallocation, so after a free a
-  stale pointer is taken as disjoint from storage the allocator hands out
-  again. A non-empty list also forwards spills across a listed call, with the
-  same gaps as `escape_analysis`.
+  overlap no live allocation, stack slot or global, so an arena allocator does
+  not qualify. Deallocation is not modelled. A non-empty list also forwards
+  spills across a listed call, as `escape_analysis` does.
 - `callee_preserves_stack_args` (off): a callee leaves the outgoing-argument
-  slots unchanged, which the psABIs do not require. It changes nothing unless
-  `escape_analysis` is on or `noalias_allocators` is non-empty.
+  slots unchanged, which the psABIs do not require. Inert without
+  `escape_analysis` or `noalias_allocators`.
+- `msr_register_keeps_mode` (on): an ARM register-form `msr cpsr_c, rN`
+  writes the mode already in force, so it re-banks nothing (masks and flags
+  still update; immediate `msr` and `cps` still switch). Wrong for a mode
+  built in a register (Linux's `safe_svcmode_maskall`, `fiqasm.S`) or a saved
+  mode restored after a switch.
+- `fp_rounding_mode_is_nearest` (on): the dynamic rounding mode of
+  float-to-integer, narrowing and integer-to-float conversions is
+  round-to-nearest-even (x86 MXCSR.RC and x87 RC, PowerPC FPSCR.RN, ARM FPSCR
+  and AArch64 FPCR RMode, MIPS FCSR.RM). Off, each such conversion reads the
+  mode, so a mode the function sets folds. Wrong after `fesetround`. Float
+  arithmetic is taken to round to nearest either way.
 
-`AssumptionOptions.none()` clears all seven; `AssumptionOptions()` does not. It
-is the sound floor of these fields for any input whose memory behaves as RAM:
-a load reads back the last value the analysed code stored at its address, so a
-memory-mapped register polled after a write still reads as the value written.
+The last two are read by the lift: `analyze` honours them and
+`Function.optimize` refuses to add them.
 
-`call_other_abis` reclassifies a Sleigh user-op by name ahead of the built-in
-table. Each value is a `strider.sleigh.CallOtherAbi`: one of the four
-footprint-free classes `CallOtherAbi.noop()` / `.pure()` / `.mem_clobber()` /
-`.no_return()`, or one naming implicit registers:
+`AssumptionOptions.none()` clears all nine; `AssumptionOptions()` keeps the
+defaults. `none()` is the sound floor for memory that behaves as RAM (a load
+reads back the last value stored) and IEEE-default float controls (MXCSR
+FTZ/DAZ, PowerPC FPSCR NI/OE/UE, ARM/AArch64 FZ, MIPS FS clear; so not for
+`-ffast-math` code). `none(...)` takes the constructor's keywords and sets only
+those: `AssumptionOptions(escape_analysis=True)` holds six claims,
+`AssumptionOptions.none(escape_analysis=True)` one.
+
+Claims accumulate per `Function`: `function.assumptions` reads those in force.
+`function.optimize(assumptions=...)` adds claims and withdraws none; a set that
+leaves out a claim already in force raises `StriderError`. Add one with a
+union (`a | b`, `a.union(b)`):
 
 ```python
-sl = strider.sleigh.Sleigh(sleigh.SleighArch.x86_64(), mem)
+from strider.lift import AssumptionOptions
+
+function.optimize(
+    assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True))
+```
+
+To drop one, analyse again without it.
+
+`call_other_abis` reclassifies a Sleigh user-op by name ahead of the built-in
+table. Each value is a `strider.sleigh.CallOtherAbi`: `noop()`, `pure()`,
+`mem_clobber()`, `no_return()`, or one naming implicit registers:
+
+```python
+arch = sleigh.SleighArch.x86_64()
 strider.sleigh.CallOtherAbi.custom(
-    sl,                              # resolves the register names here and now
+    arch,                            # resolves the register names now
     implicit_reads=["RAX", "RDI"],   # read beyond the p-code operands
     implicit_writes=["RAX"],         # written beyond the p-code result
     clobbers_memory=True,
@@ -216,16 +254,16 @@ strider.sleigh.CallOtherAbi.custom(
 )
 ```
 
-An unknown register name raises `StriderError` at construction. An ABI stated
-here holds for this analysis only.
+An unknown register name raises `StriderError` at construction.
 
-`lft.user_op_names()` lists every user-op name the architecture can emit, and
-`lft.call_other_abi(name)` reads back the classification in force: the
-built-in one, or the `cfg_opts` entry when `lft.call_other_abi(name, cfg_opts)`
-is given one. `None` means strider has no answer for the name, which fails the
-lift of any function containing it.
-`crates/strider-py/examples/python/17_custom_abis.py` runs the discovery, then
-analyses one `int 0x80` stub with and without an override.
+x86 `hlt` is the `halt` user op and falls through, as kernel code resumes
+after the interrupt. For userland code (a libc `_start`) pass
+`call_other_abis={"halt": CallOtherAbi.no_return()}`.
+
+`lft.user_op_names()` lists the user-op names the architecture can emit;
+`lft.call_other_abi(name, opts=None)` reads the classification in force.
+`None` means strider has no answer, which fails the lift of a function using
+it. `crates/strider-py/examples/python/17_custom_abis.py` walks through this.
 
 ### ElfLifter metadata
 
@@ -236,60 +274,53 @@ prog.endianness                # "little" or "big"
 prog.is_arm_be8                # EF_ARM_BE8 set; False off ARM
 prog.entry_point()             # ELF entry address
 list(prog.functions())         # one Symbol per function address, address order
-list(prog.iter_symbols())      # every Symbol, pulled one at a time (a SymbolIter)
-prog.symbols()                 # {name: Symbol}
+list(prog.iter_symbols())      # every Symbol, lazily (a SymbolIter)
+prog.symbols()                 # {name: Symbol}, no ARM / AArch64 mapping symbols
 
 prog.symbol("f")               # Symbol; raises if nothing has that name
 prog.symbol_opt("f")           # ... or None
 prog.symbol_at(0x401234)       # the Symbol covering an address, or None
 
 prog.read(addr, size)          # raw bytes, or None when unmapped
-prog.reader()                  # the BufferReader over the mapped regions: PT_LOAD
-                               # segments unless from_segments=False
+prog.reader()                  # the BufferReader over the mapped regions
 prog.rom()                     # the read-only image LoadReadOnly folds from, or None
 prog.add_elf("libc.so")        # merge another ELF (shared library)
 ```
 
-Symbols can also be attached after loading, which is how a stripped image gets
-its names back:
+Symbols can be attached after loading, to name a stripped image:
 
 ```python
 prog.add_symbol_file("vmlinux.debug")   # its symbols, none of its bytes
 prog.add_symbols({                      # names that live in no ELF at all
     "handle_irq": 0xffffffff81001200,
 })
-prog.add_symbols(                       # is_function is per CALL, not per name
+prog.add_symbols(                       # is_function applies to the whole call
     {"irq_table": (0xffffffff81800000, 0x400)},   # (address, size)
     is_function=False,
 )
 ```
 
-`add_symbol_file` is for a separate debug or symbol file: `objcopy
---only-keep-debug` output and distro debuginfo are linked at the SAME addresses
-as the image they describe, so `add_elf` refuses them as an overlap. Only the
-symbols are taken. `add_symbols` takes an address, or an `(address, size)` pair
-when the extent is known, which lets `symbol_at` resolve an address inside the
-symbol. A name an already-loaded ELF carries keeps its ELF answer.
+`add_symbol_file` takes a debug file linked at the image's own addresses
+(`objcopy --only-keep-debug`, distro debuginfo), which `add_elf` would refuse
+as an overlap. `add_symbols` takes an address or an `(address, size)` pair; a
+size lets `symbol_at` resolve addresses inside it. A name an ELF already
+carries keeps its ELF answer.
 
-A `Symbol` carries `name`, `address`, `size`, `end`, `is_function`, `is_thumb`
-and `region`. `size` is `None` when the ELF records no extent (`st_size == 0`,
-as for a hand-written `.S` entry point with no `.size` directive); `end` is
-`None` there too. `region` is the `(start, end)` of the loaded region the
-symbol maps into, such as `.text`. A Thumb function's `address` keeps the ISA
-bit, which is what makes `analyze` enter it in Thumb mode; `end`, `region` and
-`symbol_at` measure it from `address & ~1`.
+A `Symbol` carries `name`, `address`, `size`, `end`, `is_function`, `is_thumb`,
+`local_entry` and `region`. `size` and `end` are `None` when the ELF records no
+extent (or, on ppc64 ELFv1, only the descriptor's). `region` is the
+`(start, end)` of the loaded region it maps into, or `None`. A
+Thumb function's `address` keeps the ISA bit (so `analyze` enters in Thumb);
+`end`, `region` and `symbol_at` measure from `address & ~1`. `local_entry` is
+the ppc64 ELFv2 local entry (`address` plus the `st_other` offset), and
+`address` elsewhere.
 
-`symbol(name)` resolves to a definition first, and otherwise to an undefined
-symbol that has an address: a PLT stub, or an object file's extern address.
-
-`symbol_at` takes the nearest symbol at or below the address whose recorded
-extent reaches it. A symbol with no recorded size covers only its own address.
-Aliases sharing an address are ranked by recorded extent first and by being
-code second, so a sized data alias wins over an unsized function one.
-`functions()` filters to code first and keeps the sized one of what remains, so
-the two accessors can name different symbols at one address.
-
----
+`symbol(name)` prefers a definition, else an undefined symbol with an address
+(a PLT stub, an object file's extern). An object file's defined IFUNC sits
+at its extern too, with no size, no code and not `is_function`. `symbol_at`
+takes the nearest symbol at or below the address whose extent reaches it,
+ranking aliases by extent, then by being code; `functions()` prefers code, so
+the two can name different symbols at one address.
 
 ## 3. The `Function` and its `Node`s
 
@@ -299,6 +330,7 @@ function.entry_node()          # id of the Entry node
 function.node_ids()            # every id
 function.count_regions()       # Region nodes reachable from entry
 function.cfg                   # the Cfg it was lifted from
+function.assumptions           # the AssumptionOptions in force (section 2)
 function.clone()               # an independent copy, sharing the Cfg
 function.compact()             # drop nodes unreachable from entry; renumbers ids
 function.validate()            # None, or a message naming the broken invariant
@@ -311,21 +343,21 @@ A `Node`:
 ```python
 n.id                           # node id; the handle goes stale after
                                # optimize / rewrite / rewrite_all / compact
-n.kind()                       # "IntBinaryOp(Add)", "Region", "Load(RAM)"
+n.kind()                       # "IntBinaryOp(Add)", "IntConst", "Load(RAM)"
 n.op()                         # "Add" / "Less" / ... or None for op-less kinds
 n.value_type()                 # "I64" / "I1" / "F64" / ... or None
 n.inputs(), n.outputs()        # neighbouring nodes (Node handles, not ids)
-n.uint(), n.sint(), n.boolean(), n.float_bits()   # constants
-n.wide_const_bytes()           # little-endian bytes of a constant over 64 bits
+n.uint(), n.sint(), n.boolean(), n.float_bits()   # constants, at any width
 n.call_other_name()            # a CallOther's user-op name, else None
-n.vn()                         # the varnode this node names: an InitialVar's entry
-                               # register, a Call's return register (its FIRST value
-                               # output, never one clobber), else None
-n.asm_fingerprint()            # machine addresses this node was lifted or folded from
+n.vn()                         # an InitialVar's register, a Call's first
+                               # return register (None when its convention
+                               # has none), a CallOther's result varnode,
+                               # else None
+n.asm_fingerprint()            # machine addresses recorded on it (a superset:
+                               # a shared constant carries every user's)
 ```
 
-A rewrite adds the addresses of the nodes it folded into the node it builds; a
-flag cone that was already dead when the rewrite ran adds nothing.
+A rewrite adds the addresses of the nodes it folded to the node it builds.
 
 Walking the graph (each returns a list of `Node`):
 
@@ -340,16 +372,12 @@ Rendering:
 
 ```python
 function.to_dot(pretty=True)                 # Graphviz DOT text; path= writes a file
-function.to_text()                           # canonical text: a header, then
-                                             # one line per node
+function.to_text()                           # a header, then one line per node
 function.to_text(fingerprints=True)          # ... each line ending in its asm addresses
 function.to_html("graph.html")               # dark-themed standalone page (path=None returns text)
 function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)  # local subgraph DOT
-# neighborhood_dot also takes hub_cap=, max_nodes= and count_producers=, the
-# explorer's toolbar limits (section 10).
+# also hub_cap=, max_nodes=, count_producers= (section 10)
 ```
-
----
 
 ## 4. Patterns
 
@@ -379,21 +407,20 @@ p.float_is_nan(x)              # the IEEE self-inequality shape
 p.value_of_width(32)           # any value exactly 32 bits wide
 ```
 
-A **raw int** anywhere an operand is expected is `int_const(that int)`, so
-`p.int_add(c, 8)` is `p.int_add(c, p.int_const(8))`. Narrow the width by hand
-with `p.int_const(8).of_width(32)` when you need it.
+A raw int operand is `int_const(that int)`: `p.int_add(c, 8)` is
+`p.int_add(c, p.int_const(8))`. Pin a width with `.of_width(32)`.
 
-`int_const_any_width(v)` matches a constant only when `v` is a zero or sign
-extension of the constant's low bits at the width it is matched at, so
-`0x1234` never matches `0x34` at `I8`.
+`int_const_any_width(v)` matches `v` held at a width it fits, zero- or
+sign-extended to the constant's width: `-1` matches `0xff:I32`, and `0x1234`
+never matches `0x34` at `I8`.
 
 ### Operators
 
-Every integer / float / boolean operator is a free function; the `.pyi` lists
-them all. The shapes match the canonical IR (see
-[optimizations](optimizations.md)), and the alias constructors build the
-canonical form for you: `int_sub(a, b)` is `int_add(a, int_neg(b))`, `int_le`
-and `int_ne` are their lowered comparisons.
+Every operator is a free function (the `.pyi` lists them). They match the
+canonical IR ([optimizations](optimizations.md)); the aliases build it for you:
+`int_sub(a, b)` is `int_add(a, int_neg(b))` (with an uncaptured constant `b`,
+also the folded `int_add(a, -b)`), and `int_le` / `int_ne` are their lowered
+comparisons.
 
 ```python
 p.int_add(a, b); p.int_mul(a, b); p.int_neg(a); p.int_and(a, b); p.int_xor(a, b)
@@ -409,24 +436,20 @@ p.any_int_binary(c, a, b)       # any integer binary op, the node bound to c;
 p.inputs_of_width(32, p.int_add(a, b)); p.bool_inputs(p.int_and(a, b))
 ```
 
-`int_add`, `int_mul`, `int_and`, `int_or`, `int_xor`, their `I1` spellings
-`bool_and` / `bool_or` / `bool_xor`, `float_add`, `float_mul`, `int_eq`,
-`int_carry`, `int_scarry` and `float_eq` match **commutatively**, and a lowered
-comparison inherits that from the comparison it wraps, so `int_ne` and
-`float_ne` do too. Every other operator, `int_shl` / `int_shr` / `int_lt` /
-`int_div` and the rest, keeps the order you wrote. `.ordered()` pins the order
-on any binary pattern, the `int_add` sugar as much as the `int_binary`
-builder; it raises only on a shape with no operand pair, such as `anything()`:
+`int_add`, `int_mul`, `int_and`, `int_or`, `int_xor`, `bool_and` / `bool_or` /
+`bool_xor`, `float_add`, `float_mul`, `int_eq`, `int_carry`, `int_scarry`,
+`float_eq`, and so `int_ne` / `float_ne`, match **commutatively**; every other
+operator keeps the order written. `.ordered()` pins the order on any binary
+pattern (it raises on one with no operand pair, such as `anything()`):
 
 ```python
-p.int_binary("Add", p.int_const(k), p.anything()).ordered()   # k on the left
+p.int_binary("Add", p.int_const(8), p.anything()).ordered()   # 8 on the left
 ```
 
 ### Node builders
 
-Control, memory, and call nodes have typed builders with named slots. Each
-returns a builder you keep chaining; `find_all` accepts the builder directly, or
-call `.into_pat()`.
+Control, memory and call nodes have typed builders with named slots.
+`find_all` takes a builder directly, or call `.into_pat()`.
 
 ```python
 base, off, x = p.Capture("base"), p.Capture("off"), p.Capture("x")
@@ -451,67 +474,70 @@ p.ret(); p.ret().ret_val(0, p.Capture("v")) # returns
 p.entry(); p.region(); p.switch(); p.indirect_branch(); p.unreachable()
 ```
 
-Call slots: `.target(p)` (callee, a raw int address or a list of them is fine),
-`.arg(i, p)`, `.mem(m)`, `.ctrl(p)` (control predecessor), `.res()` (pin to the
-return value when nested as a value), `.output(slot)` (a specific output).
-`.target(p)` takes a list on `p.indirect_branch()` too, as does
-`p.switch().selector(p)`.
+Call slots: `.target(p)` (an int address or a list is fine), `.arg(i, p)`,
+`.mem(m)`, `.ctrl(p)`, `.res()` (pin to output slot 2, the first return
+register, when nested as a value or in a raw slot), `.output(slot)`.
+`indirect_branch().target` and `switch().selector` take a list too.
 
-A call's float arguments come after its integer ones: on x86-64 SysV `.arg(6)`
-is XMM0, the first float argument, since the convention declares six integer
-argument registers. A vector window, where the convention has one, follows the
-floats, and collected stack arguments follow all of them, so the index depends
-on the convention in force: the first stack argument is `8+25` under the
-userland PPC64 presets and `8+13` under their `*_linux_kernel` flavours, which
-name no vector register. The incoming-argument patterns (`function_arg` /
-`function_arg_float`) index the two classes separately.
+A call's argument index counts the integer registers, then the float ones,
+then any vector window, then stack arguments: on x86-64 SysV `.arg(6)` is
+XMM0; on PPC64 the first stack argument is `8+25` (userland) or `8+13`
+(`*_linux_kernel`). `function_arg` / `function_arg_float` index the two
+classes separately. An incoming stack ordinal counts slots, not C arguments:
+one per run of slots one load spans, so a `long long` read as two 4-byte loads
+takes two. Only slots up to the first one no clean load reads are arguments,
+for `function_arg_stack` and `.source_stack` too; a load a store or call may
+have overwritten is not clean. On i386, a function that ignores its first
+parameter has no stack arguments.
 
-If slots: `.cond(p)`, `.ctrl(p)`, `.true_branch(p)` / `.false_branch(p)` (what
-an edge leads to), `.capture_true(c)` / `.capture_false(c)` (bind the edge for
-constraints).
+If slots: `.cond(p)`, `.ctrl(p)`, `.capture_true(c)` / `.capture_false(c)`.
+To match what an edge leads to, join on the edge:
+`fn.find_all([if_else().capture_true(t), region().any_input(t)])`.
 
-A query refuses a pattern of more than 256 nodes, counting those nested through
-`.true_branch` / `.false_branch` and counting a shared sub-pattern once per
-slot that reaches it, and one nested deeper than the thread's stack allows:
-both raise `StriderError`. An alternation counts as its deepest arm, since the
-arms are alternatives rather than operands.
+A pattern of more than 256 nodes (every alternation arm counts; a shared
+sub-pattern counts once per slot that reaches it), or nested deeper than the
+thread's stack allows, raises `StriderError`.
 
 ### The shared builder vocabulary
 
-Every builder carries the same small set of methods, declared once in the stubs
-as `typing.Protocol` mixins and true of the runtime objects structurally:
+The builders share these methods, declared in the stubs as `typing.Protocol`
+mixins:
 
 | mixin | methods | on |
 | --- | --- | --- |
 | `NodePat` | `.capture(c)`, `.when(f)`, `.into_pat()` | every builder |
-| `InputPat` | `.input(i, p)`, `.any_input(p)` | every node builder with input slots; not `entry()` (`Entry` has none), and not the operand builders `function_arg` / `int_binary` / `float_binary` / `bool_binary`, whose operands are their arguments |
 | `CtrlPat` | `.ctrl(p)` | `if_else`, `switch`, `call`, `call_other`, `ret`, `indirect_branch`, `unreachable` |
-| `MemPat` | `.mem(p)` | `call`, `call_other`, `indirect_branch`, `load`, `store` |
 | `MemAccessPat` | `.addr(p)`, `.bit_width(n)`, `.space(s)`, `.stack_offset(k)`, `.stack_only()`, `.non_stack()`, `.heap_only()` | `load`, `store` |
+| `MemPat` | `.mem(p)` | `call`, `call_other`, `indirect_branch`, `load`, `store` |
+| `InputPat` | `.any_input(p)`, `.input(i, p)` | every node builder with inputs, except `entry()` and the operand builders `function_arg` / `int_binary` / `float_binary` / `bool_binary` |
 | `OrderedPat` | `.ordered()` | `Pat`, `int_binary`, `float_binary`, `bool_binary` |
-| `OutputPat` | `.output(slot)`, `.any_output()` | every node builder with outputs; not the sinks `ret` / `indirect_branch` / `unreachable`, and not the operand builders listed above. `.any_output()` is satisfied by ANY output of the node, not a fixed slot |
+| `OutputPat` | `.output(slot)`, `.any_output()` | every node builder with outputs, except the sinks `ret` / `indirect_branch` / `unreachable` and the operand builders |
 
 ```python
 isinstance(p.load(), p.InputPat)      # True
 isinstance(p.entry(), p.InputPat)     # False
 ```
 
-`.input(i, p)` and `.output(slot)` address RAW slots, and slot numbering is per
-node kind: `Call` inputs are `[ctrl, mem, target, sp, arg0, ...]`, `Load`'s are
-`[mem, addr]`, `If`'s are `[ctrl, cond]`, while `Call` OUTPUTS are
-`[ctrl, mem, result, ...clobbers]` and `Load`'s are `[value]`. The IR's
-`expected_signature` (`crates/strider-ir/src/node_signature.rs`) is the source
-of truth. They are the escape hatch beneath the named accessors, not a
-replacement for them. What a slot holds decides what can bind it: only an
-untyped wildcard (`var` / `anything`) reaches a control, memory or phi-token
-edge, never a typed value sub-pattern.
+`.input(i, p)` and `.output(slot)` address raw slots, numbered per node kind
+(`crates/strider-ir/src/node/signature.rs`): `Call` inputs are
+`[ctrl, mem, target, sp, arg0, ...]`, `Load`'s `[mem, addr]`, `If`'s
+`[ctrl, cond]`; `Call` outputs are `[ctrl, mem, rets..., clobbers...]`, `Load`'s
+`[value]`. In a raw slot a typed value pattern binds a value edge, a wildcard
+any edge, a control producer (`entry()`, `region()`, `if_else()`) its control
+edge, and a `call()` / `call_other()` any of its outputs (`.res()` keeps it to
+slot 2).
 
-`phi()` and `mem_phi()` index predecessors with `.phi_input(i, p)`, raw slot
-`i + 1`; their `.input(i, p)` is the raw slot every other builder's is, so
-`.input(0, p)` is the phi token.
+Every typed builder nests in every slot but a memory one; one that can never
+match where it sits (a `store()` or `ret()`, `entry()` or `region()` as a value)
+raises at query time. A memory slot (`.mem(p)`, `mem_phi().phi_input(i, p)`)
+takes memory producers, a wildcard (`anything()`, `var(c)`, a bare `Capture`)
+or a `one_of` over them; a width or type there raises.
 
-`.output(slot)` and `.any_output()` return a terminal taking one of
-`.capture(c)`, `.of_width(w)`, `.of_type("i64")`, which hands the builder back.
+`phi()` / `mem_phi()` `.phi_input(i, p)` is raw slot `i + 1`; `.input(0, p)` is
+the phi token.
+
+`.output(slot)` and `.any_output()` return a terminal taking `.capture(c)`,
+`.of_width(w)` or `.of_type("i64")`, which hands the builder back.
 
 ### `any_input`, matching *some* input
 
@@ -521,9 +547,8 @@ p.call().any_input(p.anything())                                      # some inp
 p.load().input(1, x)                                                  # raw slot 1, the address
 ```
 
-`any_input` matches an input of any kind: a value producer a value input, a
-memory producer (`store` / `mem_phi`) a memory input, a wildcard any input at
-all including control and phi-token edges.
+`any_input` binds by the same rules as a raw slot; a wildcard matches any
+input, the phi token included.
 
 ### `one_of` / `first_of`, alternation (OR)
 
@@ -532,26 +557,26 @@ base, off = p.Capture("b"), p.Capture("off")
 p.one_of([p.int_add(base, p.int_const(off)), p.var(base)])   # base+K, or bare base
 ```
 
-`one_of` is the OR combinator, dual to a `find_all([...])` list (which is AND).
-An arm is anything a top-level pattern is: a value shape, `store()` /
-`mem_phi()`, `call()`, and the rest. The result nests in any slot (value, memory,
-control):
+`one_of` is OR, dual to a `find_all([...])` list (AND). An arm is anything a
+top-level pattern is, and the result nests in any slot:
 
 ```python
 p.load().mem(p.one_of([p.store(), p.mem_phi()]))        # memory slot
 p.ret().ctrl(p.one_of([p.call(), p.region()]))          # control slot
 ```
 
-`one_of` is a **union**: every arm that matches is enumerated with its own
-bindings, so order carries no meaning and a downstream constraint can pick the
-arm it needs. A match is identified by what it binds, so two arms matching one
-node with the same bindings are one match: at the root of a pattern that
-captures nothing, `one_of([load(), anything()])` answers exactly what
-`anything()` does, and the arms need a capture to tell them apart. `first_of`
-is the **ordered** variant: it cuts to the first matching arm, so a permissive
-leading arm shadows the rest; list most-specific first. Any pattern kind is a
-valid arm, including the node-rooted control builders (`ret` / `if_else` /
-`switch` / `indirect_branch` / `unreachable`).
+`one_of` is a **union**: every matching arm is reported with its own bindings.
+A match is identified by what it binds, so arms matching one node with the same
+bindings are one match; give them captures to tell them apart.
+
+`first_of` is **ordered**: at each value, the first listed arm that matches
+wins, so list the most specific first. Several `first_of`s settle in pattern
+order: operands left to right, inner before outer, a builder's own slots before
+its `any_input`s and `input`s. The own-slot orders are `load` addr, mem;
+`store` addr, data, mem; `call` target, ctrl, args, mem; `call_other` ctrl,
+mem, args; `ret` ctrl, return values; `indirect_branch` target, ctrl, mem;
+`switch` selector, ctrl; `if_else` cond, ctrl; `phi` / `mem_phi` inputs, token.
+A query holding a `first_of` runs every configuration before answering.
 
 ### `field` / `code_ptr`, the two canonical-form alternations
 
@@ -563,11 +588,9 @@ p.field(p.function_arg(0), offset=8)         # only that offset
 p.call().target(p.code_ptr(p.function_arg(0)))   # f, or f & -2
 ```
 
-`ConstantFold` rewrites `base + 0` to `base`, so a field at offset 0 has no
-`Add`; `field` matches both forms and `offset(m)` decodes the bare one.
-`offset` takes an `int`, a `Capture` or a capture name. `code_ptr` accepts
-exactly `-2`, the ISA-mode mask strider strips when resolving a branch; any
-other constant is real arithmetic on the target.
+`ConstantFold` rewrites `base + 0` to `base`; `field` matches both forms and
+`offset(m)` reads 0 for the bare one. `offset` takes an `int`, a `Capture` or a
+capture name. `code_ptr` accepts only the ISA-mode mask `-2`.
 
 ### Captures
 
@@ -579,18 +602,16 @@ p.int_add("base", off)         # a bare string is NOT a capture: this builds,
                                # and find_all raises on it
 ```
 
-You read a capture back by the object or by its name string
-(`hit.uint(off)` or `hit.uint("off")`). `"_"` and `"any_"` are reserved.
+Read a capture back by object or name (`hit.uint(off)`, `hit.uint("off")`).
+`"_"` is reserved.
 
 ### Chaining methods
 
-The value-op functions (`int_add`, `int_mul`, `int_const`, ...) return a
-finished `Pat`; the typed builders (`load`, `call`, `int_binary`, ...) return a
-builder, finalised with `.into_pat()` or passed straight to `find_all`. Both
-carry `.capture(c)` and `.when(f)`, and `.capture(c)` takes a name as readily as
-a `Capture`. `.into_pat()` is the builder half only: a `Pat` is finished
-already, so it has no `.into_pat()` and `isinstance(int_add(a, b), NodePat)` is
-`False`.
+Value-op functions (`int_add`, `int_const`, ...) return a finished `Pat`; typed
+builders (`load`, `call`, `int_binary`, ...) return a builder. Both carry
+`.capture(c)` (a `Capture` or a name) and `.when(f)`; only a builder has
+`.into_pat()`, which holds the builder by reference, so later edits to the
+builder show through.
 
 Only a value pattern takes `.of_width(bits)` / `.value_ty("i64")` /
 `.bool_valued()`:
@@ -599,8 +620,6 @@ Only a value pattern takes `.of_width(bits)` / `.value_ty("i64")` /
 p.int_const(c).of_width(32)             # constrain the constant's width
 p.var(c).value_ty("i64")                # ... or a captured value's type
 ```
-
----
 
 ## 5. Running queries
 
@@ -613,79 +632,74 @@ function.find_unique(pat)                     # the single match, else StriderEr
 function.find_unique_value(pat, off)          # the single captured VALUE, or None
 ```
 
-`ignore_casts` takes a bool or a `CastMask`, which picks the casts the matcher
-walks through: `CastMask.zero_extend()`, `.sign_extend()`, `.extend()` (both),
-`.truncate()`, `.int_bits_to_float()`, `.float_bits_to_int()`, `.all()` and
-`.none()`, combined with `|` and `&`.
+`ignore_casts` takes a bool or a `CastMask` naming the casts to walk through:
+`CastMask.zero_extend()`, `.sign_extend()`, `.extend()` (both), `.truncate()`,
+`.int_bits_to_float()`, `.float_bits_to_int()`, `.all()`, `.none()`, combined
+with `|` and `&`. Under a mask each operand keeps the matches at the outermost
+cast level that matches, settling in pattern order as `first_of` does.
 
-`find_unique` fails if there are two *structurally distinct* matches even when
-they bind the same value. `find_unique_value(pat, capture)` deduplicates by the
-captured constant instead: `None` for no match, the value when all matches
-agree, `StriderError` for two or more distinct values. Pass `signed=True` to
-read the value as two's-complement. Its `pat` and `constraints` behave as in
-`find_all`: a list `pat` joins on shared captures, and `constraints=[...]`
-filters the joined tuples before the value dedup.
+`find_unique` fails on two structurally distinct matches even when they bind
+the same value. `find_unique_value(pat, capture, signed=False)` dedups by the
+captured constant: `None` when no match binds it to a constant, the value when
+all agree, `StriderError` for two distinct values or a capture no pattern
+binds. A list `pat` and `constraints=` work as in `find_all`.
 
 ```python
 stride = p.Capture("stride")
-# The jump-table stride: every index is scaled by the same constant, so the
-# capture collapses to one value across structurally distinct multiply nodes.
+# The jump-table stride: one value across distinct multiply nodes.
 function.find_unique_value(p.int_mul(p.anything(), p.int_const(stride)), stride)   # -> 4
 ```
-
----
 
 ## 6. Reading a `Match`
 
 ```python
 for hit in function.find_all(pat):
     hit.root                     # id where the top pattern matched
-    hit.roots                    # one root id per pattern passed to the query,
-                                 # in the order they were passed; what a joined
-                                 # find_all([p1, p2]) reads. hit.root is roots[0]
+    hit.roots                    # one root id per pattern of a joined
+                                 # find_all([p1, p2]); hit.root is roots[0]
     hit.has("off")               # did this capture bind?
 ```
 
-Index the match with the capture to get a `BoundCapture`, which carries the
-readers as properties. Each reader **raises** when the capture is unbound or
-its node lacks that aspect; the `_opt` form returns `None` instead.
+Each reader takes the capture or its name and **raises** when the capture is
+unbound or its node lacks that aspect; the `_opt` form returns `None`.
 
 ```python
-hit[off].uint                    # unsigned int (raises if not one)
-hit[off].uint_opt                # ... or None
-hit[off].sint                    # signed
-hit[flag].boolean                # bool
-hit[f].float_bits                # raw float bits
-hit[node].op                     # "Add" / ...
-hit[node].value_type             # "I64" / ...
-hit[base].node                   # a Node handle
-hit[reg].vn                      # a varnode
-hit[node].asm_fingerprint        # machine addresses (a list; [] if unbound)
+hit.uint(off)                    # unsigned int (raises if not one)
+hit.uint_opt(off)                # ... or None
+hit.sint(off)                    # signed
+hit.boolean(flag)                # bool
+hit.float_bits(f)                # raw float bits
+hit.op(node)                     # "Add" / ...
+hit.value_type(node)             # "I64" / ...
+hit.node(base)                   # a Node handle
+hit.vn(reg)                      # a varnode
+hit.asm_fingerprint(node)        # machine addresses (a list; [] if unbound)
 
-hit["off"]                       # by name, when the capture has one
-int(hit[off]); hit[off] == 8     # a numeric capture converts and compares directly
+hit.uint("off")                  # by name, when the capture has one
+int(hit[off]); hit[off] == 8     # hit[c] converts and compares a numeric capture
+hit[off].uint(); hit[base].node() # each reader, on hit[c] without the key
 ```
 
-An anonymous capture needs no name, which suits a hole you read back once:
+An anonymous capture suits a hole you read back once:
 
 ```python
 off = p.Capture()                                  # no name
 for hit in function.find_all(p.load(addr=p.int_add(p.anything(), p.int_const(off))),
                              ignore_casts=True):
-    print("constant addend", hit[off].uint)
+    print("constant addend", hit.uint(off))
 ```
 
-Every reader also exists as a `Match` method taking the capture
-(`hit.uint(off)`, `hit.node(base)`), which reads better when the capture is used
-once inline. `pattern.CaptureKey` is the type alias for that argument, a
-`Capture` or its name, and `.capture()` takes it too.
-
----
+`pattern.CaptureKey` is a `Capture` or its name. `hit[c]` is a `BoundCapture`
+carrying `has`, `int()`, `==` and every reader above without the key. It
+has no truth value (`if hit[c]` raises `TypeError`), so test `hit[c].has` or
+`c in hit`.
 
 ## 7. Constraints (`strider.pattern.constraints`)
 
-A joined `find_all([...])` correlates captures shared across its patterns.
-Constraints add relational conditions, evaluated after the join.
+A joined `find_all([...])` correlates captures shared across its patterns;
+constraints filter the joined rows. Patterns tied only by a constraint join as
+a cross product (the cost is the product of their match counts); share a
+capture or use `input_from` to keep it small.
 
 ```python
 from strider.pattern import constraints as k
@@ -707,17 +721,16 @@ k.any_of([k.dominates(t, c), k.dominates(f, c)])
 k.all_of([k.dominates(t, c), k.dominates(f, c)])
 ```
 
-`dominates(a, b)` is control-flow dominance over captured nodes or `If`
-branch-edge captures; it is not "reachable from", so no single incoming edge
-dominates a merge/loop-header phi. `phi_input_from_edge(phi, edge, value)` says
-"the value `phi` merges from that branch edge is `value`".
+`dominates(a, b)` is control-flow dominance over captured nodes or `If` edge
+captures (not reachability: no single incoming edge dominates a merge).
+`phi_input_from_edge(phi, edge, value)` says the value `phi` merges from that
+edge is `value`.
 
 `phi().input_from(edge, value)` and `mem_phi().input_from(edge, value)` build
-that constraint for you: a pattern `value` becomes a phi input under a fresh
-capture, and a `Capture` names a value another pattern in the list binds (a
-`store().capture(s)` feeding a `mem_phi`). Pass the phi's `constraints()` to the
-query; the [guide](python-guide.md#constraints-relating-matches-by-control-flow)
-shows one.
+that constraint: a pattern `value` becomes a phi input, a `Capture` names a
+value another pattern binds. Pass the phi's `constraints()` to the query; the
+[guide](python-guide.md#constraints-relating-matches-by-control-flow) shows
+one.
 
 ### `JoinPredicate`, your own logic
 
@@ -729,15 +742,10 @@ class MyRule(k.JoinPredicate):
     def constraint(self, m):  return True    # m is the joined Match
 ```
 
-Declaring captures lets a predicate connect otherwise-independent patterns and
-range-checks them like a built-in; it is consulted once they are bound. An
-exception inside `constraint` surfaces at the query. It composes inside
-`any_of` / `all_of` / `negate` like any built-in constraint.
-`constraints.JoinConstraint` is the type of what the built-in relations return.
-The [guide](python-guide.md#constraints-relating-matches-by-control-flow) has a
-worked example.
-
----
+Declared captures connect otherwise independent patterns; `constraint` runs
+once they are bound, and an exception in it surfaces at the query. It composes
+in `any_of` / `all_of` / `negate`. The built-in relations return a
+`constraints.JoinConstraint`.
 
 ## 8. Rewrites (`strider.template`)
 
@@ -746,21 +754,20 @@ function.rewrite(find=pat, replace=tmpl)             # -> how many times it fire
 function.rewrite_all([(pat1, tmpl1), (pat2, tmpl2)]) # -> total fire count
 ```
 
-`rewrite(find, replace)` replaces every match of a pattern with a built value.
-The right-hand side is a `strider.template.Template`, built from
-`strider.template`, which covers the value ops that can be BUILT and reuses the
-left-hand side's captures. It is a subset of `strider.pattern`: the alias
-constructors (`int_ne`, `int_le`, `int_sle`, `float_ne`, `float_le`,
-`float_is_nan`) and the wildcards (`anything`, `any_int`) match but do not
-build, so spell the canonical shape instead.
+`rewrite(find, replace)` replaces every match with a built value. `replace` is
+a `strider.template.Template`, a `Capture`, or a capture's name.
+`strider.template` builds the value ops and reuses the match's captures
+(`var(c)`); `float_le`, `float_is_nan` and the wildcards match but do not
+build. A `strider.pattern.Pat` is never a right-hand side: `TypeError` as
+`replace`, `StriderError` nested in a template.
+
+A match is skipped, uncounted, when the replacement has another width, or (for
+a `find` through a phi or region) would read the matched value or is not
+available where it is read. A `.when()` guard on `find` raises.
 
 `rewrite_all` makes one walk; at each node the first rule that fires wins.
-Neither is a fixed point, so a rule whose output its own `find` matches needs a
-second call. Both stale every outstanding `Node` handle, a return of 0
-included. The [guide](python-guide.md#rewriting-the-graph) walks through a
-strength reduction.
-
----
+Neither runs to a fixed point. Both stale every `Node` handle, even when they
+return 0. The [guide](python-guide.md#rewriting-the-graph) walks through one.
 
 ## 9. The optimizer (`strider.opt`)
 
@@ -769,74 +776,58 @@ strength reduction.
 ```python
 pipe = strider.opt.OptimizerPipeline.empty()     # no passes
 pipe.add(strider.opt.ConstantFold())             # a main pass, repeated to a fixed point
-pipe.add_post(strider.opt.StackOffsetDetect())   # a post-pass, run once at the end
+pipe.add_post(strider.opt.CallStackArgCollect()) # a post-pass, run once at the end
 pipe.passes                                      # ["ConstantFold"]
-pipe.post_passes                                 # ["StackOffsetDetect"]
+pipe.post_passes                                 # ["CallStackArgCollect"]
 pipe = strider.opt.OptimizerPipeline.default()   # the standard set, in analyze's order
-prog.optimize(function, pipe)                    # optimize lives on the lifter; runs in place
+function.optimize(pipeline=pipe)                 # runs in place, against the lifter's rom
 ```
 
-Main passes, which `add` takes: `ConstantFold`, `LoadReadOnly`, `KnownBits`,
+Main passes (`add`): `ConstantFold`, `LoadReadOnly`, `KnownBits`,
 `FlagCmpCanonicalize`, `IfCondInversion`, `PhiCollapse`, `RegionCollapse`,
-`DeadBranchElimination`, `CfgDetach`, `LoadForward`. Post-passes, which only
-`add_post` takes: `StackOffsetDetect`, `CallStackArgCollect`,
-`FunctionArgDetect`. `add_post` also takes a main pass, which then runs once.
-The `MainOptimizerPass`, `PostOptimizerPass` and `OptimizerPass` type aliases
-name those groups. [optimizations.md](optimizations.md) says what each pass
-does.
-
----
+`DeadBranchElimination`, `LoadForward`. Post-passes (`add_post` only):
+`CallStackArgCollect`, `FunctionArgDetect`; `add_post` also takes a main pass,
+run once. The `MainOptimizerPass`, `PostOptimizerPass` and `OptimizerPass`
+aliases name those groups. [optimizations.md](optimizations.md) says what each
+pass does.
 
 ## 10. Visualizing
 
 ```python
-prog.visualize(function)          # interactive explorer; prints a URL, blocks
-prog.visualize(cfg)               # a Cfg works too
+strider.explore.visualize(function)   # interactive explorer; prints a URL, blocks
+strider.explore.visualize(cfg)        # a Cfg works too
 ```
 
-The explorer opens on the **whole graph**, since a neighborhood view hides
-nodes without saying so and you cannot tell a small function from a truncated
-one. `visualize(whole=False)` opens on the neighborhood around the entry
-instead, which stays fast on a large function; the toolbar's **whole** toggle
-switches between them either way.
+The explorer opens on the whole graph; `visualize(whole=False)` opens on the
+neighborhood around the entry, which stays fast on a large function.
 
-Drag with the mouse or press the arrow keys to pan (shift for a longer step);
-ctrl+wheel zooms about the pointer and `+` / `-` about the window centre, `f`
-fits the graph to the window, `0` returns to 100%. A drag that ends over a node
-pans instead of re-centering on it. The toolbar drives that render:
-**depth** (hops from the centered node), **hub cap** (a node with more consumers
-than this is drawn but not expanded), **max nodes**, **+prod** (count a node's
-inputs toward the hub cap too) and **pretty** (inlined constants, resolved
-register names), with **whole** (draw the entire graph, which the neighborhood
-knobs stop applying to) and **reset** to go back. The three limits start at
-`0`, which means no limit on each; **pretty** and **whole** start on, and
-**depth** takes whatever `visualize(depth=...)` seeds.
+Pan by dragging or with the arrow keys (shift for a longer step); ctrl+wheel
+zooms about the pointer, `+` / `-` about the centre, `f` fits, `0` returns to
+100%. The toolbar: **depth** (hops from the centre, seeded by
+`visualize(depth=...)`), **hub cap** (nodes with more consumers are not
+expanded), **max nodes**, **+prod** (count inputs toward the hub cap),
+**pretty** (inlined constants, register names), **whole** and **reset**. The
+three limits start at `0`, no limit; **pretty** and **whole** start on. A
+`Cfg` shows only **whole**, **depth** and **max nodes**.
 
-`visualize()` binds `host='127.0.0.1'` and `port=0` (a free port) by default.
-Both are arguments; a non-loopback `host` exposes the graph, the queries and
-the bytes behind them to anything that can reach the port, with no
-authentication, so bind one only on a network you trust.
+`visualize()` binds `host='127.0.0.1'`, `port=0` (a free port), both keyword
+only. A non-loopback `host` serves the graph and the bytes behind it to anyone
+who can reach the port, unauthenticated.
 
-`visualize()` blocks until interrupted and returns the port it bound;
-`background=True` serves on its own non-daemon thread and returns that port
-immediately:
+`visualize()` blocks until interrupted and returns the port; `background=True`
+serves on a non-daemon thread and returns at once:
 
 ```python
-port = prog.visualize(fn, background=True)
+port = strider.explore.visualize(fn, background=True)
 # ... keep querying, analysing and rendering on this thread ...
 strider.explore.shutdown(port)   # stops the server and joins its thread
 ```
 
-The server renders through its own decoder, built from the lifter's `arch`,
-`reader()` and `rom()`, so your handle stays free to `analyze` while a page
-renders. `shutdown` is registered to run before the interpreter joins
-non-daemon threads, so an explorer left running does not hang or abort the
-process at exit.
+A render does not use the handle, so it stays free to `analyze`. A server left
+running is shut down at interpreter exit.
 
 For static output use the renderers in
 [section 3](#3-the-function-and-its-nodes).
-
----
 
 ## 11. Registers and architecture (`strider.sleigh`)
 
@@ -845,47 +836,59 @@ arch = sleigh.SleighArch.x86_64()      # a preset; also x86(), arm(), arm_thumb(
                                        # aarch64(), mipsbe32(), ppc64le(), ...
 arch.name()                            # "x86_64"
 arch.endianness()                      # "little" / "big"
+arch.reg("RAX")                        # the Vn for a register name, or None;
+                                       # the sla's exact spelling: "RAX", "x0",
+                                       # "r1", but "NG" and ppc "LR" / "CTR"
+arch.reg_name(vn)                      # the name for a Vn, or None
 
-lft.reg("RAX")                         # the Vn for a register name, or None
-                                       # matched exactly: x86 spells them upper,
-                                       # every other arch lower ("r0", "x0", "r3")
-lft.reg_name(vn)                       # the name for a Vn, or None
-lft.pcode_at(entry, addr)              # decode one instruction's p-code as text
+lft.pcode_at(entry, addr)              # one instruction's p-code as text; an odd
+                                       # entry is Thumb / MIPS16e, as in analyze;
+                                       # a new entry clones the decoder, so per
+                                       # function prefer build_cfg(entry).pcode_at
 
 lft.user_op_names()                    # every Sleigh user-op name this arch emits
 lft.call_other_abi("rdtsc")            # how one is classified, or None
 ```
 
-`Vn` is a varnode (a register/memory location); `VnSpace` names its address
-space (`VnSpace.RAM`, `.REGISTER`, `.CONST`, `.UNIQUE`). `CallingConvention`
-presets (`x86_64_systemv()`, ...) describe argument passing, and
-`CallingConvention.custom(sleigh, ...)` states an ABI they do not cover from
-register names. `.no_return()`, `.preserves_all()` and `.preserves_regs()`
-derive a variant of a convention for a per-address override. `CallOtherAbi`
-describes one Sleigh user-op, for `CfgOptions(call_other_abis=...)`. `Sleigh`
-exposes the raw register table when you need it without a lifter, and resolves
-the names both `custom` constructors take.
-`crates/strider-py/examples/python/17_custom_abis.py` uses each of them.
+`Vn` is a varnode (a register or memory location); `VnSpace` names its space
+(`VnSpace.RAM`, `.REGISTER`, `.CONST`, `.UNIQUE`). `CallingConvention` presets
+(`x86_64_systemv()`, ..., also `CallingConvention.preset(name)` over
+`sleigh.CC_PRESETS`) describe argument passing; `CallingConvention.custom(arch,
+...)` builds one from register names, and `.preserves_all()` /
+`.preserves_regs()` derive a variant for a per-address override, named
+`<base>.preserves_all` / `<base>.preserves_regs`. `CallOtherAbi`
+describes one user-op. `crates/strider-py/examples/python/17_custom_abis.py`
+builds a custom convention and user-op ABI.
 
-Analysis stays inside the function being lifted: a call is modelled by the
-calling convention of its target, never by reading the callee. On 32-bit x86
-two kinds of callee need their own convention through
+A call is modelled by its target's calling convention, never by reading the
+callee. On 32-bit x86 three kinds of callee need their own convention in
 `LifterOptions(per_address_ccs={callee: cc})`:
 
-- A callee that pops its caller's stack (`ret $imm16`: a struct return's hidden
-  pointer, stdcall, fastcall, thiscall) needs `ret_stack_pop` of `4 + imm16`.
-  Without it, stack-relative reads after the call are off by `imm16`.
+- A callee that pops its caller's stack (`ret $imm16`: stdcall, fastcall,
+  thiscall, a struct return's hidden pointer) needs `ret_stack_pop=4 + imm16`,
+  or stack reads after the call are off by `imm16`.
 - A PC thunk (`__x86.get_pc_thunk.bx`) needs a convention that does not list
-  its register in `callee_saved_regs`. Without it, the register keeps the
-  caller's value across the call.
+  its register as callee-saved, or the register keeps its pre-call value
+  after the call. The register is then unknown, so PIC loads and jump tables
+  through it stay unresolved.
+- Under `x86_linux_kernel()`, a variadic (`printk`) or `asmlinkage` callee
+  takes every argument on the stack and needs `x86_cdecl()`; otherwise its
+  first argument reads as `arg(3)`.
 
-`CallingConvention.custom` states both:
+A ppc32 `-fpic -mbss-plt` GOT thunk (`bl _GLOBAL_OFFSET_TABLE_-4; mflr r30`)
+needs a `per_address_ccs` convention for that word leaving `LR` out of
+`callee_saved_regs`; otherwise `mflr` reads the `bl`'s own return address and
+every GOT load after it is wrong. LR is then unknown, so those loads stay
+unresolved. A convention clobbering its link register is refused as the
+function's own.
+
+`CallingConvention.custom` states the first two and the PowerPC thunk, a
+preset the third:
 
 ```python
 x86 = sleigh.SleighArch.x86()
-sl32 = strider.sleigh.Sleigh(x86, mem)
 pops_8 = sleigh.CallingConvention.custom(
-    sl32,
+    x86,
     arg_passing_regs=[],
     callee_saved_regs=["EBX", "ESI", "EDI", "EBP"],   # drop "EBX" for get_pc_thunk.bx
     ret_val_regs=["EAX", "EDX"],
@@ -896,16 +899,29 @@ pops_8 = sleigh.CallingConvention.custom(
     ret_stack_pop=8,                                   # ret $4
 )
 opts32 = strider.lift.LifterOptions(per_address_ccs={0x1010: pops_8})
+kernel = strider.lift.LifterOptions(
+    per_address_ccs={printk_addr: sleigh.CallingConvention.x86_cdecl()}
+)
+got_thunk = sleigh.CallingConvention.custom(          # ppc32 bss-plt GOT thunk
+    sleigh.SleighArch.ppc32be(),
+    arg_passing_regs=[],
+    callee_saved_regs=[f"r{i}" for i in range(32) if i != 1],  # no "LR"
+    ret_val_regs=[],
+    ret_val_regs_float=[],
+    stack_pointer="r1",
+    stack_arg_base=None,
+    stack_arg_increment=4,
+    ret_stack_pop=0,
+    link_register="LR",
+    preserves_memory=True,
+)
+ppc = strider.lift.LifterOptions(per_address_ccs={got - 4: got_thunk})
 ```
 
-ARM32 hard-float passes arguments in one bank of 16 single-precision slots
-`s0..s15`, aliased as `d0..d7`. The convention names the double carriers, so
-for `float` arguments only position 0 lands right: float argument n is in `s_n`,
-inside `d_{n/2}`, while `function_arg_float(n)` reports `d_n`. It is a candidate
-rather than an answer at every position past the first, and positions 8..15
-have no entry at all.
-
----
+ARM32 hard-float: the convention names the double carriers `d0..d7`, so for
+`float` arguments only position 0 is right (float argument n is `s_n`, inside
+`d_{n/2}`, while `function_arg_float(n)` reports `d_n`), and positions 8..15
+have no entry.
 
 ## 12. The CFG (`strider.cfg`)
 
@@ -918,51 +934,49 @@ cfg.neighborhood_dot(cfg.entry(), depth=5)   # local region subgraph
 cfg.pcode_at(addr)                     # one instruction's p-code as text, or None
                                        # when this CFG stored no decode for addr
 cfg.fingerprint_pcode(n)               # [(address, p-code)] for a Node's fingerprint
-cfg.is_complete()                      # all six channels below are empty
+cfg.incomplete                         # [(address, reason)], empty when complete
 ```
 
-A converged CFG is never silently incomplete, but it reports through six
-channels, and a consumer asking "may this be incomplete?" reads all six, which
-is what `is_complete()` does:
+`cfg.incomplete` lists every machine address the CFG cannot vouch for, with
+one of seven reasons (`strider.cfg.INCOMPLETE_REASONS`):
 
-- `unresolved`, the third field of `analyze`'s result: indirect branches with
-  no complete answer, such as a site that lost a successor, one whose answer
-  oscillated or narrowed, one still growing at the iteration cap, and a return
-  whose target is not provably the caller's return address (`push rsi; ret`).
-- `cfg.unverified_seeded_sites()`: sites nothing verified. A site seated with
-  only your `known_targets`, every site the CFG consumed as a tail call, and a
-  site consumed as a return because your own `"return"` seat consumed it, so a
-  seeded ARM `pop {pc}` epilogue lands here and not in `unresolved`. That is
-  also where a FAILED re-check of your own seat lands, since the seat decided a
-  CFG edge. A return the classifier derived is re-checked each round and rides
-  no channel once `assumptions.return_slots_survive_untracked_writes` (default
-  `True`) carries its proof; clearing that claim and re-running is how you
-  audit one. So a `False` `is_complete()` over this channel alone means
-  "complete but unverified", except for a failed `"return"` seat. One shape on
-  this channel is no dispatch you seeded: an arm a mode-less re-derivation
-  found at a site whose
-  other arms all carry the flowing ISA mode is seated on the mode a caller's
-  seed gave its siblings, and nobody evaluated that arm's own.
-- `cfg.isa_mode_conflicts()`: addresses two paths reached in different ISA
-  modes. Always empty outside the four 32-bit ARM and four MIPS presets.
-- `cfg.interior_branch_targets()`: branch targets off every instruction
-  boundary, whose edge is seated on the region owning the bytes and is
-  therefore not exact.
-- `cfg.unmapped_branch_targets()`: direct-branch targets and fall-throughs no
-  byte of the image backs, each seated as an empty tail-call stub.
-- `cfg.undecodable_branch_targets()`: addresses a direct branch or a
-  fall-through past a call reached that hold no instruction, either bytes Sleigh
-  rejects or a range `data_ranges` marks as data. The branch leaves through an
-  empty tail-call stub; the call ends as no-return.
+- `"unresolved_branch"`: an indirect branch with no complete answer (stopped
+  deriving, lost a successor, narrowed, withdrawn, still growing at the
+  iteration cap), or a return whose target is not provably the caller's
+  (`push rsi; ret`) that you did not seed `"return"`. `analyze`'s `unresolved`
+  holds exactly these.
+- `"unverified_seed"`: a site settled only by your `known_targets` (including
+  a seeded `"return"` whose target is not provably the caller's), or consumed
+  as a tail call. Also an arm whose ISA mode was copied from its seeded
+  siblings rather than derived. A derived return is re-checked each round
+  under `return_slots_survive_untracked_writes`; analyse with it cleared to
+  audit one.
+- `"isa_mode_conflict"`: an address reached in two ISA modes (32-bit ARM and
+  MIPS presets only).
+- `"interior_target"`: a branch target off every instruction boundary, or a
+  region start a later decode stepped over (overlapping code).
+- `"unmapped_target"`: a target or fall-through no image byte backs. A branch
+  there leaves through an empty tail-call stub; a call falling into it ends as
+  no-return. An unmapped entry raises.
+- `"undecodable_target"`: no liftable instruction (bytes Sleigh rejects or has
+  no p-code for, or `data_ranges`). A branch there, or a fall-through into
+  `data_ranges`, leaves through an empty stub; a call falling into it ends as
+  no-return; an undecodable entry or any other fall-through into rejected
+  bytes raises.
+- `"past_function_end"`: where code falls through past `function_max_size`
+  or a `fragment_ranges` end (sequentially, on a not-taken branch, or a
+  conditional instruction skipping itself), at the first address after the
+  last decoded instruction. The region tail-calls it; a call whose return
+  address is there is reported too unless its target is in
+  `no_return_targets`.
 
-The four channels a direct edge also produces (`isa_mode_conflicts`,
-`interior_branch_targets`, `unmapped_branch_targets`,
-`undecodable_branch_targets`) accumulate across resolution rounds, so a loss in
-an early round stays reported. `unresolved` and `unverified_seeded_sites` are
-read off the final round instead, the mode-less arms excepted: those accumulate
-and are then filtered to the sites still seated.
+A seeded arm whose own decode reaches unmapped or undecodable bytes, or
+plainly falls through past the end, is dropped and named; one landing on a
+stub a direct edge already reported keeps it. The five target reasons
+accumulate across resolution rounds; the two site reasons are the final
+round's.
 
-`CfgOptions` (passed via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
+`CfgOptions` (via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
 construction:
 
 ```python
@@ -971,42 +985,68 @@ strider.cfg.CfgOptions(
     allow_code_before_start_addr=False,
     known_targets={0x401000: [0x401020, 0x401040]},   # your own answers, seated
     call_other_abis={"syscall": sleigh.CallOtherAbi.mem_clobber()},   # per user-op
-    data_ranges=[(0x401100, 0x401108)],               # [start, end) never decoded
+    data_ranges=[(0x401100, 0x401108)],               # [start, end) of data, not code
+    fragment_ranges=[(0x400f00, 0x400f20)],           # [start, end) also this function's code
+    no_return_targets=[0x401200],                     # direct-call targets that never return
 )
-# with_function_max_size(n) / with_data_ranges(r) return a changed copy.
 ```
 
-`known_targets` seats indirect-branch answers in the CFG builder and seeds the
-resolution loop, which unions its own findings on top, so it composes with
-`resolve_indirect_branches=False`. A seeded site drops out of `unresolved`
-even when the classifier could not read it. A wrong seed can stop the
-classifier deriving the site's real arms; `cfg.unverified_seeded_sites()` names
-the sites where that cannot be ruled out.
+`function_max_size` bounds the decode to `[entry, entry + size)` (`0` raises
+`ValueError`). `allow_code_before_start_addr` follows branches below the entry;
+with a size it raises `ValueError`.
 
-`data_ranges` marks bytes that are data, such as an ARM literal pool.
-`ElfLifter.analyze` fills it from the ELF's ARM and AArch64 `$d` mapping
-symbols unless the options already name some.
+`known_targets` seats indirect-branch answers and seeds the resolution loop,
+which adds its own findings, so it composes with
+`resolve_indirect_branches=False`. A seeded site leaves `unresolved` unless the
+CFG cannot seat it. One target outside the function is a tail call; several
+with one outside or off an instruction boundary defer the site. A wrong seed
+can hide the real arms, so seeded sites are `"unverified_seed"`. On ARM and
+MIPS give each target as `addr & ~1`; it decodes in the dispatch's mode.
 
----
+`data_ranges` marks bytes as data (an ARM literal pool). `ElfLifter.analyze`
+and `build_cfg` fill it from the ELF's `$d` mapping symbols unless the options
+name some.
+
+`fragment_ranges` adds code outside the bound to the function, such as GCC's
+`<name>.cold` partition of unlikely blocks: a branch into one is followed, not
+a tail call, and a fall-through past one's end is `"past_function_end"`.
+`ElfLifter.analyze` and `build_cfg` fill it, unless the options name some,
+from the sized function symbols `<name>.cold` and `<name>.cold.N` of every
+function symbol at the entry. A local fragment belongs to the function of
+that name in its own object file (`STT_FILE` group), else to the global one,
+else to every function of that name. A `<name>.part.N`, `.constprop.N` or
+`.isra.N` clone is a separate callee, and a branch into a cold partition
+named for another function stays a tail call.
+
+`no_return_targets` lists direct-call targets that never return (`exit`,
+`abort`); it is the only way to mark one. List the address the call names: a
+Thumb or MIPS16 callee at its even address (`addr & ~1`). `ElfLifter.analyze`
+and `build_cfg` also cover a ppc64 ELFv2 symbol's `local_entry` (and `analyze`
+does the same for `per_address_ccs`); a plain `Lifter` takes both tables as
+given.
 
 ## Errors
 
-Failures inside an analysis are a `strider.StriderError`. A wrongly TYPED
-argument raises the usual builtin (`TypeError`, `OverflowError`), and
-`load_elf` raises `FileNotFoundError` for a missing path and `ValueError` for a
-file that is not a supported ELF. Every other bad VALUE is a `StriderError`,
-including `add_elf` / `add_symbol_file` on the same bad paths, an unknown
-`style=`, a reserved capture name and a node id the function does not hold.
-Match readers raise
-`StriderError` for an unbound capture (use `has()` or the `_opt` readers to
-avoid that), and for a `Match` used after the function was reoptimized.
+- `TypeError`: a wrongly typed argument, a `bool` address or index, a `str`
+  `entry` outside `ElfLifter.analyze`.
+- `OverflowError`: an out-of-range fixed-width int (a constant, a stack
+  offset); an address, id, index, size or count out of its unsigned range is
+  a `StriderError` instead, as is an integer constant over 512 bits.
+- `FileNotFoundError` / `ValueError`: a missing path / a non-ELF file
+  (`load_elf`, `add_elf`, `add_symbol_file`). `ValueError` also for an
+  unsupported arch or ABI (microMIPS included) and for range-checked
+  constructor arguments: `CfgOptions(function_max_size=0)`, a size with
+  `allow_code_before_start_addr=True`, a `known_targets` string other than
+  `"return"`, a string `call_other_abis` value, an empty `data_ranges` /
+  `fragment_ranges` range, a `BufferReader` region past the address space.
+- `OSError`: a failed `to_dot` / `to_html` write to `path`.
+- `StriderError`: analysis failures, a malformed ELF, and every other bad
+  value (an unknown `style=`, a reserved capture name, an unknown node id, an
+  unbound capture read without `_opt`, a `Match` read after `compact`,
+  `optimize`, `rewrite` or `rewrite_all`).
 
-`analyze` never raises for an indirect branch. An unresolvable site, a site
-whose answer oscillates or shrank between rounds, and a target chain deeper than
-the iteration cap all come back in `unresolved` instead.
-
-The message is the error and its causes; `.backtrace` holds the message and the
-Rust backtrace, so a sweep can log it without re-running:
+The message is the error and its causes; `.backtrace` adds the Rust
+backtrace:
 
 ```python
 import logging
@@ -1016,13 +1056,11 @@ log = logging.getLogger(__name__)
 try:
     prog.analyze("no_such_function")
 except strider.StriderError as e:
-    log.error("%s", e)            # the one line you can act on
-    log.debug("%s", e.backtrace)  # frames, when you are chasing strider itself
+    log.error("%s", e)            # the error and its causes
+    log.debug("%s", e.backtrace)  # plus the Rust frames
 ```
 
-`STRIDER_BACKTRACE=1` also puts the trace in the message, from the next error
-on, including when set through `os.environ`. Importing strider sets
-`RUST_LIB_BACKTRACE=1` in the process environment (not visible in
-`os.environ`) unless `RUST_LIB_BACKTRACE` or `RUST_BACKTRACE` is already set.
-`RUST_BACKTRACE=0` exported before starting the interpreter leaves `.backtrace`
-holding only the message.
+`STRIDER_BACKTRACE=1` (also via `os.environ`) puts the trace in the message.
+Importing strider enables backtrace capture unless `RUST_LIB_BACKTRACE` or
+`RUST_BACKTRACE` is set; `RUST_BACKTRACE=0` leaves `.backtrace` holding only the
+message.

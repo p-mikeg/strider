@@ -2,7 +2,7 @@
 //! to the instructions it holds, whichever order the splits arrive in.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, CfgOptions, RegionInstruction};
+use strider_cfg::{CfgOptions, DecodeEngine, RegionInstruction};
 use strider_target::SleighArch;
 
 const BASE: u64 = 0x10_0000;
@@ -33,14 +33,9 @@ fn image(k: usize, m: usize, descending: bool) -> Vec<u8> {
 /// Bytes of instruction storage the built CFG's regions hold.
 fn held_bytes(k: usize, m: usize, descending: bool) -> usize {
     let arch = SleighArch::x86_64();
-    let mut sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(image(k, m, descending), BASE),
-    )
-    .expect("sleigh");
-    let cfg = Builder::for_arch(&arch, &mut sleigh, BASE, &CfgOptions::default())
-        .build()
+    let cfg = DecodeEngine::new(arch, BufMemReader::new(image(k, m, descending), BASE))
+        .expect("decode engine")
+        .build_cfg(BASE.into(), &CfgOptions::default())
         .expect("build");
     assert!(
         cfg.regions().count() >= 2 * k,

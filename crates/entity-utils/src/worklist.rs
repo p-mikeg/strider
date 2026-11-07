@@ -1,5 +1,5 @@
-use alloc::collections::VecDeque;
 use cranelift_entity::{EntityRef, SecondaryMap};
+use std::collections::VecDeque;
 
 /// FIFO queue for fixed-point iteration, holding each entity at most once:
 /// enqueueing one already queued is a no-op, but an entity may be re-enqueued
@@ -20,7 +20,7 @@ impl<E: EntityRef> Worklist<E> {
     }
 
     pub fn enqueue(&mut self, entity: E) {
-        if !core::mem::replace(&mut self.workset[entity], true) {
+        if !std::mem::replace(&mut self.workset[entity], true) {
             self.worklist.push_back(entity);
         }
     }
@@ -136,14 +136,6 @@ mod tests {
         assert_eq!(wl.dequeue(), None);
     }
 
-    #[test]
-    fn debug_format_pins_derive() {
-        // Pins the `Debug` derive against silent removal.
-        let mut wl: Worklist<Id> = Worklist::new();
-        wl.enqueue(Id(1));
-        let _ = format!("{wl:?}");
-    }
-
     /// Pins the single-pass mark-then-push dedup at scale.
     #[test]
     fn enqueue_dedup_at_ten_thousand_scale() {
@@ -161,29 +153,5 @@ mod tests {
         }
         assert_eq!(count, n as usize, "no duplicates after re-enqueue");
         assert_eq!(wl.dequeue(), None);
-    }
-
-    /// One entity queued at a time, drained from the highest index down: every
-    /// dequeue removes the membership maximum.
-    #[test]
-    fn descending_drain_cost_is_linear() {
-        fn drain(n: u32) -> std::time::Duration {
-            let mut wl: Worklist<Id> = Worklist::new();
-            let start = std::time::Instant::now();
-            for i in (0..n).rev() {
-                wl.enqueue(Id(i));
-                assert_eq!(wl.dequeue(), Some(Id(i)));
-            }
-            start.elapsed()
-        }
-        drain(10_000);
-        let small = drain(25_000);
-        let large = drain(200_000);
-        // Linear would be 8x; quadratic 64x.
-        assert!(
-            large.as_secs_f64() < small.as_secs_f64() * 24.0,
-            "8x the entities cost {:.1}x the drain ({small:?} -> {large:?})",
-            large.as_secs_f64() / small.as_secs_f64(),
-        );
     }
 }

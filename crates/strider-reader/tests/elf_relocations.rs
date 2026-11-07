@@ -41,8 +41,8 @@ fn a_defined_mips_rel32_writes_the_symbol_value() {
 #[test]
 fn an_undefined_mips_rel32_stays_addend_only() {
     // The STN_UNDEF case stays addend-only: `S = 0` and the `REL` addend is 0,
-    // so the slot reads 0. `object` reports it as `RelocationTarget::Absolute`,
-    // routing through `image_relative_reloc`.
+    // so the slot reads 0. It is `classify`'s image-relative row, whose
+    // `SHT_REL` field already holds the whole value and is served as is.
     let fx = common::elf_fixture::build_mips32be_rel32_elf_with(false);
 
     let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
@@ -432,8 +432,7 @@ fn read_u32_le_at(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u3
 }
 
 fn fixture_path(arch: &str, case: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out")
+    common::fixtures_out()
         .join(arch)
         .join(format!("{case}.elf"))
 }
@@ -457,9 +456,11 @@ fn sym_addr(obj: &object::File<'_>, name: &str) -> u64 {
 #[test]
 fn a_dispatch_table_is_patched_on_x86_64() {
     let path = fixture_path("x64", "elf_relocs");
-    if !path.exists() {
-        panic!("missing {path:?}; run `make -C fixtures CASE=elf_relocs ARCH=x64`");
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).expect("load_elf");
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     // `dispatch_table` lives in `.data.rel.ro`, which the default
@@ -491,18 +492,18 @@ fn default_loader_omits_data_rel_ro() {
     // The default filter excludes `.data.rel.ro` as writable, so the table is
     // unmapped without an explicit relocation pass.
     let path = fixture_path("x64", "elf_relocs");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
+    let regions = common::regions_of_file(
+        &path,
+        strider_reader::elf::LoadFilter::CodeAndReadOnly,
+        false,
+    );
     let table_addr = sym_addr(&obj, "dispatch_table");
     assert!(
         read_u64_le(&regions, table_addr).is_none(),
@@ -517,15 +518,11 @@ fn relocating_a_pre_resolved_binary_changes_nothing() {
     // and sit in the writable `.got` the fetch image does not map. Nothing to
     // apply, which is why relocation processing is opt-in.
     let path = fixture_path("x86", "control");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return; // skip if fixture not built
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let filter = strider_reader::elf::LoadFilter::CodeAndReadOnly;
     let before: Vec<Vec<u8>> = common::regions_of_file(&path, filter, false)
         .iter()
@@ -581,7 +578,6 @@ fn et_rel_byte_identical_collision_does_not_patch_the_other_section() {
 #[test]
 fn et_rel_sections_colliding_at_vma_zero_get_bases_of_their_own() {
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf();
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
     let data_base = common::section_base(&fx.bytes, ".data");
     let text_base = common::section_base(&fx.bytes, ".text.f");
     assert_eq!(
@@ -595,7 +591,7 @@ fn et_rel_sections_colliding_at_vma_zero_get_bases_of_their_own() {
     for (name, regions, expected) in [
         (
             "code-and-readonly",
-            strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions"),
+            common::regions(&fx.bytes, strider_reader::elf::LoadFilter::CodeAndReadOnly),
             vec![(text_base, fx.text_bytes.clone())],
         ),
         (
@@ -709,7 +705,7 @@ fn mips64el_ignores_a_relocation_kind_read_from_the_symbol_index() {
     table.read_exact(fx.slot_addr, &mut got).expect("read slot");
     assert_eq!(
         got, [0u8; 8],
-        "R_MIPS_COPY is unhandled; the site must keep its file-initial bytes"
+        "R_MIPS_GPREL32 is unhandled; the site must keep its file-initial bytes"
     );
 }
 
@@ -718,15 +714,11 @@ fn mips64el_ignores_a_relocation_kind_read_from_the_symbol_index() {
 #[test]
 fn a_read_straddling_a_relocated_site_serves_the_patched_bytes() {
     let path = fixture_path("x64", "elf_relocs");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).expect("load_elf");
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let table = strider_reader::MemRegionsLookupTable::new(
@@ -779,8 +771,7 @@ fn a_read_straddling_a_relocated_site_serves_the_patched_bytes() {
 /// `r_type` dispatch. Unpatched the table reads as eight zeros.
 #[test]
 fn ppc_rel32_patches_a_rodata_jump_table() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out/ppc32be/switch_masked_loop.o");
+    let path = common::fixtures_out().join("ppc32be/switch_masked_loop.o");
     let filter = strider_reader::elf::LoadFilter::CodeAndReadOnly;
     let regions = common::regions_of_file(&path, filter, true);
     let owned = strider_reader::load_elf(&path).expect("load_elf");
@@ -924,38 +915,32 @@ fn every_region_covering_a_site_serves_the_patched_bytes() {
     );
 }
 
-/// A patch is filed on EVERY region covering a site, so the patch lists cost
-/// region count times relocation count. A crafted image sets both counts
-/// independently and cheaply. The budget refuses it; the alternative is an
-/// allocation no `Result` can report.
+/// A site every one of 64 overlapping mappings covers is served patched by
+/// each of them, from one shared patch list, so a crafted overlap does not
+/// multiply the memory the patches take.
 #[test]
-fn a_site_covered_by_many_overlapping_mappings_is_refused() {
+fn every_one_of_many_overlapping_mappings_serves_a_sites_patch() {
     let bytes = common::elf_fixture::build_overlapping_loads_rela_elf(64, 512);
-    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
-    let err = elf
+    let regions = strider_reader::OwnedElf::parse(bytes)
+        .expect("parse")
         .regions(
             strider_reader::elf::RegionSource::Auto,
             strider_reader::elf::LoadFilter::AllAllocatable,
             true,
         )
-        .expect_err("32768 patch records out of a 17 KB image must be refused")
-        .to_string();
-    assert!(err.contains("patch budget"), "got: {err}");
-}
-
-/// The refusal is the relocation applier's alone: the same image loads.
-#[test]
-fn overlapping_mappings_load_unrelocated() {
-    let bytes = common::elf_fixture::build_overlapping_loads_rela_elf(64, 512);
-    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
-    let regions = elf
-        .regions(
-            strider_reader::elf::RegionSource::Auto,
-            strider_reader::elf::LoadFilter::AllAllocatable,
-            false,
-        )
-        .expect("regions");
+        .expect("overlapping mappings load relocated");
     assert_eq!(regions.len(), 64);
+    for region in &regions {
+        for site in [0x2000u64, 0x2000 + 8 * 511] {
+            let mut field = [0u8; 8];
+            assert_eq!(
+                region.read(site, &mut field),
+                Some(8),
+                "{region:?} at {site:#x}"
+            );
+            assert_eq!(u64::from_le_bytes(field), 0x1000, "{region:?} at {site:#x}");
+        }
+    }
 }
 
 /// An `SHT_REL` `R_386_RELATIVE` keeps `image_base + A` in its own field, so
@@ -992,4 +977,546 @@ fn an_implicit_addend_relative_in_a_read_only_mapping_serves_its_field() {
             .expect("a read-only RELATIVE site is not a hole");
         assert_eq!(got.to_vec(), slot_init);
     }
+}
+
+/// `R_PPC64_REL32` is `S + A - P` in a 4-byte field. A displacement past
+/// +-2 GiB does not fit it, so the site is a hole rather than a truncated word;
+/// one that fits is still patched.
+#[test]
+fn a_word_sized_rel32_that_does_not_fit_is_a_hole() {
+    let fixture = |slot_addr: u64| {
+        common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian: object::Endianness::Big,
+                is_64: true,
+                e_machine: object::elf::EM_PPC64,
+                r_type: object::elf::R_PPC64_REL32,
+                defined_symbol: true,
+                slot_init: vec![0u8; 4],
+            },
+            // Read-only, so an uncomputed field is a hole and not skipped.
+            common::elf_fixture::RelPlacement {
+                slot_addr,
+                slot_exec: true,
+                ..Default::default()
+            },
+        )
+    };
+
+    let near = fixture(0x2000);
+    let regions = common::load_with_relocations(&near.bytes);
+    assert_eq!(
+        read_u32_be(&regions, near.slot_addr),
+        Some(near.sym_addr.wrapping_sub(near.slot_addr) as u32),
+        "a displacement that fits is patched"
+    );
+
+    let far = fixture(0x1_0000_2000);
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&far.bytes));
+    assert_eq!(
+        table.unmodelled_relocation_at(far.slot_addr),
+        Some(object::elf::R_PPC64_REL32),
+        "a displacement past 32 signed bits must be a hole, not its low word"
+    );
+}
+
+/// The type a MIPS64 REL hole names, over a read-only slot:
+/// - mips64el: `object` reports `r_info` transposed, so the type comes from
+///   the untransposed word, `R_MIPS_GPREL32`, not the symbol index 1.
+/// - big-endian: the type word's top byte is `r_ssym`, not part of the type.
+/// - mips64el beside an `SHT_CREL` table: entries are read as written, so
+///   the `R_MIPS_26` jump reads as type 1 (`R_MIPS_16`), its `r_sym` word,
+///   against an out-of-range symbol.
+#[test]
+fn a_mips64_rel_hole_names_the_relocation_type() {
+    use object::Endianness::{Big, Little};
+    use object::elf::{R_MIPS_16, R_MIPS_26, R_MIPS_GPREL32};
+    for (endian, r_type, slot_len, empty_crel, want) in [
+        (Little, R_MIPS_GPREL32, 8, false, R_MIPS_GPREL32),
+        (Big, (1 << 24) | R_MIPS_GPREL32, 8, false, R_MIPS_GPREL32),
+        (Little, R_MIPS_26, 4, true, R_MIPS_16),
+    ] {
+        let fx = common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian,
+                is_64: true,
+                e_machine: object::elf::EM_MIPS,
+                r_type,
+                defined_symbol: true,
+                slot_init: vec![0u8; slot_len],
+            },
+            common::elf_fixture::RelPlacement {
+                slot_exec: true,
+                empty_crel,
+                ..Default::default()
+            },
+        );
+        let table =
+            strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+        assert_eq!(
+            table.unmodelled_relocation_at(fx.slot_addr),
+            Some(want),
+            "{endian:?} type {r_type:#x}"
+        );
+    }
+}
+
+/// A sign-extended kseg address (`0xffff_ffff_8xxx_xxxx`) fits a 4-byte
+/// `R_MIPS_REL32` on MIPS64: the unsigned field takes either signedness, so
+/// the low word is patched rather than left a hole.
+#[test]
+fn a_mips64_rel32_to_a_kseg_address_is_patched() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Big,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_REL32,
+            defined_symbol: true,
+            // A = -0x8000_0000, so S + A = 0xffff_ffff_8000_1000.
+            slot_init: 0x8000_0000u32.to_be_bytes().to_vec(),
+        },
+        // Read-only, so a field that did not fit would be a hole.
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let regions = common::load_with_relocations(&fx.bytes);
+    assert_eq!(
+        read_u32_be(&regions, fx.slot_addr),
+        Some((fx.sym_addr as u32).wrapping_add(0x8000_0000)),
+    );
+    let table = strider_reader::MemRegionsLookupTable::new(regions);
+    assert_eq!(table.unmodelled_relocation_at(fx.slot_addr), None);
+}
+
+/// A relocation at the top of the address space: a slot ending at
+/// `2^64 - 1` is patched; one whose mapping ends at `2^64` loses its last
+/// byte, so no region holds the field to patch and its mapped bytes are a
+/// hole.
+#[test]
+fn a_relocation_at_the_top_of_the_address_space_loads() {
+    for (slot_addr, patched) in [(u64::MAX - 8, true), (u64::MAX - 7, false)] {
+        let fx = common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian: object::Endianness::Little,
+                is_64: true,
+                e_machine: object::elf::EM_X86_64,
+                r_type: object::elf::R_X86_64_GLOB_DAT,
+                defined_symbol: true,
+                slot_init: vec![0u8; 8],
+            },
+            // Read-only, so an uncomputed field would be a hole.
+            common::elf_fixture::RelPlacement {
+                slot_addr,
+                slot_exec: true,
+                ..Default::default()
+            },
+        );
+        let table =
+            strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+        assert_eq!(
+            table.unmodelled_relocation_at(slot_addr),
+            (!patched).then_some(object::elf::R_X86_64_GLOB_DAT),
+            "{slot_addr:#x}"
+        );
+        if patched {
+            let mut field = [0u8; 8];
+            table
+                .read_exact(slot_addr, &mut field)
+                .expect("the slot is mapped whole");
+            assert_eq!(u64::from_le_bytes(field), fx.sym_addr);
+        } else {
+            let mut field = [0u8; 7];
+            assert!(table.read_exact(slot_addr, &mut field).is_err());
+        }
+    }
+}
+
+/// BFD opens a mips64el `.rel.dyn` with a null `R_MIPS_NONE` at `r_offset` 0,
+/// inside the first PT_LOAD. A marker leaves its field as assembled, so the
+/// ELF magic there stays served, on mips64el as on mips64be.
+#[test]
+fn a_null_mips64_relocation_leaves_the_image_start_served() {
+    for arch in ["mips64le", "mips64be"] {
+        let path = fixture_path(arch, "elf_relocs");
+        assert!(
+            path.exists(),
+            "{} is not built; run `make -C fixtures`",
+            path.display()
+        );
+        let table = strider_reader::MemRegionsLookupTable::new(common::regions_of_file(
+            &path,
+            strider_reader::elf::LoadFilter::AllAllocatable,
+            true,
+        ));
+        let mut magic = [0u8; 4];
+        assert_eq!(table.read(0, &mut magic), Some(4), "{arch}");
+        assert_eq!(&magic, b"\x7fELF", "{arch}");
+    }
+}
+
+/// A mips64el `SHT_REL` `R_MIPS_26` is applied like any other: the transposed
+/// `r_info` is undone before the type is looked up, not by giving up on it.
+#[test]
+fn a_mips64el_rel_jump_is_patched() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_26,
+            defined_symbol: true,
+            slot_init: vec![0u8; 4],
+        },
+        // In the fetch image, where an uncomputed field would be a hole.
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    let mut word = [0u8; 4];
+    table
+        .read_exact(fx.slot_addr, &mut word)
+        .expect("the jump is patched, not a hole");
+    assert_eq!(
+        u32::from_le_bytes(word),
+        (fx.sym_addr >> 2) as u32,
+        "`j func` encodes `func >> 2`"
+    );
+}
+
+/// A mips64el `SHT_REL` composite this loader does not compute stays a hole
+/// naming the whole untransposed type word: only a single type, a slot or an
+/// `R_MIPS_REL32` applies.
+#[test]
+fn a_mips64el_rel_composite_is_a_hole_naming_its_type_word() {
+    let r_type = (object::elf::R_MIPS_64 << 8) | object::elf::R_MIPS_26;
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type,
+            defined_symbol: true,
+            slot_init: vec![0u8; 4],
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    assert_eq!(table.unmodelled_relocation_at(fx.slot_addr), Some(r_type));
+}
+
+/// `object` reads an `SHT_CREL` entry's symbol and type as written, mips64el
+/// included, and only an `SHT_REL` one transposed: a CREL `R_MIPS_26` with
+/// its addend in the field is applied.
+#[test]
+fn a_mips64el_crel_jump_is_patched() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_26,
+            defined_symbol: true,
+            slot_init: vec![0u8; 4],
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            table: common::elf_fixture::RelTable::Crel(None),
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    let mut word = [0u8; 4];
+    table
+        .read_exact(fx.slot_addr, &mut word)
+        .expect("the jump is patched, not a hole");
+    assert_eq!(u32::from_le_bytes(word), (fx.sym_addr >> 2) as u32);
+}
+
+/// `S` exists only for a symbol: a relocation whose value reads it is a hole
+/// against STN_UNDEF, whichever row computes it. Each slot is read-only, so
+/// an uncomputed field is a hole rather than skipped.
+#[test]
+fn a_value_reading_s_against_no_symbol_is_a_hole() {
+    use common::elf_fixture::{RelOpts, RelPlacement, RelTable, build_rel_elf_placed};
+    use object::Endianness::{Big, Little};
+    use object::elf;
+    for (endian, e_machine, r_type, slot_init, table) in [
+        (
+            Big,
+            elf::EM_PPC64,
+            elf::R_PPC64_REL32,
+            vec![0u8; 4],
+            RelTable::Rel,
+        ),
+        (
+            Little,
+            elf::EM_X86_64,
+            elf::R_X86_64_GLOB_DAT,
+            vec![0u8; 8],
+            RelTable::Rel,
+        ),
+        // RELA: this loader reads no `SHT_REL` addend out of a branch.
+        (
+            Little,
+            elf::EM_AARCH64,
+            elf::R_AARCH64_CALL26,
+            0x9400_0000u32.to_le_bytes().to_vec(),
+            RelTable::Crel(Some(0)),
+        ),
+    ] {
+        let fx = build_rel_elf_placed(
+            RelOpts {
+                endian,
+                is_64: true,
+                e_machine,
+                r_type,
+                defined_symbol: false,
+                slot_init,
+            },
+            RelPlacement {
+                slot_exec: true,
+                table,
+                ..Default::default()
+            },
+        );
+        let regions = common::load_with_relocations(&fx.bytes);
+        let table = strider_reader::MemRegionsLookupTable::new(regions);
+        assert_eq!(
+            table.unmodelled_relocation_at(fx.slot_addr),
+            Some(r_type),
+            "r_type {r_type}"
+        );
+    }
+}
+
+/// `B + A` reads no symbol, so an `R_*_RELATIVE` naming one computes its
+/// addend whether that symbol resolves or not: here a weak undefined one,
+/// valued 0 (unresolved) and not.
+#[test]
+fn an_image_relative_relocation_ignores_its_symbol() {
+    let addend = 0x1234;
+    for value in [0, 0x1000] {
+        let fx = common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian: object::Endianness::Little,
+                is_64: true,
+                e_machine: object::elf::EM_X86_64,
+                r_type: object::elf::R_X86_64_RELATIVE,
+                defined_symbol: true,
+                slot_init: vec![0u8; 8],
+            },
+            // Read-only, so an uncomputed field would be a hole.
+            common::elf_fixture::RelPlacement {
+                slot_exec: true,
+                table: common::elf_fixture::RelTable::Crel(Some(addend)),
+                undefined_weak: Some(value),
+                ..Default::default()
+            },
+        );
+        let regions = common::load_with_relocations(&fx.bytes);
+        assert_eq!(
+            read_u64_le(&regions, fx.slot_addr),
+            Some(addend as u64),
+            "st_value {value:#x}"
+        );
+    }
+}
+
+/// An `R_X86_64_RELATIVE` whose eight-byte field runs past its four-byte
+/// mapping cannot be patched, and the four bytes mapped are a hole rather
+/// than the file's.
+#[test]
+fn an_image_relative_word_past_its_mapping_is_a_hole() {
+    let slot_init = vec![0x11, 0x22, 0x33, 0x44];
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_X86_64,
+            r_type: object::elf::R_X86_64_RELATIVE,
+            defined_symbol: false,
+            slot_init: slot_init.clone(),
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            table: common::elf_fixture::RelTable::Crel(Some(0x1234)),
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    assert!(table.read_exact(fx.slot_addr, &mut [0u8; 4]).is_err());
+    assert_eq!(
+        table.unmodelled_relocation_at(fx.slot_addr),
+        Some(object::elf::R_X86_64_RELATIVE)
+    );
+}
+
+/// An `SHT_CREL` `.rel.dyn` relinked to 0 in an image with a `.dynsym`,
+/// over an executable slot, where a hole shows: `object`'s dynamic walk
+/// skips it, and the walk of tables off `.dynsym` reads it as it reads a
+/// REL or RELA one. A RELATIVE is B + A; an entry naming a symbol a hole.
+#[test]
+fn a_crel_table_off_the_dynsym_is_walked() {
+    let build = |r_type: u32, defined_symbol: bool| {
+        let mut fx = common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian: object::Endianness::Little,
+                is_64: true,
+                e_machine: object::elf::EM_X86_64,
+                r_type,
+                defined_symbol,
+                slot_init: vec![0x55; 8],
+            },
+            common::elf_fixture::RelPlacement {
+                slot_exec: true,
+                table: common::elf_fixture::RelTable::Crel(Some(0x40)),
+                ..Default::default()
+            },
+        );
+        // Elf64_Ehdr.e_shoff, then Elf64_Shdr.sh_link of `.rel.dyn`
+        // (section 5).
+        let shoff = u64::from_le_bytes(fx.bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let at = shoff + 5 * 64 + 0x28;
+        fx.bytes[at..at + 4].copy_from_slice(&0u32.to_le_bytes());
+        let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
+        let region = regions
+            .iter()
+            .find(|r| r.start_addr() <= fx.slot_addr && fx.slot_addr < r.end_addr())
+            .expect("slot region")
+            .clone();
+        (region, fx.slot_addr)
+    };
+    let (region, slot) = build(object::elf::R_X86_64_RELATIVE, false);
+    let mut got = [0u8; 8];
+    assert_eq!(region.read(slot, &mut got), Some(8));
+    assert_eq!(u64::from_le_bytes(got), 0x40, "RELATIVE");
+    let (region, slot) = build(object::elf::R_X86_64_64, true);
+    assert_eq!(
+        region.read(slot, &mut got),
+        None,
+        "a symbol entry is a hole"
+    );
+}
+
+/// The CREL image with its empty `.crel.empty` header (section 6) turned
+/// into a decoy linked to `.dynsym`, starting at `.dynstr` and running over
+/// the real `.rel.dyn` table: the decoy's own stream decodes no entry, and
+/// the real table is still decoded, so the RELATIVE slot reads B + A.
+#[test]
+fn a_crel_header_over_another_crel_table_does_not_hide_it() {
+    let mut fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_X86_64,
+            r_type: object::elf::R_X86_64_RELATIVE,
+            defined_symbol: false,
+            slot_init: vec![0x55; 8],
+        },
+        common::elf_fixture::RelPlacement {
+            table: common::elf_fixture::RelTable::Crel(Some(0x40)),
+            empty_crel: true,
+            ..Default::default()
+        },
+    );
+    let (dynstr, reldyn_end) = {
+        let obj = object::File::parse(&*fx.bytes).unwrap();
+        let range = |name: &str| {
+            use object::ObjectSection as _;
+            obj.section_by_name(name).unwrap().file_range().unwrap()
+        };
+        let (rel, rel_size) = range(".rel.dyn");
+        (range(".dynstr").0, rel + rel_size)
+    };
+    // Elf64_Ehdr.e_shoff; the decoy's Elf64_Shdr sh_offset (0x18), sh_size
+    // (0x20) and sh_link (0x28, `.dynsym` is section 3).
+    let shoff = u64::from_le_bytes(fx.bytes[0x28..0x30].try_into().unwrap()) as usize;
+    let decoy = shoff + 6 * 64;
+    fx.bytes[decoy + 0x18..decoy + 0x20].copy_from_slice(&dynstr.to_le_bytes());
+    fx.bytes[decoy + 0x20..decoy + 0x28].copy_from_slice(&(reldyn_end - dynstr).to_le_bytes());
+    fx.bytes[decoy + 0x28..decoy + 0x2c].copy_from_slice(&3u32.to_le_bytes());
+
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
+    let region = regions
+        .iter()
+        .find(|r| r.start_addr() <= fx.slot_addr && fx.slot_addr < r.end_addr())
+        .expect("slot region");
+    let mut got = [0u8; 8];
+    assert_eq!(region.read(fx.slot_addr, &mut got), Some(8));
+    assert_eq!(u64::from_le_bytes(got), 0x40);
+}
+
+/// A big-endian MIPS32 `R_MIPS_COPY` in a `.rel.dyn` linked to no symbol
+/// table, over a 16-byte executable slot: which table its index means is
+/// in doubt, and with it the object's size, so the hole runs to the end of
+/// the mapping rather than over the one word at `r_offset`.
+#[test]
+fn a_mips32_copy_off_the_dynsym_is_a_hole_to_its_mappings_end() {
+    let mut fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Big,
+            is_64: false,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_COPY,
+            defined_symbol: true,
+            slot_init: vec![0x11; 16],
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    // Elf32_Ehdr.e_shoff, then Elf32_Shdr.sh_link of `.rel.dyn`.
+    let at = {
+        use object::{Object as _, ObjectSection as _};
+        let obj = object::File::parse(&fx.bytes[..]).unwrap();
+        let index = obj.section_by_name(".rel.dyn").unwrap().index().0;
+        u32::from_be_bytes(fx.bytes[0x20..0x24].try_into().unwrap()) as usize + 40 * index + 0x18
+    };
+    fx.bytes[at..at + 4].copy_from_slice(&0u32.to_be_bytes());
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    for off in [0, 4, 8, 12] {
+        assert_eq!(
+            table.unmodelled_relocation_at(fx.slot_addr + off),
+            Some(object::elf::R_MIPS_COPY),
+            "slot+{off}"
+        );
+    }
+}
+
+/// GCC's mips64 `.gpdword` jump-table entry is `R_MIPS_GPREL32 | R_MIPS_64`,
+/// an 8-byte field this loader does not compute: neither half is served.
+#[test]
+fn an_uncomputed_8_byte_mips64_composite_serves_no_byte() {
+    use strider_reader::ReadOnlyMemory as _;
+    let path = common::fixtures_out().join("mips64be/switch_masked_loop.o");
+    let elf = strider_reader::load_elf(&path).expect("open");
+    let obj = elf.checked_file().expect("file");
+    let rodata = obj.section_by_name(".rodata").expect(".rodata");
+    let base = strider_reader::elf::ElfSectionLayout::new(&obj).section_base(&rodata);
+    let reader = strider_reader::ElfFileMemReader::new(
+        &elf,
+        strider_reader::elf::RelocationMode::Applied { got_is_rom: false },
+    )
+    .expect("reader");
+    let mut half = [0u8; 4];
+    assert!(!reader.try_read(base, &mut half), "high half");
+    assert!(
+        !reader.try_read(base + 4, &mut half),
+        "low half served as {half:02x?}"
+    );
 }

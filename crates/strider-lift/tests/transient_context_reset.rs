@@ -2,7 +2,7 @@
 //! function to the next on a reused engine.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_lift::lift::Lifter;
+use strider_lift::Lifter;
 use strider_target::SleighArch;
 
 /// `mov lr, pc` commits ARM's `LRset` at the NEXT address, and `ARMinstructions
@@ -19,20 +19,16 @@ fn a_noflow_decode_var_does_not_leak_into_the_next_function() {
         0x10, 0xff, 0x2f, 0xe1, // 0x1004: bx r0
         0x1e, 0xff, 0x2f, 0xe1, // 0x1008: bx lr
     ]);
-    let sleigh = |b: Vec<u8>| {
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), BufMemReader::new(b, 0x1000))
-            .expect("create Sleigh")
-    };
     let terminators = |lifter: &mut Lifter<BufMemReader<Vec<u8>>>, entry: u64| -> Vec<String> {
         let cfg = lifter
-            .build_cfg(entry.into(), &Default::default(), &Default::default())
+            .build_cfg(entry.into(), &Default::default())
             .expect("build_cfg");
         cfg.regions()
             .map(|r| format!("{:?}", r.terminator))
             .collect()
     };
 
-    let mut cold = Lifter::new(arch, sleigh(bytes.clone())).unwrap();
+    let mut cold = Lifter::new(arch, BufMemReader::new(bytes.clone(), 0x1000)).unwrap();
     let alone = terminators(&mut cold, 0x1004);
     assert!(
         alone
@@ -41,7 +37,7 @@ fn a_noflow_decode_var_does_not_leak_into_the_next_function() {
         "a cold `bx r0` is an indirect branch; got {alone:?}",
     );
 
-    let mut reused = Lifter::new(arch, sleigh(bytes)).unwrap();
+    let mut reused = Lifter::new(arch, BufMemReader::new(bytes, 0x1000)).unwrap();
     let _ = terminators(&mut reused, 0x1000);
     assert_eq!(
         terminators(&mut reused, 0x1004),
@@ -93,24 +89,13 @@ fn lr_set_bytes() -> Vec<u8> {
 fn a_noflow_decode_var_does_not_leak_into_a_second_build_of_the_same_function() {
     let arch = SleighArch::arm();
     for (entry, size) in [(0x1000u64, 0x1c), (0x1021, 0xe)] {
-        let mut lifter = Lifter::new(
-            arch,
-            rsleigh::Sleigh::new(
-                arch.sla_spec(),
-                arch.pspec(),
-                BufMemReader::new(lr_set_bytes(), 0x1000),
-            )
-            .expect("create Sleigh"),
-        )
-        .unwrap();
+        let mut lifter = Lifter::new(arch, BufMemReader::new(lr_set_bytes(), 0x1000)).unwrap();
         let opts = strider_cfg::CfgOptions {
-            fn_max_size: Some(size),
+            bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
         };
         let mut terminators = || -> Vec<String> {
-            let cfg = lifter
-                .build_cfg(entry.into(), &opts, &Default::default())
-                .expect("build_cfg");
+            let cfg = lifter.build_cfg(entry.into(), &opts).expect("build_cfg");
             let mut t: Vec<String> = cfg
                 .regions()
                 .map(|r| format!("{:?} {:?}", r.start_addr, r.terminator))
@@ -129,16 +114,7 @@ fn a_noflow_decode_var_does_not_leak_into_a_second_build_of_the_same_function() 
 
 fn arm_lifter(bytes: Vec<u8>) -> Lifter<BufMemReader<Vec<u8>>> {
     let arch = SleighArch::arm();
-    Lifter::new(
-        arch,
-        rsleigh::Sleigh::new(
-            arch.sla_spec(),
-            arch.pspec(),
-            BufMemReader::new(bytes, 0x1000),
-        )
-        .expect("create Sleigh"),
-    )
-    .unwrap()
+    Lifter::new(arch, BufMemReader::new(bytes, 0x1000)).unwrap()
 }
 
 fn sorted_terminators(
@@ -147,10 +123,10 @@ fn sorted_terminators(
     size: u64,
 ) -> anyhow::Result<Vec<String>> {
     let opts = strider_cfg::CfgOptions {
-        fn_max_size: Some(size),
+        bound: strider_cfg::FunctionBound::size(size),
         ..Default::default()
     };
-    let cfg = lifter.build_cfg(entry.into(), &opts, &Default::default())?;
+    let cfg = lifter.build_cfg(entry.into(), &opts)?;
     let mut t: Vec<String> = cfg
         .regions()
         .map(|r| format!("{:?} {:?}", r.start_addr, r.terminator))

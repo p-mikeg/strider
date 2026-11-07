@@ -17,6 +17,13 @@ from . import _elf_builder as eb
 from .conftest import fixture_path
 
 
+
+def _rom(lift):
+    """The read-only view an `ElfLifter` folds against."""
+    rom = lift.rom()
+    assert rom is not None
+    return rom
+
 def _elf_relocs():
     return str(fixture_path("x64", "elf_relocs"))
 
@@ -63,7 +70,9 @@ def test_the_opt_in_resolves_a_dispatch_through_a_data_rel_ro_table():
     `.data.rel.ro`, so the site resolves only once that is served."""
     path = str(fixture_path("ppc32le", "indirect_branch"))
 
-    unresolved = strider.lift.load_elf(path).analyze("indirect_branch_resolved")
+    unresolved = strider.lift.load_elf(path).analyze(
+        "indirect_branch_resolved",
+    )
     assert unresolved.unresolved, "without the GOT the table base is unmapped"
 
     resolved = strider.lift.load_elf(
@@ -96,21 +105,21 @@ def test_add_elf_makes_the_claim_per_image(tmp_path):
     _image_with_a_got(first, 0x400000, b"\x11" * 8)
     _image_with_a_got(second, 0x500000, b"\x22" * 8)
 
-    elf = ext._load_elf_from_segments(str(first), True, True)
-    assert elf.ro_reader().read(0x401000, 8) == b"\x11" * 8
+    elf = strider.lift.load_elf(str(first), relocated_got_is_rom=True)
+    assert _rom(elf).read(0x401000, 8) == b"\x11" * 8
 
-    elf.add_elf(str(second), False, False)
-    assert elf.ro_reader().read(0x401000, 8) == b"\x11" * 8, (
+    elf.add_elf(str(second), apply_relocations=False)
+    assert _rom(elf).read(0x401000, 8) == b"\x11" * 8, (
         "a merge must not drop what the first image's claim serves"
     )
-    assert elf.ro_reader().read(0x501000, 8) is None, (
+    assert _rom(elf).read(0x501000, 8) is None, (
         "the merged image made no claim, so its GOT stays out"
     )
 
     third = tmp_path / "third.elf"
     _image_with_a_got(third, 0x600000, b"\x33" * 8)
-    elf.add_elf(str(third), True, True)
-    assert elf.ro_reader().read(0x601000, 8) == b"\x33" * 8, (
+    elf.add_elf(str(third), relocated_got_is_rom=True)
+    assert _rom(elf).read(0x601000, 8) == b"\x33" * 8, (
         "a merge that does make the claim serves its own GOT"
     )
 
@@ -130,11 +139,11 @@ def test_the_claim_is_refused_without_relocations(tmp_path):
             apply_relocations=False,
             relocated_got_is_rom=True,
         ),
-        lambda: ext._load_elf_from_segments(_elf_relocs(), False, True),
-        lambda: ext._load_elf_from_sections(_elf_relocs(), False, True),
-        # The constructors default `apply_relocations` to False, so the flag
+        lambda: ext._load_elf(_elf_relocs(), True, False, True),
+        lambda: ext._load_elf(_elf_relocs(), False, False, True),
+        # The constructor defaults `apply_relocations` to False, so the flag
         # alone is the contradiction there.
-        lambda: ext._load_elf_from_segments(_elf_relocs(), relocated_got_is_rom=True),
+        lambda: ext._load_elf(_elf_relocs(), relocated_got_is_rom=True),
     ):
         with pytest.raises(strider.StriderError) as excinfo:
             call()
@@ -146,9 +155,34 @@ def test_add_elf_refuses_the_claim_without_relocations(tmp_path):
     first, second = tmp_path / "first.elf", tmp_path / "second.elf"
     _image_with_a_got(first, 0x400000, b"\x11" * 8)
     _image_with_a_got(second, 0x500000, b"\x22" * 8)
-    elf = ext._load_elf_from_segments(str(first), True, True)
+    elf = strider.lift.load_elf(str(first), relocated_got_is_rom=True)
     with pytest.raises(strider.StriderError) as excinfo:
-        elf.add_elf(str(second), False, True)
+        elf.add_elf(str(second), apply_relocations=False, relocated_got_is_rom=True)
     assert "relocated_got_is_rom" in str(excinfo.value)
     # Refused before anything merged: the handle is unchanged.
-    assert elf.ro_reader().read(0x501000, 8) is None
+    assert _rom(elf).read(0x501000, 8) is None
+
+
+def _image_with_unreadable_code(path, base: int) -> None:
+    """`_image_with_a_got` with its `.text` PT_LOAD pointed past the end of
+    the file, so reading that mapping fails."""
+    _image_with_a_got(path, base, b"\x22" * 8)
+    eb.point_load_past_eof(path, 0)
+
+
+def test_the_refusal_comes_before_any_mapping_is_read(tmp_path):
+    """The pair is judged on its own, so an image whose code cannot be read
+    still gets the refusal rather than the read error."""
+    broken = tmp_path / "broken.elf"
+    _image_with_unreadable_code(broken, 0x500000)
+    with pytest.raises(strider.StriderError, match="relocated_got_is_rom=True needs apply_relocations=True"):
+        ext._load_elf(str(broken), True, False, True)
+
+
+def test_add_elf_refuses_the_claim_before_any_mapping_is_read(tmp_path):
+    good, broken = tmp_path / "good.elf", tmp_path / "broken.elf"
+    _image_with_a_got(good, 0x400000, b"\x11" * 8)
+    _image_with_unreadable_code(broken, 0x500000)
+    elf = strider.lift.load_elf(str(good))
+    with pytest.raises(strider.StriderError, match="relocated_got_is_rom=True needs apply_relocations=True"):
+        elf.add_elf(str(broken), apply_relocations=False, relocated_got_is_rom=True)

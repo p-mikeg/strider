@@ -9,22 +9,22 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-# `test-util` exposes the build_call_cc / build_branch convenience
-# constructors this crate's `tb.rs` builders use. This is a NORMAL
-# dependency, so a workspace-wide build resolves strider-ir with the feature on;
-# only the wheel, which never depends on this crate, resolves it without.
+# `test-util`: the convenience constructors `tb.rs` uses.
 strider-ir = { workspace = true, features = ["test-util"] }
 strider-target = { workspace = true }
-# `EntityRef::index`, for the id-set comparison in
-# `assert_live_matches_reachable`.
+# `EntityRef::index` for `assert_live_matches_reachable`; `interp`'s value
+# maps.
 cranelift-entity.workspace = true
+# `Vn` / `VnSpace` in the builders and `interp`.
 rsleigh.workspace = true
+# `graph_oracle`, re-exported from the `test-util` feature.
+graph-algorithms = { workspace = true, features = ["test-util"] }
 anyhow.workspace = true
 proptest = { workspace = true, optional = true }
 
 [features]
-# Gates `proptest_gen`. Off by default so `cargo build --workspace`, which
-# builds this crate as a member, does not compile proptest's tree.
+# Gates `proptest_gen`, so tests of a crate that does not enable it skip
+# proptest.
 proptest-gen = ["dep:proptest"]
 
 [lints]

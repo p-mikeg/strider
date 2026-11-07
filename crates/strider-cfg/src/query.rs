@@ -5,41 +5,70 @@ use super::types::{Region, RegionTerminator};
 use super::{Cfg, RegionId};
 use anyhow::anyhow;
 
-use crate::Result;
+use crate::{DataRanges, FunctionBound, Result};
 
-/// True when `target` lies outside the half-open function range
-/// `[start_addr, start_addr + fn_max_size)`.
-///
-/// `allow_code_before_start_addr` relaxes the lower bound ONLY while
-/// `fn_max_size` is `None`.  With a size set the extent is known exactly, so
-/// any `target < start_addr` is a tail call whatever the flag says.
-///
-/// The window is non-wrapping.  When `start_addr + fn_max_size` overflows it
-/// clamps to `[start_addr, u64::MAX]` and the upper bound is dropped
-/// entirely.
+/// Whether `target` lies outside both the function `bound` describes from
+/// `start_addr` and every `fragments` range. A `Size` window that overflows
+/// is `[start_addr, u64::MAX]`.
 pub(crate) fn is_addr_tail_call(
     target: u64,
     start_addr: u64,
-    fn_max_size: Option<u64>,
-    allow_code_before_start_addr: bool,
+    bound: FunctionBound,
+    fragments: &DataRanges,
 ) -> bool {
-    // `lower == 0` disables the lower-bound check; `upper == None` disables
-    // the upper one.
-    let lower_bound_strict = fn_max_size.is_some() || !allow_code_before_start_addr;
-    let lower = if lower_bound_strict { start_addr } else { 0 };
-    if target < lower {
-        return true;
+    let outside = match bound {
+        FunctionBound::Size(size) => {
+            target < start_addr
+                || start_addr
+                    .checked_add(size.get())
+                    .is_some_and(|end| target >= end)
+        }
+        FunctionBound::Open { code_before_start } => !code_before_start && target < start_addr,
+    };
+    outside && !fragments.overlaps(target, target.saturating_add(1))
+}
+
+/// Whether falling through from the instruction at `from` to `to` leaves the
+/// function. An `Open` bound has no end, but a fragment's end still ends it.
+pub(crate) fn is_fall_through_past_end(
+    from: u64,
+    to: u64,
+    start_addr: u64,
+    bound: FunctionBound,
+    fragments: &DataRanges,
+) -> bool {
+    let in_fragment = |a: u64| fragments.overlaps(a, a.saturating_add(1));
+    is_addr_tail_call(to, start_addr, bound, fragments)
+        || (matches!(bound, FunctionBound::Open { .. })
+            && in_fragment(from)
+            && !in_fragment(to)
+            && to != start_addr)
+}
+
+/// The user-op a `CallOther` names: its CONST input 0, as an index into
+/// `names`. `None` for any other operand shape.
+#[must_use]
+pub fn user_op_of<'n>(insn: &rsleigh::Insn, names: &'n [String]) -> Option<(u32, &'n str)> {
+    let id = insn
+        .inputs
+        .first()
+        .filter(|vn| vn.addr_space == rsleigh::VnSpace::CONST)?
+        .addr_off;
+    let id = u32::try_from(id).ok()?;
+    names.get(id as usize).map(|name| (id, name.as_str()))
+}
+
+/// A direct `Call`'s target address: its first operand, when that names the
+/// code space.
+#[must_use]
+pub fn direct_call_target(insn: &rsleigh::Insn, code_space: rsleigh::VnSpace) -> Option<u64> {
+    if insn.opcode != rsleigh::Opcode::Call {
+        return None;
     }
-    // `checked_add`, NOT `saturating_add`: on overflow the `None` drops the
-    // upper-bound check, whereas a saturating bound with `target >= upper`
-    // would misclassify `target == u64::MAX` as out of range.
-    if let Some(sz) = fn_max_size
-        && let Some(upper) = start_addr.checked_add(sz)
-        && target >= upper
-    {
-        return true;
-    }
-    false
+    insn.inputs
+        .first()
+        .filter(|vn| vn.addr_space == code_space)
+        .map(|vn| vn.addr_off)
 }
 
 pub struct IfRegionSuccessors {
@@ -49,37 +78,21 @@ pub struct IfRegionSuccessors {
 }
 
 impl Cfg {
-    /// The outgoing edge to the region that STARTS at the terminator's
-    /// `true_target` is the taken side, failing that the one that merely
-    /// CONTAINS it; the remaining edge is the fall-through.  A degenerate
-    /// `if (c) goto L else goto L` reports that region for both; a
-    /// non-`CondBranch` region reports `None` for both.
-    ///
-    /// Containment is the fallback, not the test: a `true_target` off an
-    /// instruction boundary is seated as an edge to the region that OWNS it,
-    /// which starts elsewhere.  It also covers an intra-machine-instruction
-    /// target at a non-zero pcode index.  That seating can also make both arms
-    /// answer one region; such a target is reported on
-    /// `interior_branch_targets`, so a caller that needs to tell it from a real
-    /// `goto L` / `goto L` reads that channel.
-    ///
-    /// A start compare has to win over containment because the two can name
-    /// different successors: `fn_max_size` cutting through the last instruction
-    /// leaves the fall-through region's span overhanging the bound, and an
-    /// out-of-bounds `true_target` inside that overhang is owned both by that
-    /// region and by the stub that starts at it.
+    /// The taken side is the successor starting at `true_target`, else the one
+    /// containing it (an `InteriorTarget` seat); the other edge is the
+    /// fall-through. `if (c) goto L else goto L` answers L for both; a
+    /// non-`CondBranch` region `None` for both.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionSuccessors> {
         let region = self
             .region_graph
             .node_weight(region_id)
             .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
-        let RegionTerminator::CondBranch { true_target } = &region.terminator else {
+        let RegionTerminator::CondBranch { true_target } = region.terminator else {
             return Ok(IfRegionSuccessors {
                 if_true_region: None,
                 if_false_region: None,
             });
         };
-        let true_target = *true_target;
         let mut starts_at_taken = None;
         let mut contains_taken = None;
         let mut rest = None;
@@ -88,12 +101,8 @@ impl Cfg {
             .edges_directed(region_id, petgraph::Outgoing)
         {
             let target = edge.target();
-            let successor = self.region_graph.node_weight(target).ok_or_else(|| {
-                anyhow!("dangling edge target {target:?} from region {region_id:?}")
-            })?;
-            // Each bucket takes at most one edge, so the degenerate
-            // both-arms-same-region case stays sane: the second edge falls
-            // through to a later bucket instead of overwriting the taken side.
+            let successor = &self.region_graph[target];
+            // One edge per bucket, for the both-arms-one-region case.
             if successor.start_addr == true_target && starts_at_taken.is_none() {
                 starts_at_taken = Some(target);
             } else if successor.contains_addr(true_target) && contains_taken.is_none() {
@@ -117,12 +126,10 @@ impl Cfg {
         self.region_graph.node_weights()
     }
 
-    /// Unordered; a predecessor with parallel edges is yielded once per edge,
-    /// and dangling sources are skipped.
-    pub fn region_predecessors(&self, region_id: RegionId) -> impl Iterator<Item = &Region> {
+    /// Unordered; a predecessor with parallel edges is yielded once per edge.
+    pub fn region_predecessors(&self, region_id: RegionId) -> impl Iterator<Item = RegionId> + '_ {
         self.region_graph
-            .edges_directed(region_id, petgraph::Incoming)
-            .filter_map(|edge| self.region_graph.node_weight(edge.source()))
+            .neighbors_directed(region_id, petgraph::Incoming)
     }
 
     /// Unordered.
@@ -130,28 +137,16 @@ impl Cfg {
         self.region_graph.node_indices()
     }
 
-    /// Every arm of `switch_region`, keyed by the address it starts at: the
-    /// regions the CFG builder wired for that jump-table's targets.  One pass,
-    /// for a caller resolving all of a table's targets at once.
-    ///
-    /// Keyed by successor edge rather than a global start-address lookup, which
-    /// stays correct across a later `split_region` that re-targets the incoming
-    /// edge.  Keyed on the full `start_addr`: a target landing inside an
-    /// already-decoded region splits it, so a wired arm always begins exactly at
-    /// the target, and a target is always a machine-instruction start.  A
-    /// successor beginning MID-pcode at the same machine address (a `CondBranch`
-    /// into a pcode sequence) is a different region and does not answer for it.
+    /// Every successor of `switch_region`, keyed by its full `start_addr`. An
+    /// arm starts at p-code index 0, so a mid-instruction successor at the same
+    /// machine address does not answer for it.
     pub fn switch_arm_regions(
         &self,
         switch_region: RegionId,
     ) -> rustc_hash::FxHashMap<super::types::PcodeInsnAddr, RegionId> {
         self.region_graph
             .neighbors(switch_region)
-            .filter_map(|s| {
-                self.region_graph
-                    .node_weight(s)
-                    .map(|region| (region.start_addr, s))
-            })
+            .map(|s| (self.region_graph[s].start_addr, s))
             .collect()
     }
 }
@@ -162,26 +157,54 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
+    use crate::CfgOptions;
     use crate::test_support::*;
     use crate::types::{PcodeInsnAddr, Region};
-    use crate::{Builder, CfgOptions};
+
+    #[test]
+    fn is_addr_tail_call_by_bound() {
+        let open = |code_before_start| FunctionBound::Open { code_before_start };
+        let size = FunctionBound::size(0x100);
+        let none = DataRanges::default();
+        let cold = DataRanges::new([0x0800..0x0810, 0x1200..0x1210]);
+        for (target, bound, fragments, tail) in [
+            (0x0800, open(false), &none, true),
+            (0x0800, open(true), &none, false),
+            (0x1200, open(false), &none, false),
+            (0x0800, size, &none, true),
+            (0x10ff, size, &none, false),
+            (0x1100, size, &none, true),
+            (0x0800, open(false), &cold, false),
+            (0x080f, size, &cold, false),
+            (0x0810, size, &cold, true),
+            (0x1200, size, &cold, false),
+            (0x1210, size, &cold, true),
+        ] {
+            assert_eq!(
+                is_addr_tail_call(target, 0x1000, bound, fragments),
+                tail,
+                "{target:#x} {bound:?}"
+            );
+        }
+    }
 
     #[test]
     fn is_addr_tail_call_overflowing_window_top_addr_is_in_range() {
         // The window cannot wrap, so it clamps to `[start, u64::MAX]` and
         // every target at or above start, u64::MAX included, is in range.
         let start = u64::MAX - 0x100;
-        let sz = 0x1000u64; // overflows when added to start
+        // Overflows when added to start.
+        let bound = FunctionBound::size(0x1000);
         assert!(
-            !is_addr_tail_call(u64::MAX, start, Some(sz), false),
+            !is_addr_tail_call(u64::MAX, start, bound, &DataRanges::default()),
             "u64::MAX is the top of the non-wrapping window, must be in-range"
         );
         assert!(
-            !is_addr_tail_call(start + 0x10, start, Some(sz), false),
+            !is_addr_tail_call(start + 0x10, start, bound, &DataRanges::default()),
             "interior of an overflowing window must be in-range"
         );
         assert!(
-            is_addr_tail_call(start - 1, start, Some(sz), false),
+            is_addr_tail_call(start - 1, start, bound, &DataRanges::default()),
             "below start is still a tail call"
         );
     }
@@ -194,23 +217,26 @@ mod tests {
             .join(format!("{case}.elf"));
         assert!(
             path.exists(),
-            "missing test binary {path:?}; run `make -C fixtures` first"
+            "{} is not built; run `make -C fixtures`",
+            path.display()
         );
-        let obj = strider_reader::load_elf(&path)
+        let elf = strider_reader::load_elf(&path)
             .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-        let obj = obj.checked_file().expect("the mapped file is unchanged");
-        let mem = strider_reader::ElfFileMemReader::from_object(&obj)
-            .expect("ElfFileMemReader::from_object");
+        let obj = elf.checked_file().expect("the mapped file is unchanged");
+        let mem = strider_reader::ElfFileMemReader::new(
+            &elf,
+            strider_reader::elf::RelocationMode::Unapplied,
+        )
+        .expect("ElfFileMemReader::new");
         let arch = SleighArch::x86_64();
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("create Sleigh");
         let entry_addr = obj
             .symbol_by_name(fn_name)
             .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
             .address();
-        Builder::for_arch(&arch, &mut sleigh, entry_addr, &CfgOptions::default())
-            .build()
-            .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
+        crate::DecodeEngine::new(arch, mem)
+            .expect("decode engine")
+            .build_cfg(entry_addr.into(), &CfgOptions::default())
+            .unwrap_or_else(|e| panic!("build_cfg for {fn_name:?}: {e:?}"))
     }
 
     #[test]
@@ -353,5 +379,66 @@ mod tests {
             "no successor starts at 0x2000's pcode index 0, so the site has no arm"
         );
         let _ = mid_pcode;
+    }
+
+    /// A `CallOther`'s user-op is its CONST input 0 as a table index; any other
+    /// shape names none.
+    #[test]
+    fn user_op_of_reads_a_const_index_into_the_table() {
+        let names = ["LOCK".to_owned(), "UNLOCK".to_owned()];
+        let call_other = |input: Option<rsleigh::Vn>| rsleigh::Insn {
+            opcode: rsleigh::Opcode::CallOther,
+            output: None,
+            inputs: input.into_iter().collect(),
+        };
+        let at = |addr_space, addr_off| rsleigh::Vn {
+            addr_space,
+            addr_off,
+            size: 4,
+        };
+        let of = |insn| user_op_of(&insn, &names);
+        assert_eq!(
+            of(call_other(Some(at(rsleigh::VnSpace::CONST, 1)))),
+            Some((1, "UNLOCK"))
+        );
+        assert_eq!(of(call_other(Some(at(rsleigh::VnSpace::CONST, 2)))), None);
+        assert_eq!(
+            of(call_other(Some(at(rsleigh::VnSpace::REGISTER, 1)))),
+            None
+        );
+        assert_eq!(
+            of(call_other(Some(at(rsleigh::VnSpace::CONST, 1 << 32)))),
+            None
+        );
+        assert_eq!(of(call_other(None)), None);
+    }
+
+    /// A direct `Call`'s target is its operand only in the code space; a
+    /// `CallIndirect` names no address.
+    #[test]
+    fn direct_call_target_reads_a_code_space_operand_only() {
+        let op = |opcode, addr_space| rsleigh::Insn {
+            opcode,
+            output: None,
+            inputs: vec![rsleigh::Vn {
+                addr_space,
+                addr_off: 0x10,
+                size: 8,
+            }]
+            .into(),
+        };
+        let code = rsleigh::VnSpace::RAM;
+        assert_eq!(
+            direct_call_target(&op(rsleigh::Opcode::Call, code), code),
+            Some(0x10)
+        );
+        assert_eq!(
+            direct_call_target(&op(rsleigh::Opcode::Call, rsleigh::VnSpace::REGISTER), code),
+            None
+        );
+        assert_eq!(
+            direct_call_target(&op(rsleigh::Opcode::CallIndirect, code), code),
+            None
+        );
     }
 }

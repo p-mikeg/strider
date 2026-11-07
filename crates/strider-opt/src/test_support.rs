@@ -1,51 +1,108 @@
+use std::cell::Cell;
+use std::thread::LocalKey;
+
 use anyhow::anyhow;
 
 use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{Graph, IRViewer, Value};
+use strider_ir::{FunctionBuilder, Graph, IRBuilderExt, IRViewer, IntBinaryOp, ValueType};
+use strider_ir::{ReadOnlyMemory, node::ValueId};
 
-pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
+pub(crate) use strider_ir_test_utils::{Rng, make_empty_fn as make_fn, make_fn_with_var};
 
 use crate::{ConstantFold, LoadForward, Optimizer, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
-/// xorshift64 over an explicit state, so a failing fixture replays from its
-/// seed alone. State `0` is a fixed point: seeds are forced odd.
-pub(crate) struct Rng(pub u64);
-
-impl Rng {
-    pub(crate) fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        x
-    }
-
-    pub(crate) fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-
-    pub(crate) fn u128(&mut self) -> u128 {
-        (u128::from(self.next()) << 64) | u128::from(self.next())
-    }
-
-    pub(crate) fn chance(&mut self, pct: u64) -> bool {
-        self.next() % 100 < pct
-    }
+/// One [`crate::run_one`] of `pass` over no rom.
+pub(crate) fn run_pass(pass: &dyn Optimizer, fg: &mut strider_ir::Function) -> crate::Result<bool> {
+    crate::run_one(pass, fg, &crate::OptCtx::new(None))
 }
 
-/// Runs `pass` until a run reports no change, each iteration with a fresh
-/// default `OptCtx`. Returns the number of iterations that DID report a
-/// change, so `0` means the first run was already a no-op.
+/// One [`crate::run_one`] of `pass` over `rom`.
+pub(crate) fn run_pass_rom(
+    pass: &dyn Optimizer,
+    fg: &mut strider_ir::Function,
+    rom: &dyn ReadOnlyMemory,
+) -> crate::Result<bool> {
+    crate::run_one(pass, fg, &crate::OptCtx::new(Some(rom)))
+}
+
+/// Runs `pass` over no rom until a run reports no change, returning the
+/// number of runs that changed something.
 pub(crate) fn run_to_fixed_point(
     pass: &dyn Optimizer,
     fg: &mut strider_ir::Function,
 ) -> crate::Result<usize> {
     let mut iterations = 0;
-    while crate::run_one(pass, fg, &mut crate::OptCtx::at_floor(None))?.changed() {
+    while run_pass(pass, fg)? {
         iterations += 1;
     }
     Ok(iterations)
+}
+
+/// `PhiCollapse` + `RegionCollapse`.
+pub(crate) const COLLAPSE: &[&dyn Optimizer] = &[&PhiCollapse, &RegionCollapse];
+
+/// `ConstantFold` + [`COLLAPSE`].
+pub(crate) const CF_RP: &[&dyn Optimizer] = &[&ConstantFold, &PhiCollapse, &RegionCollapse];
+
+/// [`CF_RP`] + `LoadForward`.
+pub(crate) const STANDARD: &[&dyn Optimizer] =
+    &[&ConstantFold, &PhiCollapse, &RegionCollapse, &LoadForward];
+
+/// `passes` as one pipeline.
+pub(crate) fn pipeline(passes: &[&'static dyn Optimizer]) -> OptimizerPipeline {
+    let mut p = OptimizerPipeline::new();
+    for &pass in passes {
+        p.add(pass);
+    }
+    p
+}
+
+/// Runs `passes` as one pipeline over no rom.
+pub(crate) fn run_passes(
+    fg: &mut strider_ir::Function,
+    passes: &[&'static dyn Optimizer],
+) -> crate::Result<()> {
+    pipeline(passes).run(fg, &crate::OptCtx::new(None))
+}
+
+/// `base + k`, `k` two's-complement at `ty` (at most 128 bits wide).
+pub(crate) fn at(
+    b: &mut FunctionBuilder,
+    base: ValueId,
+    k: i64,
+    ty: ValueType,
+) -> crate::Result<ValueId> {
+    b.build_const_binop(i128::from(k) as u128, base, IntBinaryOp::Add, ty)
+}
+
+/// Zeroes each of `counters`, runs `f`, and returns their summed count.
+pub(crate) fn steps(
+    counters: &[&'static LocalKey<Cell<u64>>],
+    f: impl FnOnce() -> crate::Result<()>,
+) -> crate::Result<u64> {
+    for c in counters {
+        c.with(|c| c.set(0));
+    }
+    f()?;
+    Ok(counters.iter().map(|c| c.with(Cell::get)).sum())
+}
+
+/// Asserts `work(2n)` is at most `ratio_pct`% of `work(n)`.
+#[track_caller]
+pub(crate) fn assert_near_linear(
+    name: &str,
+    n: usize,
+    work: impl Fn(usize) -> crate::Result<u64>,
+    ratio_pct: u64,
+) -> crate::Result<()> {
+    let small = work(n)?;
+    let big = work(2 * n)?;
+    assert!(
+        big * 100 <= small * ratio_pct,
+        "{name}: doubling {n} to {} took {small} steps to {big}, past {ratio_pct}%",
+        2 * n
+    );
+    Ok(())
 }
 
 #[track_caller]
@@ -65,47 +122,13 @@ pub(crate) fn assert_returns_const(f: &strider_ir::Function, expected: u64) {
     );
 }
 
-/// `ConstantFold` + `PhiCollapse` + `RegionCollapse`.
-pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p
-}
-
-/// `cf_rp_pipeline` plus `LoadForward`.
-pub(crate) fn standard_test() -> OptimizerPipeline {
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::default());
-    pipeline
-}
-
-/// An [`crate::OptCtx`] with `stack_global_disjoint` cleared. The other
-/// default-on claim, `assume_incoming_args_survive_calls`, stays set.
-pub(crate) fn octx_structural_only() -> crate::OptCtx<'static> {
-    let mut ctx = crate::OptCtx::at_floor(None);
-    ctx.options.assumptions.stack_global_disjoint = false;
-    ctx
-}
-
-/// An [`crate::OptCtx`] at the pipeline default, `stack_global_disjoint` set.
-pub(crate) fn octx_stack_global_disjoint() -> crate::OptCtx<'static> {
-    let mut ctx = crate::OptCtx::at_floor(None);
-    ctx.options.assumptions.stack_global_disjoint = true;
-    ctx
-}
-
-/// Input[2] of the first `Return`, after ctrl and mem.
-pub(crate) fn return_value(graph: &Graph) -> crate::Result<Value> {
+/// The first `Return`'s first value input.
+pub(crate) fn return_value(graph: &Graph) -> crate::Result<ValueId> {
     let ret = graph
         .all_node_ids()
         .find(|&n| matches!(graph.node_kind(n), NodeKind::Return))
         .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(graph.node_inputs(ret)[2])
+    Ok(graph.node_inputs(ret)[NodeKind::Return.input_head_len()])
 }
 
 pub(crate) fn return_kind(graph: &Graph) -> crate::Result<NodeKind> {
@@ -126,22 +149,22 @@ pub(crate) fn find_unique_if(graph: &Graph) -> NodeId {
     first
 }
 
-/// Memory-graph shapes the scaling tests analyse at two sizes, each built over
-/// 64-bit constant addresses so no SP phi needs collapsing first.
+/// Memory-graph shapes the memory tests share, mostly over 64-bit constant
+/// addresses so no SP phi needs collapsing first.
 pub(crate) mod memory_shapes {
     use strider_ir::node::ValueType;
-    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, Value};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, node::ValueId};
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_frame, stack_vn_x86_64};
 
-    const TY: ValueType = ValueType::I64;
+    const TY: ValueType = ValueType::int(64);
     /// A slot no shape reads, taking the loads that would otherwise be dead.
     const SINK: usize = usize::MAX >> 8;
 
-    fn address(b: &mut FunctionBuilder, slot: usize) -> crate::Result<Value> {
+    fn address(b: &mut FunctionBuilder, slot: usize) -> crate::Result<ValueId> {
         b.build_int_const(0x10_0000 + 8 * slot as u64, TY)
     }
 
-    fn store(b: &mut FunctionBuilder, slot: usize, value: Value) -> crate::Result<()> {
+    fn store(b: &mut FunctionBuilder, slot: usize, value: ValueId) -> crate::Result<()> {
         let addr = address(b, slot)?;
         b.build_store(addr, value, rsleigh::VnSpace::RAM)?;
         Ok(())
@@ -152,7 +175,7 @@ pub(crate) mod memory_shapes {
         store(b, slot, v)
     }
 
-    fn load(b: &mut FunctionBuilder, slot: usize) -> crate::Result<Value> {
+    fn load(b: &mut FunctionBuilder, slot: usize) -> crate::Result<ValueId> {
         let addr = address(b, slot)?;
         b.build_load(addr, rsleigh::VnSpace::RAM, TY)
     }
@@ -252,6 +275,76 @@ pub(crate) mod memory_shapes {
         })
     }
 
+    /// `-O0`'s `if (verbose) call();` `n` times over a slot stored
+    /// `verbose`: each guard reloads the slot past the previous guard's call,
+    /// and with `spill` past a store to another slot.
+    pub(crate) fn guard_chain(
+        n: usize,
+        verbose: u64,
+        spill: bool,
+    ) -> crate::Result<strider_ir::Function> {
+        shape(|b| {
+            store_const(b, 0, verbose)?;
+            for i in 0..n {
+                if spill {
+                    store_const(b, 1, i as u64)?;
+                }
+                let v = load(b, 0)?;
+                let zero = b.build_int_const(0u64, TY)?;
+                let cond = b.build_int_cmp_operation(v, zero, strider_ir::IntCmpOp::Equal, TY)?;
+                let (skip, guarded, merge) = (
+                    b.create_region_all()?,
+                    b.create_region_all()?,
+                    b.create_region_all()?,
+                );
+                b.build_if(cond, skip, guarded)?;
+                b.set_region(skip);
+                b.build_branch(merge)?;
+                b.set_region(guarded);
+                let target = b.build_int_const(0x1000u64, TY)?;
+                b.build_call(target, &[], &[], 0)?;
+                b.build_branch(merge)?;
+                b.set_region(merge);
+            }
+            Ok(())
+        })
+    }
+
+    /// GCC's jump-threaded `n` times `if (c) call();`: a hot chain of tests
+    /// and a cold chain of calls, each call's block testing again, so every
+    /// test and call block merges the two and its dominator is the entry.
+    /// Then reloads of `n` distinct slots, so no reload's memo serves another.
+    pub(crate) fn call_ladder(n: usize) -> crate::Result<strider_ir::Function> {
+        shape(|b| {
+            let hot = (0..=n)
+                .map(|_| b.create_region_all())
+                .collect::<Result<Vec<_>, _>>()?;
+            let cold = (0..n)
+                .map(|_| b.create_region_all())
+                .collect::<Result<Vec<_>, _>>()?;
+            b.build_branch(hot[0])?;
+            for i in 0..n {
+                b.set_region(hot[i]);
+                let cond = b.build_boolean_const(true);
+                b.build_if(cond, cold[i], hot[i + 1])?;
+                b.set_region(cold[i]);
+                let target = b.build_int_const(0x1000u64, TY)?;
+                b.build_call(target, &[], &[], 0)?;
+                if i + 1 < n {
+                    let cond = b.build_boolean_const(true);
+                    b.build_if(cond, cold[i + 1], hot[i + 1])?;
+                } else {
+                    b.build_branch(hot[n])?;
+                }
+            }
+            b.set_region(hot[n]);
+            for i in 0..n {
+                read(b, i)?;
+            }
+            Ok(())
+        })
+    }
+
     /// One loop whose body updates each of `n` accumulators from the next.
     pub(crate) fn accumulator_loop(n: usize) -> crate::Result<strider_ir::Function> {
         shape(|b| {
@@ -299,8 +392,7 @@ pub(crate) mod memory_shapes {
                 b.build_if(cond, body, exit)?;
                 b.set_region(body);
                 let counter = load(b, k)?;
-                let one = b.build_int_const(1u64, TY)?;
-                let next = b.build_int_binary_operation(counter, one, IntBinaryOp::Add, TY)?;
+                let next = b.build_const_binop(1u64, counter, IntBinaryOp::Add, TY)?;
                 store(b, k, next)?;
                 b.build_branch(header)?;
                 b.set_region(exit);
@@ -333,8 +425,7 @@ pub(crate) mod memory_shapes {
             }
             for (k, &(header, exit)) in levels.iter().enumerate().rev() {
                 let counter = load(b, k)?;
-                let one = b.build_int_const(1u64, TY)?;
-                let next = b.build_int_binary_operation(counter, one, IntBinaryOp::Add, TY)?;
+                let next = b.build_const_binop(1u64, counter, IntBinaryOp::Add, TY)?;
                 store(b, k, next)?;
                 b.build_branch(header)?;
                 b.set_region(exit);
@@ -343,10 +434,36 @@ pub(crate) mod memory_shapes {
         })
     }
 
+    /// One spill, then `n` calls each followed by its reload, summed, its
+    /// region phis over SP collapsed: the `-O0` shape.
+    pub(crate) fn spill_call_chain(n: usize) -> crate::Result<strider_ir::Function> {
+        let sp = stack_vn_x86_64();
+        let mut fg = shape(|b| {
+            let sp_val = b.read_variable(&sp)?;
+            let slot = b.build_const_binop((-8i64) as u64, sp_val, IntBinaryOp::Add, TY)?;
+            let seven = b.build_int_const(7u64, TY)?;
+            b.build_store(slot, seven, rsleigh::VnSpace::RAM)?;
+            let call_sp = b.build_const_binop((-64i64) as u64, sp_val, IntBinaryOp::Add, TY)?;
+            b.write_variable(&sp, call_sp)?;
+            let mut sum = seven;
+            for _ in 0..n {
+                let target = b.build_int_const(0x1000u64, TY)?;
+                b.build_call(target, &[], &[], 0)?;
+                let reload = b.build_load(slot, rsleigh::VnSpace::RAM, TY)?;
+                sum = b.build_int_binary_operation(sum, reload, IntBinaryOp::Add, TY)?;
+            }
+            store(b, SINK, sum)
+        })?;
+        super::run_passes(&mut fg, super::COLLAPSE)?;
+        fg.assume(&crate::AssumptionOptions {
+            escape_analysis: true,
+            ..crate::AssumptionOptions::none()
+        });
+        Ok(fg)
+    }
+
     /// `n` stores over four slots, each followed by a read of a slot never
-    /// written, behind a two-entry loop.  The loop is irreducible, so the
-    /// memory graph has no [`crate::mem_ssa::MemLayout`] and every query falls
-    /// back to the path walk.
+    /// written, behind an irreducible loop.
     pub(crate) fn irreducible_store_chain(n: usize) -> crate::Result<strider_ir::Function> {
         const SLOTS: usize = 4;
         shape(|b| {
@@ -375,6 +492,34 @@ pub(crate) mod memory_shapes {
         })
     }
 
+    /// A two-entry loop whose body holds `n` stores to distinct slots, then
+    /// `n` reloads of distinct slots never written.
+    pub(crate) fn irreducible_body(n: usize) -> crate::Result<strider_ir::Function> {
+        shape(|b| {
+            let (top, mid, exit) = (
+                b.create_region_all()?,
+                b.create_region_all()?,
+                b.create_region_all()?,
+            );
+            let enter_mid = b.build_boolean_const(true);
+            b.build_if(enter_mid, mid, top)?;
+            b.set_region(top);
+            store_const(b, 0, 1)?;
+            b.build_branch(mid)?;
+            b.set_region(mid);
+            for i in 0..n {
+                store_const(b, 1 + i, i as u64)?;
+            }
+            for i in 0..n {
+                read(b, 1 + n + i)?;
+            }
+            let again = b.build_boolean_const(true);
+            b.build_if(again, top, exit)?;
+            b.set_region(exit);
+            Ok(())
+        })
+    }
+
     /// A 32-bit function taking stack arguments at `sp + 4`, its region phis
     /// over SP collapsed.
     fn stack_shape(
@@ -392,23 +537,82 @@ pub(crate) mod memory_shapes {
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        let mut collapse = crate::OptimizerPipeline::new();
-        collapse.add(crate::PhiCollapse);
-        collapse.add(crate::RegionCollapse);
-        collapse.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+        super::run_passes(&mut fg, super::COLLAPSE)?;
         Ok(fg)
     }
 
-    fn sp_plus(b: &mut FunctionBuilder, sp: rsleigh::Vn, k: i64) -> crate::Result<Value> {
+    fn sp_plus(b: &mut FunctionBuilder, sp: rsleigh::Vn, k: i64) -> crate::Result<ValueId> {
         let sp_value = b.read_variable(&sp)?;
-        let k = b.build_int_const(k as u64, ValueType::I32)?;
-        b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::I32)
+        super::at(b, sp_value, k, ValueType::int(32))
     }
 
     fn call32(b: &mut FunctionBuilder) -> crate::Result<()> {
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
         Ok(())
+    }
+
+    /// `k` stack arguments written below a lowered SP and one call, behind an
+    /// irreducible loop over frame locals. After the call the slot just above
+    /// the arguments is reloaded and stored to a global, so forwarding it asks
+    /// the argument window across all `k` slots.
+    pub(crate) fn irreducible_stack_args(k: usize) -> crate::Result<strider_ir::Function> {
+        irreducible_stack_args_merging(k, None)
+    }
+
+    /// [`irreducible_stack_args`] with a diamond between the argument stores
+    /// and the call, one arm storing to argument slot `merge`, so a probe of
+    /// the window stops at the merge.
+    pub(crate) fn irreducible_stack_args_merging(
+        k: usize,
+        merge: Option<usize>,
+    ) -> crate::Result<strider_ir::Function> {
+        stack_shape(|b, sp| {
+            let (top, mid, exit) = (
+                b.create_region_all()?,
+                b.create_region_all()?,
+                b.create_region_all()?,
+            );
+            let enter_mid = b.build_boolean_const(true);
+            b.build_if(enter_mid, mid, top)?;
+            b.set_region(top);
+            let local = sp_plus(b, sp, -8)?;
+            let one = b.build_int_const(1u64, ValueType::int(32))?;
+            b.build_store(local, one, rsleigh::VnSpace::RAM)?;
+            b.build_branch(mid)?;
+            b.set_region(mid);
+            let local = sp_plus(b, sp, -12)?;
+            let two = b.build_int_const(2u64, ValueType::int(32))?;
+            b.build_store(local, two, rsleigh::VnSpace::RAM)?;
+            let again = b.build_boolean_const(true);
+            b.build_if(again, top, exit)?;
+            b.set_region(exit);
+            let lowered = sp_plus(b, sp, -(4 * k as i64) - 64)?;
+            b.write_variable(&sp, lowered)?;
+            for i in 0..k {
+                let slot = sp_plus(b, sp, 4 + 4 * i as i64)?;
+                let arg = b.build_int_const(0x100 + i as u64, ValueType::int(32))?;
+                b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
+            }
+            if let Some(merge) = merge {
+                diamond(
+                    b,
+                    |b| {
+                        let slot = sp_plus(b, sp, 4 + 4 * merge as i64)?;
+                        let v = b.build_int_const(0x77u64, ValueType::int(32))?;
+                        b.build_store(slot, v, rsleigh::VnSpace::RAM)?;
+                        Ok(())
+                    },
+                    |_| Ok(()),
+                )?;
+            }
+            call32(b)?;
+            let above = sp_plus(b, sp, 4 + 4 * k as i64)?;
+            let reloaded = b.build_load(above, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+            let global = b.build_int_const(0x9000u64, ValueType::int(32))?;
+            b.build_store(global, reloaded, rsleigh::VnSpace::RAM)?;
+            Ok(())
+        })
     }
 
     /// `n` diamonds, each calling on one arm with a stack argument written
@@ -422,7 +626,7 @@ pub(crate) mod memory_shapes {
                     b,
                     |b| {
                         let slot = sp_plus(b, sp, 4)?;
-                        let arg = b.build_int_const(i as u64, ValueType::I32)?;
+                        let arg = b.build_int_const(i as u64, ValueType::int(32))?;
                         b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
                         call32(b)
                     },
@@ -440,11 +644,102 @@ pub(crate) mod memory_shapes {
             for _ in 0..n {
                 diamond(b, call32, |_| Ok(()))?;
                 let slot = sp_plus(b, sp, 4)?;
-                let arg = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
-                let sink = b.build_int_const(0x9000u64, ValueType::I32)?;
+                let arg = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+                let sink = b.build_int_const(0x9000u64, ValueType::int(32))?;
                 b.build_store(sink, arg, rsleigh::VnSpace::RAM)?;
             }
             Ok(())
         })
     }
+
+    /// A value spilled to the stack top, where outgoing slot 0 sits, and
+    /// reloaded after a call: pinned unless `callee_preserves_stack_args`.
+    ///
+    /// ```text
+    /// sp' = sp - 64        ; this function's frame
+    /// store 0x42 -> sp'+0  ; scratch spill, or f's arg0
+    /// call f
+    /// load  sp'+0
+    /// ```
+    ///
+    /// Returns the builder, its terminator not yet built, and the reload.
+    pub(crate) fn stack_top_spill() -> crate::Result<(FunctionBuilder, ValueId)> {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let mut b = sp_frame(sp)
+            .stack_args(strider_ir_test_utils::stack_args_at(0, 4))
+            .build_fn_single_region()?;
+        let entry_sp = b.read_variable(&sp)?;
+        let call_sp = b.build_const_binop(
+            (-64i64) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
+        b.write_variable(&sp, call_sp)?;
+        let slot0 = b.build_const_binop(0u64, call_sp, IntBinaryOp::Add, ValueType::int(32))?;
+        let spilled = b.build_int_const(0x42u64, ValueType::int(32))?;
+        b.build_store(slot0, spilled, rsleigh::VnSpace::RAM)?;
+        call32(&mut b)?;
+        let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+        Ok((b, reload))
+    }
+}
+
+/// A sample of every `NodeKind` shape: each op variant, each payload-free
+/// kind, and one of each payload kind.
+pub(crate) fn sample_kinds() -> Vec<strider_ir::node::NodeKind> {
+    use strider_ir::node::NodeKind as K;
+    use strider_ir::{
+        ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    };
+    let mut v = vec![
+        K::Entry,
+        K::InitialMemory,
+        K::Region,
+        K::MemPhi,
+        K::Phi,
+        K::If,
+        K::IndirectBranch,
+        K::Unreachable,
+        K::Return,
+        K::Truncate,
+        K::Popcount,
+        K::Lzcount,
+        K::FloatConst(0),
+        K::IntToFloat,
+        K::FloatToInt,
+        K::FloatToFloat,
+        K::IntBitsToFloat,
+        K::FloatBitsToInt,
+        K::CPoolRef,
+        K::New,
+        K::Call { cc: None },
+        K::Load(rsleigh::VnSpace::RAM),
+        K::Store(rsleigh::VnSpace::RAM),
+        K::CallOther { user_op_id: 0 },
+        K::InitialVar(strider_ir::node::InitialVnId::from_u32(0)),
+        K::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
+        K::IntConst(strider_ir::node::IntConstId::from_u32(0)),
+    ];
+    v.extend(IntUnaryOp::ALL.map(K::IntUnaryOp));
+    v.extend(IntBinaryOp::ALL.map(K::IntBinaryOp));
+    v.extend(IntCmpOp::ALL.map(K::IntCmpOp));
+    v.extend(ExtendOp::ALL.map(K::Extend));
+    v.extend(FloatUnaryOp::ALL.map(K::FloatUnaryOp));
+    v.extend(FloatBinaryOp::ALL.map(K::FloatBinaryOp));
+    v.extend(FloatCmpOp::ALL.map(K::FloatCmpOp));
+    v
+}
+
+/// The 1-bit logical NOT, `Xor(v, IntConst(1)):I1`.
+pub(crate) fn bool_not(b: &mut FunctionBuilder, v: ValueId) -> crate::Result<ValueId> {
+    b.build_const_binop(1u64, v, IntBinaryOp::Xor, ValueType::I1)
+}
+
+/// Whether `node` is [`bool_not`]'s shape, the constant on either side.
+pub(crate) fn is_bool_not(f: &strider_ir::Function, node: NodeId) -> bool {
+    *f.node_kind(node) == NodeKind::IntBinaryOp(IntBinaryOp::Xor)
+        && f.node_inputs(node)
+            .into_iter()
+            .any(|v| f.value_type_opt(v) == Some(ValueType::I1) && f.int_const_u128(v) == Some(1))
 }

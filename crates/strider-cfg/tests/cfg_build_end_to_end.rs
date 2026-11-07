@@ -1,11 +1,13 @@
-//! `Builder::build` driven by hand-crafted byte sequences, covering the
-//! boundary shapes a real binary rarely reaches.
+//! `DecodeEngine::build_cfg` driven by hand-crafted byte sequences, covering
+//! the boundary shapes a real binary rarely reaches.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, Cfg, CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTargets};
+use strider_cfg::{
+    Cfg, CfgOptions, DecodeEngine, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
+};
 use strider_target::SleighArch;
 
 type TestReader = BufMemReader<Vec<u8>>;
@@ -13,57 +15,31 @@ type TestReader = BufMemReader<Vec<u8>>;
 fn make_sleigh_x86_64(bytes: Vec<u8>, base: u64) -> Sleigh<TestReader> {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh x86_64")
+    arch.sleigh(reader).expect("create Sleigh x86_64")
 }
 
 fn build_from_bytes(bytes: Vec<u8>, start: u64) -> Cfg {
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, start);
-    Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .build()
-        .expect("Builder::build on synthetic bytes")
+    let reader = BufMemReader::new(bytes, start);
+    DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(start.into(), &CfgOptions::default())
+        .expect("build_cfg on synthetic bytes")
 }
 
 fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, start);
-    Builder::for_arch(&arch, &mut sleigh, start, opts)
-        .build()
-        .expect("Builder::build on synthetic bytes")
+    let reader = BufMemReader::new(bytes, start);
+    DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(start.into(), opts)
+        .expect("build_cfg on synthetic bytes")
 }
 
-fn build_from_bytes_ccs(
-    bytes: Vec<u8>,
-    start: u64,
-    per_address_ccs: &FxHashMap<u64, strider_target::BuiltCallingConvention>,
-) -> Cfg {
-    let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, start);
-    Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .with_per_address_ccs(per_address_ccs)
-        .build()
-        .expect("Builder::build on synthetic bytes")
-}
-
-/// Flags each `target` address `no_return`.
-fn no_return_ccs(targets: &[u64]) -> FxHashMap<u64, strider_target::BuiltCallingConvention> {
-    targets
-        .iter()
-        .map(|&a| {
-            (
-                a,
-                strider_target::BuiltCallingConvention {
-                    no_return: true,
-                    ..Default::default()
-                },
-            )
-        })
-        .collect()
-}
-
-/// A `no_return` call terminates its region even MID-function, where the
-/// return address is in-bounds and the structural function-end fallback cannot
-/// fire.  Without the flag the same call falls through to the trailing `ret`.
+/// A call to a `no_return_targets` address ends its region even MID-function,
+/// where the return address is in-bounds and the structural function-end
+/// fallback cannot fire.  Without the mark the same call falls through to the
+/// trailing `ret`.
 #[test]
 fn direct_call_to_no_return_target_terminates_region_mid_function() {
     // 0x1000: call 0x2005, a far target chosen so it cannot coincide with
@@ -80,12 +56,17 @@ fn direct_call_to_no_return_target_terminates_region_mid_function() {
         "unmarked mid-function call falls through to the ret"
     );
 
-    // Flagged `no_return`: the region now ends AT the call.
-    let cfg = build_from_bytes_ccs(bytes, 0x1000, &no_return_ccs(&[0x2005]));
+    // Marked no-return: the region now ends AT the call.
+    let no_return: FxHashSet<u64> = [0x2005].into_iter().collect();
+    let opts = CfgOptions {
+        no_return_targets: &no_return,
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
     assert_eq!(
         cfg.region_graph()[cfg.entry()].terminator,
         RegionTerminator::NoReturn,
-        "a call to a no_return-flagged target terminates the region"
+        "a call to a no-return target terminates the region"
     );
 }
 
@@ -100,34 +81,17 @@ fn single_ret_produces_one_region_without_tail_call_flag() {
 }
 
 #[test]
-fn back_jump_splits_region() {
-    // The `jmp -4` targets 0x1002, mid-region, triggering split_region.
-    let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
-    let cfg = build_from_bytes(bytes, 0x1000);
-    assert!(
-        cfg.region_graph().node_count() >= 2,
-        "expected at least 2 regions after back-jump split; got {}",
-        cfg.region_graph().node_count()
-    );
-    // The back-jump edges from the branch region to the split second half.
-    assert!(
-        cfg.region_graph().edge_count() >= 1,
-        "expected at least one edge from the back-jump"
-    );
-}
-
-#[test]
 fn split_both_halves_unconditional() {
-    // Same back-jump fixture, asserting per-half terminators.
+    // The `jmp -4` targets 0x1002, mid-region.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
     let cfg = build_from_bytes(bytes, 0x1000);
 
     let mut first_half = None;
     let mut second_half = None;
     for r in cfg.region_graph().node_weights() {
-        if r.start_addr.machine_addr.addr == 0x1000 {
+        if r.start_addr.machine() == 0x1000 {
             first_half = Some(r);
-        } else if r.start_addr.machine_addr.addr == 0x1002 {
+        } else if r.start_addr.machine() == 0x1002 {
             second_half = Some(r);
         }
     }
@@ -139,55 +103,46 @@ fn split_both_halves_unconditional() {
 }
 
 #[test]
-fn fn_max_size_forces_forward_jump_to_be_tail_call() {
-    // With fn_max_size=0x10 the target 0x1012 is past the bound.
-    let bytes = vec![0xeb, 0x10];
-    let opts = CfgOptions {
-        fn_max_size: Some(0x10),
-        ..CfgOptions::default()
+fn a_forward_jump_out_of_the_size_bound_is_a_tail_call() {
+    let ret_at_0x1010 = || {
+        let mut bytes = vec![0xeb, 0x0e]; // jmp 0x1010
+        bytes.extend(std::iter::repeat_n(0x90u8, 14));
+        bytes.push(0xc3); // 0x1010: ret, decoded were the edge followed
+        bytes
     };
-    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
-    assert_eq!(cfg.region_graph().node_count(), 1);
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall {
-            target: 0x1012.into()
-        }
-    );
+    for (bound, bytes, target) in [
+        (0x10, vec![0xeb, 0x10], 0x1012u64), // jmp 0x1012, past the bound
+        // `start + size`: the bound is half-open.
+        (0x10, ret_at_0x1010(), 0x1010),
+        // The jmp crosses a 1-byte bound yet decodes whole: the bound trips
+        // only on sequential fall-through, never mid-instruction.
+        (1, vec![0xeb, 0x10], 0x1012),
+    ] {
+        let opts = CfgOptions {
+            bound: strider_cfg::FunctionBound::size(bound),
+            ..CfgOptions::default()
+        };
+        let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+        assert_eq!(cfg.region_graph().node_count(), 1, "bound {bound:#x}");
+        assert_eq!(
+            cfg.region_graph()[cfg.entry()].terminator,
+            RegionTerminator::TailCall {
+                target: target.into()
+            },
+            "bound {bound:#x}"
+        );
+    }
 }
 
 #[test]
-fn forward_jump_landing_exactly_at_fn_max_size_is_tail_call() {
-    // Target 0x1010 lands EXACTLY on `start + fn_max_size`.  The window is
-    // half-open, so that is out of bounds and must be a tail call.  A `ret`
-    // sits at 0x1010 so the bytes would decode if the edge were followed.
-    let mut bytes = vec![0xeb, 0x0e]; // jmp +0x0e (next insn 0x1002 + 0x0e = 0x1010)
-    bytes.extend(std::iter::repeat_n(0x90u8, 14)); // nop filler to 0x1010
-    bytes.push(0xc3); // 0x1010: ret
-    let opts = CfgOptions {
-        fn_max_size: Some(0x10),
-        ..CfgOptions::default()
-    };
-    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
-    assert_eq!(cfg.region_graph().node_count(), 1);
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall {
-            target: 0x1010.into()
-        },
-        "addr == start + fn_max_size must already be out-of-range (half-open bound)"
-    );
-}
-
-#[test]
-fn forward_jump_landing_just_inside_fn_max_size_is_followed() {
+fn forward_jump_landing_just_inside_size_bound_is_followed() {
     // Companion probe one byte lower, strictly inside: the edge must be
     // followed and the target region decoded.
     let mut bytes = vec![0xeb, 0x0d]; // jmp +0x0d -> 0x1002 + 0x0d = 0x100f
     bytes.extend(std::iter::repeat_n(0x90u8, 13)); // nop filler to 0x100f
     bytes.push(0xc3); // 0x100f: ret
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -220,13 +175,15 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, 0x0ff0);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let opts = CfgOptions {
-        allow_code_before_start_addr: true,
+        bound: strider_cfg::FunctionBound::Open {
+            code_before_start: true,
+        },
         ..CfgOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-        .build()
+    let cfg = DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
         .unwrap();
 
     assert_ne!(
@@ -273,11 +230,11 @@ fn assert_tail_call_stub_at(cfg: &Cfg, addr: u64) {
 #[test]
 fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
     // Taken 0x1000 is in range; the fall-through 0x1004 is out of bounds at
-    // fn_max_size=4.  The conditional survives, with the OOB arm lowered to a
+    // a size bound of 4.  The conditional survives, with the OOB arm lowered to a
     // stub wired as a regular CondBranch successor.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
     let opts = CfgOptions {
-        fn_max_size: Some(4),
+        bound: strider_cfg::FunctionBound::size(4),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -294,6 +251,11 @@ fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
     // the self-loop and the stub edge.
     assert_eq!(cfg.region_graph().node_count(), 2);
     assert_eq!(cfg.region_graph().edge_count(), 2);
+    // The not-taken path falls past the end, as a sequential one does.
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1004, strider_cfg::Reason::PastFunctionEnd)]
+    );
 }
 
 #[test]
@@ -302,7 +264,7 @@ fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
     // out of bounds and the fall-through 0x1004 is in range.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0x7a, 0xc3];
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -321,19 +283,21 @@ fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
     let fallthrough = cfg
         .region_graph()
         .node_weights()
-        .find(|r| r.start_addr.machine_addr.addr == 0x1004)
+        .find(|r| r.start_addr.machine() == 0x1004)
         .expect("fall-through region at 0x1004 must be decoded");
     assert_eq!(fallthrough.terminator, RegionTerminator::Return);
+    // A branch out of range is a tail call, not a fall-through.
+    assert_eq!(incomplete_of(&cfg), []);
 }
 
 #[test]
 fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
-    // With fn_max_size=2 both arms are out of bounds.  The conditional
+    // With a size bound of 2 both arms are out of bounds.  The conditional
     // survives with both lowered to stubs; collapsing to a single TailCall
     // would silently drop the fall-through arm.
     let bytes = vec![0x74u8, 0x7e];
     let opts = CfgOptions {
-        fn_max_size: Some(2),
+        bound: strider_cfg::FunctionBound::size(2),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -349,6 +313,10 @@ fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
     assert_tail_call_stub_at(&cfg, 0x1002);
     assert_eq!(cfg.region_graph().node_count(), 3);
     assert_eq!(cfg.region_graph().edge_count(), 2);
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
+    );
 }
 
 #[test]
@@ -358,7 +326,7 @@ fn cond_branches_to_same_oob_target_share_one_stub() {
     // second stub would collide.
     let bytes = vec![0x74u8, 0x7e, 0x75, 0x7c, 0xc3];
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -391,129 +359,227 @@ fn cond_branches_to_same_oob_target_share_one_stub() {
     );
 }
 
+/// Every entry of `cfg.incomplete()`, as `(machine address, reason)`.
+fn incomplete_of(cfg: &Cfg) -> Vec<(u64, strider_cfg::Reason)> {
+    cfg.incomplete()
+        .iter()
+        .map(|(addr, reason)| (addr.machine(), reason))
+        .collect()
+}
+
+/// The start addresses of the regions the region at `from` edges to.
+fn successor_starts(cfg: &Cfg, from: u64) -> Vec<u64> {
+    let graph = cfg.region_graph();
+    let id = cfg
+        .region_ids()
+        .find(|&id| graph[id].start_addr == PcodeInsnAddr::at_machine_start(from))
+        .unwrap_or_else(|| panic!("no region at {from:#x}"));
+    graph
+        .neighbors(id)
+        .map(|succ| graph[succ].start_addr.machine())
+        .collect()
+}
+
 #[test]
-fn fall_through_past_fn_max_size_is_function_boundary_error() {
-    // A `lock cmpxchg` is multi-pcode-op with intra-insn CONST branches.
-    // Running off fn_max_size=2 with no explicit terminator opcode is a
-    // function-boundary error, not a tail call.
+fn fall_through_past_size_bound_tail_calls_the_end() {
+    // 0x1000 `xor eax, eax`, then a `lock cmpxchg` (multi-pcode-op, with
+    // intra-insn CONST branches) at the 2-byte bound, never decoded: the
+    // fall-through is a tail call to 0x1002.
     let mut bytes = vec![0x31u8, 0xc0];
     bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
     let opts = CfgOptions {
-        fn_max_size: Some(2),
-        ..CfgOptions::default()
-    };
-    let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-        .build()
-        .expect_err(
-            "sequential fall-through past fn_max_size must error, not classify as tail call",
-        );
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("function-boundary error"),
-        "expected function-boundary error message; got {msg}"
-    );
-    assert!(
-        msg.contains("sequential decoding overflowed"),
-        "expected overflow detail in error message; got {msg}"
-    );
-}
-
-#[test]
-fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
-    // `mov eax, 5` starts inside fn_max_size=3 but falls through to 0x1005,
-    // past the 0x1003 bound, with no terminator opcode.  Must be a
-    // function-boundary error, not a synthetic tail call.  This is the
-    // `tzcount.o` shape: a small function with no terminator inside its
-    // recorded bound.
-    let bytes = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90];
-    let opts = CfgOptions {
-        fn_max_size: Some(3),
-        ..CfgOptions::default()
-    };
-    let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-        .build()
-        .expect_err("single-insn fall-through past fn_max_size must error");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("function-boundary error"),
-        "expected function-boundary error message; got {msg}"
-    );
-    assert!(
-        msg.contains("sequential decoding overflowed"),
-        "expected overflow detail in error message; got {msg}"
-    );
-}
-
-#[test]
-fn probe_x86_nop_lifts_to_zero_pcode_ops() {
-    // Precondition for the zero-pcode-prefix test below: x86 `nop` lifts to
-    // zero pcode ops here, so a run of them never appends to
-    // `RegionBuilder::insns`.
-    let mut sleigh = make_sleigh_x86_64(vec![0x90u8], 0x1000);
-    let lift = sleigh.lift_one(0x1000).expect("lift_one nop");
-    assert!(
-        lift.insns.is_empty(),
-        "expected x86 nop to lift to zero pcode ops; got {}",
-        lift.insns.len()
-    );
-}
-
-#[test]
-fn zero_pcode_prefix_crossing_fn_max_size_is_function_boundary_error() {
-    // Zero-pcode nops run across the bound with a real `ret` past it.  Since
-    // they produce no pcode ops, `insns` stays empty while decode walks
-    // machine-by-machine past `start + fn_max_size`, so the boundary check
-    // must fire on the first past-bound instruction rather than absorb the
-    // next function's `ret`.
-    //
-    // The bound is 0x1002; three nops carry decode to 0x1003 with `insns`
-    // still empty, and the `ret` there belongs to the next function.
-    let bytes = vec![0x90u8, 0x90, 0x90, 0xc3];
-    let opts = CfgOptions {
-        fn_max_size: Some(2),
-        ..CfgOptions::default()
-    };
-    let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-        .build()
-        .expect_err(
-            "zero-pcode prefix crossing fn_max_size must error, not absorb the next function",
-        );
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("function-boundary error"),
-        "expected function-boundary error message; got {msg}"
-    );
-    assert!(
-        msg.contains("sequential decoding overflowed"),
-        "expected overflow detail in error message; got {msg}"
-    );
-}
-
-#[test]
-fn fn_max_size_smaller_than_first_terminator_insn_still_builds_tail_call() {
-    // A 2-byte `jmp +0x10` under fn_max_size=1 starts in range but its
-    // encoding crosses the bound.  Decoding is NOT length-bounded: the
-    // instruction decodes fully and its OOB target is a tail call.  Contrast
-    // the erroring cases above; the bound trips only on sequential
-    // fall-through, never mid-instruction.
-    let bytes = vec![0xebu8, 0x10]; // jmp +0x10 -> target 0x1012
-    let opts = CfgOptions {
-        fn_max_size: Some(1),
+        bound: strider_cfg::FunctionBound::size(2),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
-    assert_eq!(cfg.region_graph().node_count(), 1);
+
+    assert_tail_call_stub_at(&cfg, 0x1002);
+    assert_eq!(successor_starts(&cfg, 0x1000), [0x1002]);
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+#[test]
+fn fall_through_past_a_straddled_bound_leaves_after_the_instruction() {
+    // `mov eax, 5` starts inside a 3-byte bound and decodes whole, so the
+    // fall-through leaves at 0x1005, not at the bound.
+    let bytes = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90];
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(3),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+
+    assert_tail_call_stub_at(&cfg, 0x1005);
+    assert_eq!(successor_starts(&cfg, 0x1000), [0x1005]);
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1005, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+/// Under an open bound only an address below the entry is out of range, and
+/// a fall-through only moves up.
+#[test]
+fn an_open_bound_never_ends_past_the_function() {
+    // xor eax, eax; nop; ret
+    for code_before_start in [false, true] {
+        let opts = CfgOptions {
+            bound: strider_cfg::FunctionBound::Open { code_before_start },
+            ..CfgOptions::default()
+        };
+        let cfg = build_from_bytes_opts(vec![0x31, 0xc0, 0x90, 0xc3], 0x1000, &opts);
+        assert_eq!(
+            incomplete_of(&cfg),
+            [],
+            "code_before_start {code_before_start}"
+        );
+    }
+}
+
+/// A call whose return address is past the end still ends its region
+/// `NoReturn`, and the return address is reported: the callee returning would
+/// fall out of the function. A listed no-return callee never returns, so its
+/// call is not reported.
+#[test]
+fn a_call_returning_past_size_bound_is_reported() {
+    let opts = |no_return| CfgOptions {
+        bound: strider_cfg::FunctionBound::size(5),
+        no_return_targets: no_return,
+        ..CfgOptions::default()
+    };
+    let none = FxHashSet::default();
+    // 0x1000 call 0x2005
+    let call = vec![0xe8, 0x00, 0x10, 0x00, 0x00, 0xc3];
+    let cfg = build_from_bytes_opts(call.clone(), 0x1000, &opts(&none));
     assert_eq!(
         cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall {
-            target: 0x1012.into()
-        }
+        RegionTerminator::NoReturn
+    );
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1005, strider_cfg::Reason::PastFunctionEnd)]
+    );
+
+    let exit: FxHashSet<u64> = [0x2005].into_iter().collect();
+    let cfg = build_from_bytes_opts(call, 0x1000, &opts(&exit));
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::NoReturn
+    );
+    assert_eq!(incomplete_of(&cfg), []);
+
+    // 0x1000 call rax, under a 2-byte bound
+    let indirect = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(2),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(vec![0xff, 0xd0, 0xc3], 0x1000, &indirect);
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::NoReturn
+    );
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+/// `bytes` at `start` under `arch`, bounded to `size`.
+fn build_sized(arch: SleighArch, bytes: Vec<u8>, start: u64, size: u64) -> Cfg {
+    let reader = BufMemReader::new(bytes, start);
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(size),
+        ..CfgOptions::default()
+    };
+    DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(start.into(), &opts)
+        .expect("build_cfg")
+}
+
+/// The entries of a build of `bytes` at 0x1000 bounded to their own length.
+fn skip_past_end(arch: SleighArch, bytes: Vec<u8>) -> Vec<(u64, strider_cfg::Reason)> {
+    let size = bytes.len() as u64;
+    incomplete_of(&build_sized(arch, bytes, 0x1000, size))
+}
+
+// A conditional instruction skips itself with `if (!cc) goto inst_next`, so its
+// not-executed path is a branch to its own end. Past the size end that is a
+// fall-through out of the function, reported where it lands.
+
+#[test]
+fn an_arm_conditional_return_last_reports_its_skip() {
+    let le = |words: &[u32]| -> Vec<u8> { words.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    // cmp r0, #0; then the conditional return
+    for (what, last) in [("popne {pc}", 0x18bd_8000u32), ("bxne lr", 0x112f_ff1e)] {
+        assert_eq!(
+            skip_past_end(SleighArch::arm(), le(&[0xe350_0000, last])),
+            [(0x1008, strider_cfg::Reason::PastFunctionEnd)],
+            "{what}"
+        );
+    }
+}
+
+#[test]
+fn a_mips_branch_likely_last_reports_its_skip() {
+    // beql a0, zero, 0x1000; nop: not taken, it skips its delay slot to 0x1008.
+    let be = |words: &[u32]| -> Vec<u8> { words.iter().flat_map(|w| w.to_be_bytes()).collect() };
+    assert_eq!(
+        skip_past_end(SleighArch::mipsbe32(), be(&[0x5080_ffff, 0])),
+        [(0x1008, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+#[test]
+fn an_x86_rep_last_reports_its_skip() {
+    // rep movsb
+    assert_eq!(
+        skip_past_end(SleighArch::x86_64(), vec![0xf3, 0xa4]),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+#[test]
+fn an_x86_conditional_branch_last_reports_its_not_taken_side() {
+    // cmp eax, eax; jne 0x1000: the taken side stays in range, the
+    // fall-through leaves the function.
+    assert_eq!(
+        skip_past_end(SleighArch::x86_64(), vec![0x39, 0xc0, 0x75, 0xfc]),
+        [(0x1004, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+#[test]
+fn zero_pcode_prefix_crossing_size_bound_tail_calls_the_end() {
+    // Three nops, then the next function's `ret` at 0x1003. The nops append
+    // no pcode op, so `insns` stays empty while decode walks past the 2-byte
+    // bound; the fall-through must still stop at 0x1002 rather than absorb
+    // the `ret`.
+    let nop = make_sleigh_x86_64(vec![0x90u8], 0x1000).lift_one(0x1000);
+    assert!(
+        nop.expect("lift_one nop").insns.is_empty(),
+        "nop has p-code"
+    );
+    let bytes = vec![0x90u8, 0x90, 0x90, 0xc3];
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(2),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+
+    assert_tail_call_stub_at(&cfg, 0x1002);
+    assert_eq!(successor_starts(&cfg, 0x1001), [0x1002]);
+    assert!(
+        cfg.regions()
+            .all(|r| r.terminator != RegionTerminator::Return),
+        "the next function's ret was absorbed"
+    );
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
     );
 }
 
@@ -533,10 +599,7 @@ fn jump_to_entry_address_forms_single_region_self_loop() {
         cfg.region_graph()[cfg.entry()].terminator,
         RegionTerminator::Unconditional
     );
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].start_addr.machine_addr.addr,
-        0x1000
-    );
+    assert_eq!(cfg.region_graph()[cfg.entry()].start_addr.machine(), 0x1000);
 }
 
 #[test]
@@ -575,11 +638,10 @@ fn build_ppc32be(words: &[u32], start: u64, opts: &CfgOptions) -> Cfg {
     let arch = SleighArch::ppc32be();
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
     let reader = BufMemReader::new(bytes, start);
-    let mut sleigh =
-        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh ppc32be");
-    Builder::for_arch(&arch, &mut sleigh, start, opts)
-        .build()
-        .expect("Builder::build on synthetic ppc words")
+    DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(start.into(), opts)
+        .expect("build_cfg on synthetic ppc words")
 }
 
 /// `li r3,1` / the trap / `li r3,2` / `blr`, as (sealed at the trap, addresses
@@ -596,7 +658,7 @@ fn ppc_trap_run(trap_word: u32, opts: &CfgOptions) -> (bool, Vec<u64>) {
     let mut decoded: Vec<u64> = cfg
         .region_graph()
         .node_weights()
-        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine_addr.addr))
+        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine()))
         .collect();
     decoded.sort_unstable();
     decoded.dedup();
@@ -627,7 +689,7 @@ fn a_call_other_override_outranks_the_unconditional_ppc_trap_rule() {
     assert_eq!(decoded, vec![0x1000, 0x1004, 0x1008, 0x100c]);
 
     let opts = CfgOptions {
-        call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+        call_other_overrides: &strider_target::call_other_abi::CallOtherOverrides::new(vec![(
             "trapWord".to_owned(),
             strider_target::call_other_abi::CallOtherClass::PURE.into(),
         )])
@@ -640,31 +702,6 @@ fn a_call_other_override_outranks_the_unconditional_ppc_trap_rule() {
         "a returning override for `trapWord` must keep the region open"
     );
     assert_eq!(decoded, vec![0x1000, 0x1004, 0x1008, 0x100c]);
-}
-
-fn build_one(mut sleigh: Sleigh<TestReader>, start: u64) -> (Cfg, Sleigh<TestReader>) {
-    let arch = SleighArch::x86_64();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .build()
-        .expect("Builder::build");
-    (cfg, sleigh)
-}
-
-/// The Cfg never owns the Sleigh, so a rebuild reuses it without re-loading
-/// the SLA spec.
-#[test]
-fn sleigh_can_be_used_for_multiple_cfg_builds() {
-    let bytes_a = vec![0xc3u8];
-    let sleigh = make_sleigh_x86_64(bytes_a, 0x1000);
-    let (cfg1, sleigh) = build_one(sleigh, 0x1000);
-    let count1 = cfg1.region_graph().node_count();
-    let (cfg2, sleigh) = build_one(sleigh, 0x1000);
-    let count2 = cfg2.region_graph().node_count();
-    let (cfg3, _final_sleigh) = build_one(sleigh, 0x1000);
-    assert!(count1 >= 1);
-    assert!(count2 >= 1);
-    assert!(cfg3.region_graph().node_count() >= 1);
-    let _ = cfg3.entry();
 }
 
 /// `jmp rax` at 0x1000 followed by 16 `int3`.
@@ -727,11 +764,11 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         unresolved_addr,
-        ResolvedTargets::Multiple(vec![0x1004, 0x9000].into_iter().map(Into::into).collect()),
+        ResolvedTargets::table([0x1004, 0x9000].map(strider_cfg::ResolvedTarget::from)),
     );
 
     let opts = CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         known_targets: &known,
         ..CfgOptions::default()
     };
@@ -767,7 +804,7 @@ fn known_single_oob_target_produces_tail_call() {
     known.insert(unresolved_addr, ResolvedTargets::Single(oob_target.into()));
 
     let opts = CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         known_targets: &known,
         ..CfgOptions::default()
     };
@@ -808,11 +845,11 @@ fn known_multiple_in_range_targets_produces_switch() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         unresolved_addr,
-        ResolvedTargets::Multiple(vec![0x1004, 0x1008].into_iter().map(Into::into).collect()),
+        ResolvedTargets::table([0x1004, 0x1008].map(strider_cfg::ResolvedTarget::from)),
     );
 
     let opts = CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         known_targets: &known,
         ..CfgOptions::default()
     };
@@ -850,22 +887,20 @@ fn a_switch_arm_interior_to_a_sibling_arm_is_dropped() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         site,
-        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1005.into()]),
+        ResolvedTargets::table(vec![0x1002.into(), 0x1005.into()]),
     );
     let opts = CfgOptions {
         known_targets: &known,
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
+    let reader = BufMemReader::new(bytes, base);
+    let cfg = DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm");
 
-    let starts: Vec<u64> = cfg
-        .regions()
-        .map(|r| r.start_addr.machine_addr.addr)
-        .collect();
+    let starts: Vec<u64> = cfg.regions().map(|r| r.start_addr.machine()).collect();
     assert!(
         !starts.contains(&0x1005),
         "0x1005 is inside the immediate of the instruction at 0x1002, so it must \
@@ -906,26 +941,24 @@ fn a_switch_arm_shadowed_by_an_overlapping_region_is_dropped() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(0x1000),
-        ResolvedTargets::Multiple(vec![0x1005.into(), 0x2000.into()]),
+        ResolvedTargets::table(vec![0x1005.into(), 0x2000.into()]),
     );
     known.insert(
         PcodeInsnAddr::at_machine_start(0x2000),
-        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1008.into()]),
+        ResolvedTargets::table(vec![0x1002.into(), 0x1008.into()]),
     );
     let opts = CfgOptions {
         known_targets: &known,
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
+    let reader = BufMemReader::new(bytes, base);
+    let cfg = DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm shadowed by an overlapping region");
 
-    let starts: Vec<u64> = cfg
-        .regions()
-        .map(|r| r.start_addr.machine_addr.addr)
-        .collect();
+    let starts: Vec<u64> = cfg.regions().map(|r| r.start_addr.machine()).collect();
     assert!(
         !starts.contains(&0x1008),
         "0x1008 is inside the immediate of the instruction at 0x1002, so it must \
@@ -957,22 +990,20 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(base),
-        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1005.into()]),
+        ResolvedTargets::table(vec![0x1002.into(), 0x1005.into()]),
     );
     let opts = CfgOptions {
         known_targets: &known,
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
+    let reader = BufMemReader::new(bytes, base);
+    let cfg = DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm inside a zero-pcode-op instruction");
 
-    let starts: Vec<u64> = cfg
-        .regions()
-        .map(|r| r.start_addr.machine_addr.addr)
-        .collect();
+    let starts: Vec<u64> = cfg.regions().map(|r| r.start_addr.machine()).collect();
     assert!(
         !starts.contains(&0x1005),
         "0x1005 is the last byte of the endbr64 at 0x1002, so it must not decode \
@@ -985,7 +1016,7 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
                 "0x1005 is interior to the endbr64 at 0x1002 and must be dropped",
             );
         }
-        if region.start_addr.machine_addr.addr == 0x1002 {
+        if region.start_addr.machine() == 0x1002 {
             assert_eq!(
                 (region.insns.len(), region.empty_span_len),
                 (0, 4),
@@ -998,70 +1029,54 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
 
 /// A Thumb `IT` commits every `condit` bit at `inst_next`, so a later round
 /// seating a target there re-imposes a context whose diff touches several of
-/// them. The build must carry on rather than reject the context.
+/// them. The seated target must still decode rather than have its context
+/// rejected.
 ///
 /// `bx r0 ; itte eq ; movs r0,#0 x3 ; bx lr`, seating 0x1002 in round one and
 /// 0x1004 in round two, which is the orchestrator's re-lift shape.
 #[test]
 fn re_imposing_a_context_over_an_it_block_builds() {
-    use strider_cfg::{FlowContext, FlowVars};
-
     let arch = SleighArch::arm_thumb();
     let mut bytes = vec![0u8; 0x40];
     bytes[0x00..0x0c].copy_from_slice(&[
         0x00, 0x47, 0x06, 0xbf, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x70, 0x47,
     ]);
     let reader = BufMemReader::new(bytes, 0x1000);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    let flow = FlowVars::discover(&sleigh).expect("discover flow vars");
-    let defaults = flow.snapshot(&sleigh, 0x1000);
+    let mut engine = DecodeEngine::new(arch, reader).expect("decode engine");
 
-    let mut round = |target: u64| -> usize {
-        flow.pin_at(&mut sleigh, 0x1000, &defaults)
-            .expect("reset entry context");
-        let (var, value) = arch
-            .entry_mode_context(0x1001)
-            .expect("ARM declares an ISA-mode var");
-        sleigh
-            .set_context_at(0x1000, var, value)
-            .expect("pin the entry mode");
-        let function_mode: FlowContext = flow.snapshot(&sleigh, 0x1000);
+    // Entered with the Thumb bit, as production enters a Thumb function; the
+    // engine pins the entry context each round.
+    let mut round = |target: u64| {
         let mut known = FxHashMap::default();
         known.insert(
             PcodeInsnAddr::at_machine_start(0x1000),
-            ResolvedTargets::Multiple(vec![target.into()]),
+            ResolvedTargets::table(vec![target.into()]),
         );
         let opts = CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
         };
-        Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-            .with_flow_context(&flow, function_mode)
-            .build()
-            .expect("re-imposing a context over an IT block must build")
-            .regions()
-            .count()
+        let cfg = engine
+            .build_cfg(0x1001u64.into(), &opts)
+            .expect("re-imposing a context over an IT block must build");
+        // A rejected pin does not fail the build: it reports the arm.
+        assert_eq!(cfg.undecodable_seeded_targets(), [], "seating {target:#x}");
+        assert!(
+            cfg.regions().any(|r| r.start_addr.machine() == target),
+            "a region starts at the seated {target:#x}",
+        );
     };
 
-    assert!(round(0x1002) > 0);
-    assert!(round(0x1004) > 0);
+    round(0x1002);
+    round(0x1004);
 }
 
-/// Thumb-2 coprocessor encodings that once wrote past the parse state.
-/// `allocateOperand` was unbounded, so it ran `state[alloc++]` off the end of
-/// `state` and wrote through the next node's `resolve` vector, taking the
-/// process down.  The bound it carries now turns an overrun into a
-/// `SleighError`, so the property is that the lift COMPLETES: p-code out and a
-/// decode error are both acceptable, a crash is not.
-///
-/// These bytes do not descend further than legal code, though the crash they
-/// caused made it look that way.  Measured, `0xdeec3b8a` peaks at 98
-/// `ConstructState`s and breadcrumb depth 30, against 104 and 35 for
-/// `vpush {s0-s31}`, the 32-register architectural maximum.  Both simply
-/// exceeded the 75 states `ParserContext::initialize` used to hand out, which
-/// is why sizing the parse state for legal ARM code lets these decode too.
+/// Thumb-2 coprocessor encodings needing more parse states than a small
+/// `ParserContext` holds (`0xdeec3b8a` peaks at 98 `ConstructState`s; legal
+/// `vpush {s0-s31}` needs 104). The lift must complete: p-code or a decode
+/// error, never a crash.
 #[test]
-fn thumb_coproc_bytes_that_once_overran_the_parse_state_do_not_crash() {
+fn thumb_coproc_bytes_lift_without_crashing() {
     let arch = SleighArch::arm_thumb();
     for word in [
         0xdeec_3b8au32,
@@ -1073,15 +1088,14 @@ fn thumb_coproc_bytes_that_once_overran_the_parse_state_do_not_crash() {
         let mut bytes = word.to_be_bytes().to_vec();
         bytes.resize(0x40, 0x70);
         let reader = BufMemReader::new(bytes, 0x1000);
-        let mut sleigh =
-            Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh arm_thumb");
+        let mut sleigh = arch.sleigh(reader).expect("create Sleigh arm_thumb");
         // Returning at all is the assertion; a regression takes the process
         // down here rather than failing.
         drop(sleigh.lift_one(0x1000));
     }
 }
 
-/// `fn_max_size` cutting through the last instruction leaves the fall-through
+/// A size bound cutting through the last instruction leaves the fall-through
 /// region's span overhanging the bound, and an OOB taken target landing in that
 /// overhang is owned by two regions: the stub that starts at it, and the
 /// fall-through region whose last instruction covers it.  Polarity must name
@@ -1096,7 +1110,7 @@ fn oob_taken_target_inside_the_fallthrough_overhang_keeps_its_polarity() {
         0x0fu8, 0x84, 0x0b, 0x00, 0x00, 0x00, 0x48, 0x31, 0xc0, 0x48, 0x31, 0xc0, 0x48, 0x31, 0xc0,
     ];
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     // `ret 0x12` spans 0x100f..0x1012 and overhangs; `ret` spans one byte.
@@ -1110,8 +1124,7 @@ fn oob_taken_target_inside_the_fallthrough_overhang_keeps_its_polarity() {
         let start_of = |id: Option<petgraph::graph::NodeIndex>| {
             cfg.region_graph()[id.expect("both arms are wired")]
                 .start_addr
-                .machine_addr
-                .addr
+                .machine()
         };
         assert_eq!(
             start_of(succ.if_true_region),
@@ -1126,26 +1139,32 @@ fn oob_taken_target_inside_the_fallthrough_overhang_keeps_its_polarity() {
     }
 }
 
-/// A region whose sequential decode walks off the end of the mapped image
-/// seals at its last decoded instruction and seats the same stub a direct
-/// branch to those bytes gets, rather than failing the whole function.
+/// A region whose sequential decode walks off the end of the mapped image, on
+/// the boundary (`DataUnavailErr`) or mid-instruction
+/// (`PartiallyInitializedInsn`), seals at its last decoded instruction and
+/// seats the stub a direct branch to those bytes gets, rather than failing
+/// the whole function.
 #[test]
 fn fallthrough_off_the_end_of_the_mapped_image_seats_a_stub() {
-    // 0x1000: xor rax,rax (48 31 c0); the fall-through 0x1003 has no bytes.
-    let cfg = build_from_bytes(vec![0x48u8, 0x31, 0xc0], 0x1000);
-
-    assert_eq!(
-        cfg.unmapped_branch_targets(),
-        &[PcodeInsnAddr::at_machine_start(0x1003)],
-        "the unmapped fall-through is reported, not silently dropped"
-    );
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::Unconditional,
-        "the decoded instructions are kept as a sealed region"
-    );
-    assert_tail_call_stub_at(&cfg, 0x1003);
-    assert_eq!(cfg.region_graph().edge_count(), 1);
+    // 0x1000: xor rax,rax (48 31 c0); 0x1003 has no bytes, or one byte of a
+    // three-byte instruction.
+    for bytes in [vec![0x48u8, 0x31, 0xc0], vec![0x48u8, 0x31, 0xc0, 0x48]] {
+        let cfg = build_from_bytes(bytes, 0x1000);
+        assert_eq!(
+            cfg.incomplete()
+                .of(strider_cfg::Reason::UnmappedTarget)
+                .collect::<Vec<_>>(),
+            &[PcodeInsnAddr::at_machine_start(0x1003)],
+            "the unmapped fall-through is reported, not silently dropped"
+        );
+        assert_eq!(
+            cfg.region_graph()[cfg.entry()].terminator,
+            RegionTerminator::Unconditional,
+            "the decoded instructions are kept as a sealed region"
+        );
+        assert_tail_call_stub_at(&cfg, 0x1003);
+        assert_eq!(cfg.region_graph().edge_count(), 1);
+    }
 }
 
 /// A direct branch and a fall-through reaching one unmapped address report it
@@ -1158,50 +1177,11 @@ fn one_unmapped_address_two_edges_reach_is_reported_once() {
     // which the image has no bytes for.
     let cfg = build_from_bytes(vec![0x74, 0x04, 0xeb, 0x04, 0xc3, 0xc3, 0x31, 0xc0], 0x1000);
     assert_eq!(
-        cfg.unmapped_branch_targets(),
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UnmappedTarget)
+            .collect::<Vec<_>>(),
         &[PcodeInsnAddr::at_machine_start(0x1008)],
     );
-}
-
-/// The window ending mid-instruction is the same verdict as it ending on the
-/// boundary: Sleigh raises `PartiallyInitializedInsn` rather than
-/// `DataUnavailErr`, and the region still seals on a stub.
-#[test]
-fn a_fallthrough_straddling_the_end_of_the_mapped_image_seats_a_stub() {
-    // 0x1000: xor rax,rax (48 31 c0); 0x1003 holds one byte of a three-byte
-    // instruction, so its decode reads past the end of the image.
-    let cfg = build_from_bytes(vec![0x48u8, 0x31, 0xc0, 0x48], 0x1000);
-
-    assert_eq!(
-        cfg.unmapped_branch_targets(),
-        &[PcodeInsnAddr::at_machine_start(0x1003)],
-        "the straddling fall-through is reported, not silently dropped"
-    );
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::Unconditional,
-        "the decoded instructions are kept as a sealed region"
-    );
-    assert_tail_call_stub_at(&cfg, 0x1003);
-    assert_eq!(cfg.region_graph().edge_count(), 1);
-}
-
-/// `fn_max_size: Some(0)` reads as unbounded.  A zero-length bound taken
-/// literally puts `start_addr` itself out of range, and the first fall-through
-/// then fails the function.
-#[test]
-fn a_zero_fn_max_size_is_unbounded() {
-    // 0x1000: xor rax,rax (48 31 c0) ; 0x1003: ret (c3)
-    let opts = CfgOptions {
-        fn_max_size: Some(0),
-        ..CfgOptions::default()
-    };
-    let cfg = build_from_bytes_opts(vec![0x48u8, 0x31, 0xc0, 0xc3], 0x1000, &opts);
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::Return
-    );
-    assert_eq!(cfg.region_graph().node_count(), 1);
 }
 
 /// A finished region hands on an exactly-sized instruction vector; the push
@@ -1225,4 +1205,151 @@ fn a_finished_region_keeps_no_spare_instruction_capacity() {
         filled += usize::from(!region.insns.is_empty());
     }
     assert!(filled > 0, "expected a region holding instructions");
+}
+
+/// A GCC hot/cold split: `foo` at 0x1000 `js`es down to its cold fragment
+/// at 0x0ff0, which jumps back into the body at 0x1005.
+///
+/// ```text
+/// 0x0ff0: add eax, 1        83 c0 01
+/// 0x0ff3: jmp 0x1005        eb 10
+/// 0x0ff5: nop x11
+/// 0x1000: test edi, edi     85 ff
+/// 0x1002: js 0x0ff0         78 ec
+/// 0x1004: nop               90
+/// 0x1005: ret               c3
+/// ```
+fn hot_cold_split(fragment_ranges: Vec<(u64, u64)>) -> Cfg {
+    let mut bytes = vec![0x83, 0xc0, 0x01, 0xeb, 0x10];
+    bytes.extend(std::iter::repeat_n(0x90u8, 11));
+    bytes.extend([0x85, 0xff, 0x78, 0xec, 0x90, 0xc3]);
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(6),
+        fragment_ranges: strider_cfg::DataRanges::try_new("fragment_ranges", fragment_ranges)
+            .unwrap(),
+        ..CfgOptions::default()
+    };
+    DecodeEngine::new(SleighArch::x86_64(), BufMemReader::new(bytes, 0x0ff0))
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
+        .expect("build_cfg")
+}
+
+#[test]
+fn a_branch_into_an_unlisted_fragment_is_a_tail_call() {
+    let cfg = hot_cold_split(Vec::new());
+    assert_tail_call_stub_at(&cfg, 0x0ff0);
+    assert!(incomplete_of(&cfg).is_empty());
+}
+
+#[test]
+fn a_fragment_range_is_decoded_and_its_jump_back_is_an_edge() {
+    let cfg = hot_cold_split(vec![(0x0ff0, 0x0ff5)]);
+    assert_eq!(successor_starts(&cfg, 0x0ff0), vec![0x1005]);
+    let mut from_entry = successor_starts(&cfg, 0x1000);
+    from_entry.sort_unstable();
+    assert_eq!(from_entry, vec![0x0ff0, 0x1004]);
+    assert!(
+        !cfg.regions()
+            .any(|r| matches!(r.terminator, RegionTerminator::TailCall { .. })),
+        "nothing leaves the function"
+    );
+    assert!(incomplete_of(&cfg).is_empty());
+}
+
+#[test]
+fn a_fall_through_past_a_fragment_end_is_past_function_end() {
+    let cfg = hot_cold_split(vec![(0x0ff0, 0x0ff3)]);
+    assert_tail_call_stub_at(&cfg, 0x0ff3);
+    assert_eq!(
+        incomplete_of(&cfg),
+        vec![(0x0ff3, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+/// A fragment above the entry ends the function under every bound: the
+/// `ret` at 0x1013 after the fragment `[0x1010, 0x1013)` is not decoded.
+///
+/// ```text
+/// 0x1000: test edi, edi     85 ff
+/// 0x1002: js 0x1010         78 0c
+/// 0x1004: ret               c3
+/// 0x1005: nop x11
+/// 0x1010: add eax, 1        83 c0 01
+/// 0x1013: ret               c3
+/// ```
+#[test]
+fn a_fall_through_past_a_fragment_above_the_entry_is_past_function_end() {
+    let mut bytes = vec![0x85, 0xff, 0x78, 0x0c, 0xc3];
+    bytes.extend(std::iter::repeat_n(0x90u8, 11));
+    bytes.extend([0x83, 0xc0, 0x01, 0xc3]);
+    for bound in [
+        strider_cfg::FunctionBound::size(5),
+        strider_cfg::FunctionBound::Open {
+            code_before_start: false,
+        },
+        strider_cfg::FunctionBound::Open {
+            code_before_start: true,
+        },
+    ] {
+        let opts = CfgOptions {
+            bound,
+            fragment_ranges: strider_cfg::DataRanges::try_new(
+                "fragment_ranges",
+                vec![(0x1010, 0x1013)],
+            )
+            .unwrap(),
+            ..CfgOptions::default()
+        };
+        let cfg = DecodeEngine::new(
+            SleighArch::x86_64(),
+            BufMemReader::new(bytes.clone(), 0x1000),
+        )
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
+        .expect("build_cfg");
+        assert_tail_call_stub_at(&cfg, 0x1013);
+        assert_eq!(
+            incomplete_of(&cfg),
+            vec![(0x1013, strider_cfg::Reason::PastFunctionEnd)],
+            "{bound:?}"
+        );
+    }
+}
+
+/// A branch into the middle of an instruction enters at that instruction,
+/// whether or not another edge also splits there.
+#[test]
+fn an_interior_target_enters_at_its_containing_instruction() {
+    // 0x1000 xor eax, eax
+    // 0x1002 mov eax, 1        (5 bytes)
+    // 0x1007 je 0x1003         interior to the mov
+    // 0x1009 ret, or jne 0x1002; ret
+    let alone = [0x31, 0xc0, 0xb8, 1, 0, 0, 0, 0x74, 0xfa, 0xc3];
+    let split_too = [0x31, 0xc0, 0xb8, 1, 0, 0, 0, 0x74, 0xfa, 0x75, 0xf7, 0xc3];
+    for bytes in [&alone[..], &split_too[..]] {
+        let cfg = build_from_bytes(bytes.to_vec(), 0x1000);
+        let graph = cfg.region_graph();
+        let je = graph
+            .node_indices()
+            .find(|&n| {
+                graph[n]
+                    .insns
+                    .back()
+                    .is_some_and(|i| i.addr.machine() == 0x1007)
+            })
+            .expect("the region ending at the je");
+        let taken = cfg.region_if(je).expect("CondBranch").if_true_region;
+        assert_eq!(
+            taken.map(|t| graph[t].start_addr.machine()),
+            Some(0x1002),
+            "{bytes:x?}: the taken edge enters at the mov, not before it",
+        );
+        let interior: Vec<_> = cfg
+            .incomplete()
+            .of(strider_cfg::Reason::InteriorTarget)
+            .map(|a| a.machine())
+            .collect();
+        assert_eq!(interior, [0x1003], "{bytes:x?}");
+    }
 }

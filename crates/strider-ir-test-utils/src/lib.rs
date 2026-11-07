@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use strider_ir::node::{NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp,
-    ReadOnlyMemory, Result, Value, ValueType,
+    ReadOnlyMemory, Result, ValueType,
 };
 
 /// Node-kind assertion vocabulary over entry-reachable nodes.
@@ -15,17 +15,41 @@ pub trait IrWalkerEx: IRWalker {
     fn has_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> bool {
         self.walk_kind(pred).next().is_some()
     }
+
+    /// The first reachable node of the kind; panics if there is none.
+    #[track_caller]
+    fn first_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> NodeId {
+        self.walk_kind(pred)
+            .next()
+            .expect("no reachable node of the kind")
+    }
+
+    /// The only reachable node of the kind; panics unless there is exactly one.
+    #[track_caller]
+    fn sole_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> NodeId {
+        let mut nodes = self.walk_kind(pred);
+        let first = nodes.next().expect("no reachable node of the kind");
+        assert!(
+            nodes.next().is_none(),
+            "more than one reachable node of the kind"
+        );
+        first
+    }
+
+    /// The sole reachable `Return`'s value input; panics unless there is exactly
+    /// one `Return` and it carries a value.
+    #[track_caller]
+    fn returned(&self) -> ValueId {
+        let ret = self.sole_kind(|k| matches!(k, NodeKind::Return));
+        self.nth_input(ret, NodeKind::Return.input_head_len())
+            .expect("the Return carries no value")
+    }
 }
 
 impl<T: IRWalker + ?Sized> IrWalkerEx for T {}
 
-/// An [`EditFunction`](strider_ir::EditFunction)'s cached live set and roots
-/// against a fresh entry walk of the same graph, AS SETS: root ORDER
-/// legitimately differs.
-///
-/// # Panics
-///
-/// If either cached set disagrees with the walk.
+/// Asserts an [`EditFunction`](strider_ir::EditFunction)'s cached live set and
+/// roots equal a fresh entry walk's, as sets (root order may differ).
 pub fn assert_live_matches_reachable(edit: &strider_ir::EditFunction) {
     use cranelift_entity::EntityRef;
     let entry = edit.entry();
@@ -48,11 +72,7 @@ pub fn assert_live_matches_reachable(edit: &strider_ir::EditFunction) {
 
 /// Builder shorthands for shapes that aren't primitive in the IR.
 pub trait IrBuilderEx: IRBuilderExt {
-    /// `Add(lhs, Neg(rhs))`, the shape the lifter lowers `IntSub` to.
-    ///
-    /// # Errors
-    ///
-    /// If either operand is not a value edge.
+    /// `Add(lhs, Neg(rhs))`, the lifter's lowering of `IntSub`.
     fn build_sub_as_add_neg(
         &mut self,
         lhs_id: ValueId,
@@ -66,21 +86,19 @@ pub trait IrBuilderEx: IRBuilderExt {
 
 impl<T: IRBuilderExt + ?Sized> IrBuilderEx for T {}
 
-/// Unlike any real machine address, so a sentinel-stamped node leaking into a
-/// graph dump or IR snapshot is unmistakable.
+/// Lift address stamped on fixture nodes; unlike any real address.
 pub const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
-/// Fallback SP when a fixture declares no `stack_vn`. `build_call` reads the
-/// SP from the variable table and errors if it is absent, so a `Call`-building
-/// fixture always needs one; the high offset dodges common test registers.
+/// SP when a fixture declares no `stack_vn` (`build_call` needs one). The high
+/// offset avoids common test registers.
 const DEFAULT_TEST_SP: rsleigh::Vn = rsleigh::Vn {
     addr_off: 0x7000,
     addr_space: rsleigh::VnSpace::REGISTER,
     size: 8,
 };
 
-/// Fluent description of a mock function's register convention, synthesising a
-/// [`strider_target::BuiltCallingConvention`] from the declared lists.
+/// Fluent mock register convention, built into a
+/// [`strider_target::BuiltCallingConvention`].
 #[derive(Default, Clone)]
 pub struct RegisterSet {
     tracked: Vec<rsleigh::Vn>,
@@ -91,7 +109,7 @@ pub struct RegisterSet {
     ret_stack_pop: i64,
     stack_args: Option<strider_target::StackArgs>,
     /// `None` defaults to little-endian.
-    endianness: Option<strider_target::Endianness>,
+    byte_order: Option<strider_target::ByteOrder>,
     /// `None` for an ISA with no architectural link register (x86).
     link_register: Option<rsleigh::Vn>,
 }
@@ -136,8 +154,9 @@ impl RegisterSet {
         self
     }
 
-    pub fn endianness(mut self, e: strider_target::Endianness) -> Self {
-        self.endianness = Some(e);
+    /// A bare `Endianness` is the order of every space.
+    pub fn byte_order(mut self, order: impl Into<strider_target::ByteOrder>) -> Self {
+        self.byte_order = Some(order.into());
         self
     }
 
@@ -146,79 +165,56 @@ impl RegisterSet {
         self
     }
 
-    /// Stamps [`SENTINEL_LIFT_ADDR`] but creates no region; drive
-    /// `create_region` / `set_entry_region` / `set_region` yourself.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from `FunctionBuilder::new`.
+    /// Stamps [`SENTINEL_LIFT_ADDR`] but creates no region.
     pub fn build_fn(self) -> Result<FunctionBuilder> {
-        // `FunctionBuilder::new` seeds the declared arg/ret regs but not the
-        // stack vn (in production the lifter owns that), so track it here.
+        // `FunctionBuilder::new` does not track the stack vn; the lifter does.
         let stack_vn = self.sp.unwrap_or(DEFAULT_TEST_SP);
         let mut tracked = self.tracked;
         if !tracked.contains(&stack_vn) {
             tracked.push(stack_vn);
         }
-        // Skips `validate`, so fixtures may declare overlapping or otherwise
-        // degenerate register sets. Exhaustive: a new ABI field must be routed
-        // here.
+        // Skips `validate`, so fixtures may declare degenerate register sets.
         let cc = strider_target::BuiltCallingConvention {
             arg_passing_regs: self.arg_passing,
             arg_passing_regs_float: Vec::new(),
             callee_saved_regs: self.callee_saved,
             ret_val_regs: self.ret_val,
             ret_val_regs_float: Vec::new(),
-            stack_vn,
+            stack_ptr: stack_vn,
             stack_args: self.stack_args,
             ret_stack_pop: self.ret_stack_pop,
-            link_register_vn: self.link_register,
+            link_register: self.link_register,
             preserves_memory: false,
             preserves_all_registers: false,
-            no_return: false,
-            entry_address_vn: None,
+            entry_address: None,
+            reg_args_adjoin_stack_args: false,
         };
-        let endianness = self
-            .endianness
-            .unwrap_or(strider_target::Endianness::Little);
-        let mut b = FunctionBuilder::new(tracked, cc, endianness)?;
+        let byte_order = self.byte_order.unwrap_or_default();
+        let mut b = FunctionBuilder::new(tracked, cc, byte_order);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }
 
-    /// `build_fn` plus `create_region` + `set_entry_region` + `set_region`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from `FunctionBuilder::new`,
-    /// `create_region`, or `set_entry_region`.
+    /// `build_fn` plus one region, set as entry and current.
     pub fn build_fn_single_region(self) -> Result<FunctionBuilder> {
         let mut b = self.build_fn()?;
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;
-        // Mirrors the lifter: arg carriers recorded after entry setup, so tests
-        // see the same `arg_index_to_values` a lifted function has.
+        // After entry setup, as the lifter does.
         b.record_register_arg_carriers();
         b.set_region(region);
         Ok(b)
     }
 
-    /// The canonical `if (cond) { return 1 } else { return 2 }` scaffold the
-    /// `If`-rewrite passes test against. `cond_builder` runs in the entry
-    /// region and yields the condition plus an auxiliary `T` threaded back to
-    /// the caller (typically operands to assert on after the rewrite); use
-    /// `()` when there is none.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from `FunctionBuilder::new`, region /
-    /// IR construction, the closure, or `FunctionBuilder::build`.
+    /// `if (cond) { return 1 } else { return 2 }`, returning the function, its
+    /// `If` and the `T` that `cond_builder` (run in the entry region) yields
+    /// alongside the condition.
     pub fn build_if_then_else_returns<F, T>(
         self,
         cond_builder: F,
     ) -> Result<(Function, strider_ir::node::NodeId, T)>
     where
-        F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::Value, T)>,
+        F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::node::ValueId, T)>,
     {
         let mut b = self.build_fn()?;
         let entry = b.create_region_all()?;
@@ -232,11 +228,11 @@ impl RegisterSet {
         b.build_if(cond, t, f)?;
 
         b.set_region(t);
-        let one = b.build_int_const(1u64, ValueType::I64)?;
+        let one = b.build_int_const(1u64, ValueType::int(64))?;
         b.build_return(Some(one), &[])?;
 
         b.set_region(f);
-        let two = b.build_int_const(2u64, ValueType::I64)?;
+        let two = b.build_int_const(2u64, ValueType::int(64))?;
         b.build_return(Some(two), &[])?;
         b.set_lift_addr(None);
 
@@ -251,53 +247,34 @@ impl RegisterSet {
 }
 
 /// Single-region function returning whatever `f` produces.
-///
-/// # Errors
-///
-/// Propagates any error from the builder closure or from `FunctionBuilder::build`.
 pub fn make_empty_fn<F>(f: F) -> Result<Function>
 where
-    F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
+    F: FnOnce(&mut FunctionBuilder) -> Result<ValueId>,
 {
     make_empty_fn_endian(strider_target::Endianness::Little, f)
 }
 
-/// [`make_empty_fn`] with an explicit endianness baked into the function,
-/// which is the source of truth its passes read.
-///
-/// # Errors
-///
-/// Propagates any error from the builder or from `FunctionBuilder::build`.
+/// [`make_empty_fn`] with an explicit endianness.
 pub fn make_empty_fn_endian<F>(endianness: strider_target::Endianness, f: F) -> Result<Function>
 where
-    F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
+    F: FnOnce(&mut FunctionBuilder) -> Result<ValueId>,
 {
-    // No declared registers, so the trivial convention: only the synthetic SP
-    // is tracked, as an unreferenced `InitialVar`.
     let mut b = RegisterSet::new()
-        .endianness(endianness)
+        .byte_order(endianness)
         .build_fn_single_region()?;
     let val = f(&mut b)?;
-    // Re-stamp so the trailing `build_return` is attributed even when `f`
-    // cleared the lift address, as fingerprint-propagation tests do when they
-    // set their own per-insn addresses and reset to `None`.
+    // `f` may have cleared the lift address.
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     b.build()
 }
 
-/// Single-region function with `vn` tracked. The closure receives the
-/// read-back value (the `InitialVar(vn)` value; a single-region function has no
-/// phi at entry) and returns the value to wire into the `Return`; that read-back
-/// value comes back to the caller too.
-///
-/// # Errors
-///
-/// Propagates any error from the builder closure or from `FunctionBuilder::build`.
-pub fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(Function, Value)>
+/// Single-region function with `vn` tracked. The closure gets `vn`'s initial
+/// value and returns the value to return; that initial value is returned too.
+pub fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(Function, ValueId)>
 where
-    F: FnOnce(&mut FunctionBuilder, Value) -> Result<Value>,
+    F: FnOnce(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
 {
     let mut b = RegisterSet::new()
         .tracked(vn)
@@ -305,20 +282,15 @@ where
         .build_fn_single_region()?;
     let x = b.read_variable(&vn)?;
     let val = f(&mut b, x)?;
-    // Re-stamp the sentinel after the closure (see `make_empty_fn`).
+    // `f` may have cleared the lift address.
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     Ok((b.build()?, x))
 }
 
-/// Unpacked-slices entry point for tests that don't use the fluent
-/// [`RegisterSet`]. `stack_vn = None` falls back to the synthetic test SP.
-/// No region is created.
-///
-/// # Errors
-///
-/// Propagates any error from [`FunctionBuilder::new`].
+/// [`RegisterSet::build_fn`] from unpacked slices; `stack_vn = None` uses the
+/// default test SP. No region is created.
 pub fn builder(
     tracked: Vec<rsleigh::Vn>,
     arg_passing: &[rsleigh::Vn],
@@ -336,23 +308,23 @@ pub fn builder(
         stack_vn,
         ret_stack_pop,
     )
-    .endianness(endianness)
+    .byte_order(endianness)
     .build_fn()
 }
 
-/// No declared registers, trivial convention, little-endian, no region.
-///
-/// # Errors
-///
-/// Propagates any error from [`FunctionBuilder::new`].
+/// No declared registers, little-endian, no region.
 pub fn empty_builder() -> Result<FunctionBuilder> {
     RegisterSet::new().build_fn()
 }
 
+pub use graph_algorithms::oracle as graph_oracle;
+pub mod interp;
+mod rng;
 mod tb;
 
 #[cfg(feature = "proptest-gen")]
 pub mod proptest_gen;
+pub use rng::Rng;
 pub use tb::Tb;
 
 pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
@@ -363,8 +335,8 @@ pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
-/// Create-and-stamp in one step, for fixtures that add nodes to a graph after
-/// `build` and still have to satisfy the always-on fingerprint check.
+/// Creates a node stamped with [`SENTINEL_LIFT_ADDR`], for nodes added after
+/// `build`.
 pub fn sentinel_node(
     function: &mut strider_ir::Function,
     kind: strider_ir::node::NodeKind,
@@ -378,7 +350,7 @@ pub fn sentinel_node(
     n
 }
 
-/// Test `ReadOnlyMemory` covering the mock-rom shapes the opt-pass suite needs.
+/// Test `ReadOnlyMemory`.
 pub struct MockRom {
     shape: MockRomShape,
 }
@@ -398,14 +370,13 @@ enum MockRomShape {
     Limited { addr: u64, size: usize, value: u64 },
     /// Serves every `(addr, size)`.
     AlwaysAnswer { value: u64 },
-    /// A byte run starting at `base`, served with no endianness swap and no
-    /// size cap.
-    RawBytes { base: u64, bytes: Vec<u8> },
+    /// Byte runs served verbatim; a read must sit wholly inside one run.
+    Regions { runs: Vec<(u64, Vec<u8>)> },
 }
 
 impl MockRom {
-    /// `entries[i]` at `base + i * stride`. Any other read size, and any
-    /// stride of `0`, resolves to `None`.
+    /// `entries[i]` at `base + i * stride`, for reads of `size` only. A stride
+    /// of `0` serves nothing.
     pub fn strided(base: u64, stride: u64, entries: Vec<u64>, size: usize) -> Self {
         Self {
             shape: MockRomShape::Strided {
@@ -417,7 +388,7 @@ impl MockRom {
         }
     }
 
-    /// Size is not constrained.
+    /// Exact addresses, any read size.
     pub fn fixed_table(entries: &[(u64, u64)]) -> Self {
         Self {
             shape: MockRomShape::FixedTable {
@@ -426,7 +397,7 @@ impl MockRom {
         }
     }
 
-    /// One `(addr, size)` mapping; every other read resolves to `None`.
+    /// One `(addr, size)` mapping.
     pub fn limited(addr: u64, size: usize, value: u64) -> Self {
         Self {
             shape: MockRomShape::Limited { addr, size, value },
@@ -439,20 +410,25 @@ impl MockRom {
         }
     }
 
-    /// `bytes` verbatim from `base`; a read straying outside the run errors.
+    /// `bytes` verbatim from `base`.
     pub fn raw_bytes(base: u64, bytes: Vec<u8>) -> Self {
+        Self::regions([(base, bytes)])
+    }
+
+    /// Several byte runs; a read must sit wholly inside one of them.
+    pub fn regions(runs: impl IntoIterator<Item = (u64, Vec<u8>)>) -> Self {
         Self {
-            shape: MockRomShape::RawBytes { base, bytes },
+            shape: MockRomShape::Regions {
+                runs: runs.into_iter().collect(),
+            },
         }
     }
 }
 
 impl MockRom {
-    /// `None` when the shape doesn't serve that address/size.
-    ///
-    /// `read` encodes the resolved value LITTLE-ENDIAN, and `LoadReadOnly`
-    /// decodes with the function's own endianness, so a fixture driving
-    /// `MockRom` must build its function little-endian (the default).
+    /// `None` when the shape doesn't serve that address/size. `read` encodes
+    /// the value little-endian, so a fixture using it must build its function
+    /// little-endian.
     fn resolve(&self, addr: u64, size: usize) -> Option<u64> {
         match &self.shape {
             MockRomShape::Strided {
@@ -485,29 +461,33 @@ impl MockRom {
             } => (addr == *a && size == *s).then_some(*value),
             MockRomShape::AlwaysAnswer { value } => Some(*value),
             // Served bytewise by `read`.
-            MockRomShape::RawBytes { .. } => None,
+            MockRomShape::Regions { .. } => None,
         }
     }
 }
 
 impl ReadOnlyMemory for MockRom {
     fn read(&self, addr: u64, buf: &mut [u8]) -> Result<()> {
-        if let MockRomShape::RawBytes { base, bytes } = &self.shape {
-            let start =
-                usize::try_from(addr.checked_sub(*base).ok_or_else(|| {
-                    anyhow::anyhow!("MockRom: {addr:#x} below the base {base:#x}")
-                })?)?;
-            let end = start
-                .checked_add(buf.len())
-                .ok_or_else(|| anyhow::anyhow!("MockRom: read length overflow"))?;
-            let src = bytes
-                .get(start..end)
-                .ok_or_else(|| anyhow::anyhow!("MockRom: {addr:#x} unmapped"))?;
-            buf.copy_from_slice(src);
-            return Ok(());
+        if let MockRomShape::Regions { runs } = &self.shape {
+            for (base, bytes) in runs {
+                let Some(start) = addr
+                    .checked_sub(*base)
+                    .and_then(|o| usize::try_from(o).ok())
+                else {
+                    continue;
+                };
+                let Some(src) = start
+                    .checked_add(buf.len())
+                    .and_then(|end| bytes.get(start..end))
+                else {
+                    continue;
+                };
+                buf.copy_from_slice(src);
+                return Ok(());
+            }
+            anyhow::bail!("MockRom: {addr:#x} unmapped");
         }
         let size = buf.len();
-        // Every shape resolves to a `u64`, so a wider read is unserviceable.
         if size > 8 {
             anyhow::bail!("MockRom: read size {size} > 8 unsupported");
         }
@@ -537,8 +517,7 @@ pub fn sp_frame(sp: rsleigh::Vn) -> RegisterSet {
     RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp)
 }
 
-/// `RegisterSet` with one varnode as the tracked, argument-passing stack
-/// pointer.
+/// `RegisterSet` with one varnode as the tracked, argument-passing SP.
 pub fn sp_arg_frame(sp: rsleigh::Vn) -> RegisterSet {
     RegisterSet::new().tracked(sp).arg(sp).stack_vn(sp)
 }
@@ -552,16 +531,11 @@ pub fn stack_args_at(base_offset: i128, increment: i128) -> Option<strider_targe
     })
 }
 
-/// Single-region function with `stack_vn` tracked as the stack pointer. The
-/// closure gets the read-back SP (`InitialVar(stack_vn)`) and owns the whole
-/// body, the `Return` included.
-///
-/// # Errors
-///
-/// Propagates any error from the builder closure or from `FunctionBuilder::build`.
+/// Single-region function with `stack_vn` as SP. The closure gets the initial
+/// SP and builds the whole body, `Return` included.
 pub fn make_sp_fn<F>(stack_vn: rsleigh::Vn, f: F) -> Result<Function>
 where
-    F: FnOnce(&mut FunctionBuilder, Value) -> Result<()>,
+    F: FnOnce(&mut FunctionBuilder, ValueId) -> Result<()>,
 {
     let mut b = sp_frame(stack_vn).build_fn_single_region()?;
     let sp_val = b.read_variable(&stack_vn)?;
@@ -598,25 +572,15 @@ pub fn if_cmp_then_return(c: u64) -> Function {
     t.finish()
 }
 
-/// `if cond_val { return 1 } else { return 2 }`, over a constant condition, so
-/// a pass that folds the branch has a dead arm to remove.
-///
-/// # Errors
-///
-/// Propagates any error from the builder or from `FunctionBuilder::build`.
+/// `if cond_val { return 1 } else { return 2 }` over a constant condition.
 pub fn make_if_fn(cond_val: bool) -> Result<Function> {
     RegisterSet::new()
         .build_if_then_else_returns(|b| Ok((b.build_boolean_const(cond_val), ())))
         .map(|(function, _, ())| function)
 }
 
-/// A store on each branch of an if/else plus a load at the join, forcing a
-/// genuine `MemPhi` whose variadic tail past the one-slot `[PhiToken]` prefix
-/// is two `Memory` predecessors.
-///
-/// # Panics
-///
-/// If any builder step fails.
+/// A store on each arm of an if/else and a load at the join, forcing a `MemPhi`
+/// over two `Memory` predecessors.
 pub fn mem_phi_with_two_stores() -> Function {
     let var_vn = reg_vn(0x10, 8);
     let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
@@ -634,28 +598,71 @@ pub fn mem_phi_with_two_stores() -> Function {
 
     for (region, val) in [(region_t, 1u64), (region_f, 2u64)] {
         b.set_region(region);
-        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
-        let data = b.build_int_const(val, ValueType::I64).unwrap();
+        let addr = b.build_int_const(0x40u64, ValueType::int(64)).unwrap();
+        let data = b.build_int_const(val, ValueType::int(64)).unwrap();
         b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
         b.build_branch(join).unwrap();
     }
 
     b.set_region(join);
-    let addr = b.build_int_const(0x48u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x48u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     b.set_lift_addr(None);
     b.build().unwrap()
 }
 
-/// `return(reg)` over one tracked register, yielding a single
-/// `InitialVar(reg)`. Returns the register so tests can build `phi_for` /
-/// `initial_var_for` patterns against it.
-pub fn single_initial_var() -> (Function, rsleigh::Vn) {
-    let reg = reg_vn(0x00, 8);
-    let mut t = Tb::with_vars(&[reg]);
-    let v = t.read_var(&reg);
-    (t.ret_val(v), reg)
+#[cfg(test)]
+mod rom_tests {
+    use strider_ir::ReadOnlyMemory;
+
+    use super::MockRom;
+
+    const A: u64 = 0x1000;
+    const B: u64 = 0x2000;
+
+    fn two() -> MockRom {
+        MockRom::regions([(A, vec![1, 2, 3, 4]), (B, vec![9, 8])])
+    }
+
+    fn read(rom: &MockRom, addr: u64, n: usize) -> Option<Vec<u8>> {
+        let mut buf = vec![0u8; n];
+        rom.read(addr, &mut buf).ok().map(|()| buf)
+    }
+
+    #[test]
+    fn every_region_is_served() {
+        let rom = two();
+        assert_eq!(read(&rom, A, 4), Some(vec![1, 2, 3, 4]));
+        assert_eq!(read(&rom, A + 2, 2), Some(vec![3, 4]));
+        assert_eq!(read(&rom, B, 2), Some(vec![9, 8]));
+        assert_eq!(read(&rom, B + 1, 1), Some(vec![8]));
+    }
+
+    #[test]
+    fn a_read_overrunning_a_region_is_unmapped() {
+        // It must not fall through to a later region, nor wrap.
+        let rom = two();
+        assert_eq!(read(&rom, A + 2, 4), None);
+        assert_eq!(read(&rom, A + 4, 1), None);
+        assert_eq!(read(&rom, B + 2, 1), None);
+    }
+
+    #[test]
+    fn an_address_outside_every_region_is_unmapped() {
+        let rom = two();
+        assert_eq!(read(&rom, A - 1, 1), None);
+        assert_eq!(read(&rom, 0x1800, 1), None);
+        assert_eq!(read(&rom, 0x3000, 1), None);
+    }
+
+    #[test]
+    fn raw_bytes_is_one_region() {
+        let rom = MockRom::raw_bytes(A, vec![7, 7]);
+        assert_eq!(read(&rom, A, 2), Some(vec![7, 7]));
+        assert_eq!(read(&rom, A - 1, 1), None);
+        assert_eq!(read(&rom, A + 1, 2), None);
+    }
 }

@@ -1,10 +1,11 @@
-"""Type stubs for strider.lift: the lift, optimise and resolve handle
-(`Lifter` / `ElfLifter`), its options, and the loaders."""
+"""The lift, optimise and resolve handle (`Lifter` / `ElfLifter`), its
+options, and the ELF loader."""
 
 from __future__ import annotations
 
 from typing import (
     Any,
+    ClassVar,
     Literal,
     Mapping,
     NamedTuple,
@@ -13,36 +14,24 @@ from typing import (
     Union,
 )
 
-import os
-
 from .cfg import Cfg, CfgOptions
 from .ir import Function
 from .opt import OptimizerPipeline
-from .reader import BufferReader, MemLike, RomLike, Symbol, SymbolIter
+from .reader import MemLike, RomLike
 from .sleigh import CallingConvention, CallOtherAbi, SleighArch, Vn
 
 __all__: list[str]
 
-#: What the loaders accept as a filesystem path.
-StrPath = Union[str, "os.PathLike[str]"]
+from ._api import ElfLifter as ElfLifter, StrPath as StrPath, load_elf as load_elf
 
 _L = TypeVar("_L", bound="Lifter")
 
 class AnalyzeResult(NamedTuple):
-    """What `Lifter.analyze` returns: a named 3-tuple of the CFG, the lifted
-    function, and the unresolved indirect branches. A real
-    `collections.namedtuple`, so `isinstance(result, tuple)` holds and it
-    compares equal to the plain tuple.
+    """What `Lifter.analyze` returns: (cfg, function, unresolved).
 
-    `unresolved` holds the machine addresses of indirect branches that could
-    not be resolved, and a non-empty list is not an error.
-
-    Empty means fully resolved, NOT that the answer is complete: it is one of
-    six incompleteness channels, and a dispatch the CFG consumed as a return
-    or a tail call is reported only through `cfg.unverified_seeded_sites()`.
-    The other four are `cfg.isa_mode_conflicts()`,
-    `cfg.interior_branch_targets()`, `cfg.unmapped_branch_targets()` and
-    `cfg.undecodable_branch_targets()`; `cfg.is_complete()` tests all six.
+    `unresolved` holds the machine addresses `cfg.incomplete` names
+    `"unresolved_branch"`. Empty means fully resolved, NOT that the answer is
+    complete: `cfg.incomplete` lists every reason.
     """
 
     cfg: Cfg
@@ -50,84 +39,131 @@ class AnalyzeResult(NamedTuple):
     unresolved: list[int]
 
 class AssumptionOptions:
-    """Claims about the code being analysed, for `LifterOptions(assumptions=...)`.
+    """Unchecked claims about the analysed code, for
+    `LifterOptions(assumptions=...)` and `Function.optimize(assumptions=...)`;
+    a wrong claim makes the answer wrong.
 
-    None is checked, and each one's risky value is the positive one, so any of
-    them can make the answer wrong on valid input. `stack_global_disjoint`,
-    `assume_incoming_args_survive_calls` and
-    `return_slots_survive_untracked_writes` default `True`, the other four off
-    or empty; clearing all seven is the sound floor under any input whose
-    memory behaves as RAM (see `none`). What each one claims is in
-    `docs/python-api.md` section 2.
+    Five default `True`, the other four off or empty; clearing all nine is
+    the sound floor (see `none`). Claims accumulate on a `Function`:
+    `Function.optimize` adds, none withdraws, and it refuses to add a
+    lift-time claim (`msr_register_keeps_mode`, `fp_rounding_mode_is_nearest`).
     """
 
-    # Read-only: these are getters with no setter, so a plain attribute
-    # declaration would let a type checker accept `o.x = ...`, which raises at runtime.
     @property
-    def stack_global_disjoint(self) -> bool: ...
+    def stack_global_disjoint(self) -> bool:
+        """The stack never overlaps constant-address memory (`.data`, `.rodata`,
+        `.bss`, MMIO). Default `True`."""
+        ...
     @property
-    def assume_incoming_args_survive_calls(self) -> bool: ...
+    def assume_incoming_args_survive_calls(self) -> bool:
+        """A call leaves the incoming stack-argument slots alone unless handed a
+        pointer into them. Default `True`; read by incoming-argument detection."""
+        ...
     @property
-    def distinct_sp_bases_disjoint(self) -> bool: ...
+    def distinct_sp_bases_disjoint(self) -> bool:
+        """A store rooted at an SP base other than the entry SP (e.g. `sp & -16`)
+        misses the probed slot. Default `False`; read by incoming-argument
+        detection."""
+        ...
     @property
-    def callee_preserves_stack_args(self) -> bool: ...
+    def callee_preserves_stack_args(self) -> bool:
+        """A callee leaves the outgoing-argument slots the caller wrote alone.
+        Inert without `escape_analysis` or `noalias_allocators`. Default `False`."""
+        ...
     @property
-    def noalias_allocators(self) -> list[int]: ...
+    def noalias_allocators(self) -> list[int]:
+        """Callee addresses of pure `malloc`-like allocators, sorted. Each result
+        overlaps no other allocation, stack slot or constant address, so an arena
+        allocator does not qualify. Default empty."""
+        ...
     @property
-    def escape_analysis(self) -> bool: ...
+    def escape_analysis(self) -> bool:
+        """When no stack address escapes to a callee, forward a spill load across
+        a call (and, under `stack_global_disjoint`, past an opaque store).
+        Misses a callee reaching the frame through a preserved register, or
+        writing an argument slot above an alignment hole. Default `False`."""
+        ...
     @property
-    def return_slots_survive_untracked_writes(self) -> bool: ...
+    def return_slots_survive_untracked_writes(self) -> bool:
+        """Untracked stores, callees and user-ops leave the saved return address
+        and entry SP slots alone. Default `True`; off, such a return is unverified."""
+        ...
+    @property
+    def msr_register_keeps_mode(self) -> bool:
+        """An ARM `msr cpsr_c, rN` writes the mode already in force; the
+        immediate form and `cps` still switch. Default `True`; a lift-time claim."""
+        ...
+    @property
+    def fp_rounding_mode_is_nearest(self) -> bool:
+        """Float conversions reading the dynamic rounding mode round to nearest
+        even; off, each selects among the four modes. Wrong after `fesetround`.
+        Default `True`; a lift-time claim."""
+        ...
     def __init__(
         self,
         *,
-        stack_global_disjoint: bool = ...,
-        assume_incoming_args_survive_calls: bool = ...,
-        distinct_sp_bases_disjoint: bool = ...,
-        callee_preserves_stack_args: bool = ...,
-        noalias_allocators: list[int] = ...,
-        escape_analysis: bool = ...,
-        return_slots_survive_untracked_writes: bool = ...,
+        stack_global_disjoint: Optional[bool] = ...,
+        assume_incoming_args_survive_calls: Optional[bool] = ...,
+        distinct_sp_bases_disjoint: Optional[bool] = ...,
+        callee_preserves_stack_args: Optional[bool] = ...,
+        noalias_allocators: Optional[list[int]] = ...,
+        escape_analysis: Optional[bool] = ...,
+        return_slots_survive_untracked_writes: Optional[bool] = ...,
+        msr_register_keeps_mode: Optional[bool] = ...,
+        fp_rounding_mode_is_nearest: Optional[bool] = ...,
     ) -> None:
-        """Build the claims; every field defaults as documented above."""
+        """A field omitted or `None` takes its default."""
         ...
     @staticmethod
-    def none() -> "AssumptionOptions":
-        """Every claim cleared: the sound floor of these fields under any
-        input, forwarding solely what the IR structurally proves.
+    def none(
+        *,
+        stack_global_disjoint: Optional[bool] = ...,
+        assume_incoming_args_survive_calls: Optional[bool] = ...,
+        distinct_sp_bases_disjoint: Optional[bool] = ...,
+        callee_preserves_stack_args: Optional[bool] = ...,
+        noalias_allocators: Optional[list[int]] = ...,
+        escape_analysis: Optional[bool] = ...,
+        return_slots_survive_untracked_writes: Optional[bool] = ...,
+        msr_register_keeps_mode: Optional[bool] = ...,
+        fp_rounding_mode_is_nearest: Optional[bool] = ...,
+    ) -> "AssumptionOptions":
+        """Every claim cleared, then the ones named set; with no argument,
+        the sound floor. `none(escape_analysis=True)` holds one claim where
+        `AssumptionOptions(escape_analysis=True)` holds six.
 
-        Three of the seven default `True`, so this is not
-        `AssumptionOptions()`.
-
-        Memory is still taken to be RAM: a load reads back the last value the
-        analysed code stored at its address, with nothing outside that code
-        (a device, another thread, a signal handler) changing it in between.
-        A memory-mapped register polled after a write reads as the value
-        written, and no option lifts that premise.
+        The floor still takes memory to be RAM (a load reads the last value
+        stored) and float arithmetic to round to nearest with flush-to-zero
+        and denormals-are-zero off, so `-ffast-math` code has no floor.
         """
         ...
+    def union(self, other: AssumptionOptions) -> AssumptionOptions:
+        """Every claim either holds, every allocator either lists; `a | b`."""
+        ...
+    def __or__(self, other: AssumptionOptions) -> AssumptionOptions: ...
+    def __eq__(self, other: object) -> bool:
+        """Equal claims and allocators."""
+        ...
+    __hash__: ClassVar[None]  # type: ignore[assignment]
 
 class LifterOptions:
     """Per-call options for `Lifter.analyze`.
 
-    `cfg` holds the CFG-building options. `assumptions` holds the unchecked
-    claims about the analysed code, each of which can make the answer wrong.
-    `compact` drops unreachable nodes at the end. `per_address_ccs` overrides
-    the calling convention for a callee, keyed by the direct-call target
-    address rather than the call site. `pipeline`, when set,
-    replaces the default optimizer pipeline for the calls these options drive.
+    `compact` drops unreachable nodes at the end. `per_address_ccs`
+    overrides the calling convention of a callee, keyed by the direct-call
+    target address (not the call site); on ppc64 ELFv2 `ElfLifter.analyze`
+    also matches a call to `Symbol.local_entry` for a key at
+    `Symbol.address`. A call to an override whose `stack_pointer` is not
+    the analysed function's own raises `StriderError`. `pipeline`, when
+    set, replaces the default optimizer pipeline; it is held, not copied, so
+    passes added to it later apply to later calls.
     """
 
-    # Read-only: these are getters with no setter, so a plain attribute
-    # declaration would let a type checker accept `o.x = ...`, which raises at runtime.
     @property
     def cfg(self) -> CfgOptions: ...
     @property
     def assumptions(self) -> AssumptionOptions: ...
     @property
     def compact(self) -> bool: ...
-    # A read-only VIEW onto what the constructor stored, built once and handed
-    # out unchanged. Unlike the `CfgOptions` tables, it is not shared with a
-    # clone: `with_cfg` resets it.
     @property
     def per_address_ccs(self) -> Optional[Mapping[int, CallingConvention]]: ...
     @property
@@ -144,82 +180,85 @@ class LifterOptions:
         resolve_indirect_branches: bool = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None:
-        """Build the options; every field defaults."""
-        ...
-    def with_cfg(self, cfg: CfgOptions) -> LifterOptions:
-        """A copy of these options with `cfg` replaced."""
+        """Every field defaults."""
         ...
 
 class Lifter:
-    """Lifts, optimises and resolves functions for one architecture.
-
-    Build one with `strider.lift.lifter(arch, mem, rom=None)`. The calling
-    convention is an argument of every `analyze` call, so one handle can
-    analyse functions under different conventions.
-    """
+    """Lifts, optimises and resolves functions for one architecture. Build
+    one with `strider.lift.lifter(arch, mem, rom=None)`. While an `analyze`,
+    `build_cfg` or `add_elf` is in flight, every `Lifter` method raises
+    `StriderError`. The bytes `mem` serves must not change while the handle
+    lives: decodes are cached by address."""
 
     def __init__(
         self, arch: SleighArch, mem: MemLike, rom: Optional[RomLike] = ...
     ) -> None:
-        """Build a handle for `arch` reading code from `mem`, with `rom` as
-        the optional read-only memory for constant folding."""
+        """A handle for `arch` reading code from `mem`, with optional
+        read-only memory `rom`. `mem`'s bytes must stay fixed while the handle
+        lives."""
         ...
-    # pyo3's `#[new]` fills `tp_new`, so a Python subclass constructs the base
-    # through `__new__`; `ElfLifter` does.
+    # A subclass (`ElfLifter`) constructs the base through `__new__`.
     def __new__(
         cls: type[_L],
         arch: SleighArch,
         mem: MemLike,
         rom: Optional[RomLike] = ...,
     ) -> _L: ...
-    def _check_usable(self) -> None:
-        """INTERNAL. Raise what `_rebuild` would, without rebuilding, so a
-        caller that commits state elsewhere can refuse before it does."""
-        ...
-    def _rebuild(
-        self, arch: SleighArch, mem: MemLike, rom: Optional[RomLike] = ...
+    def _merge_elf(
+        self,
+        elf: Any,
+        path: str,
+        apply_relocations: bool,
+        relocated_got_is_rom: bool,
     ) -> None:
-        """INTERNAL. Rebuild the handle's Sleigh and orchestrator state, so a
-        newly merged-in ELF becomes visible."""
+        """Merge the ELF at `path` into `elf` and rebuild, refusing before
+        anything is merged when the handle is in use."""
+        ...
+    def _build_cfg_elf(
+        self, elf: Any, entry: int, opts: Optional[CfgOptions] = ...
+    ) -> Cfg:
+        """`ElfLifter.build_cfg` over `elf`."""
+        ...
+    def _analyze_elf(
+        self,
+        elf: Any,
+        entry: Union[str, int],
+        cc: CallingConvention,
+        opts: Optional[LifterOptions] = ...,
+    ) -> AnalyzeResult:
+        """`ElfLifter.analyze` over `elf`."""
         ...
     @property
     def arch(self) -> SleighArch:
-        """The `SleighArch` this handle decodes with.
-
-        Enough, with `reader()` and `rom()`, to build a SECOND handle over the
-        same memory, which is how a thread that does not own this one renders."""
+        """The `SleighArch` this handle decodes with. With `reader()` and
+        `rom()`, enough to build a second handle for another thread."""
         ...
     def reader(self) -> MemLike:
-        """The code source (`BufferReader` or `MemReader`) this handle was
-        built with."""
+        """The `mem` this handle was built with."""
         ...
     def rom(self) -> Optional[RomLike]:
-        """The `rom` (read-only memory for constant folding) this handle was
-        built with, or `None` if none was supplied."""
+        """The `rom` this handle was built with, or `None`."""
         ...
     def user_op_names(self) -> list[str]:
-        """Every Sleigh user-op name this architecture can emit, indexed by
-        user-op id. These are the names `CfgOptions(call_other_abis=...)`
-        classifies."""
+        """Every Sleigh user-op name of this arch, indexed by user-op id: the
+        keys `CfgOptions(call_other_abis=...)` takes."""
         ...
     def call_other_abi(
         self, name: str, opts: Optional[CfgOptions] = ...
     ) -> Optional[CallOtherAbi]:
-        """How `name` is classified: the `opts` entry for it when there is
-        one, else the built-in table, else `None` for a name strider has no
-        answer for (which fails the lift of any function containing it).
-        Raises `StriderError` off the handle's thread."""
+        """The `CallOtherAbi` for user op `name`: the `opts` entry, else the
+        built-in one, else `None` (a lift reaching it fails). Raises
+        `StriderError` for an `opts` entry built for another arch."""
         ...
     def build_cfg(
         self,
         entry: int,
         opts: Optional[CfgOptions] = ...,
     ) -> Cfg:
-        """Build the control-flow graph of the function at `entry`, without
-        lifting or optimising.
-
-        Holds the GIL for the whole build, unlike `analyze`: decoding is short
-        next to a full analysis, and it runs on the handle's own thread."""
+        """The control-flow graph of the function at `entry`, without
+        lifting. An unmapped or undecodable entry, or a fall-through no call
+        explains into bytes Sleigh rejects, raises `StriderError`. Holds the
+        GIL throughout."""
         ...
     def analyze(
         self,
@@ -229,101 +268,30 @@ class Lifter:
     ) -> AnalyzeResult:
         """Lift, optimise and resolve the function at address `entry`.
 
-        `cc` is required here; `ElfLifter.analyze` also takes a symbol name
-        and supplies a default `cc`.
+        `ElfLifter.analyze` also takes a symbol name and a default `cc`. A
+        non-int `entry` raises `TypeError`, an out-of-range one
+        `StriderError`. Incomplete code is reported in `Cfg.incomplete`
+        (check it before trusting an absence, "no store to X"), not raised.
+        These raise `StriderError`: an unmapped or undecodable entry, a
+        fall-through no call explains into bytes Sleigh rejects, and a Sleigh
+        user-op with no `CallOtherAbi` (see `call_other_abi`).
 
-        A bad `entry` raises a `StriderError` naming the cause, as `build_cfg`
-        does for the same argument.
-
-        An empty `unresolved` is not a complete answer: see `AnalyzeResult`
-        for the six channels, and `Cfg.is_complete` to test them all.
-
-        Runs the fixed-point loop with the GIL released, so other Python
-        threads keep running -- except where `mem` or `rom` is a Python object,
-        whose adapter takes the GIL back on every read anyway; there the GIL is
-        held, so finalization waits for the analysis the way any other Python
-        call does.
-
-        A DAEMON thread running an analysis when the interpreter starts
-        finalizing is still unsafe with a Python `mem` or `rom`: the thread is
-        terminated inside your `read` callback, and the unwind passes through
-        Rust frames, which aborts or segfaults the process. CPython hangs a
-        pure-Python daemon thread safely instead, so this is a cost of the
-        Rust frames below the callback and no exception can be raised for it.
-        Analyse on non-daemon threads and join them, which is clean.
+        Releases the GIL unless `mem` or `rom` is a Python reader (anything
+        but a `BufferReader`). A daemon thread inside this call at
+        interpreter shutdown aborts the process; analyse on non-daemon
+        threads and join them.
         """
-        ...
-    def optimize(
-        self,
-        function: Function,
-        pipeline: Optional[OptimizerPipeline] = ...,
-        opts: Optional[LifterOptions] = ...,
-    ) -> None:
-        """Run an optimizer pipeline over `function` in place. `pipeline=None`
-        runs the default pipeline; a given pipeline is copied, so it stays
-        usable. `opts=None` takes the `LifterOptions` defaults.
-
-        Runs against this handle's `rom`, so `LoadReadOnly` folds here exactly
-        as it does inside `analyze`. Invalidates outstanding `Node` / `Match`
-        handles and every node id for `function`.
-
-        Holds the GIL for the whole run, unlike `analyze`: the run borrows the
-        function for mutation."""
-        ...
-    def reg(self, name: str) -> Optional[Vn]:
-        """The varnode for the register called `name`, or `None` when the
-        name is not a register."""
-        ...
-    def reg_name(self, vn: Vn) -> Optional[str]:
-        """The register name for `vn`, or `None` when it names no register."""
         ...
     def pcode_at(self, entry: int, addr: int) -> str:
-        """Decode from `entry` one instruction at a time until `addr`, and
-        return that instruction's p-code (ops joined with `"; "`, empty for
-        an instruction that lifts to none).
+        """The p-code (ops joined `"; "`, empty for none) of the instruction
+        at `addr`, decoding linearly from `entry` on a fresh decoder.
 
-        A stand-alone sweep, so it works for an address outside any analysed
-        CFG. `addr` must be reachable through the linear instruction stream
-        from `entry`; raises `StriderError` otherwise.
+        Raises `StriderError` unless `addr` is on the linear stream from
+        `entry`. On ARM or MIPS `entry`'s low bit selects the ISA mode, the
+        sweep starts at `entry & ~1` and `addr`'s low bit is ignored.
 
-        The sweep decodes on a copy of the engine, which carries over the
-        decode modes the analyses pinned. Past the engine's commit limit it
-        cannot, and this raises `StriderError` rather than answering `addr` in
-        the pspec default mode: sweep from a fresh `Lifter` instead.
-        """
-        ...
-    def visualize(
-        self,
-        target: Union[Function, Cfg],
-        host: str = ...,
-        port: int = ...,
-        depth: Optional[int] = ...,
-        whole: bool = ...,
-        background: bool = ...,
-    ) -> int:
-        """Start the interactive explorer for `target`, a `Function` or a
-        `Cfg`. Prints the local URL and blocks on this thread until Ctrl-C;
-        `background=True` serves on its own thread and returns the bound port,
-        so you can keep querying while the page is open.
-
-        `host` / `port` choose where to bind, `port=0` taking whatever is free.
-        The default binds loopback: any other `host` puts the graph of the
-        binary you are analysing on the network, and no endpoint authenticates.
-        `depth` is the neighborhood radius, used only when `whole=False`.
-
-        Opens on the WHOLE graph: a neighborhood view hides nodes without
-        saying so. `whole=False` opens on the neighborhood around the entry
-        instead (inputs and outputs out to `depth` hops), which is what
-        scales to large functions; the toolbar's `whole` toggle switches
-        between them either way. The neighborhood knobs open uncapped and are
-        set from the page, where 0 means no limit on each.
-
-        A function of a few thousand nodes can keep the layout engine busy for
-        a long time.
-
-        `strider.explore.shutdown(port)` stops a server and joins its thread.
-        It is registered to run before the interpreter joins non-daemon
-        threads, so an explorer left running does not hang or abort at exit.
+        A new `entry` clones the decoder; `build_cfg(entry).pcode_at(addr)`
+        is far cheaper and follows a mode switch.
         """
         ...
 
@@ -332,193 +300,6 @@ def lifter(
     mem: MemLike,
     rom: Optional[RomLike] = ...,
 ) -> Lifter:
-    """Create a lifter for `arch` that can lift and analyze functions. `mem`
-    supplies the code bytes; `rom` is the optional read-only memory for
-    constant folding."""
-    ...
-
-class ElfLifter(Lifter):
-    """A loaded ELF binary as a `Lifter`, returned by
-    `strider.lift.load_elf(path)`.
-
-    It carries the ELF's memory as both code reader and read-only image, plus
-    the symbol table and a name-aware `analyze(target)`. Analyse many
-    functions by calling `analyze` repeatedly.
-    """
-
-    #: INTERNAL. The loaded-ELF handle: the code and read-only readers, the
-    #: symbol table, and the raw `read`. Its class is not in the module
-    #: namespace, so there is no name to give it here.
-    _elf: Any
-
-    def __init__(
-        self,
-        elf: Any,
-        arch: SleighArch,
-        cc: CallingConvention,
-        mem: MemLike,
-        rom: Optional[RomLike] = ...,
-    ) -> None:
-        """Do not call this directly; use `load_elf`."""
-        ...
-    @property
-    def arch(self) -> SleighArch:
-        """The architecture this binary was loaded as."""
-        ...
-    @property
-    def cc(self) -> CallingConvention:
-        """The calling convention `analyze` uses when none is passed."""
-        ...
-    @property
-    def is_arm_be8(self) -> bool:
-        """Whether the binary sets ARM's `EF_ARM_BE8`: instructions stored
-        little-endian, data big-endian. `EI_DATA` marks BE8 and BE32 images
-        alike, so this is what `load_elf` picks `arm_be_kernel` over `arm_be`
-        on. `False` off ARM."""
-        ...
-    @property
-    def endianness(self) -> str:
-        """Byte order of the loaded binary: `"little"` or `"big"`."""
-        ...
-    def functions(self) -> SymbolIter:
-        """The function symbols in address order, one per address: aliases of
-        an address already listed are excluded, preferring the one whose size
-        the ELF records. A function with no recorded size is still yielded,
-        with `Symbol.size` `None`.
-
-        A cursor, not a container: `len()` reports what is LEFT to pull."""
-        ...
-    def iter_symbols(self) -> SymbolIter:
-        """Every symbol pulled one at a time, so the `Symbol` objects are never
-        all live at once. The Rust table is built up front. `len()` reports
-        what is LEFT to pull, so a consumed cursor shrinks."""
-        ...
-    def symbol(self, name: str) -> Symbol:
-        """The `Symbol` named `name`: its definition in the first ELF that
-        defines it, else an undefined symbol that still has an address (a PLT
-        stub, or an object file's extern). Raises `StriderError` when there is
-        neither."""
-        ...
-    def symbol_opt(self, name: str) -> Optional[Symbol]:
-        """`symbol`, but `None` rather than raising when `name` is
-        undefined."""
-        ...
-    def symbol_at(self, address: int) -> Optional[Symbol]:
-        """The symbol covering `address`: the nearest one at or below it whose
-        recorded extent reaches `address`. A symbol with no recorded size
-        covers only its own address. Aliases sharing an address are ranked by
-        having a recorded extent first, then by being code, so a sized DATA
-        alias outranks an unsized CODE one; `functions()` filters to code
-        instead. `None` when nothing covers `address`."""
-        ...
-    def symbols(self) -> Mapping[str, Symbol]:
-        """Every symbol, keyed by the name it resolves under."""
-        ...
-    def entry_point(self) -> int:
-        """The entry-point address of the first loaded ELF."""
-        ...
-    def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Up to `size` raw bytes at `addr`, or `None` when `addr` is unmapped or
-        inside a relocation this loader does not compute."""
-        ...
-    def reader(self) -> BufferReader:
-        """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
-        unless `from_segments=False`."""
-        ...
-    def add_elf(
-        self,
-        path: StrPath,
-        *,
-        apply_relocations: bool = True,
-        relocated_got_is_rom: bool = False,
-    ) -> None:
-        """Merge another ELF, such as a shared library, into this handle.
-        The earlier-loaded ELF wins on name collisions.
-
-        `apply_relocations` defaults to `True`, matching `load_elf`: a merged
-        ELF is normally the ET_DYN case relocations exist for, and the flag
-        also selects what is mapped, so `False` drops writable non-executable
-        sections rather than serving their on-disk bytes.
-
-        `relocated_got_is_rom` is `load_elf`'s unchecked claim, made for THIS
-        image only: it does not inherit the handle's, since one shared
-        object's link says nothing about another's. It contradicts
-        `apply_relocations=False` here too, and the pair raises `StriderError`.
-
-        Raises `StriderError` if the new ELF maps code over an address already
-        loaded with different bytes (two ELFs at the same base cannot merge)."""
-        ...
-    def add_symbol_file(self, path: StrPath) -> None:
-        """Take the symbols of `path` and none of its bytes.
-
-        How a separate debug or symbol file attaches after loading: a
-        `objcopy --only-keep-debug` companion and distro debuginfo are linked
-        at the same addresses as the image they describe, so `add_elf` would
-        refuse them as an overlap. Both `.symtab` and `.dynsym` are read, and
-        the already-loaded ELFs keep a colliding name."""
-        ...
-    def add_symbols(
-        self,
-        symbols: dict[str, Union[int, tuple[int, int]]],
-        *,
-        is_function: bool = ...,
-    ) -> None:
-        """Add symbols directly, for names that live in no ELF: a map file, a
-        kernel `System.map`, or your own naming. Each value is an address, or
-        an `(address, size)` pair when the extent is known, which is what lets
-        `symbol_at` resolve an interior address. An ELF already carrying a name
-        keeps its own answer."""
-        ...
-    def analyze(
-        self,
-        entry: Union[int, str],
-        cc: Optional[CallingConvention] = ...,
-        opts: Optional[LifterOptions] = ...,
-    ) -> AnalyzeResult:
-        """Lift the function at `entry`, a symbol name or an address. `cc`
-        defaults to this handle's convention. Unless `opts.cfg.data_ranges` names
-        some, the ELF's `$d` mapping symbols supply them, so a literal pool is
-        never decoded as code.
-
-        Releases the GIL as `Lifter.analyze` does, with the same consequence
-        for a daemon thread parked inside it at interpreter finalization."""
-        ...
-    def __repr__(self) -> str: ...
-
-def load_elf(
-    path: StrPath,
-    *,
-    from_segments: bool = ...,
-    apply_relocations: bool = ...,
-    relocated_got_is_rom: bool = ...,
-    arch: Optional[SleighArch] = ...,
-    cc: Optional[CallingConvention] = ...,
-) -> ElfLifter:
-    """Load an ELF binary, picking the architecture and calling convention
-    from its header, and return an `ElfLifter`.
-
-    `from_segments=True` (the default) walks PT_LOAD program headers, falling
-    back to sections for relocatable objects; `from_segments=False` forces
-    the section walk for section-granular regions. Override the detected
-    `arch=` / `cc=` for kernel or custom-ABI workflows. `apply_relocations`
-    (default `True`) applies relocations, which shared objects and PIE
-    binaries need; it also selects what is mapped, so `False` drops writable
-    non-executable sections rather than serving their on-disk bytes. A
-    writable-and-executable mapping is kept either way.
-
-    `relocated_got_is_rom` (default `False`) additionally serves `.got` and
-    `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
-    the address the slot holds. That is an unchecked claim about the runtime:
-    it is wrong wherever a slot is rewritten after the loader has run, and the
-    fold is then wrong too. It is what resolves a PIC jump table whose base
-    comes out of the GOT. `.got.plt` is never served, lazy binding rewriting
-    those slots on the first call through each one. It contradicts
-    `apply_relocations=False`, which says the loader has NOT run, and the pair
-    raises `StriderError`.
-
-    Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
-    when the file is not an ELF, or its architecture or ABI is unsupported.
-    Passing both `arch=` and `cc=` skips the detector, and with it the ABI
-    refusal.
-    """
+    """A `Lifter` for `arch` reading code from `mem`, with optional read-only
+    memory `rom`. `mem`'s bytes must stay fixed while the `Lifter` lives."""
     ...

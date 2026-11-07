@@ -67,6 +67,13 @@ def test_match_getitem_is_stale_after_compact():
         m[c]
 
 
+def test_a_stale_bound_capture_reprs_without_raising():
+    g, m, c = _graph_and_match()
+    b = m[c]
+    g.compact()
+    assert repr(b) == "BoundCapture(stale)"
+
+
 def test_match_has_is_stale_after_compact():
     """`has` / `in` are capture accessors too: the natural
     `if c in m: m.node(c)` guard must not turn a raise into a clean skip."""
@@ -93,14 +100,13 @@ def test_optimize_invalidates_outstanding_handles():
 
     c = Capture()
     add_hits = fn.find_all(load().capture(c))
-    if not add_hits:
-        pytest.skip("no load node to hold a stale handle against")
+    assert add_hits, "array_sum loads its array elements"
     handle = add_hits[0]
     assert handle.node(c) is not None
 
     pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
-    lift.optimize(fn, pipe)
+    fn.optimize(pipeline=pipe)
 
     # Stale handle: dereferencing must raise, not read the mutated arena.
     with pytest.raises(strider.StriderError):

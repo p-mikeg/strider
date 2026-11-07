@@ -5,11 +5,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::support::{Tb, shapes};
-use strider_ir::IntUnaryOp;
-use strider_pattern::matcher::MatcherBuilder;
+use strider_ir::IRViewer;
+use strider_ir::node::{NodeKind, ValueKind};
+use strider_ir::{IntBinaryOp, IntUnaryOp};
+use strider_pattern::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_neg, int_xor, one_of,
-    ret, var,
+    Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_const, int_neg,
+    int_xor, one_of, ret, var,
 };
 
 /// `int_neg(int_add(5, int_mul(7, 9)))`.
@@ -92,7 +94,8 @@ fn first_of_reports_only_the_first_matching_arm() {
 }
 
 /// Counts continuations reaching the root guard: `one_of` is multiplicative in
-/// the number of nested alternations, `first_of` cuts at the first match.
+/// the number of nested alternations, the first `first_of` built cuts at its
+/// first match.
 ///
 /// The root capture is what keeps the count meaningful: a pattern binding
 /// nothing a caller can see has one answer per root, and `find_all` then stops
@@ -135,7 +138,11 @@ fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
 fn one_of_explores_every_arm_while_first_of_cuts() {
     let f = shapes::add_consts(5, 3);
     assert_eq!(root_continuations(&f, false), 4, "2 arms x 2 alternations");
-    assert_eq!(root_continuations(&f, true), 1);
+    assert_eq!(
+        root_continuations(&f, true),
+        2,
+        "the second first_of's arms all run"
+    );
 }
 
 /// A capture on the alternation's own output vertex has nothing to bind when
@@ -168,13 +175,9 @@ fn an_alternation_root_never_reports_an_unbound_vertex_capture() {
 }
 
 /// Caller-supplied logic holds the same `Matcher` and may run a query of its
-/// own. Those matches must not count towards an enclosing arm's cut.
-///
-/// `satisfied` is shared across nested WALKS on purpose, so a `first_of` inside
-/// an `IfPat` branch does not cut on the hand-off. Sharing it across nested
-/// QUERIES too made an arm that produced NOTHING look like it had produced a
-/// match: the cut fired and the later arm holding the real match was never
-/// tried.
+/// own. Those matches must not count towards an enclosing arm's cut: counted,
+/// an arm that produced NOTHING looks like it produced a match, the cut fires
+/// and the later arm holding the real match is never tried.
 #[test]
 fn a_nested_query_in_a_guard_does_not_fire_an_enclosing_cut() {
     let function = neg_add_5_mul();
@@ -312,5 +315,612 @@ fn first_of_keeps_a_later_arm_for_the_other_commutative_operand() {
     assert_eq!(
         in_slot_0, in_slot_1,
         "the slot spelling the alternation cannot change the answer"
+    );
+}
+
+/// A root `first_of` cuts per anchoring output: the control arm matching the
+/// `Call`'s control output must not keep the memory arm from its memory
+/// output.
+#[test]
+fn a_root_first_of_cut_does_not_carry_to_the_next_output() {
+    let mut t = Tb::empty();
+    t.call_at(0x1234);
+    let function = t.ret_nothing();
+    let call = || KindSpec::Variant(std::mem::discriminant(&NodeKind::Call { cc: None }));
+    let c = Capture::new();
+    let mut b = MatcherBuilder::new();
+    let ctl_node = b.node(call());
+    let ctl = b.control_output(ctl_node, 0);
+    let mem_node = b.node(call());
+    let mem = b.memory_output(mem_node, 1);
+    let alt = b.first_of(&[ctl, mem]);
+    b.capture_output(alt, c);
+    let pat = b.finish();
+    let kinds: Vec<_> = Matcher::new(&function)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|m| function.value_kind(m.value(c).expect("c binds")))
+        .collect();
+    assert_eq!(kinds, [ValueKind::Control, ValueKind::Memory]);
+}
+
+/// `add(neg(5), 5)` when `neg_first`, else `add(5, neg(5))`.
+fn add_neg_5_and_5(neg_first: bool) -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let five = t.u64(5);
+    let neg = t.int_un(five, IntUnaryOp::Neg);
+    let sum = if neg_first {
+        t.add(neg, five)
+    } else {
+        t.add(five, neg)
+    };
+    t.ret_val(sum)
+}
+
+/// The cut holds for the whole attempt: once arm 1 matched an IR node, a later
+/// configuration of a sibling enumerated AROUND the alternation re-offers that
+/// node without reaching arm 2, as when the sibling is enumerated inside it.
+#[test]
+fn a_first_of_cut_outlives_the_invocation_that_recorded_it() {
+    let x = Capture::new();
+    let y = Capture::new();
+    // Arm 1 of the sibling binds `x` to `5`, arm 2 to `neg(5)`.
+    let sibling = || one_of![int_neg(var(x)), var(x)];
+    let alternation = || first_of![var(x), var(y)];
+    let rows = |f: &strider_ir::Function, pat: strider_pattern::Pattern| -> Vec<(bool, bool)> {
+        Matcher::new(f)
+            .find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| (h.value(x).is_some(), h.value(y).is_some()))
+            .collect()
+    };
+    let around = rows(
+        &add_neg_5_and_5(true),
+        int_add(sibling(), alternation()).ordered().into_pattern(),
+    );
+    let inside = rows(
+        &add_neg_5_and_5(false),
+        int_add(alternation(), sibling()).ordered().into_pattern(),
+    );
+    assert_eq!(inside, [(true, false)]);
+    assert_eq!(around, inside, "arm 2 is never reached once arm 1 matched");
+}
+
+/// The sibling's arms reversed: arm 1 of the sibling now binds `x` to
+/// `neg(5)`, so arm 1 of the alternation first fails and arm 2 matches, and
+/// only the sibling's next configuration brings arm 1 a match. A union's arm
+/// order carries no meaning, so the answer must not move with it.
+#[test]
+fn a_first_of_answer_does_not_depend_on_a_siblings_arm_order() {
+    let x = Capture::new();
+    let y = Capture::new();
+    let sibling = || one_of![var(x), int_neg(var(x))];
+    let alternation = || first_of![var(x), var(y)];
+    let rows = |f: &strider_ir::Function, pat: strider_pattern::Pattern| -> Vec<(bool, bool)> {
+        Matcher::new(f)
+            .find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| (h.value(x).is_some(), h.value(y).is_some()))
+            .collect()
+    };
+    let around = rows(
+        &add_neg_5_and_5(true),
+        int_add(sibling(), alternation()).ordered().into_pattern(),
+    );
+    let inside = rows(
+        &add_neg_5_and_5(false),
+        int_add(alternation(), sibling()).ordered().into_pattern(),
+    );
+    assert_eq!(inside, [(true, false)]);
+    assert_eq!(around, inside, "the lowest arm that matches wins");
+}
+
+/// `match_at` keeps arm 1, though arm 2 of the alternation matches before the
+/// sibling's next configuration brings arm 1 in.
+#[test]
+fn match_at_takes_the_lowest_first_of_arm_that_matches() {
+    let x = Capture::new();
+    let y = Capture::new();
+    let f = add_neg_5_and_5(true);
+    let pat = int_add(one_of![var(x), int_neg(var(x))], first_of![var(x), var(y)])
+        .ordered()
+        .into_pattern();
+    let any_add = int_add(anything(), anything()).into_pattern();
+    let sum = Matcher::new(&f).find_all(&any_add).unwrap()[0].root();
+    let hit = Matcher::new(&f)
+        .match_at(sum, &pat)
+        .unwrap()
+        .expect("matches");
+    assert!(hit.value(y).is_none(), "arm 2 lost to arm 1");
+    assert_eq!(f.int_const_u128(hit.value(x).unwrap()), Some(5));
+}
+
+/// `add(xor(b, a), add(a, b))`: the sibling under `rows` binds `x` to `b` in
+/// one configuration and to `a` in the other.
+fn xor_ba_plus_add_ab() -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let a = t.u64(1);
+    let b = t.u64(2);
+    let s = t.int_bin(b, a, IntBinaryOp::Xor);
+    let inner = t.add(a, b);
+    let sum = t.add(s, inner);
+    t.ret_val(sum)
+}
+
+/// `(x, y bound, w bound)` per match of `int_add(sibling, inner)`, the sibling
+/// binding `x` to `b` first, then to `a`, or the reverse.
+fn under_sibling(
+    f: &strider_ir::Function,
+    b_first: bool,
+    inner: impl Fn(&mut MatcherBuilder) -> PatValueRef,
+    (x, y, w): (Capture, Capture, Capture),
+) -> Vec<(Option<u128>, bool, bool)> {
+    let to_b = || int_xor(var(x), anything()).ordered();
+    let to_a = || int_xor(anything(), var(x)).ordered();
+    let sibling = if b_first {
+        one_of![to_b(), to_a()]
+    } else {
+        one_of![to_a(), to_b()]
+    };
+    let mut b = MatcherBuilder::new();
+    let sibling = MatchPat::compile(sibling, &mut b);
+    let inner = inner(&mut b);
+    let sum = b.binary(IntBinaryOp::Add, sibling, inner);
+    b.set_force_ordered(sum);
+    Matcher::new(f)
+        .find_all(&b.finish())
+        .unwrap()
+        .iter()
+        .map(|h| {
+            let x = h.value(x).and_then(|v| f.int_const_u128(v));
+            (x, h.value(y).is_some(), h.value(w).is_some())
+        })
+        .collect()
+}
+
+/// Two `first_of`s whose arms conflict through `x`, under a sibling that binds
+/// `x` in either order. They settle in the order the pattern spells them: the
+/// left one keeps arm 1 (`x` = `a`), which leaves the right one arm 2.
+#[test]
+fn two_first_ofs_settle_left_to_right_whatever_the_enumeration_order() {
+    let f = xor_ba_plus_add_ab();
+    let caps = (Capture::new(), Capture::new(), Capture::new());
+    let (x, y, w) = caps;
+    let inner = |b: &mut MatcherBuilder| {
+        let sum = int_add(first_of![var(x), var(y)], first_of![var(x), var(w)]);
+        MatchPat::compile(sum.ordered(), b)
+    };
+    let b_first = under_sibling(&f, true, inner, caps);
+    assert_eq!(b_first, [(Some(1), false, true)]);
+    assert_eq!(under_sibling(&f, false, inner, caps), b_first);
+}
+
+/// One `first_of` reached at `a` and at `b` in the same match settles at the
+/// earlier-built node first: `a` keeps arm 1, which leaves `b` arm 2.
+#[test]
+fn a_shared_first_of_settles_per_node_whatever_the_enumeration_order() {
+    let f = xor_ba_plus_add_ab();
+    let caps = (Capture::new(), Capture::new(), Capture::new());
+    let (x, y, _) = caps;
+    let inner = |b: &mut MatcherBuilder| {
+        let shared = MatchPat::compile(first_of![var(x), var(y)], b);
+        let sum = b.binary(IntBinaryOp::Add, shared, shared);
+        b.set_force_ordered(sum);
+        sum
+    };
+    let b_first = under_sibling(&f, true, inner, caps);
+    assert_eq!(b_first, [(Some(1), true, false)]);
+    assert_eq!(under_sibling(&f, false, inner, caps), b_first);
+}
+
+/// The kinds `x` binds in `pat`'s matches, sorted.
+fn x_kinds(f: &strider_ir::Function, pat: &strider_pattern::Pattern, x: Capture) -> Vec<String> {
+    let mut v: Vec<String> = Matcher::new(f)
+        .find_all(pat)
+        .unwrap()
+        .iter()
+        .map(|h| format!("{:?}", f.node_kind(f.producer(h.value(x).unwrap()))))
+        .collect();
+    v.sort();
+    v
+}
+
+/// The cut `first_of` sits under a cast ladder. Skipping an arm that a later
+/// configuration would have matched must not send the ladder through the cast
+/// to a match the uncut search never offers, so the answer does not move with
+/// a sibling union's arm order.
+#[test]
+fn a_cut_first_of_under_a_cast_ladder_ignores_a_siblings_arm_order() {
+    let vn = super::support::reg_vn(0x40, 4);
+    let mut t = Tb::with_vars(&[vn]);
+    let r = t.read_var(&vn);
+    let zx = t.zext_to(r, strider_ir::node::ValueType::int(64));
+    let five = t.u64(5);
+    let sum = t.add(five, zx);
+    let f = t.ret_val(sum);
+    let x = Capture::new();
+    let rows = |var_first: bool| {
+        let sibling = if var_first {
+            one_of![var(x), anything()]
+        } else {
+            one_of![anything(), var(x)]
+        };
+        let pat = int_add(sibling, first_of![var(x), anything()])
+            .ordered()
+            .into_pattern()
+            .ignore_casts();
+        x_kinds(&f, &pat, x)
+    };
+    assert_eq!(rows(true), rows(false));
+}
+
+/// A `first_of` shared by both operands of one node is offered the same IR
+/// node twice per match and may take a different arm each time. A guard
+/// needing both arms leaves no match through arm 0 at both, so the one
+/// through arm 0, then arm 1, is kept.
+#[test]
+fn a_first_of_offered_one_node_twice_keeps_a_guarded_match() {
+    let mut t = Tb::empty();
+    let x = t.f64(1.5);
+    let eq = t.fcmp(x, x, strider_ir::FloatCmpOp::Equal);
+    let one = t.boolean(true);
+    let nan = t.bool_bin(eq, one, IntBinaryOp::Xor);
+    let f = t.ret_val(nan);
+    let (a, b) = (Capture::new(), Capture::new());
+    let pat = strider_pattern::float_is_nan(first_of![var(a), var(b)])
+        .when_match(move |_, _, bd| bd.get_value(a).is_some() && bd.get_value(b).is_some())
+        .into_pattern();
+    assert_eq!(Matcher::new(&f).find_all(&pat).unwrap().len(), 1);
+}
+
+/// Two outputs of one node are two values offered: an arm's match at one
+/// proves nothing at the other. At `v1` only the second arm matches, so it
+/// stays beside the first arm's match at `v0`.
+#[test]
+fn two_outputs_of_one_node_settle_a_first_of_apart() {
+    let rax = super::support::reg_vn(0, 8);
+    let rdx = super::support::reg_vn(16, 8);
+    let mut t = Tb::with_vars(&[rax, rdx]);
+    t.call_other("op", 1, &[], Some(rax), &[], &[rdx]);
+    let v0 = t.read_var(&rax);
+    let v1 = t.read_var(&rdx);
+    let sum = t.add(v0, v1);
+    let r = t.int_bin(sum, v0, IntBinaryOp::Xor);
+    let f = t.ret_val(r);
+    assert_eq!(f.producer(v0), f.producer(v1));
+    let (fc, x) = (Capture::new(), Capture::new());
+    let pat = int_xor(
+        int_add(first_of![var(x), anything()].capture(fc), anything()),
+        var(x),
+    )
+    .ordered()
+    .into_pattern();
+    let mut got: Vec<_> = Matcher::new(&f)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|h| h.value(fc).unwrap().as_u32())
+        .collect();
+    got.sort_unstable();
+    let mut want = [v0.as_u32(), v1.as_u32()];
+    want.sort_unstable();
+    assert_eq!(got, want);
+}
+
+/// A single-answer query stops at its first match when that match took the
+/// first arm of every choice: the filter keeps it first. Here the natural
+/// ordering of the commutative `add(5, mul)` is that match, so the swapped one,
+/// through the second arm, never runs.
+#[test]
+fn a_single_answer_query_stops_at_a_first_arm_match() {
+    let f = neg_add_5_mul();
+    let runs = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&runs);
+    let pat = int_add(
+        first_of![strider_pattern::any_int_const(), anything()],
+        anything(),
+    )
+    .when_match(move |_, _, _| {
+        seen.fetch_add(1, Ordering::Relaxed);
+        true
+    })
+    .into_pattern();
+    let m = Matcher::new(&f);
+    assert_eq!(m.find_all(&pat).unwrap().len(), 1);
+    assert_eq!(runs.swap(0, Ordering::Relaxed), 1);
+    let add = (f.graph().all_node_ids())
+        .find(|&n| matches!(f.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .unwrap();
+    assert!(m.match_at(add, &pat).unwrap().is_some());
+    assert_eq!(runs.load(Ordering::Relaxed), 1);
+}
+
+/// The match that stops a single-answer query need not be the first found: any
+/// match through the first arm of every choice is kept. On `add(5, mul)` the
+/// first union arm offers its `first_of` the `mul`, so that match takes the
+/// second arm; the second union arm's first-arm match at `5` then stops the
+/// query before its own second arm runs.
+#[test]
+fn a_single_answer_query_stops_at_a_later_first_arm_match() {
+    let f = neg_add_5_mul();
+    let runs = Arc::new(AtomicUsize::new(0));
+    let counted = |p: strider_pattern::MatchOnly| {
+        let seen = Arc::clone(&runs);
+        p.when_match(move |_, _, _| {
+            seen.fetch_add(1, Ordering::Relaxed);
+            true
+        })
+    };
+    let ordered = int_add(
+        anything(),
+        first_of![strider_pattern::any_int_const(), anything()],
+    )
+    .ordered();
+    let swapped = int_add(
+        first_of![strider_pattern::any_int_const(), anything()],
+        anything(),
+    )
+    .ordered();
+    let pat = one_of![counted(ordered), counted(swapped)].into_pattern();
+    let add = (f.graph().all_node_ids())
+        .find(|&n| matches!(f.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .unwrap();
+    assert!(Matcher::new(&f).match_at(add, &pat).unwrap().is_some());
+    assert_eq!(runs.load(Ordering::Relaxed), 2);
+}
+
+/// A union arm beside a shared `first_of` keeps the `first_of`'s own match:
+/// `float_is_nan` reaches its operand once per slot, so the match through
+/// `var(x)` at both slots ties with one that reached it at a single slot.
+#[test]
+fn a_union_beside_a_shared_first_of_keeps_its_match() {
+    let mut t = Tb::empty();
+    let v = t.f64(1.5);
+    let eq = t.fcmp(v, v, strider_ir::FloatCmpOp::Equal);
+    let one = t.boolean(true);
+    let nan = t.bool_bin(eq, one, IntBinaryOp::Xor);
+    let f = t.ret_val(nan);
+    let (x, y) = (Capture::new(), Capture::new());
+    let rows = |pat: strider_pattern::Pattern| {
+        let mut v: Vec<(bool, bool)> = Matcher::new(&f)
+            .find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| (h.value(x).is_some(), h.value(y).is_some()))
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let fo = || first_of![var(x), anything()];
+    let want = [(false, true), (true, false), (true, true)];
+    let by_var = strider_pattern::float_is_nan(one_of![fo(), var(y)]);
+    assert_eq!(rows(by_var.into_pattern()), want);
+    let by_capture = strider_pattern::float_is_nan(one_of![fo(), anything().capture(y)]);
+    assert_eq!(rows(by_capture.into_pattern()), want);
+}
+
+/// `float_is_nan(a)` over `a = int_bits_to_float(r0)`.
+fn nan_of_bits() -> strider_ir::Function {
+    let r0 = super::support::reg_vn(0, 8);
+    let mut t = Tb::with_vars(&[r0]);
+    let i = t.read_var(&r0);
+    let a = t.int_bits_to_float(i, strider_ir::node::ValueType::float(64));
+    let eq = t.fcmp(a, a, strider_ir::FloatCmpOp::Equal);
+    let nan = t.bool_not(eq);
+    t.ret_val(nan)
+}
+
+/// Which of `caps` each match of `pat` binds, sorted.
+fn bound(
+    f: &strider_ir::Function,
+    pat: strider_pattern::Pattern,
+    caps: &[Capture],
+) -> Vec<Vec<bool>> {
+    let mut v: Vec<Vec<bool>> = Matcher::new(f)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|h| caps.iter().map(|&c| h.value(c).is_some()).collect())
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+/// A guard below each arm reads the bindings from before that arm binds, so
+/// the two reads of `float_is_nan` differ: after arm 0 at the first read,
+/// arms 0 and 1 fail at the second. The first arm that matches at each read
+/// is arm 0, then arm 2, though other matches took arm 1 at both.
+#[test]
+fn a_shared_first_of_takes_the_first_matching_arm_at_each_read() {
+    let f = nan_of_bits();
+    let (x, y, z) = (Capture::new(), Capture::new(), Capture::new());
+    let g = move || anything().when_match(move |_, _, b| b.get_value(x).is_none());
+    let pat = strider_pattern::float_is_nan(first_of![
+        strider_pattern::int_bits_to_float(g()).capture(x),
+        strider_pattern::int_bits_to_float(g()).capture(y),
+        var(z)
+    ])
+    .into_pattern();
+    assert_eq!(bound(&f, pat, &[x, y, z]), [vec![true, false, true]]);
+}
+
+/// Arm 0's guard needs `c`, which only arm 1 binds: it fails at the first
+/// read and holds at the second, after arm 1.
+#[test]
+fn a_shared_first_of_arm_a_guard_admits_at_the_second_read_wins_there() {
+    let f = nan_of_bits();
+    let (x, c) = (Capture::new(), Capture::new());
+    let pat = strider_pattern::float_is_nan(first_of![
+        var(x).when_match(move |_, _, b| b.get_value(c).is_some()),
+        anything().capture(c)
+    ])
+    .into_pattern();
+    assert_eq!(bound(&f, pat, &[x, c]), [vec![true, true]]);
+}
+
+/// A root guard needing `z`, which only the `first_of`'s arm 1 binds. At the
+/// first read arm 0 matches, then arm 1 at the second: `{x, z}`. A match the
+/// union arm routes away from the first read takes arm 1 at the second, the
+/// first arm that matches there once the guard rules arm 0 out: `{y, z}`.
+#[test]
+fn a_shared_first_of_under_a_root_guard_takes_the_first_arm_at_each_read() {
+    let f = nan_of_bits();
+    let (x, y, z) = (Capture::new(), Capture::new(), Capture::new());
+    let pat = strider_pattern::float_is_nan(one_of![
+        first_of![var(x), anything().capture(z)],
+        anything().capture(y)
+    ])
+    .when_match(move |_, _, b| b.get_value(z).is_some())
+    .into_pattern();
+    assert_eq!(
+        bound(&f, pat, &[x, y, z]),
+        [vec![false, true, true], vec![true, false, true]]
+    );
+}
+
+/// The union arm binds `t` at the first read and routes it away from the
+/// `first_of`, whose arm 0 needs a `y` only arm 1 binds. Arm 1 at the first
+/// read then arm 0 at the second (`{y}`) beats the match taking arm 1 at the
+/// second read (`{t, y}`); the union at both reads (`{t}`) reads no `first_of`.
+#[test]
+fn a_shared_first_of_settles_a_read_a_union_routes_away_on_its_own() {
+    let f = nan_of_bits();
+    let (y, t) = (Capture::new(), Capture::new());
+    let has_y = move || anything().when_match(move |_, _, b| b.get_value(y).is_some());
+    let no_y = move || anything().when_match(move |_, _, b| b.get_value(y).is_none());
+    let pat = strider_pattern::float_is_nan(one_of![
+        first_of![
+            has_y(),
+            strider_pattern::int_bits_to_float(no_y()).capture(y)
+        ],
+        no_y().capture(t)
+    ])
+    .into_pattern();
+    assert_eq!(
+        bound(&f, pat, &[y, t]),
+        [vec![false, true], vec![true, false]]
+    );
+}
+
+/// An outer `first_of` routes one read to an inner one. Under a root guard
+/// binding `x` and `y` together, arm 0 (`x`) at the first read, then the inner
+/// `first_of`'s arm 1 (`y`) at the second, is the first arm that yields a match
+/// at each read.
+#[test]
+fn a_shared_first_of_routing_a_read_to_an_inner_one_settles_each_read() {
+    let f = nan_of_bits();
+    let (x, y) = (Capture::new(), Capture::new());
+    let pat =
+        strider_pattern::float_is_nan(first_of![var(x), anything(), first_of![var(x), var(y)]])
+            .when_match(move |_, _, b| b.get_value(x).is_some() == b.get_value(y).is_some())
+            .into_pattern();
+    assert_eq!(bound(&f, pat, &[x, y]), [vec![true, true]]);
+}
+
+/// A match taking arm 0 at the second read, after the union at the first,
+/// settles that read for the match taking arm 0 then arm 1, so `{x, z}` goes
+/// and `{x, y}` and `{y}` stay.
+#[test]
+fn a_union_at_one_read_lets_another_match_settle_the_next() {
+    let f = nan_of_bits();
+    let (x, y, z) = (Capture::new(), Capture::new(), Capture::new());
+    let pat = strider_pattern::float_is_nan(one_of![
+        first_of![var(x), anything().capture(z)],
+        anything().capture(y)
+    ])
+    .when_match(move |_, _, b| b.get_value(z).is_some() || b.get_value(y).is_some())
+    .into_pattern();
+    assert_eq!(
+        bound(&f, pat, &[x, y, z]),
+        [vec![false, true, false], vec![true, true, false]]
+    );
+}
+
+/// A match the first read drops does not settle the second: arm 0, which
+/// needs the `w` only arm 2 binds, matches at the second read only after
+/// arm 2 at the first, which arm 1 beats. The answer is as with arm 0 off.
+#[test]
+fn a_match_dropped_at_one_read_does_not_settle_the_next() {
+    let f = nan_of_bits();
+    let (x, y, z, w) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    let run = |arm0: bool| {
+        let fo = first_of![
+            var(x).when_match(move |_, _, b| arm0 && b.get_value(w).is_some()),
+            anything().capture(z),
+            anything().capture(w)
+        ];
+        let pat = strider_pattern::float_is_nan(one_of![fo, anything().capture(y)]).into_pattern();
+        bound(&f, pat, &[x, y, z, w])
+    };
+    let want = [
+        vec![false, false, true, false],
+        vec![false, true, false, false],
+        vec![false, true, true, false],
+    ];
+    assert_eq!(run(false), want);
+    assert_eq!(run(true), want);
+}
+
+/// `float_is_nan(a + b)`: each read offers the `first_of` either addend of the
+/// commutative add, and the guard wants `p` and `q` on different addends. At
+/// the first read arm 0 matches whichever addend it is offered, so both orders
+/// stay, however the IR numbers `a` and `b`.
+#[test]
+fn a_shared_first_of_offered_two_values_settles_its_reads_in_order() {
+    let (r0, r1) = (super::support::reg_vn(0, 8), super::support::reg_vn(8, 8));
+    let mut t = Tb::with_vars(&[r0, r1]);
+    let (i, j) = (t.read_var(&r0), t.read_var(&r1));
+    let f64t = strider_ir::node::ValueType::float(64);
+    let a = t.int_bits_to_float(i, f64t);
+    let b = t.int_bits_to_float(j, f64t);
+    let s = t.fbin(a, b, strider_ir::FloatBinaryOp::Add, f64t);
+    let eq = t.fcmp(s, s, strider_ir::FloatCmpOp::Equal);
+    let nan = t.bool_not(eq);
+    let f = t.ret_val(nan);
+    let (p, q) = (Capture::new(), Capture::new());
+    let fo = first_of![anything().capture(p), anything().capture(q)];
+    let pat = strider_pattern::float_is_nan(strider_pattern::float_add(fo, anything()))
+        .when_match(move |_, _, bd| {
+            matches!((bd.get_value(p), bd.get_value(q)), (Some(x), Some(y)) if x != y)
+        })
+        .into_pattern();
+    let mut got: Vec<_> = Matcher::new(&f)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|h| (h.value(p).unwrap().as_u32(), h.value(q).unwrap().as_u32()))
+        .collect();
+    got.sort_unstable();
+    let (a, b) = (a.as_u32(), b.as_u32());
+    let mut want = [(a, b), (b, a)];
+    want.sort_unstable();
+    assert_eq!(got, want);
+}
+
+/// Under `first_of`, `match_at` returns `find_all`'s first match at the node,
+/// though an all-lowest-arm configuration comes later in the walk.
+#[test]
+fn match_at_agrees_with_find_alls_first_under_first_of() {
+    let mut t = Tb::empty();
+    let a = t.u64(5);
+    let one = t.u64(1);
+    let s = t.add(a, one);
+    let f = t.ret_val(s);
+    let (x, y) = (Capture::new(), Capture::new());
+    let pat = int_add(first_of![int_const(1u128), var(x)], var(y)).into_pattern();
+    let m = Matcher::new(&f);
+    let all = m.find_all(&pat).unwrap();
+    let hit = m.match_at(all[0].root(), &pat).unwrap().expect("matches");
+    assert_eq!(
+        (hit.value(x), hit.value(y)),
+        (all[0].value(x), all[0].value(y))
     );
 }

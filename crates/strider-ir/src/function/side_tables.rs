@@ -1,95 +1,71 @@
-use std::cell::{Cell, RefCell};
-
-use cranelift_entity::{SecondaryMap, entity_impl};
+use cranelift_entity::{PrimaryMap, SecondaryMap};
+use dashu_int::UBig;
 use entity_utils::{EntityInterner, UnionDag};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::NodeIdRemap;
-use crate::node::{NodeId, ValueId};
+use crate::IRViewer;
+use crate::graph::{Graph, NodeIdRemap};
+use crate::node::IntConstId;
+use crate::node::{CcId, NodeId, NodeKind, SwitchTableId, ValueId};
 
-/// Interner key for a distinct `(base, offset)` decomposition, stack or heap.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct MemoryId(u32);
-entity_impl!(MemoryId);
+/// Up to two limbs (128 bits) are inline, so a small constant allocates nothing.
+const _: () = assert!(size_of::<UBig>() == 24);
 
-/// A value's address cone reduced to a `base + offset` terminal. `Stack` and
-/// `Heap` both resolve through `memory_interner` to `(base, offset)`; the
-/// variant is the region.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum MemDecomp {
-    /// Not yet computed (the map default).
-    #[default]
-    Unknown,
-    /// Provably neither stack- nor heap-rooted.
-    NotMemory,
-    /// Rooted at the entry SP (or an alignment-masked SP anchor).
-    Stack(MemoryId),
-    /// Rooted at a pure allocator's fresh return pointer.
-    Heap(MemoryId),
-}
-
-/// The ABI class a function argument was passed in; stack arguments continue
-/// the `Integer` index space after the register ones. Indices are positional
-/// within a class, gaps preserved: an unregistered carrier leaves its index
-/// empty rather than shifting the later ones down.
+/// The ABI class a function argument was passed in. Stack arguments continue
+/// the `Integer` index space after the register ones; indices are positional
+/// within a class, so an unregistered carrier leaves a gap.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum ArgClass {
     Integer,
     Float,
 }
 
-/// Drains an `FxHashMap` and rebuilds it through a per-entry translation,
-/// keeping only entries `f` maps to `Some((new_key, new_payload))`.
-fn remap_hashmap<K, V, NK, NV>(
-    map: &mut FxHashMap<K, V>,
-    mut f: impl FnMut(K, V) -> Option<(NK, NV)>,
-) -> FxHashMap<NK, NV>
-where
-    NK: std::hash::Hash + Eq,
-{
-    let mut dst = FxHashMap::with_capacity_and_hasher(map.len(), Default::default());
-    for (old_key, old_payload) in map.drain() {
-        if let Some((new_key, new_payload)) = f(old_key, old_payload) {
-            dst.insert(new_key, new_payload);
-        }
-    }
-    dst
-}
-
-/// Per-function data keyed by arena ids (or the CC arg index) that is not part
-/// of the graph's structural identity.
-#[derive(Default, Clone)]
-pub struct SideTables {
-    /// Machine-instruction addresses whose lifting or rewrite contributed to
-    /// each node's value.
+/// Per-function tables keyed by node, value or payload id. [`Function::compact`]
+/// remaps or renumbers them; invalidation keeps them.
+///
+/// [`Function`]: crate::Function
+/// [`Function::compact`]: crate::Function::compact
+#[derive(Clone)]
+pub struct FunctionSideTables {
+    /// Instruction addresses recorded on each node: its own, each dedup hit's,
+    /// and every node absorbed into it (a live alias). A superset of the
+    /// contributors: a shared constant carries every address that used it.
     asm_fingerprints: UnionDag<NodeId, u64>,
     /// The tracked varnode a value represents, at most one per value.
     pub(crate) value_vn: FxHashMap<ValueId, crate::node::InitialVnId>,
     /// Per-class CC argument index to the carrier nodes' output values
     /// (`InitialVar` for register args, `Load` for stack args).
     arg_index_to_values: FxHashMap<(ArgClass, u32), Vec<ValueId>>,
-    /// SP-decomposition memo keyed by the value whose address cone was
-    /// analysed.  A [`MemDecomp::Stack`] resolves through `memory_interner` to
-    /// `(base, offset)`, where `base` is the SP-derived terminal and the offset
-    /// is in bytes relative to it: two accesses are the same slot iff they
-    /// share both.
-    memory_offsets: RefCell<SecondaryMap<ValueId, MemDecomp>>,
-    memory_interner: RefCell<EntityInterner<MemoryId, (ValueId, i128)>>,
-    /// `InitialVnId` to `InitialVar(id)` node index. Accessors trust it; the
-    /// validator re-checks reachable entries against the node's kind
-    /// (`StaleInitialVarIndex`).
-    pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
-    /// Whole-function frame-escape verdict, or `None` when not computed.
-    /// Cleared after every changing pass of the optimizer's fixed-point loop,
-    /// after every post-pass, and on compaction.
-    frame_escape: Cell<Option<bool>>,
-    /// A stack address was held, at some `Call`, in a register the call
-    /// clobbers.  The call node carries no such value, so this is the only
-    /// record that a callee may have received it.
-    frame_address_in_call_register: bool,
+    /// The `InitialVar(id)` node of each id.
+    pub(crate) initial_var_index: SecondaryMap<crate::node::InitialVnId, Option<NodeId>>,
+    /// Unsigned values of `IntConst(id)` nodes, deduped after
+    /// `crate::eval::mask` to the node's output width.
+    pub(crate) const_interner: EntityInterner<IntConstId, UBig>,
+    /// Case addresses of each `Switch(id)`, one per control output.
+    switch_tables: PrimaryMap<SwitchTableId, Vec<u64>>,
+    /// Override conventions of `Call { cc: Some(id) }`, deduped by value.
+    call_ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention>,
+    /// Sleigh user-op name by `CallOther` `user_op_id`.
+    call_other_names: FxHashMap<u64, String>,
+    /// Every tracked varnode, in `InitialVnId` order.
+    vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 }
 
-impl SideTables {
+impl FunctionSideTables {
+    pub(crate) fn new(vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>) -> Self {
+        Self {
+            asm_fingerprints: UnionDag::default(),
+            value_vn: FxHashMap::default(),
+            arg_index_to_values: FxHashMap::default(),
+            initial_var_index: SecondaryMap::new(),
+            const_interner: EntityInterner::default(),
+            switch_tables: PrimaryMap::new(),
+            call_ccs: EntityInterner::default(),
+            call_other_names: FxHashMap::default(),
+            vn_interner,
+        }
+    }
+
     #[inline]
     fn class_values(&self, class: ArgClass, index: u32) -> &[ValueId] {
         self.arg_index_to_values
@@ -161,93 +137,6 @@ impl SideTables {
         self.arg_index_to_values.values().flatten().copied()
     }
 
-    #[inline]
-    pub fn memory_class(&self, value: ValueId) -> MemDecomp {
-        self.memory_offsets.borrow()[value]
-    }
-
-    /// `(base, byte offset from base)`.  `None` when unknown or provably not
-    /// memory-rooted (neither stack- nor heap-rooted).
-    #[inline]
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn memory_slot_resolved(&self, value: ValueId) -> Option<(ValueId, i128)> {
-        self.memory_decomp(value).1
-    }
-
-    /// The region tag and the `(base, byte offset)` it resolves to, from one
-    /// lookup.
-    #[inline]
-    pub fn memory_decomp(&self, value: ValueId) -> (MemDecomp, Option<(ValueId, i128)>) {
-        let class = self.memory_offsets.borrow()[value];
-        let slot = match class {
-            MemDecomp::Stack(id) | MemDecomp::Heap(id) => {
-                self.memory_interner.borrow().get(id).copied()
-            }
-            MemDecomp::Unknown | MemDecomp::NotMemory => None,
-        };
-        (class, slot)
-    }
-
-    /// `offset` is in bytes from `base`.
-    #[inline]
-    pub fn set_stack_slot(&self, value: ValueId, base: ValueId, offset: i128) {
-        let id = self.memory_interner.borrow_mut().intern((base, offset));
-        self.memory_offsets.borrow_mut()[value] = MemDecomp::Stack(id);
-    }
-
-    /// `offset` is in bytes from the heap `base` (an allocator's return
-    /// pointer). Distinct from [`Self::set_stack_slot`] only in the region tag.
-    #[inline]
-    pub fn set_heap_slot(&self, value: ValueId, base: ValueId, offset: i128) {
-        let id = self.memory_interner.borrow_mut().intern((base, offset));
-        self.memory_offsets.borrow_mut()[value] = MemDecomp::Heap(id);
-    }
-
-    /// Negative memo entry: `value` is provably not memory-rooted (neither
-    /// stack- nor heap-rooted).
-    #[inline]
-    pub fn set_not_memory(&self, value: ValueId) {
-        self.memory_offsets.borrow_mut()[value] = MemDecomp::NotMemory;
-    }
-
-    /// Drops every memoized decomposition, invalidating all [`MemoryId`]s.
-    /// A caller that rewires an address value's producers owes the call; the
-    /// fixed-point loop makes it after every changing pass.
-    #[inline]
-    pub fn clear_memory_slots(&self) {
-        self.memory_offsets.borrow_mut().clear();
-        *self.memory_interner.borrow_mut() = EntityInterner::new();
-    }
-
-    /// Memoized frame-escape verdict, or `None` when not yet computed.
-    #[inline]
-    pub fn frame_escape(&self) -> Option<bool> {
-        self.frame_escape.get()
-    }
-
-    #[inline]
-    pub fn set_frame_escape(&self, escapes: bool) {
-        self.frame_escape.set(Some(escapes));
-    }
-
-    /// Invalidates the memo. The pipeline calls it after every changing pass of
-    /// the fixed-point loop and after every post-pass.
-    #[inline]
-    pub fn clear_frame_escape(&self) {
-        self.frame_escape.set(None);
-    }
-
-    /// Whether some `Call` saw a stack address in a register it clobbers.
-    #[inline]
-    pub fn frame_address_in_call_register(&self) -> bool {
-        self.frame_address_in_call_register
-    }
-
-    #[inline]
-    pub fn set_frame_address_in_call_register(&mut self) {
-        self.frame_address_in_call_register = true;
-    }
-
     /// Unordered.
     pub fn asm_fingerprint(&self, id: NodeId) -> FxHashSet<u64> {
         let mut set = FxHashSet::default();
@@ -262,136 +151,296 @@ impl SideTables {
         self.asm_fingerprints.is_empty(id)
     }
 
-    /// Unions `contributors` in.  Existing entries are never removed.
+    /// Unions `contributors` in. Existing entries are never removed.
     pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
         for &addr in contributors {
             self.asm_fingerprints.extend(node_id, addr);
         }
     }
 
-    /// Links `src`'s fingerprint under `dst`'s. A live alias, not a copy:
-    /// contributors added to `src` afterwards are `dst`'s too.
-    pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
+    /// Links `src`'s fingerprint under `dst`'s, a live alias once `src`'s is
+    /// non-empty (see [`UnionDag::union`]).
+    pub(crate) fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
         if dst == src {
             return;
         }
         self.asm_fingerprints.union(dst, src);
     }
 
-    /// Remaps every arena-id key / value after a compaction; an entry whose
-    /// node or value did not survive is dropped.
-    pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
-        self.asm_fingerprints
-            .remap(|old| remap.node_old_to_new(old));
-        // Both the slot key and its interned base are ValueIds, so the map and
-        // the interner have to be rebuilt together.
-        let (new_slots, new_interner) = {
-            let old_slots = self.memory_offsets.borrow();
-            let old_interner = self.memory_interner.borrow();
-            let mut new_interner: EntityInterner<MemoryId, (ValueId, i128)> = EntityInterner::new();
-            let mut new_slots: SecondaryMap<ValueId, MemDecomp> = SecondaryMap::new();
-            for (old_value, slot) in old_slots.iter() {
-                let Some(new_value) = remap.value_old_to_new(old_value) else {
-                    continue;
-                };
-                let new_slot = match *slot {
-                    MemDecomp::Unknown => continue,
-                    MemDecomp::NotMemory => MemDecomp::NotMemory,
-                    MemDecomp::Stack(id) | MemDecomp::Heap(id) => {
-                        let Some(&(old_base, off)) = old_interner.get(id) else {
-                            continue;
-                        };
-                        let Some(new_base) = remap.value_old_to_new(old_base) else {
-                            continue;
-                        };
-                        let new_id = new_interner.intern((new_base, off));
-                        if matches!(*slot, MemDecomp::Heap(_)) {
-                            MemDecomp::Heap(new_id)
-                        } else {
-                            MemDecomp::Stack(new_id)
-                        }
-                    }
-                };
-                new_slots[new_value] = new_slot;
+    /// Rebuilds the constant interner, the switch tables and the call
+    /// conventions over the entries surviving nodes reference, rewriting each
+    /// node's id in place. Call only after `Graph::retain_reachable_stale_cache`.
+    pub(crate) fn gc_payload_tables(&mut self, graph: &mut Graph) {
+        // Exhaustive, so a new field must state whether it is collected.
+        let Self {
+            // Translated by `Self::remap`.
+            asm_fingerprints: _,
+            value_vn: _,
+            arg_index_to_values: _,
+            initial_var_index: _,
+            const_interner,
+            switch_tables,
+            call_ccs,
+            // Keyed by `user_op_id`, which names every `CallOther`, live or not.
+            call_other_names: _,
+            // The function's own tracked varnodes, not a node's.
+            vn_interner: _,
+        } = self;
+        let mut consts: EntityInterner<IntConstId, UBig> = EntityInterner::default();
+        let mut const_ids: SecondaryMap<IntConstId, Option<IntConstId>> = SecondaryMap::new();
+        let mut tables: PrimaryMap<SwitchTableId, Vec<u64>> = PrimaryMap::new();
+        let mut table_ids: SecondaryMap<SwitchTableId, Option<SwitchTableId>> = SecondaryMap::new();
+        let mut ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention> =
+            EntityInterner::default();
+        let mut cc_ids: SecondaryMap<CcId, Option<CcId>> = SecondaryMap::new();
+        let nodes: Vec<NodeId> = graph.all_node_ids().collect();
+        for node in nodes {
+            match graph.node_kind_mut(node) {
+                NodeKind::IntConst(id) => {
+                    let old = *id;
+                    *id = *const_ids[old]
+                        .get_or_insert_with(|| consts.intern(const_interner[old].clone()));
+                }
+                NodeKind::Switch(id) => {
+                    let old = *id;
+                    *id = *table_ids[old]
+                        .get_or_insert_with(|| tables.push(switch_tables[old].clone()));
+                }
+                NodeKind::Call { cc: Some(id) } => {
+                    let old = *id;
+                    *id = *cc_ids[old].get_or_insert_with(|| ccs.intern(call_ccs[old].clone()));
+                }
+                NodeKind::Call { cc: None }
+                | NodeKind::Entry
+                | NodeKind::InitialMemory
+                | NodeKind::InitialVar(_)
+                | NodeKind::Region
+                | NodeKind::MemPhi
+                | NodeKind::Phi
+                | NodeKind::If
+                | NodeKind::Return
+                | NodeKind::IndirectBranch
+                | NodeKind::Unreachable
+                | NodeKind::Load(_)
+                | NodeKind::Store(_)
+                | NodeKind::IntUnaryOp(_)
+                | NodeKind::IntBinaryOp(_)
+                | NodeKind::IntCmpOp(_)
+                | NodeKind::Truncate
+                | NodeKind::Popcount
+                | NodeKind::Lzcount
+                | NodeKind::Extend(_)
+                | NodeKind::FloatConst(_)
+                | NodeKind::FloatBinaryOp(_)
+                | NodeKind::FloatUnaryOp(_)
+                | NodeKind::FloatCmpOp(_)
+                | NodeKind::IntToFloat
+                | NodeKind::FloatToInt
+                | NodeKind::FloatToFloat
+                | NodeKind::IntBitsToFloat
+                | NodeKind::FloatBitsToInt
+                | NodeKind::CallOther { .. }
+                | NodeKind::CPoolRef
+                | NodeKind::New => {}
             }
-            (new_slots, new_interner)
-        };
-        *self.memory_offsets.get_mut() = new_slots;
-        *self.memory_interner.get_mut() = new_interner;
-        // `InitialVnId`s are stable across compaction, so only the arena-id
-        // coordinate of the next two maps needs translating.
-        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn_id| {
-            remap
-                .value_old_to_new(old_value)
-                .map(|new_value| (new_value, vn_id))
-        });
-        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn_id, old_id| {
-            remap.node_old_to_new(old_id).map(|new_id| (vn_id, new_id))
-        });
-        // Recomputed off the compacted graph on next demand.
-        self.frame_escape.set(None);
+        }
+        *const_interner = consts;
+        *switch_tables = tables;
+        *call_ccs = ccs;
+    }
+
+    /// Remaps arena ids after a compaction, dropping entries that did not survive.
+    pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
+        // Exhaustive, so a new field must state what compaction does to it.
+        let Self {
+            asm_fingerprints,
+            value_vn,
+            arg_index_to_values,
+            initial_var_index,
+            // Payload ids, renumbered by `Self::gc_payload_tables`.
+            const_interner: _,
+            switch_tables: _,
+            call_ccs: _,
+            // Keyed by a `user_op_id` and an `InitialVnId`, both stable
+            // across compaction.
+            call_other_names: _,
+            vn_interner: _,
+        } = self;
+        asm_fingerprints.remap(|old| remap.node_old_to_new(old));
+        *value_vn = value_vn
+            .drain()
+            .filter_map(|(value, id)| Some((remap.value_old_to_new(value)?, id)))
+            .collect();
+        for node in initial_var_index.values_mut() {
+            *node = node.and_then(|n| remap.node_old_to_new(n));
+        }
         // An index whose carriers all vanish is dropped.
-        self.arg_index_to_values =
-            remap_hashmap(&mut self.arg_index_to_values, |key, old_values| {
-                let mapped: Vec<ValueId> = old_values
-                    .into_iter()
-                    .filter_map(|old_value| remap.value_old_to_new(old_value))
-                    .collect();
-                (!mapped.is_empty()).then_some((key, mapped))
-            });
+        arg_index_to_values.retain(|_, values| {
+            values.retain_mut(|v| remap.value_old_to_new(*v).map(|new| *v = new).is_some());
+            !values.is_empty()
+        });
+    }
+}
+
+impl crate::Function {
+    /// Interns `value` masked to `ty`'s width.
+    ///
+    /// `ty` must be an integer type; a float one masks every value to `0` and
+    /// [`crate::validate`] rejects the node.
+    pub fn intern_int_const(
+        &mut self,
+        value: impl Into<UBig>,
+        ty: crate::node::ValueType,
+    ) -> crate::node::IntConstId {
+        let v = crate::eval::mask(&value.into(), ty);
+        self.side_tables_mut().const_interner.intern(v)
+    }
+
+    /// Panics on an out-of-range id. An in-range id minted by another
+    /// function's interner silently returns this one's value, which
+    /// `validate`'s `DanglingConstId` cannot see either.
+    pub(crate) fn const_value(&self, id: crate::node::IntConstId) -> &UBig {
+        &self.side_tables().const_interner[id]
+    }
+
+    /// The tracked varnodes in `InitialVnId` order.
+    pub fn all_vns(&self) -> &[rsleigh::Vn] {
+        self.side_tables().vn_interner.values_as_slice()
+    }
+
+    /// Panics on an out-of-range id.
+    pub fn initial_vn(&self, id: crate::node::InitialVnId) -> rsleigh::Vn {
+        self.side_tables().vn_interner[id]
+    }
+
+    /// Non-panicking [`Self::initial_vn`].
+    pub(crate) fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
+        self.side_tables().vn_interner.get(id).copied()
+    }
+
+    /// `None` when `vn` is not tracked.
+    pub fn vn_id_of(&self, vn: &rsleigh::Vn) -> Option<crate::node::InitialVnId> {
+        self.side_tables().vn_interner.key_of(vn)
+    }
+
+    /// In allocation order.
+    pub(crate) fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
+        self.side_tables().vn_interner.keys()
+    }
+
+    /// The tracked varnode `value` represents, if any.
+    #[inline]
+    pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
+        self.side_tables()
+            .value_vn
+            .get(&value)
+            .map(|&id| self.initial_vn(id))
+    }
+
+    /// A no-op when `vn` is untracked.
+    #[inline]
+    pub(crate) fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
+        if let Some(vn_id) = self.vn_id_of(&vn) {
+            self.side_tables_mut().value_vn.insert(value, vn_id);
+        }
+    }
+
+    /// The effective convention for `node_id`: a `Call`'s override if it
+    /// carries one, else the function default.
+    ///
+    /// # Panics
+    ///
+    /// On a `Call` whose [`CcId`] this function never minted, which `validate`
+    /// reports as `DanglingCcId`.
+    #[inline]
+    pub fn get_cc(&self, node_id: NodeId) -> &strider_target::BuiltCallingConvention {
+        let NodeKind::Call { cc: Some(id) } = *self.node_kind(node_id) else {
+            return self.default_cc();
+        };
+        &self.side_tables().call_ccs[id]
+    }
+
+    /// `None` for an id this function never minted.
+    #[inline]
+    pub fn cc(&self, id: CcId) -> Option<&strider_target::BuiltCallingConvention> {
+        self.side_tables().call_ccs.get(id)
+    }
+
+    /// Replaces any prior override on `call`.
+    ///
+    /// # Panics
+    ///
+    /// If `call` is not a `Call`.
+    pub fn set_call_cc(&mut self, call: NodeId, cc: strider_target::BuiltCallingConvention) {
+        let id = self.side_tables_mut().call_ccs.intern(cc);
+        let kind = self.graph_mut().node_kind_mut(call);
+        let NodeKind::Call { cc } = kind else {
+            panic!("set_call_cc on {call:?}, a {kind:?}");
+        };
+        *cc = Some(id);
+    }
+
+    /// The case addresses of a `Switch`, empty for any other node or an id
+    /// this function never minted.
+    #[inline]
+    pub fn switch_targets(&self, node_id: NodeId) -> &[u64] {
+        let NodeKind::Switch(id) = *self.node_kind(node_id) else {
+            return &[];
+        };
+        self.switch_table(id).unwrap_or(&[])
+    }
+
+    /// `None` for an id this function never minted.
+    #[inline]
+    pub(crate) fn switch_table(&self, id: SwitchTableId) -> Option<&[u64]> {
+        self.side_tables().switch_tables.get(id).map(Vec::as_slice)
+    }
+
+    /// A fresh table for a `Switch` about to be created.
+    pub fn add_switch_table(&mut self, targets: Vec<u64>) -> SwitchTableId {
+        self.side_tables_mut().switch_tables.push(targets)
+    }
+
+    /// The name of a `CallOther`'s user-op, Sleigh's or `read_volatile`;
+    /// `None` for any other node or an unnamed op.
+    #[inline]
+    pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
+        let NodeKind::CallOther { user_op_id } = *self.node_kind(node_id) else {
+            return None;
+        };
+        self.side_tables()
+            .call_other_names
+            .get(&user_op_id)
+            .map(String::as_str)
+    }
+
+    /// Names every `CallOther { user_op_id }`, present and future.
+    pub fn set_call_other_name(&mut self, user_op_id: u64, name: impl Into<String>) {
+        self.side_tables_mut()
+            .call_other_names
+            .insert(user_op_id, name.into());
+    }
+
+    /// The output of `vn`'s `InitialVar` node; `None` when `vn` is untracked or
+    /// its `InitialVar` did not survive [`Self::compact`].
+    pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
+        let id = self.vn_id_of(vn)?;
+        let node = self.side_tables().initial_var_index[id]?;
+        self.graph().node_outputs(node).first().copied()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::function::test_function;
+    use crate::node::ValueType;
     use cranelift_entity::EntityRef;
-
-    /// Class and resolved slot come out of one lookup and must agree in every
-    /// state.
-    #[test]
-    fn memory_decomp_returns_class_and_slot_together() {
-        let st = SideTables::default();
-        let base = ValueId::new(0);
-        let stack = ValueId::new(1);
-        let heap = ValueId::new(2);
-        let not_mem = ValueId::new(3);
-        let cold = ValueId::new(4);
-
-        st.set_stack_slot(stack, base, -8);
-        st.set_heap_slot(heap, base, 16);
-        st.set_not_memory(not_mem);
-
-        assert!(
-            matches!(st.memory_decomp(stack), (MemDecomp::Stack(_), Some((b, -8))) if b == base)
-        );
-        assert!(matches!(st.memory_decomp(heap), (MemDecomp::Heap(_), Some((b, 16))) if b == base));
-        assert_eq!(st.memory_decomp(not_mem), (MemDecomp::NotMemory, None));
-        assert_eq!(st.memory_decomp(cold), (MemDecomp::Unknown, None));
-
-        for v in [stack, heap, not_mem, cold] {
-            let (class, slot) = st.memory_decomp(v);
-            assert_eq!(class, st.memory_class(v));
-            assert_eq!(slot, st.memory_slot_resolved(v));
-        }
-    }
-
-    #[test]
-    fn frame_escape_round_trips_and_clears() {
-        let st = SideTables::default();
-        assert_eq!(st.frame_escape(), None, "cold: not yet computed");
-        st.set_frame_escape(true);
-        assert_eq!(st.frame_escape(), Some(true));
-        st.set_frame_escape(false);
-        assert_eq!(st.frame_escape(), Some(false), "overwrites a prior verdict");
-        st.clear_frame_escape();
-        assert_eq!(st.frame_escape(), None, "clear invalidates the memo");
-    }
 
     // The union is order-independent, deduplicating and never dropping an entry.
     #[test]
     fn extend_asm_fingerprint_unions_deduped() {
-        let mut st = SideTables::default();
+        let mut st = FunctionSideTables::new(EntityInterner::default());
         let n = NodeId::new(3);
 
         // Seed from empty; contributors may arrive unsorted.
@@ -421,5 +470,76 @@ mod tests {
             st.asm_fingerprint(n),
             FxHashSet::from_iter([5, 10, 20, 30, 35, 40, 45, 50])
         );
+    }
+
+    // Interning: one value, one `IntConstId`, masked to the declared
+    // width whatever spelling reached it.
+
+    /// A user-supplied rewrite can reach `intern_int_const` with a float type;
+    /// it must not panic (a Python `PanicException` escapes `except
+    /// Exception`), and `validate` reports the mistake.
+    #[test]
+    fn intern_int_const_on_a_float_type_does_not_panic() {
+        let mut f = test_function();
+        let id = f.intern_int_const(0u64, ValueType::float(64));
+        assert_eq!(*f.const_value(id), UBig::ZERO);
+    }
+
+    /// No unmasked value may slip in via a `from_words` spelling.
+    #[test]
+    fn interning_from_words_masks_to_width() {
+        let mut f = test_function();
+        // Bit 69 is inside I80's width, bit 84 is above it; only 69 survives.
+        let hi: u64 = (1 << 5) | (1 << 20);
+        let value = u128::from(hi) << 64;
+        let limbed = f.intern_int_const(UBig::from_words(&[0, hi]), ValueType::int(80));
+        let scalar = f.intern_int_const(value, ValueType::int(80));
+        assert_eq!(
+            limbed, scalar,
+            "a from_words spelling must mask to width like a scalar one"
+        );
+        let masked = value & ValueType::int(80).int_mask_u128().unwrap();
+        assert_eq!(u128::try_from(f.const_value(limbed)), Ok(masked));
+        assert_eq!(
+            f.const_value(limbed),
+            &UBig::from_words(&[0, 1 << 5]),
+            "past the carrier the limbs carry the masked value"
+        );
+    }
+
+    /// Past the carrier there is no scalar reading, and the limbs stand.
+    #[test]
+    fn values_past_the_u128_carrier_keep_their_limbs() {
+        let mut f = test_function();
+        // Bit 128 is the first bit no `u128` carries.
+        let id = f.intern_int_const(UBig::from_words(&[0, 0, 1, 0]), ValueType::int(256));
+        assert!(u128::try_from(f.const_value(id)).is_err());
+        assert_eq!(*f.const_value(id), UBig::ONE << 128);
+    }
+
+    /// Bits above the declared width are not part of the value, on either
+    /// path, so an over-wide spelling dedups with the masked one.
+    #[test]
+    fn interning_masks_to_the_declared_width_on_both_paths() {
+        let cases: [(&str, ValueType); 4] = [
+            ("i1", ValueType::I1),
+            ("i64", ValueType::int(64)),
+            ("i72", ValueType::int(72)),
+            ("i128", ValueType::int(128)),
+        ];
+        for (label, ty) in cases {
+            let mut f = test_function();
+            let masked = ty.int_mask_u128().unwrap();
+            let saturated = f.intern_int_const(u128::MAX, ty);
+            let exact = f.intern_int_const(masked, ty);
+            let limbed = f.intern_int_const(UBig::from_words(&[u64::MAX; 8]), ty);
+            assert_eq!(saturated, exact, "{label}: the mask is applied first");
+            assert_eq!(saturated, limbed, "{label}: the limb path masks too");
+            assert_eq!(
+                u128::try_from(f.const_value(saturated)),
+                Ok(masked),
+                "{label}"
+            );
+        }
     }
 }

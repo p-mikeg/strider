@@ -1,42 +1,554 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+### Breaking, Python
+
+These change an answer without an error:
+
+- `Node.vn()` / `Match.vn()` of a call whose convention returns nothing is
+  `None`; it named one of the call's clobbered registers.
+- A `<name>.cold` fragment goes to the function of that name in its own
+  object file (STT_FILE group), else to a global one, else to every function
+  of that name, so two statics sharing a name no longer share fragments.
+- A `one_of` / `first_of` arm nests through its slot's edge:
+  `store().mem(one_of([call().res()]))` and the `load()` twin, which matched
+  nothing, match the call's memory token.
+- A `call()` / `call_other()` in a raw slot (`input`, `any_input`,
+  `phi_token`, `call_other().arg`) also binds the call's control and memory
+  edges; `.res()` keeps it to the value.
+- `into_pat()` holds the builder by reference: a later edit to the builder
+  changes what the `Pat` matches, and it answers every query.
+- `BoundCapture.__eq__` compares at full width: `m[c] == 2**300` can be
+  `True`.
+- `find_all` returns one match per bound output:
+  `call().any_output().capture(c)` on an n-output call gives n matches, and
+  `find_unique` raises there.
+- `ElfLifter.analyze` / `build_cfg` follow a function's GCC `<name>.cold` and
+  `<name>.cold.N` fragments instead of ending at a tail call.
+- `BoundCapture`'s readers are methods: `m[c].uint == 4` is `False`; call
+  `m[c].uint()`.
+- An object file's defined IFUNC symbol sits at the unmapped extern address a
+  call to it targets, not at its resolver: its `Symbol.address` changes, its
+  `size` is `None`, it is not `is_function`, `functions()` leaves it out, and
+  `analyze` of it raises.
+- A constant's `asm_fingerprint` leaves out the compare or integer binary op
+  that reads it through a register.
+- `symbols()`, `iter_symbols()` and `symbol_at` leave out ARM / AArch64
+  mapping symbols (`$a`, `$d`, `$t`, `$x`, `$d.N`).
+- `CallingConvention.name()` of a `preserves_all()` / `preserves_regs()`
+  variant is `"<base>.preserves_all"` / `"<base>.preserves_regs"`.
+- `load_elf(from_segments=False)` serves no section of a writable PT_LOAD
+  as ROM.
+- A carry after `cmn` / `adds` / x86 `add` becomes one unsigned `Less`, so
+  HI / LS / `ja` / `jbe` sites match an unsigned-compare pattern.
+- A `call()` / `call_other()` wrapped in `one_of`, `first_of` or `into_pat`
+  matches once per call, like the bare pattern, not once per output.
+- `.res()` on a call in a control or memory slot has no effect; it made the
+  pattern match nothing.
+- A call's collected stack arguments end at a slot holding a callee-saved
+  register's entry value, so `call().arg(k)` past the register arguments no
+  longer binds the prologue's saved frame pointer, link register or
+  callee-saved registers.
+- ARM hard-float (AAPCS-VFP) functions return in d0-d7 (q0-q3, a vector
+  aggregate): calls and returns carry d4-d7.
+- An optimizer run that reaches its iteration cap returns the valid, partly
+  folded function and sets `Function.optimizer_converged` to `False`, where
+  it raised.
+- A MIPS16 function's `Symbol.address` carries its ISA bit (bit 0), so
+  `analyze` of it decodes MIPS16; it decoded MIPS32.
+- A stack argument every arm of a join stores (gcc's cross-jumped calls) is
+  collected as the phi of the stored values: `call().arg(k)` binds it. Locals
+  stored on both arms at the argument slots come along too.
+- A direct branch into an instruction's interior enters at that instruction,
+  not at the start of its region; an x86 `lock`-prefix re-entry is benign
+  anywhere in a region and no longer reported.
+
+These raise:
+
+- `add_elf` / `add_symbol_file` raise `FileNotFoundError` for a missing path
+  and `ValueError` for a non-ELF, as `load_elf` does, where they raised
+  `StriderError`.
+- `bytes` where a list of ints is expected (`known_targets` values,
+  `no_return_targets`, `noalias_allocators`, `int_const`) raises `TypeError`;
+  it read each byte as an int.
+- An out-of-range int for a fixed-width argument (`int_const_any_width`,
+  `float_const`, `stack_offset`, `source_stack`, `function_arg_stack`,
+  `custom()`'s stack fields) raises `OverflowError`, where it raised
+  `TypeError` or `StriderError`.
+- An out-of-range unsigned `add_symbols` size, `value_of_width` /
+  `inputs_of_width` width or `Vn` size raises `StriderError`, where it raised
+  `OverflowError`.
+- `entry()` / `region()` as a value operand raise at query time; they
+  returned `[]`.
+- `find_unique_value` raises `StriderError` for a capture no pattern binds;
+  it returned `None`.
+- `IfPat.true_branch` / `false_branch` are gone: join on the edge,
+  `[if_else().capture_true(t), region().any_input(t)]`.
+- `Cfg.is_complete()` and the per-reason `Cfg` getters are gone:
+  `cfg.incomplete` lists every `(address, reason)`, the reasons in
+  `strider.cfg.INCOMPLETE_REASONS`. `analyze` and `build_cfg` report
+  incompleteness rather than raise it. They raise `StriderError` only for an
+  unmapped or undecodable entry or a fall-through no call explains into bytes
+  Sleigh rejects; `analyze` also raises for a user-op with no `CallOtherAbi`.
+- `CallingConvention.no_return()` is gone: list the callee in
+  `CfgOptions(no_return_targets=...)`, which `build_cfg` honours too.
+- `CfgOptions.with_function_max_size`, `with_data_ranges` and
+  `LifterOptions.with_cfg` are gone: pass the fields to the constructors.
+  `function_max_size` with `allow_code_before_start_addr=True` raises
+  `ValueError`.
+- `strider.opt.CfgDetach` and `StackOffsetDetect` are gone: the default
+  pipeline does their work.
+- `Lifter.optimize(function, pipeline, opts)` is
+  `Function.optimize(assumptions=None, pipeline=None)`. Claims accumulate on
+  the function (`Function.assumptions`); a set leaving out a claim already in
+  force, or adding one the lift reads, raises.
+- `Lifter.visualize` is `strider.explore.visualize(target, *, ...)`.
+- `Lifter.reg` / `reg_name` and `strider.sleigh.Sleigh` are gone: use
+  `SleighArch.reg` / `reg_name` / `name()`. `lifter=` is gone from
+  `to_dot` / `neighborhood_dot`.
+- `Node.wide_const_bytes()` is gone: `uint()` reads every width.
+- Op-name aliases (`"eq"`, `"shl"`, `"add"`, `"zero"`) raise: pass the op's
+  own name (`"Equal"`, `"ShiftLeft"`, `"Add"`, `"ZeroExtend"`).
+- A `strider.pattern` pattern is no longer a rewrite right-hand side: use
+  `strider.template`.
+- `BoundCapture` has no truth value (`bool(m[c])` raises).
+- `AssumptionOptions` is unhashable and compares by value; `SleighArch`,
+  `CallingConvention` and `Symbol` compare and hash by value.
+- `bool(CastMask)` is whether it selects any cast.
+- `ElfLifter.analyze` / `build_cfg` given the wrong options type raise
+  `TypeError`.
+- A `MemReader.read` that raises, returns a non-bytes value or returns more
+  bytes than asked fails the lift with `StriderError` (its exception as
+  `__cause__`) at any address, not `unmapped_target` past the entry.
+- A buffer with items wider than a byte (`array('H')`,
+  `memoryview.cast('I')`) is refused where it was read one item per byte:
+  `BufferReader` raises `TypeError`, a `MemReader.read` returning one fails
+  the lift, a `ReadOnlyMemory.read` returning one reads as unmapped.
+- `Lifter.call_other_abi` raises for an entry built against another arch.
+- `ElfLifter.arch` and `reader()` raise while the handle is in use;
+  `reader()` returns the handle's own `BufferReader`.
+- An address, node id or operand index outside the unsigned range raises
+  `StriderError`, not `OverflowError`; a `bool` there, `entry` included,
+  raises `TypeError` where it read as 0 or 1.
+- A non-int `entry` to `Lifter.analyze` / `build_cfg` (and
+  `ElfLifter.build_cfg`) raises `TypeError`, not `StriderError`; `pcode_at`
+  takes `entry` the same way. `Lifter.analyze` without `cc` raises
+  `TypeError`.
+- `of_width`, `value_of_width`, `inputs_of_width` and the `load()` /
+  `store()` `bit_width` raise `StriderError` for a width no value type has;
+  they matched nothing.
+- A constant `int_sub` / `float_sub` costs 5 pattern nodes against the
+  256-node cap, not 3.
+- `field(base, True)` raises `TypeError` where it read offset 1.
+
+Output that reads differently:
+
+- `Node.kind()` / `repr(Node)` render `IntConst`, `InitialVar` and
+  `CallOther` without the interner handle.
+- `to_dot(pretty=True)` names a `Load` / `Store` space by its sla name.
+- `Function.to_text()` adds `assumptions` and
+  `frame_address_in_call_register` header lines, and a REGISTER-space byte
+  order that differs from the data order.
+- `Node.sint()` and the signed `Match` readers answer past 128 bits where they
+  answered `None`; `int_const` takes an `int` of up to 512 bits.
+- A failed read at a decode address is reported as `is unmapped`,
+  not as missing bytes; a preset convention that does not fit the arch names
+  both; a builder wired into its own operand is named as a cycle.
+- Calling-convention errors spell a varnode as `%[0x20]:4` and a preset by
+  its name; a Sleigh exception reads `sleigh: <error>`.
+
+### Breaking, Rust
+
+The crates are unpublished and their API changed throughout; the larger moves
+are `Strider::analyze(entry, cc, &AnalyzeOptions, pipeline)`,
+`DecodeEngine`, `ValueType` as `Int(u16)` / `Float(u16)`, integer constants
+stored as `dashu-int` `UBig`, and a sealed `TemplatePat`. One silent change:
+a repeated `CallOtherPat::name` or `PhiPat::for_vn` intersects where the last
+replaced the rest.
+
+- `Lifter::build_ir_with` takes `entry_values` (registers bound to a known
+  value on entry, passed by `AnalyzeOptions::entry_values`);
+  `OpdTable::toc_at` reads an ELFv1 descriptor's TOC pointer.
+- `BuiltCallingConvention::validate` no longer requires a callee-saved
+  link register; `validate_default` does, for a function's own convention.
+- `OptimizerPipeline::run` returns `Ok` at its iteration cap; read
+  `Function::optimizer_converged`. A typed `when_match` on a call root inside
+  an alternation is refused, as `.build()` refuses it.
+- `one_of![ret()].when_match(..)` is refused as `ret().when_match(..)` is; it
+  never matched.
+- `Region::insns` is a `VecDeque`.
+- `ValidationError::EmptySwitchTargets` is gone (reported as
+  `NodeOutputCountMismatch`), and so is `EditFunction::control_edits`.
+- `Function::frame_address_in_call_register` is gone: read
+  `call_register_frame_reach().is_some()`.
+- `ValidationError::PhiTokenNotFromRegion::producer_kind` is `token_kind`;
+  `OrphanedMemoryOutput` has no `kind`; `Match::get_vn` and strider-pattern's
+  `test-util` feature are gone; `strider_ir::walk::CastMask` is
+  `strider_ir::node::CastMask`; `first_value_input_type` is
+  `slot0_input_type`.
+- `FunctionBuilder::new` returns the builder, not a `Result`;
+  `Function::new` takes the tracked varnodes as a slice.
+- `OwnedElf::open` is gone: `load_elf(path)` maps the file.
+- `float_le(x, y).ordered()` pins both comparisons.
+
+### Added, Python
+
+- Integer arguments take any `__index__` object (`BoundCapture`, numpy
+  ints); `to_dot` / `to_html` take an `os.PathLike` path.
+- `Capture("any_")` is an ordinary name; only `"_"` stays reserved.
+- `CfgOptions(fragment_ranges=[(start, end)])`: ranges that also belong to
+  the function (`ElfLifter` fills it from `.cold` symbols).
+- `"past_function_end"` in `INCOMPLETE_REASONS`: code fell through past
+  `function_max_size` or a `fragment_ranges` end, now a tail call where it
+  was an error.
+- `AssumptionOptions.fp_rounding_mode_is_nearest` and
+  `msr_register_keeps_mode` (both default on, read by the lift);
+  `AssumptionOptions.none(...)` takes keywords; `a | b` / `union`;
+  `Function.assumptions`.
+- `strider.sleigh.CC_PRESETS`, `CallingConvention.preset(name)`,
+  `SleighArch.preset(name)`, `SleighArch.calling_conventions()`,
+  `CallingConvention.to_dict()`, `custom(entry_address=,
+  reg_args_adjoin_stack_args=)`.
+- `CallingConvention.custom` / `CallOtherAbi.custom` take a `SleighArch`;
+  `SleighArch.reg` / `reg_name` work without a lifter.
+- `strider.template.int_ne`, `int_le`, `int_sle`, `float_ne` and
+  `capture_typed`.
+- `Symbol.local_entry` (ppc64 ELFv2).
+- `strider.cfg.DOT_STYLES`, `strider.sleigh.ARCH_PRESETS`, and
+  `strider.pattern.VALUE_TYPES`, `INT_CMP_OPS`, `INT_BINARY_OPS`,
+  `BOOL_BINARY_OPS`, `FLOAT_BINARY_OPS` and `EXTEND_OPS`.
+- A `Lifter` takes weak references, so a reader can point back at its
+  handle without a cycle.
+- `.ordered()` on `inputs_of_width` and `bool_inputs`.
+- `Function.optimizer_converged`.
+
+### Changed, Python
+
+- `ElfLifter`, `load_elf`, `FieldPat`, `field` and `code_ptr` report
+  `strider.lift` / `strider.pattern` as their `__module__`.
+- A `Lifter` works on any thread. `analyze`, `build_cfg` and `add_elf` hold
+  it alone; a `Lifter` call on it meanwhile raises `StriderError` ("already
+  in use"), while `ElfLifter` symbol and memory reads still work.
+- Every typed builder nests in every slot but a memory one; a memory slot
+  takes `anything()`, `var(c)` and a bare `Capture`.
+- `load()` / `store()` region filters apply in call order: each replaces the
+  earlier one, except that `stack_only()` keeps an earlier `stack_offset`.
+- `function_arg_reg` / `source_register` match a sub-register of the carrier.
+- `Function.rewrite` / `rewrite_all` skip a site whose replacement has
+  another width or is not available where it is read, count each site once,
+  and raise when a replacement would build nodes no instruction produced.
+- `ElfLifter.build_cfg` derives `data_ranges` and ppc64 local entries from
+  the ELF as `analyze` does.
+- `ElfLifter.analyze` takes an `__index__` entry as an address.
+- `ElfLifter.analyze` enters a ppc64 ELFv1 function with `r2` holding its
+  `.opd` descriptor's TOC pointer, so TOC-relative loads and jump tables
+  resolve as on ELFv2.
+- `CallingConvention.custom` accepts a `link_register` missing from
+  `callee_saved_regs`: a call to such a `per_address_ccs` callee clobbers
+  it (the ppc32 `-mbss-plt` GOT thunk). `analyze` raises for one as the
+  function's own convention.
+- `analyze` refuses a calling convention whose stack geometry belongs to
+  another arch; `CallingConvention.custom` checks it at construction.
+- `AssumptionOptions(...)` takes its defaults from Rust (`None` means
+  default) and keeps `noalias_allocators` sorted.
+- `LoadForward`, `FunctionArgDetect` and return-target verification narrow
+  under `stack_global_disjoint` and `noalias_allocators`.
+- `ConstantFold` narrows a truncate of a wide op, folds integer constants
+  past 128 bits, and collapses cast chains and constant bitcasts;
+  `FlagCmpCanonicalize` folds a signed compare against an immediate to one
+  `Sless` on x86, ARM, Thumb and AArch64; `PhiCollapse` folds `phi & C`.
+  Patterns written against the source shape may no longer match.
+- `DeadBranchElimination` folds a branch only if its surviving arm still
+  reaches a terminator, and strips every dead `Region` predecessor.
+- Error messages name the value-op constructor called, list accepted op
+  names, spell value types as `i64`, and name the first unbound capture.
+- A pattern compile reads its stack budget from the real thread stack on
+  Windows and the BSDs too.
+- `CfgOptions(function_max_size=)` and the neighborhood `depth` /
+  `hub_cap` / `max_nodes` refuse a `bool` (`TypeError`); a negative value
+  raises `StriderError`, not `OverflowError`.
+- The explorer's CFG search highlights nothing for an address outside u64;
+  it showed an error.
+
+### Fixed
+
+Matching and rewriting:
+
+- A join keeps matches that differ only in their root when their captures
+  are not shared with an earlier pattern; a join (`find_all` over several
+  patterns or with any constraint) dropped such rows.
+- Two fixed operands wired to one slot of a commutative node are not split
+  across both slots.
+- Replacing a builder's `.when()` or slot value whose `__del__` touches the
+  builder no longer panics.
+- `find_joined_constrained` keeps rows that differ only in a later
+  pattern's binding of a shared capture; the answer depended on pattern
+  order.
+- A template reading a capture its pattern bound to a node says so; it
+  reported the capture as unbound.
+- `rewrite` binds the same match `find_all` lists first at a root under
+  `first_of`.
+- `first_of` and `ignore_casts` settle in a fixed order: at each value the
+  first listed arm (or outermost cast level) that matches wins.
+- `int_const_any_width` with a negative value matches `I256` / `I512`
+  constants.
+- `.when()` on a nested `function_arg(..)` runs; `m[a] == m[b]` compares the
+  captured constants in the abi3 wheel.
+- A template constant at a shift count is built at the shift's width;
+  a template `float_const` with bits above its width is refused.
+- Rewrites skip a match through a `Phi` / `MemPhi` / `Region` whose
+  replacement would form a data cycle or read an unavailable value.
+- `repr()` of `CastMask`, `VnSpace`, a stale `BoundCapture` and a
+  `preserves_all()` / `preserves_regs()` convention evaluates back or names
+  the variant.
+- A `StriderError` raised on a small thread, and a query compiled on one, no
+  longer crash the process.
+- `int_sub(x, K)` and `float_sub(x, K)` with an uncaptured constant `K` (a
+  value, a list, `int_const_any_width`, bare or under one `of_width`) also
+  match the folded `x + (-K)`.
+- A capture on `ret()`, `unreachable()` or `indirect_branch()`, or on an
+  alternation with such an arm (`one_of([ret(), unreachable()]).capture(c)`),
+  binds the node; it matched nothing.
+
+Analysis:
+
+- A seeded table arm that calls an unmarked no-return function and then runs
+  past the function end is kept; a switch with such an arm before a literal
+  pool (gcc MIPS16, Thumb) stayed unresolved.
+- An arm falling through into another arm's region is sealed onto it before
+  decoding, so a mode clash is `isa_mode_conflict`, not `undecodable_target`.
+- Seating a table at an instruction that ends at 2^64 no longer overflows.
+- `mwaitx` reads its EBX timer.
+- An ARM `addls pc` or Thumb `tbb` jump table indexed through a guarded
+  ROM cell (`switch (map[c])`) seats only the arms the cell's guard admits;
+  it seated arms past the table, silently.
+- A 32-bit PowerPC `_Complex double` returns in r3..r6; i386 cdecl returns
+  no float in ST1.
+- An ARM SMCCC call (`smc` / `hvc`) preserves r8..r14.
+- A call's stack arguments take a narrow big-endian store at a merged
+  slot's start, and only a RAM load reads an incoming stack argument.
+- A call's stack arguments stored before a branch are collected when the
+  two paths store the other arguments differently (gcc -O2 aarch64, mips64).
+- `x == x`, `x < x` (signed and unsigned) and a signed borrow of `x - x`
+  fold.
+- `ElfLifter` no longer rescans every `add_symbols` symbol for `.cold`
+  names on each `analyze`.
+- A jump table behind an IT-block early return (`cmp; itt hi; movhi; bxhi lr;
+  tbb`) seats only the arms its dispatch reaches; it seated bytes past the
+  table and the next function with an empty `incomplete`.
+- ARM NEON `vtbl` / `vtbx` lift exactly on the D registers; they clobbered a
+  core register and never wrote `Dd`.
+- XSAVE / XSAVEC / XSAVEOPT / XSAVES read EDX:EAX, `cpuid` reads ECX, and
+  AArch64 `smc` / `hvc` read x0..x17.
+- A wide incoming stack load starting inside an argument merges into it
+  instead of starting a new ordinal.
+- A jump table indexed by a leading-zero or population count with no bounds
+  check (clang AArch64 `switch(__builtin_clz(x))`) is read up to the count's
+  largest value; it read past the table and seated arms of the next one.
+- A seeded table arm inside an instruction of the dispatch's own region
+  defers the site, as one in any other region does; it left a one-arm table.
+- `validate` rejects a memory read that skips a Store through a call that
+  leaves memory alone.
+- An exception a Python `ReadOnlyMemory.read` raised, read as unmapped, is
+  no longer the `__cause__` of a later `StriderError`.
+- A ppc64 `rldicl` switch (`switch (x >> 28)`) bounds its table by the
+  guard on the truncated rotate; it read past the table.
+- The ppc64 Linux-kernel conventions clobber r13 (the per-CPU `paca`)
+  across a call.
+- x86 `wrmsr` writes `FS_OFFSET` / `GS_OFFSET`.
+- A folded `popcount` / `lzcount` wraps to its output width.
+- The ppc64 `*16_HIGHER34` relocations hole only their halfword.
+- Call stack-argument collection and table classification are no longer
+  quadratic in calls behind merges and in table sites over one index.
+- Jump tables: index known bits, equality guards, phis of constants, bit
+  fields, `rlwinm` guards and byte indices bound the seated arms; a guard the
+  range analysis cannot read, or an unproven Thumb byte-table index, defers
+  the site rather than seating cells past the table; a `cmov; jmp *reg` phi
+  of labels resolves.
+- Seeds: a one-target `known_targets` seed outside the function is a tail
+  call; a `"return"` seed over a p-code `RETURN` is `"unverified_seed"`; a
+  seeded arm that is unmapped, undecodable or past the function's end is
+  dropped and reported; duplicate seed entries seat one arm.
+- ARM: ThumbEE mode carries across direct and resolved indirect edges; a
+  `blx` / `jalx` to a lower callee no longer switches the caller's mode;
+  `msr` to the CPSR control field re-banks, and `mrs` reads the masks.
+- Hard-float AAPCS arguments, and the MIPS `t9` / ppc64 `r12` entry address,
+  read the entry value at an entry that is also a loop header.
+- `per_address_ccs` overrides with another stack pointer are refused; they
+  produced wrong stack offsets.
+- `FunctionArgDetect` keeps a reassigned parameter's carriers;
+  `CallStackArgCollect` handles big-endian right-justified slots, partial
+  overwrites and listed allocators; incoming-argument detection no longer
+  takes a reload after `h(&a)` as the argument.
+- `LoadForward` under `escape_analysis` no longer skips an opaque store.
+- `hlt` falls through and clobbers memory (`halt` `call_other`); volatile
+  system registers and timers read a fresh value each time
+  (`read_volatile`).
+- x86 `swapgs` and `wr{fs,gs}base` update the segment base a later `fs:` /
+  `gs:` access reads; `aapcs64` keeps `sp_el0` across a call.
+- Address offsets compare on the address ring.
+- A jump-table target found in its other ISA mode as well no longer counts
+  as a narrowing, which could withdraw the site.
+- N constant `if (flag)` guards over one local (gcc -O0) settle in a bounded
+  number of optimizer iterations, not N.
+- Phi placement at lift is near-linear: deep loop nests no longer cost
+  quadratic time and memory.
+- A constant fold of an unused root leaves a shared constant's
+  `asm_fingerprint` alone.
+
+Lifting and decoding (most in the vendored Sleigh):
+
+- An x86 decode longer than 16 bytes is undecodable instead of a panic.
+- x86 `rdpid` requires a register operand; `f3 0f c7 /7` with a memory
+  operand decoded as a 4-byte `rdpid`.
+- ARM NEON `vtrn`, `vzip` and `vuzp` (D and Q) write both registers; they
+  wrote only Vd, from an opaque op of Vm alone, leaving Vm stale. A `vtrn`
+  of 64-bit elements (UNDEFINED) no longer decodes.
+- Partially overlapping views of one register (AArch64 `ldr h21` then a read
+  of `s21`, v8-v31) share one variable; the read kept stale bytes.
+- x86 VEX shifts by an immediate (`vpsrldq`, `vpsraw`, ...) zero the
+  destination's upper bits.
+- `xgetbv` reads the XCR that ECX selects.
+- VEX.128 AES and carry-less multiply ops, `vinserti128` and VEX.128
+  `vcvtps2ph` zero their destination up to ZMM, and an AVX2 gather clears
+  its whole mask register; VEX.128 `vcvtps2ph` to memory stores its result.
+- Float-to-integer and narrowing conversions round by the dynamic rounding
+  mode and saturate as the ISA does on x86 (SSE, VEX, x87), ARM, AArch64,
+  PowerPC and MIPS; `fcvt*`, `vcvt`, `fctid*`, `fcfidu`, `friz`, `frsp`,
+  `fist*` and `frndint` were wrong.
+- x86: `fprem`, `fxam`, `fcom`, `rcl` / `rcr` OF, `lock hlt`, 66/F2/F3
+  conversion prefixes, `0x67` memory and string operands, `rep`, `lea`, and
+  the upstream Ghidra b16f1556d2 fixes; VEX.256 FMA writes all 256 bits;
+  `rdtscp` writes EDX:EAX and ECX; `0x90` under a REX prefix without B is a
+  `nop`; `pushf` and `syscall`'s R11 set reserved RFLAGS bit 1.
+- PowerPC: `fmadd` and kin round once and give the ISA's NaN; the scalar,
+  VSX and record forms set the FPSCR status bits (FPRF, FR, FI, FX, OX, UX,
+  ZX, XX, VX*); `vcmp*.` and `bcd*.` set CR6; `mtfsfi`, `lxsd`, `stxvw4x`,
+  `fmrgew`, `stfs`, `lfs`, `fmsub`, `xscvdpspn` (truncates), `slbmfee`,
+  `xscmp*`, `paste.`, `isel` (ppc32), VSX double FMAs and `divwe[u]` fixed;
+  `divweo` / `divweuo` set OV by the 32-bit quotient; `mfpmr` / `mtpmr`
+  lift; `xsdivqp` has its own `call_other`.
+- MIPS: `mtc0` clobbers CP0; `syscall` clobbers `at`, `hi` and `lo`; MIPS64
+  `ins` / `ext` / `wsbh` sign-extend; fixed-mode float-to-integer
+  conversions lift to fewer p-code ops.
+- AArch64: `fmov` to an h register, `bfcvt*`, `fcvtxn`, `ldpsw` (second
+  word), `stlrb` / `stlrh` and `ldar` W (access width), LSE atomics and
+  `ldlar` into W (upper half), byte and half `ld{s,u}{max,min}` (compare
+  width); by-element `sdot`, `udot`, `usdot`, `sudot`, `bfdot`, `fcmla` and
+  `sm3tt*` lift; 64-bit `bfdot`, `sudot` and `usdot` zero bytes 8-15.
+- ARM: `vrintr`, `vld3/4`, `vst3/4`, BE8/BE32 `vld1` / `vst1`, `msr` flags,
+  NEON `vcvt` f16 vectors, modified immediates with imm8 0, `sdiv` / `udiv`
+  by 0, `rfeia` / `rfeib` (PC from the lower word); BE8 decodes with its own
+  `ARM8_be8` sla.
+- The fixes Ghidra master made after the fork's base, listed in
+  `externals/rsleigh/sleigh/FORK.md`.
+- ppc64 ELFv1 and ppc32 SysV conventions return floats in `f1`-`f4`.
+- CFG decoding of a run of `nop`s is deterministic. A call followed by a
+  `nop` and decodable non-code (Thumb `bl __stack_chk_fail; nop` before a
+  literal pool) ends `NoReturn` where it failed the build.
+- `Lifter.pcode_at` honours the entry's ISA bit (odd is Thumb or MIPS16) and
+  decodes as a fresh handle would, after any number of builds; only the
+  entry's mode is pinned. `Cfg.pcode_at` takes the same address.
+- A branch into the middle of an instruction with internal p-code branches
+  (`lock cmpxchg`, `rep movs`) edges to its first op, not its last p-code
+  slice, and is still `"interior_target"`.
+- A MIPS delay slot whose ISA mode an earlier build on the same handle left
+  stale decodes as on a fresh handle; the build raised `BadDataError`.
+- A fall-through or Duff's-device switch of n arms builds its CFG in linear
+  time in n; it was quadratic.
+- `LoadForward` is linear on a run of `if (c) call()` joins; it was
+  quadratic.
+- An ARM NEON saturating op (`vqadd`, ...) writes `fpscr`, so a later
+  `vmrs` no longer reads the earlier FPSCR.
+- An ARM `vld2` / `vld3` / `vld4` clobbers only the NEON registers; it
+  clobbered every register, losing SP and the return.
+- The decoder refuses a context region that ends before it starts, where
+  it crashed, and reports a reader that panics on its second byte read as
+  `MemReaderPanicked`.
+
+Loading:
+
+- A Python reader's unmapped answer builds no error, so constant loads from
+  unmapped memory cost no more than mapped ones.
+- Under `got_is_rom`, a `-z now` non-PIE executable's `JUMP_SLOT` against an
+  import with a canonical PLT is a hole; it was served as the PLT stub's own
+  address, and the stub lifted as a self-loop.
+- An unsized ARM / Thumb 16-bit or `ABS8` relocation holes only its own
+  bytes, not the next instruction's.
+- Relocations: a linked image is relocated from its dynamic tags as `ld.so`
+  reads them; no image fails with "patch budget"; overlapping or ambiguous
+  fields are holes; mips64el `SHT_REL`, `R_X86_64_32`, `R_PPC64_REL32`,
+  `R_386_GOT32`, `R_AARCH64_GOT_LD_PREL19` with an addend, and `STN_UNDEF`
+  relocations are handled.
+- `relocated_got_is_rom=True` leaves unmapped what only the loader computes
+  (IFUNC slots, MIPS global GOT entries, lazy-binding header words, TLS slots,
+  `R_*_COPY` objects) and serves PPC32 `.got2`.
+- `add_elf` refuses an image of another architecture, class, byte order or
+  `EF_ARM_BE8` (`StriderError`), and a microMIPS image (`ValueError`).
+- `load_elf` refuses a microMIPS image unless given both `arch=` and `cc=`,
+  and a COFF or Mach-O file; a malformed ELF raises `StriderError`.
+- An uncomputed PowerPC half16 relocation holes only its halfword, and an
+  uncomputed 8-byte field (MIPS64 `R_MIPS_64` composite, x86-64 `GOTPLT64`
+  / `SIZE64`, ppc64 doubleword64 and prefixed fields) all eight bytes.
+- A symbol in an empty allocated `ET_REL` section sits at the section's
+  aligned base, where it read 0.
+- The PowerPC TLS markers (`R_PPC64_TLSGD` / `TLSLD`, ppc32 `R_PPC_TLS` /
+  `TLSGD` / `TLSLD`) leave the instruction they mark served, where they
+  holed it.
+- `add_symbol_file` of a ppc64 ELFv1 debug file names the code its `.opd`
+  descriptors point at, read from the loaded image.
+- A ppc64 ELFv1 function's `Symbol.size` is its `st_size`; ppc64 ELFv2
+  `no_return_targets` and `per_address_ccs` keyed by symbol also cover the
+  local entry.
+- `load_elf` / `add_elf` parse an image once.
+- A relocation table ending past the top of the address space no longer
+  panics `load_elf`.
+
+Rendering:
+
+- `to_dot` / `to_html` raise `OSError` naming the path when the file cannot
+  be written.
+- `strider.explore.visualize(depth=True)` raises `TypeError`.
+- The HTML viewer classifies every IR node kind (phis, shifts, extends, raw
+  constants and initial vars were left out).
+- A pretty DOT label of a NaN float constant shows its bits.
+- The explorer shows a failed `/dot` request's error and clears the graph;
+  it kept the stale one.
+- The HTML viewer switches to `sfdp` past 2000 nodes; it counted labelled
+  edges too.
+
 ## 0.2.0
 
 Both the Python and the Rust surfaces changed; the two are listed separately.
-The shape each API settled into is in
-[docs/python-api.md](docs/python-api.md).
+[docs/python-api.md](docs/python-api.md) has the shape each API settled into.
 
 ### Breaking, Python
 
 Loading and symbols:
 
 - The symbol accessors return a `Symbol` record (`name`, `address`, `size`,
-  `end`, `is_function`, `region`, `is_thumb`), so `symbol(name)` is no longer
-  an address and `symbol_size` is gone. `functions()` yields `Symbol`s, not
-  names, one per address and function symbols only, keeping the alias whose
-  size the ELF records. A Thumb function's `address` keeps its ISA bit; `end`,
-  `region` and `symbol_at` measure from `address & ~1`. A name resolves to a
-  definition, in load order, before an undefined symbol that carries an
-  address.
+  `end`, `is_function`, `region`, `is_thumb`); `symbol_size` is gone.
+  `functions()` yields `Symbol`s, one per address and function symbols only,
+  keeping the alias whose size the ELF records. A Thumb function's `address`
+  keeps its ISA bit; `end`, `region` and `symbol_at` measure from
+  `address & ~1`. A name resolves to a definition, in load order, before an
+  undefined symbol that carries an address.
 - `add_elf` applies relocations by default (`apply_relocations=True`), as
   `load_elf` does. The flag also selects what is mapped: `True` every
-  allocatable section, `False` code and read-only data only. Pass
-  `apply_relocations=False` for the old behaviour.
+  allocatable section, `False` code and read-only data only.
 - An `ET_REL` object's sections are laid out from a synthetic image base, not
   address 0, and sections that shared an address are rebased apart, so every
   symbol address in a `.o` moves and address 0 is unmapped.
-- Images are memory-mapped. A file changed on disk while it is loaded raises;
-  set `STRIDER_NO_MMAP=1` to read the image instead.
-- `wide_const_bytes()` returns `bytes`; it returned `list[int]`.
+- Images are memory-mapped. A file changed on disk while loaded raises;
+  `STRIDER_NO_MMAP=1` reads the image instead.
+- `wide_const_bytes()` returns `bytes`, not `list[int]`.
 - `load_elf` refuses an ELFCLASS32 MIPS image whose ABI is n32, EABI32, EABI64
-  or O64, none of which has a preset; it assumed O32 for all of them and read
-  arguments past the fourth out of the wrong registers.
-- `CfgOptions.known_targets` reads back target lists as tuples, so the
-  read-only view is read-only all the way down: editing one of those lists was
-  a silent no-op against the table `analyze` reads.
+  or O64, none of which has a preset; it assumed O32.
+- `CfgOptions.known_targets` reads back target lists as tuples; editing one
+  of those lists was a silent no-op.
 - `LifterOptions.per_address_ccs` reads back as the same read-only
-  `mappingproxy` on every access, as the `CfgOptions` tables do; it built a
-  fresh dict of fresh objects per read.
+  `mappingproxy` on every access, as the `CfgOptions` tables do.
 
 Analysis:
 
@@ -52,25 +564,23 @@ Analysis:
   `True`, the claim return verification rests on).
   `AssumptionOptions.none()` clears all seven.
 - `build_cfg` raises a `StriderError` naming the cause for an `entry` it
-  cannot use, the way `analyze` does; it raised a bare `OverflowError`.
+  cannot use, as `analyze` does, not a bare `OverflowError`.
 - A `Lifter` decodes only on the thread that built it. `analyze`, `build_cfg`,
   `optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`,
   `user_op_names` or a renderer given `lifter=` raise `StriderError` on any
-  other thread. The handle moves and drops anywhere; build a second one over
-  the same `arch` / `reader()` / `rom()` to work off-thread, and call its
-  `analyze(addr, cc)`, a plain handle carrying no symbols and no default
-  convention.
+  other thread. The handle moves and drops anywhere; to work off-thread, build
+  a second one over the same `arch` / `reader()` / `rom()` and call its
+  `analyze(addr, cc)` (a plain handle: no symbols, no default convention).
 - `CallingConvention.custom(sleigh, ...)` resolves register names against the
   `Sleigh` it is given, so using the result with a `Lifter` of another
-  architecture raises instead of analysing against the wrong registers.
-- `cc.no_return()` passed as `analyze`'s main `cc` raises; it only means
-  something as a `per_address_ccs` override.
-- Building a `Cfg` raises when the architecture reports no user-op names,
-  where every `CallOther` then classified as returning.
+  architecture raises.
+- `cc.no_return()` passed as `analyze`'s main `cc` raises; it is only a
+  `per_address_ccs` override.
+- Building a `Cfg` raises when the architecture reports no user-op names.
 - `Lifter.optimize(function)` raises for a function another handle lifted.
 - `Function.rewrite` / `rewrite_all` raise where a replacement reads the value
-  it replaces, which installed an uncomputable `x = f(x)`.
-- `Node.op()` returns the `ExtendOp` for `Extend`, where it returned `None`.
+  it replaces (`x = f(x)`).
+- `Node.op()` returns the `ExtendOp` for `Extend`, not `None`.
 - `Node` equality and hash include the graph generation, so a handle held
   across an `optimize` no longer equals a fresh one.
 - `Node.const_uint` / `const_int` / `const_bool` are `uint` / `sint` /
@@ -95,8 +605,8 @@ Patterns:
 - `int_const_any_of(values)` is gone: `int_const` takes a list.
 - `signed_int_const` -> `int_const_any_width`, which also takes a list. It
   matches a constant when the value is a zero or sign extension of the
-  constant's bits at the constant's width, so a stored `0x34` no longer
-  answers a search for `0x1234`. `strider.template.signed_int_const` is gone;
+  constant's bits at its width, so a stored `0x34` no longer answers a search
+  for `0x1234`. `strider.template.signed_int_const` is gone;
   `template.int_const` builds the same constant.
 - A bare string is no longer a capture operand; use `Capture(name)`.
 - `.cap(name)` is gone: `.capture()` takes a `Capture` or a name.
@@ -109,20 +619,19 @@ Patterns:
 - `PhiPat.input` / `MemPhiPat.input` -> `.phi_input`, which indexes
   predecessors. `.input` is now the raw-slot method every builder has, so
   `.input(0, p)` reaches the phi token.
-- `one_of` reports every arm that matches, not just the first; `first_of` is
-  the first-match form.
+- `one_of` reports every arm that matches; `first_of` is the first-match form.
 - `float_is_nan(p)` and `float_le(a, b)` require the operand each repeats to be
   the same value, so they match fewer shapes.
 - `find_all(..., ignore_casts_mask=)` is gone: `ignore_casts` takes a bool or a
   `CastMask`.
-- A pattern over 256 nodes, counting the nodes of `if_else` branch patterns, or
-  nested deeper than the thread's stack allows, raises
-  `StriderError` instead of crashing the interpreter.
+- A pattern over 256 nodes, counting `if_else` branch patterns, or nested
+  deeper than the thread's stack allows, raises `StriderError` instead of
+  crashing the interpreter.
 - The operand-index setters (`CallPat.arg`, `CallOtherPat.arg`,
   `RetPat.ret_val`, `PhiPat.phi_input`, `MemPhiPat.phi_input`, `.input()`)
   reject an index past 1,048,576.
-- A `.when()` predicate on a root with no value output is handed the real
-  matched node as `Match.root`, not a fabricated `I1`.
+- A `.when()` predicate on a root with no value output gets the real matched
+  node as `Match.root`, not a fabricated `I1`.
 
 Match readers:
 
@@ -144,17 +653,15 @@ Rendering:
   `Function.neighborhood_dot(center, ..., pretty=True)`.
 - `Function.to_dot` / `to_html` quote every attribute value (`shape="box"`).
 - `Function.validate()` appends each node's kind and lowest instruction
-  address to its error, as in `[node12 Store(..) @ 0x401000]`.
+  address to its error (`[node12 Store(..) @ 0x401000]`).
 
 ### Breaking, Rust
 
 - The `rsleigh` path dependency is the `externals/rsleigh` git submodule: clone
   with `--recursive`, or run `git submodule update --init --recursive`.
 - The MSRV is 1.91.
-- Building the wheel or the sdist needs maturin 1.10 or newer: `license` is a
-  PEP 639 SPDX expression and `license-files` names several files, which 1.8.1
-  and earlier refuse to parse and 1.8.2 through 1.9.x silently truncate to the
-  first entry.
+- Building the wheel or the sdist needs maturin 1.10 or newer (1.8.2 through
+  1.9.x silently keep only the first of several `license-files`).
 - The fixture binaries are Git LFS objects; a fresh clone needs
   `git lfs install && git lfs pull`.
 - Every pattern builder takes the Python name: the `int_` and `any_` renames
@@ -162,11 +669,10 @@ Rendering:
   `anything`, `if_node` -> `if_else`, `CallPat::at_any(addrs)` ->
   `target(int_const(addrs))`, `SwitchPat::address` -> `selector`,
   `signed_int_const` -> `int_const_any_width`, `preceded_by` -> `ctrl`,
-  `mem_in` -> `mem`,
-  `PhiPat` / `MemPhiPat::input` -> `phi_input`. Builder types follow
-  (`IntBinaryAny` -> `AnyIntBinary`, ...). `bool_value` and `int_const_any_of`
-  are gone.
-- `MatchPat`, `NodePredicate` and `PostMatchFn` carry `+ Send`; a closure
+  `mem_in` -> `mem`, `PhiPat` / `MemPhiPat::input` -> `phi_input`. Builder
+  types follow (`IntBinaryAny` -> `AnyIntBinary`, ...). `bool_value` and
+  `int_const_any_of` are gone.
+- `MatchPat`, `NodePredicate` and `PostMatchFn` carry `+ Send`, so a closure
   capturing an `Rc<Cell<_>>` no longer compiles. `PostMatchFn` takes
   `Option<ValueType>`.
 - `TemplatePat` is implemented for `Captured<Var>` alone, so `.capture()` on a
@@ -176,8 +682,8 @@ Rendering:
 - The `int`, `bool`, `int_binary_op`, `int_cmp_op` and `bool_binary_op`
   capture kinds of `int_const_with!` / `bool_const_with!` /
   `float_const_with!` are gone.
-- `MatcherBuilder::constrain_input_widths` is gone; pin a width on the one
-  vertex that must carry it with `MatcherBuilder::set_value_width`.
+- `MatcherBuilder::constrain_input_widths` is gone; use
+  `MatcherBuilder::set_value_width` on the one vertex that must carry it.
 - `NodeKind::Switch(SwitchTableId)` and `NodeKind::Call { cc: Option<CcId> }`
   carry their case table and override convention. `SideTables::{switch_targets,
   set_call_cc, call_other_name, set_call_other_name}` moved to `Function`;
@@ -192,8 +698,7 @@ Rendering:
   `IRViewer::switch_isa_mode`). `Unreachable` takes an optional memory input.
   `build_switch` returns the `NodeId` it created.
 - `ValueType` gains `I24`, `I40`, `I56`, `I72`, `I96`, `I112`, `F16` and `F128`.
-- `ValidationError` gains thirteen variants and the enum is not
-  `non_exhaustive`, so an exhaustive match stops compiling:
+- `ValidationError` (not `non_exhaustive`) gains thirteen variants:
   `ArithmeticWidthMismatch`, `DanglingCcId`, `DanglingInitialVnId`,
   `DanglingSwitchTableId`, `DataCycle`, `FloatConstUnrepresentableType`,
   `FloatConstWidthMismatch`, `InitialVarTypeMismatch`, `InputNotAvailable`,
@@ -201,22 +706,18 @@ Rendering:
   `UnmergedMemoryEffect`. `FunctionBuilder::build` fails with a
   `ValidationReport` whose `errors` field holds them.
 - `strider_ir::dominates`, `control_edge_dominators` and `control_dominators`
-  are gone, and with the last of them strider-ir's production dependency on
-  petgraph: `control_dominator_tree` / `control_edge_dominator_tree` return a
-  `DominatorTree`, whose `dominates` is O(1), and petgraph's `simple_fast`
-  stays only as the tests' oracle.
-- `strider_ir` renames the stack side tables for the memory classes they cover:
-  `SpDecomp` -> `MemDecomp`, `StackId` -> `MemoryId`, `stack_slot` ->
-  `memory_class`, `stack_slot_resolved` -> `memory_slot_resolved`,
-  `set_stack_slot_not` -> `set_not_memory`, `clear_stack_slots` ->
-  `clear_memory_slots`.
+  are gone, and with them strider-ir's production dependency on petgraph:
+  `control_dominator_tree` / `control_edge_dominator_tree` return a
+  `DominatorTree` with an O(1) `dominates`.
+- `strider_ir` renames the stack side tables: `SpDecomp` -> `MemDecomp`,
+  `StackId` -> `MemoryId`, `stack_slot` -> `memory_class`,
+  `stack_slot_resolved` -> `memory_slot_resolved`, `set_stack_slot_not` ->
+  `set_not_memory`, `clear_stack_slots` -> `clear_memory_slots`.
 - `Graph::retain_reachable` is `retain_reachable_stale_cache`, and
   `Graph::update_input` panics on a `UseId` its node no longer holds.
   `Graph::remove_node_input` needs the `test-injectors` feature and
   `FunctionBuilder::build_branch` the `test-util` feature.
-- `FunctionBuilder::build_call_other_abi` is gone with no public replacement;
-  `strider-lift` builds an ABI-carrying `CallOther` through its own
-  crate-private path.
+- `FunctionBuilder::build_call_other_abi` is gone with no public replacement.
 - Removed: `Cfg::raw_neighborhood_dot`, `Cfg::region_id_at_start`, the
   `ConstValue` re-export from `strider-ir`, `strider_ir::graph::InputCursor`
   (`strider_graph::InputCursor` remains), `dot::Result`,
@@ -234,51 +735,44 @@ Rendering:
   `DEFAULT_SFDP_NODE_THRESHOLD` are private; build a style with
   `DotStyle::dark()`, `dark_cfg()` or `empty()`.
 - `dot::DotEmitter::node` doubles every backslash in a label, so a `\l` or
-  `\n` renders literally; `node_raw_label` is the one that keeps line breaks.
-  `dot::GraphDot::as_dot_with_state` is gone (`as_dot` remains): the state it
-  handed back only maps nodes under `cfg(test)`, so a production caller got
-  nothing usable.
+  `\n` renders literally; `node_raw_label` keeps line breaks.
+  `dot::GraphDot::as_dot_with_state` is gone (`as_dot` remains).
 - `CfgOptions` gains public `call_other_overrides` and `data_ranges` fields,
   so a struct literal needs `..Default::default()`.
 - `strider_cfg::CfgOptions<'a>` and `strider_lift::LiftOptions<'a>` carry a
   lifetime: `CfgOptions::known_targets` is a `&'a FxHashMap<PcodeInsnAddr,
   ResolvedTargets>` and `LiftOptions::per_address_ccs` a `&'a FxHashMap<u64,
-  BuiltCallingConvention>`. Both took their map by value, so every `analyze`
-  with a seeded table copied the whole table twice. A struct literal must name
-  a borrow (`known_targets: &known`), and `Default` borrows one shared empty
-  table instead of allocating. `strider_cfg::Builder::for_arch` takes
-  `&'a CfgOptions<'a>` and `with_per_address_ccs` a `&'a FxHashMap<..>`, and
-  code forwarding `LiftOptions::per_address_ccs` to `Lifter::build_cfg` passes
-  it as it stands rather than by reference.
+  BuiltCallingConvention>`, both taken by value before; `Default` borrows a
+  shared empty table. `strider_cfg::Builder::for_arch` takes
+  `&'a CfgOptions<'a>` and `with_per_address_ccs` a `&'a FxHashMap<..>`;
+  forward `LiftOptions::per_address_ccs` to `Lifter::build_cfg` as it stands.
 - `strider_cfg::ResolvedTargets` carries `ResolvedTarget { addr, isa_bit }`, so
   a `known_targets` map needs `ResolvedTarget::from(addr)`.
 - `AnalyzeResult` gains `unverified_seeded_sites`, `interior_branch_targets`,
   `isa_mode_conflicts`, `unmapped_branch_targets` and
-  `undecodable_branch_targets`; a struct literal must name them.
+  `undecodable_branch_targets`.
 - `AliasMode`, `MemAliasOptions` and `OptOptions::arg_alias` are gone.
-  `OptOptions` is `{ resolve_indirect_branches, assumptions }`, with the
-  claims in `AssumptionOptions` as listed under Breaking, Python;
-  `AssumptionOptions::default()` keeps three on and `::none()` clears all
-  seven.
+  `OptOptions` is `{ resolve_indirect_branches, assumptions }`, the claims as
+  under Breaking, Python; `AssumptionOptions::default()` keeps three on and
+  `::none()` clears all seven.
 - `strider_opt::apply_rules_in_order` is gone. `LoadForward` is no longer a
   unit struct: use `LoadForward::default()`.
 - `PostOptimizer` has an `Any` supertrait, so an implementor must be
   `'static`.
 - `strider_opt::value_range::compute_value_ranges` takes a
-  `&DominatorTree<NodeId>` (from `control_dominator_tree`) rather than
-  petgraph's `Dominators`.
+  `&DominatorTree<NodeId>` (from `control_dominator_tree`), not petgraph's
+  `Dominators`.
 - `BuiltCallingConvention::try_new` -> `validate(&self)`;
   `BuiltCallingConventionParts` is gone. `validate` compares argument and
   callee-saved registers by byte range, so a callee-saved `d8` against an
   argument `q8` is rejected.
 - `CallingConvention::x86_64_all_preserving` is gone on both surfaces; use
   `CallingConvention::x86_64_systemv().preserves_all()`.
-- A `Call`'s flat argument list is longer on the userland PowerPC presets,
-  which now name `v2`-`v13` for vector arguments, so a `call().arg(n)` query
-  reads a different operand on both surfaces: a collected stack argument's
-  first position is `8+25` on PPC64 and `8+20` on PPC32, where it was `8+13`
-  and `8+8`. The three `*_linux_kernel` flavours name no vector register, so
-  nothing moves there.
+- The userland PowerPC presets name `v2`-`v13` for vector arguments, so a
+  `call().arg(n)` query reads a different operand on both surfaces: a
+  collected stack argument's first position is `8+25` on PPC64 and `8+20` on
+  PPC32, where it was `8+13` and `8+8`. The three `*_linux_kernel` flavours
+  name no vector register, so nothing moves there.
 - `SleighArch::probe_regs` needs the `test-util` feature.
 - The ARM processor-mode `CallOther` rows apply to the ARM32 presets only, and
   a processor-mode switch (`setUserMode`, `setFIQMode`, ...) clobbers
@@ -291,22 +785,16 @@ Rendering:
   `OwnedElf::regions(source, filter, relocate)`. `MemRegion::data` /
   `data_mut` are gone; a region serves bytes through `read`.
 - `ElfFileMemReader::from_bytes` and `::from_path` are gone, and
-  `elf::relocations` is private.
-  `::from_object(&obj)` is the one constructor and it copies each mapping, so
-  the reader has nothing to stat: `from_bytes(b)` is `object::File::parse(b)`
-  then `::from_object(&obj)`, and `from_path(p)` is `load_elf(p)` then
-  `::from_object(owned.checked_file()?)`. A zero-copy view of a mapped ELF is
-  an `OwnedElf::regions` load behind a `MemRegionsLookupTable`.
+  `elf::relocations` is private. `::from_object(&obj)` is the one
+  constructor and copies each mapping; a zero-copy view of a mapped ELF is an
+  `OwnedElf::regions` load behind a `MemRegionsLookupTable`.
 - `OwnedElf::function_entry` is gone; build an `OpdTable` over a
-  `checked_file` instead, which is what every caller already did.
-- `elf::LoadFilter` gains `ImmutableAndRelocatedGot`, so a match over it stops
-  compiling. `OwnedElf::regions` errors for that filter with `relocate=false`:
-  the filter claims the loader has relocated `.got` / `.data.rel.ro`, which
-  `relocate=false` denies.
-- `BuiltCallingConvention` gains `entry_address_vn`, the register an ABI
-  guarantees holds the function's own entry address on entry to it (PPC64
-  ELFv2 `r12`, MIPS abicalls `t9`), which the lift binds to the entry address;
-  a struct literal must name it.
+  `checked_file`.
+- `elf::LoadFilter` gains `ImmutableAndRelocatedGot`; `OwnedElf::regions`
+  errors for it with `relocate=false`.
+- `BuiltCallingConvention` gains `entry_address_vn`, the register holding the
+  function's own entry address on entry (PPC64 ELFv2 `r12`, MIPS abicalls
+  `t9`), which the lift binds.
 - `BuiltCallingConvention::ret_and_clobber_vns` reports REGISTER clobbers only,
   so a `Call` no longer carries an output per tracked Sleigh temporary.
 - `strider_cfg`'s region types carry resolved targets and extents, all fields
@@ -314,40 +802,33 @@ Rendering:
   `Switch`'s `target`/`targets` are `ResolvedTarget`s, `Switch` gains `addr`,
   `Region` gains `empty_span_len` and `RegionInstruction` gains `len`.
 - `OptimizerPipeline::add` and `add_post_pass` require `Send`, and `passes()` /
-  `post_passes()` hand back `Box<dyn ... + Send>`, so a pass capturing an `Rc`
-  no longer compiles.
-- `LiftOutcome` gains `switch_anchors` and `return_sites`, so a struct literal
-  must name them.
+  `post_passes()` hand back `Box<dyn ... + Send>`.
+- `LiftOutcome` gains `switch_anchors` and `return_sites`.
 - `entity_utils::UnionDag`'s value parameter is `V: Copy + Eq + Hash`.
 - `strider_pattern::IndirectBranchPat::isa_mode` is gone; the slot is
-  `.input(3, p)`, which the struct's slot layout names.
-- `ArchPreset::arch` needs the `test-util` feature. A caller holding a preset
-  names the `SleighArch` constructor.
+  `.input(3, p)`.
+- `ArchPreset::arch` needs the `test-util` feature; call the `SleighArch`
+  constructor instead.
 - `Lifter::arch` is gone; `Strider::arch` remains.
 
 ### Added, Python
 
 - `load_elf(relocated_got_is_rom=True)` / `add_elf(relocated_got_is_rom=True)`
   serve `.got` and `.data.rel.ro` as read-only memory, so a load through a GOT
-  slot folds to the address it holds. Off by default: it is a claim about the
-  runtime that the image cannot prove. Only a section of those names the loader
-  really maps writable is served; `.got.plt` never is, lazy binding rewriting
-  those slots. The flag with `apply_relocations=False` is refused: the claim is
-  that the loader has relocated those slots, which the other flag denies.
+  slot folds to the address it holds. Off by default (a runtime claim the
+  image cannot prove); `.got.plt` is never served; refused with
+  `apply_relocations=False`.
 - `LifterOptions(assumptions=AssumptionOptions(...))` tunes memory precision;
   [docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what
   each claim buys. `AssumptionOptions.none()` makes none of them.
-- `cfg.is_complete()` and six incompleteness channels:
-  `unresolved`, `cfg.unverified_seeded_sites()` (answers exactly the caller's
-  `known_targets`, sites consumed as a tail call, returns the caller seeded,
-  and an arm seated on a mode nobody evaluated),
-  `cfg.isa_mode_conflicts()` (addresses reached in two ISA modes),
-  `cfg.interior_branch_targets()` (targets off every instruction boundary,
-  including overlapping decodes), `cfg.unmapped_branch_targets()` (direct
-  branches to addresses no byte backs) and `cfg.undecodable_branch_targets()`
-  (bytes that hold no instruction, reached by a branch or by a fall-through
-  past a call). [docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg)
-  describes each.
+- `cfg.is_complete()` and six incompleteness channels: `unresolved`,
+  `cfg.unverified_seeded_sites()` (sites settled by `known_targets`, consumed
+  as a tail call, a seeded return, or an arm on an unevaluated mode),
+  `cfg.isa_mode_conflicts()` (reached in two ISA modes),
+  `cfg.interior_branch_targets()` (off every instruction boundary),
+  `cfg.unmapped_branch_targets()` (no byte backs it) and
+  `cfg.undecodable_branch_targets()` (no instruction, reached by a branch or a
+  fall-through past a call).
 - A `Return` whose target does not fold to the entry return address
   (`push x; ret`, `mov lr, r1; bx lr`, an overwritten saved link) is reported
   in `unresolved`.
@@ -360,37 +841,34 @@ Rendering:
   classifier off.
 - Object files (`ET_REL`) analyse: code relocations are applied for x86,
   x86-64, AArch64, ARM and Thumb, PowerPC and MIPS; an undefined or common
-  symbol resolves to its own address in an unmapped range past the image; a
-  GOT reference loads from a synthetic slot holding the symbol's address. A
-  relocation strider does not compute is a hole outside writable mappings:
-  reads stop there and the decode error names the relocation type.
+  symbol gets its own address in an unmapped range past the image; a GOT
+  reference loads from a synthetic slot holding the symbol's address. An
+  uncomputed relocation is a hole outside writable mappings, and the decode
+  error names its type.
 - ppc64 ELFv1 function symbols and the entry point resolve through their `.opd`
   descriptors.
 - `ElfLifter.add_symbol_file(path)` takes the symbols of a debug companion;
   `ElfLifter.add_symbols({name: addr | (addr, size)}, is_function=)` takes
   symbols from no ELF, such as a `System.map`. `symbol_at(address)`,
   `symbol_opt`, `iter_symbols()`, `endianness` and `is_arm_be8`.
-- `Lifter.arch`, `Lifter.reader()` and `Lifter.rom()` (on `ElfLifter`, `arch`
-  and `reader()` already existed), and `Cfg.lifter`.
+- `Lifter.arch`, `Lifter.reader()` and `Lifter.rom()`, and `Cfg.lifter`.
 - `BufferReader` accepts `bytes`, `bytearray` or a sequence of ints.
 - `Lifter.optimize` takes `opts=` and uses the handle's `rom`.
-- `cc.preserves_all()` / `cc.preserves_regs()` calling-convention transforms
-  and an `arm_aapcs_soft` preset. A callee-cleanup convention (`ret $imm16`)
-  or an i386 PC thunk needs its own `per_address_ccs` entry, built with
+- `cc.preserves_all()` / `cc.preserves_regs()` and an `arm_aapcs_soft`
+  preset. A callee-cleanup convention (`ret $imm16`) or an i386 PC thunk needs
+  its own `per_address_ccs` entry, built with
   `CallingConvention.custom(..., ret_stack_pop=4 + imm16)` or with the thunk's
   register left out of `callee_saved_regs`.
 - `CallingConvention.powerpc_sysv32_linux_kernel()`,
-  `powerpc64_elf_v1_linux_kernel()` and `powerpc64_elf_v2_linux_kernel()`, the
-  kernel-internal PowerPC flavours, which name no vector register.
-  `load_elf` picks one when `e_entry` is at or above `KERNELBASE`
-  (`0xc000_0000` on ppc32, `0xc000_0000_0000_0000` on ppc64), independently of
-  the ELFv1/ELFv2 choice. x86's kernel ABI has no header bit to read and still
-  needs an explicit `cc=`.
+  `powerpc64_elf_v1_linux_kernel()` and `powerpc64_elf_v2_linux_kernel()`,
+  which name no vector register. `load_elf` picks one when `e_entry` is at or
+  above `KERNELBASE` (`0xc000_0000` on ppc32, `0xc000_0000_0000_0000` on
+  ppc64). x86's kernel ABI has no header bit and needs an explicit `cc=`.
 - `CfgOptions(call_other_abis={name: CallOtherAbi})` reclassifies a Sleigh
   user-op: `CallOtherAbi.noop()` / `pure()` / `mem_clobber()` / `no_return()`,
   or `CallOtherAbi.custom(sleigh, implicit_reads=, implicit_writes=,
-  clobbers_memory=, no_return=)`. `Lifter.user_op_names()` lists the user-ops
-  an architecture can emit; `Lifter.call_other_abi(name, opts=None)` reads back
+  clobbers_memory=, no_return=)`. `Lifter.user_op_names()` lists an
+  architecture's user-ops; `Lifter.call_other_abi(name, opts=None)` reads back
   the classification in force.
 - `function_arg_float(n)` and `call().arg(n)` reach float arguments, which
   follow the integer ones at a call site.
@@ -409,9 +887,9 @@ Rendering:
   `MemAccessPat`, `OrderedPat` and `OutputPat`. `pattern.CaptureKey` and the
   `IntBinaryOpName`, `BoolBinaryOpName` and `FloatBinaryOpName` aliases.
 - `indirect_branch().target(p)` and `switch().selector(p)` take a list.
-- `Function.to_text()`: the IR as canonical text, a header (endianness, tracked
-  varnodes, default convention, argument carriers) and then one line per node,
-  stable across runs.
+- `Function.to_text()`: the IR as canonical text, stable across runs: a header
+  (endianness, tracked varnodes, default convention, argument carriers), then
+  one line per node.
 - `Function.validate()` also reports a memory read that skips a memory effect
   on its path, an `InitialVar` naming a varnode the function never minted or
   typed against it wrongly, and a `Store` only a `Load` takes (`LostStore`).
@@ -434,8 +912,7 @@ Rendering:
   `unmapped_branch_targets` / `undecodable_branch_targets` /
   `undecodable_seeded_targets` / `link_register_seated` / `tail_call_seated` /
   `function_isa_bit` / `flowing_isa_bit_at_site` / `space_ids` /
-  `switch_arm_regions`, and `AnalyzeResult::is_complete`
-  (`unverified_seeded_sites` is an `AnalyzeResult` field, listed above).
+  `switch_arm_regions`, and `AnalyzeResult::is_complete`.
 - `CfgOptions::data_ranges` (`DataRanges`) and
   `strider_reader::elf::mapping_symbol_data_ranges`.
 - `strider_cfg::Builder::with_user_op_names` and `with_transient_defaults`;
@@ -448,7 +925,7 @@ Rendering:
 - `elf::LoadFilter::ImmutableAndRelocatedGot`, the immutable image plus `.got`
   and `.data.rel.ro`.
 - `graph_algorithms::dominance::dominators` (Lengauer-Tarjan), and
-  `strider_ir::DominatorTree` with its `span` built over it.
+  `strider_ir::DominatorTree` with its `span`.
 - `NodeKind::input_head_len`, `expected_output_kind` and `is_terminator`.
 - `ArchPreset::ALL`.
 - `BuiltCallingConvention::float_arg_slots`.
@@ -459,10 +936,10 @@ Rendering:
 - `ValueType::ALL`, `Strider::{user_op_names, rom, arch}`,
   `dot::DotEmitter::node_raw_label` and `strider_opt::apply_rules_count_with`.
 - `SleighArch::callother_output_is_exact_in`: whether a `CallOther` output
-  narrower than its tracked container leaves the rest of that container alone,
-  true on x86 and x86-64 outside the x87 register file.
-- `[profile.release]` sets `overflow-checks = true`, so the shipped wheel
-  traps on arithmetic overflow.
+  narrower than its tracked container leaves the rest of it alone (true on
+  x86 and x86-64 outside the x87 register file).
+- `[profile.release]` sets `overflow-checks = true`: the shipped wheel traps on
+  arithmetic overflow.
 
 ### Changed
 
@@ -475,97 +952,59 @@ Rendering:
   one value.
 - The optimizer skips a pass whose last run changed nothing until the graph
   changes.
-- The indirect-branch resolution loop is one round per level of discovery.
-  The partial-function lookahead that seated sites between rounds is gone: the
-  ordinary rounds seat what it did, so the result is unchanged.
 - `validate` rejects IR it used to accept: a non-phi node that is its own
   transitive producer; the memory, `InitialVar` and `LostStore` checks above; an
   integer operation mixing operand widths; a `CcId` or `SwitchTableId` no
   interner holds; an input not available at its use; a reachable graph with no
-  terminator; and a `Region` that drops an arm's memory effect, which is
-  `UnmergedMemoryEffect` rather than the `MemoryRewind` whose message describes
-  a reader taking a stale state.
-- `strider-opt` no longer depends on petgraph either, no public item of its
-  own changing: the jump-table index classifier climbs the `Dominators`
-  `graph_algorithms::dominance::dominators` builds, and `mem_ssa::layout`
-  orders its memory graph with
-  `graph_algorithms::dominance::immediate_dominators` and `DomIntervals`.
+  terminator; and a `Region` that drops an arm's memory effect
+  (`UnmergedMemoryEffect`, not `MemoryRewind`).
 
 ### Performance
 
 - A `Call` carries an output per clobbered REGISTER rather than per tracked
-  Sleigh varnode, a p-code `CALL` writing no UNIQUE varnode: over the 2,718
-  fixture functions the lift drops 26,432 `Call` outputs, none of them used,
-  and on the 24 largest x86-64 functions of a release binary the lifted graph
-  loses 26% of its nodes and 49% of its values, `build_ir` running 1.31x
-  faster and `analyze` 1.24x.
-- A Sleigh temporary gets a phi only where one is live across a region
-  boundary, which is only where one machine instruction's p-code is split; it
-  was written in almost every region and so given a phi at almost every join.
-  On those same functions the graph loses a further 21% of its nodes and 16%
-  of its values, `build_ir` runs 1.16x faster and `analyze` 1.09x. The
-  optimised text is unchanged on every fixture function either way.
-- A `per_address_ccs` table costs what the function calls rather than its own
-  size: the builder borrows it and the lift seeds only the overrides this
-  CFG's call targets select (10,000 entries over `mov eax,1; ret`: `build_cfg`
-  3.24 ms to 9.8 us, `build_ir_with` 561 us to 16 us, both now flat in the
-  table size). From Python each `analyze` still resolves every entry's ABI
-  against the register table, which 10,000 entries cost 5.4 ms.
-- A pattern query no longer doubles per nested failing branch pattern (a
-  40-`If` graph with no match: 14.6 s to 0.001 s), and a commutative node whose
-  two inputs are one value tries one operand order.
+  Sleigh varnode, so lifted graphs are much smaller and `build_ir` and
+  `analyze` faster.
+- A Sleigh temporary gets a phi only where it is live across a region
+  boundary, not at almost every join; the optimised text is unchanged.
+- A `per_address_ccs` table costs what the function calls, not its size: the
+  lift seeds only the overrides this CFG's call targets select. From Python
+  each `analyze` still resolves every entry's ABI.
+- A pattern query no longer doubles per nested failing branch pattern, and a
+  commutative node whose two inputs are one value tries one operand order.
 - `find_all` attempts a root once per distinct anchor, stops at the first
-  operand ordering of a pattern with no visible capture, and keys each join
-  level on what each prefix position binds rather than on the intersection,
-  which left a chain join running the whole cartesian product.
+  operand ordering of a pattern with no visible capture, and no longer runs a
+  chain join over the whole cartesian product.
 - `LoadForward`, `FunctionArgDetect` and `CallStackArgCollect` answer
   nearest-clobber queries by climbing a memory dominator tree instead of
-  walking the memory graph per query (debug build: `LoadForward` over 1600
-  call diamonds 7.9 s to 0.10 s). An irreducible memory graph has no such tree,
-  and there the walk now publishes each location's start-independent answers
-  for the rest of the climb (clang -O0 goto-into-loop inputs, `LoadForward`'s
-  share of `analyze` at 500 / 1000 / 2000 / 4000 statements: 0.117 / 0.466 /
-  2.787 / 9.994 s to 0.013 / 0.035 / 0.089 / 0.225 s).
+  walking the memory graph per query; on an irreducible memory graph the walk
+  memoises start-independent answers.
 - Dominators come from Lengauer-Tarjan rather than petgraph's quadratic
   iterative scheme; join `dominates` constraints, `phi_input_from_edge` and
   value-range guard lookups answer from dominator-tree intervals.
-- `Function::validate` is linear (192k nodes: 2.1 s to 232 ms), and so is
-  draining a `Worklist` and dead-branch elimination over chained constant
-  branches.
+- `Function::validate` is linear, and so are draining a `Worklist` and
+  dead-branch elimination over chained constant branches.
 - Region lookup is O(log n) for full and partial reads.
-- A run of `$d` data mapping symbols is one range: each mark scanned the rest
-  of its section for the next code mark, so k consecutive marks cost O(k^2) and
-  produced k nested ranges.
-- One def-use walk order serves every read at a live-graph reading, where each
-  peephole pass seeded from its own whole-graph post-order and so re-walked the
-  graph once per pass of a pipeline iteration.
-- Compaction sizes its arenas off the survivors rather than doubling beside the
-  graph it replaces, and a finished CFG region drops its instruction vector's
-  push slack.
-- Resurrecting a value costs its own cone rather than an allocation spanning
-  the node arena, and a phi's incoming edge is an indexed read of its
-  `Region`'s inputs rather than a walk of the use list, which cost O(k) per arm
-  at a k-predecessor join.
+- A run of `$d` data mapping symbols is one range, not k nested ranges built
+  in O(k^2).
+- One def-use walk order serves every peephole pass of a pipeline iteration.
+- Compaction sizes its arenas off the survivors, and a finished CFG region
+  drops its instruction vector's push slack.
+- Resurrecting a value costs its own cone, not the node arena, and a phi's
+  incoming edge is an indexed read of its `Region`'s inputs.
 - Loading maps the image and patches relocations on read, and a symbol resolves
   through an index, so opening a kernel no longer walks every relocation and
-  symbol. `symbol_at` is one index query (40k labels: 8.3 ms to 0.002 ms).
+  symbol; `symbol_at` is one index query.
 - `add_elf` checks overlap in O(n log n).
-- `BufferReader` copies `bytes` and `bytearray` in one piece (64 MiB: 3.2 s to
-  41 ms).
+- `BufferReader` copies `bytes` and `bytearray` in one piece.
 - `pcode_at` decodes through one cached engine instead of cloning `Sleigh` per
   call.
 - Reading `CfgOptions.known_targets` or `.call_other_abis` returns a cached
-  read-only `mappingproxy` instead of copying the table (`analyze` with 20,000
-  known targets: 32.0 ms to 1.6 ms), and `LifterOptions.per_address_ccs` is
-  served the same way.
-- A seeded `known_targets` table costs an `analyze` nothing: the option tables
-  are borrowed rather than owned, `PyCfgOptions` seats the table into the CFG
-  builder's own form at construction and lends it per call, and the resolve
-  loop copies it only where it seats a target (20,000 entries: 0.95 ms an
-  `analyze` to nothing).
+  read-only `mappingproxy` instead of copying the table, and
+  `LifterOptions.per_address_ccs` is served the same way.
+- A seeded `known_targets` table costs an `analyze` nothing: `CfgOptions`
+  converts it once and lends it per call.
 - `pcode_at` keeps what each sweep decoded, so a walk over a function's
-  instructions decodes it once instead of re-sweeping from the entry per
-  address.
+  instructions decodes it once.
 - A CFG build reuses the `Lifter`'s Sleigh user-op table instead of fetching it
   over FFI, and `Function.to_dot(pretty=True)` resolves the register table once
   per render.
@@ -577,26 +1016,22 @@ Rendering:
 Lifting and memory:
 
 - PowerPC `mtfsf` / `mtfsfi` (the Power ISA 2.06 `L=1` / `W=1` forms, on the
-  ppc64 presets) and
-  `wrtee` / `wrteei` declare the FPSCR and MSR registers they write, which the
-  sla reads back itself; a read either side of one folded to the same value.
-  The x86 `XSAVE` / `XRSTOR` footprint gained the opmask, high ZMM, MPX and
-  CET-supervisor state it moves.
+  ppc64 presets) and `wrtee` / `wrteei` declare the FPSCR and MSR registers
+  they write. The x86 `XSAVE` / `XRSTOR` footprint gained the opmask, high
+  ZMM, MPX and CET-supervisor state it moves.
 - A p-code `LOAD` / `STORE` in the REGISTER space reads or writes the register
-  its folded address names, with a phi placed for it; it was lifted as opaque
-  memory and the value vanished (ARM `vld1.N {dX[i]}`). One that does not fold
-  (`VLD2/3/4`, `VST2/3/4`) is an opaque access that mirrors every tracked
-  register into its slot before and re-reads each after, where it failed the
-  function.
+  its folded address names, with a phi placed for it (ARM `vld1.N {dX[i]}`).
+  One that does not fold (`VLD2/3/4`, `VST2/3/4`) is an opaque access that
+  mirrors every tracked register into its slot before and re-reads each
+  after.
 - A `LOAD` from the constant space lifts as the constant its address encodes,
   so PowerPC `rlwimi` / `rldimi` / `rldic` / `rldcr` masks fold.
 - `CBRANCH` lowers as `cond != 0`, not the condition's low bit.
 - A shift count at or past the output width gives 0 (the sign fill for an
-  arithmetic shift right), in the lift and in `ConstantFold`, where the lift
-  truncated the count (x86 `psrad xmm, xmm`) and the fold clamped `IntLeft` at
-  127 and masked `IntRight`'s input after shifting.
-- `popcount` / `lzcount` count over the operand width, where `clz` on a 32-bit
-  operand of a 64-bit register read 32 too high on AArch64 and PPC64.
+  arithmetic shift right), in the lift (x86 `psrad xmm, xmm`) and in
+  `ConstantFold`.
+- `popcount` / `lzcount` count over the operand width (AArch64 and PPC64
+  `clz` on a 32-bit operand).
 - Sign-extending a constant into `I256` / `I512` fills the upper half.
 - A write into a tracked container wider than 16 bytes lifts; a p-code
   temporary of a width the IR did not type (x86 `adcx` / `adox` / `lsl`,
@@ -608,49 +1043,38 @@ Lifting and memory:
   little-endian layout, not the image's data endianness, and `load_elf` picks
   `arm_be_kernel` for an ARM BE8 image.
 - A call through an x86 trap vector (`int imm8`, `into`) pops no return
-  address, where SP drifted by 4 or 8 after every syscall. Only a `swi` trap
-  vector: the rule keyed on the target's producer being any `CallOther`, so
-  `rdrand rax; call rax` lost the callee's return-address pop.
+  address; a call through any other `CallOther` result
+  (`rdrand rax; call rax`) keeps its pop.
 - A `CallOther` output narrower than its tracked container writes that slice
-  alone on x86 and x86-64, where the SDM leaves the rest of the container as it
-  was: the output was widened to the container and written whole, so
-  `mov eax,0x12345678; in ax,dx; shr eax,16; ret` returned a shift of the
-  intrinsic's opaque result instead of `0x1234`. Decided per register file:
-  every other architecture redefines those bytes without the sla saying so, and
-  so does an x86 MMX write to its enclosing 10-byte x87 `ST`, so both keep the
+  alone on x86 and x86-64, as the SDM specifies
+  (`mov eax,0x12345678; in ax,dx; shr eax,16; ret` returns `0x1234`). Other
+  architectures, and an x86 MMX write to its 10-byte x87 `ST`, keep the
   whole-container clobber.
 - A calling convention names the register holding the function's own entry
   address (PPC64 ELFv2 `r12`, MIPS abicalls `t9`) and the lift binds it, so
-  TOC-relative addressing folds: four ppc64 fixture jump-table sites resolve
-  where they deferred. ELFv1 names a descriptor word rather than a register and
-  keeps none.
+  TOC-relative addressing folds. ELFv1 names a descriptor word rather than a
+  register and keeps none.
 - A `CallOther` whose output is a memory operand (x86 `sgdt [mem]`) lifts.
 - Unclassified user-ops that failed the lift are classified: AArch64 `svc`,
   ARM32 NEON float user-ops, `cpsid a` and its siblings, MIPS `syscall`. ARM32
   `smc` / `hvc` carry the SMCCC register footprint; `software_udf` does not
   return.
 - A user-op is opaque to the memory walk whatever the function's convention
-  says, where `preserves_memory` let a store forward across a `syscall`.
+  says, so no store forwards across a `syscall`.
 - A PowerPC `tw` / `twi` / `td` / `tdi` whose mask covers a whole signed or
   unsigned trichotomy ends its region as no-return; a MIPS `BUG()` trap ends
   its function's decode.
 - A MIPS o32 `double` return is the 8-byte `f0_1` pair, not its low half.
 - PowerPC `cr2`-`cr4`, `r2`, `r13` and `v20`-`v31` are callee-saved, and the
-  PPC64 stack-argument base is 112 bytes on ELFv1 and 96 on ELFv2, where every
-  PPC64 stack argument was read at the wrong offset.
+  PPC64 stack-argument base is 112 bytes on ELFv1 and 96 on ELFv2.
 - A callee-saved `d8`-`d15` preserves 64 bits, not the whole `q` register.
-- The USERLAND PowerPC conventions pass vector arguments in `v2`-`v13` and
-  return a vector in `v2` (ELFv2 a homogeneous vector aggregate in `v2`-`v9`),
-  where no preset named a vector register at all and DCE deleted every
-  AltiVec/VSX result and every caller's vector argument setup. An ELFv2
-  `__float128` or IEEE `long double` return comes back in `v2` too. The three
-  `*_linux_kernel` flavours name no part of it, PowerPC Linux being built
-  `-mno-altivec -mno-vsx`, so a function that never touches a vector seeds no
-  16-byte varnode. The vector window follows the float one, which moves the
-  stack-argument positions listed under Breaking, Rust.
-- `BuiltCallingConvention::validate` rejects a stack-pointer SUB-register in a
-  register list, the disjointness rule being by byte range; `ESP` beside `RSP`
-  was accepted and made the stack pointer `arg 0`.
+- The userland PowerPC conventions pass vector arguments in `v2`-`v13` and
+  return a vector in `v2` (ELFv2 a homogeneous vector aggregate in `v2`-`v9`).
+  An ELFv2 `__float128` or IEEE `long double` return comes back in `v2` too.
+  The three `*_linux_kernel` flavours name no vector register (the kernel is
+  built `-mno-altivec -mno-vsx`).
+- `BuiltCallingConvention::validate` rejects a stack-pointer sub-register in a
+  register list; `ESP` beside `RSP` made the stack pointer `arg 0`.
 - A `per_address_ccs` override naming an integer argument register outside the
   function's own convention lifts.
 - An ARM32 function with a NEON register and a call analyses.
@@ -666,58 +1090,48 @@ Optimizer and analysis:
 
 - IR validation runs its dataflow checks even when a node is missing an asm
   fingerprint, so an error bundle can carry both.
-- A value tested for non-zero is no longer read as bit 0 of itself, which
-  deleted packed comparisons above the tested bit.
-- Memory SSA no longer memoises a path-relative cycle verdict, which let a
-  sibling branch narrow a load onto a phi of one arm.
+- A value tested for non-zero is no longer read as bit 0 of itself.
+- Memory SSA no longer memoises a path-relative cycle verdict.
 - `LoadForward` and `FunctionArgDetect` rewire load memory edges only on
   structural facts, so re-optimising under `AssumptionOptions.none()` inherits
   no assumption. `LoadForward` reports a change when it narrows without
-  forwarding, where the final drain could leave a `Phi[x, x]`.
+  forwarding.
 - An alignment mask anchors a stack base only when its 1-run reaches the top of
-  the address width, so `sp & 0x10` or `sp & 0x8000_0000` no longer roots a
-  stack base that `stack_global_disjoint` calls disjoint from a global.
+  the address width; `sp & 0x10` or `sp & 0x8000_0000` no longer roots one.
 - A call's collected stack arguments stop at a slot a nearer store partly
   overwrote.
 - `CallStackArgCollect` and `FunctionArgDetect` replace what an earlier run
-  wrote, where re-optimising a function grew each call's argument list.
+  wrote, so re-optimising no longer grows each call's argument list.
 - `PhiCollapse` reports the node it killed.
 - The optimizer's iteration cap drains and validates before reporting.
 - Constant-folding a branch no longer strands a loop with no path to a
   terminator.
 - `Function.rewrite` / `rewrite_all` refill the memory-decomposition side
   table, so `load().stack_only()` answers correctly after a rewrite.
-- `Lifter::build_ir` refuses a `Cfg` another `Lifter` built: its p-code named
-  address spaces by pointer into the engine that decoded it, a use-after-free
-  once that engine was dropped.
+- `Lifter::build_ir` refuses a `Cfg` another `Lifter` built.
 - `rewrite_all` and `apply_rules_count` stop at the first rule that fires at a
   node.
 - Under `escape_analysis`, a frame address held in any register a call
   clobbers escapes the frame (i386 `regparm`, clang fastcc, the GNU C static
-  chain, AArch64 `x8`); a spill is no longer forwarded across a callee that
+  chain, AArch64 `x8`), so a spill is no longer forwarded across a callee that
   writes it. Sleigh's internal registers (`SleighArch::internal_registers`)
-  are not callee-visible and stay out.
-- `PhiCollapse` and `RegionCollapse` skip a region unreachable from the entry,
-  whose only predecessor is its own `If`: collapsing one built a value from
-  itself, which `validate` rejects.
-- A known-bits fold attributes its folded cone to the node it builds, so the
-  asm fingerprint of the replacement names the instructions it stands for.
+  are exempt.
+- `PhiCollapse` and `RegionCollapse` skip a region unreachable from the entry
+  whose only predecessor is its own `If`.
+- A known-bits fold attributes its folded cone to the node it builds.
 - `range_of` resolves a chain of phis under a depth budget rather than giving
   up at the first one.
-- Return verification locates a RAM store's address through the same guess
-  machinery a load's address goes through, so a write through a frame pointer
-  reloaded off the stack is checked against the saved slot. What is left, a
-  store at no locatable stack address and any callee or user-op, is the claim
-  `AssumptionOptions::return_slots_survive_untracked_writes` carries. A guess
-  is not a placement, so it bears on the answer only with that claim cleared:
-  the guess picks one phi arm, and a prologue's own `push lr` through a merged
-  SP otherwise read as a write to the return slot, which reported a genuine
-  return.
+- Return verification locates a RAM store's address as it does a load's, so
+  a write through a frame pointer reloaded off the stack is checked against
+  the saved slot. A store at no locatable stack address, and any callee or
+  user-op, is covered by
+  `AssumptionOptions::return_slots_survive_untracked_writes`, so a prologue's
+  `push lr` through a merged SP no longer reports a genuine return.
 
 Indirect branches and the CFG:
 
-- A conditional's arms are told apart by where its successors start, where an
-  `fn_max_size` bound cutting an instruction could swap them.
+- A conditional's arms are told apart by where its successors start, so an
+  `fn_max_size` bound cutting an instruction cannot swap them.
 - A guard on a sub-register bounds the index scaled out of it, and a guard
   bounds a table index through a mask of bits known to be zero (PowerPC
   `slwi` / `sldi`), so tables stop seating slots past their end.
@@ -733,42 +1147,29 @@ Indirect branches and the CFG:
   instruction, costs the edge, not the function; so does a fall-through past a
   call into such bytes, and bytes that do not decode behind a jump-table arm
   drop that arm.
-- A narrowing mask on a table cell is not read as the index: `(tbl[i] & m) +
-  base` put the cell's range below its load width, which made the cell the
-  shallowest bounded candidate and seated one arm per masked value. The index
-  is the bounded value below the cell's load and inside its address; a cell the
-  evaluator cannot fold keeps the masked value, the only bound a `*p & m`
-  dispatch has.
-- A switch over a negative case base, which guards `index + k` that
-  `ConstantFold` then merges into the table base, takes its bound from the
-  tightest guarded sibling with the index pinned `k` lower, `Add` being modular
-  at one width; the index itself read as unbounded.
-- A single-register pop into the PC (`ldr pc,[sp],#4`) is classified as a
-  return rather than left unresolved: with a call between the push and the pop
-  nothing folds the stack load back to the link register. `ReturnTargets`
-  separates it from the `push X; pop pc` tail call it looks like, and the
-  seated `Return` records a return site, so every seat is re-checked against
-  each round's IR.
-- A return a CALLER seeded is reported on `unverified_seeded_sites` alone; it
-  was also reported as an unverified return, which the caller had asserted.
-- A `Return` the CLASSIFIER seated rides no channel once
+- A narrowing mask on a table cell is not read as the index (`(tbl[i] & m) +
+  base` seated one arm per masked value): the index is the bounded value below
+  the cell's load; a cell the evaluator cannot fold keeps the masked value.
+- A switch over a negative case base (a guard on `index + k` that
+  `ConstantFold` merges into the table base) takes its bound from that guard.
+- A single-register pop into the PC (`ldr pc,[sp],#4`) with a call between
+  push and pop is classified as a return rather than left unresolved, told
+  apart from a `push X; pop pc` tail call and re-checked against each round's
+  IR.
+- A return the caller seeded is reported on `unverified_seeded_sites` alone,
+  not also as an unverified return.
+- A `Return` the classifier seated is not reported once
   `return_slots_survive_untracked_writes` carries its proof, so an ARM
-  `push {lr}; bl; pop {pc}` comes out complete with every channel empty.
-  Clearing that claim and re-running is how a caller audits one: the same site
-  reports with the claim off. A caller-seeded `Return` whose re-check FAILS is
-  reported on `unverified_seeded_sites`, not as an unresolved dispatch, because
-  the seat decided a CFG edge.
+  `push {lr}; bl; pop {pc}` comes out complete. A caller-seeded `Return` whose
+  re-check fails is reported on `unverified_seeded_sites`, not as an
+  unresolved dispatch.
 - A region starting mid-machine-instruction keeps the decode context those
-  bytes were lifted in: the region-start reset re-decoded the instruction the
-  region continues and spliced a second constructor's p-code onto the half
-  already in the graph, so `gcc -march=armv4t`'s `movne lr,pc; bxne r3` lost
-  its call. A lock-prefix re-entry is treated as exact only where the region
-  starts at that instruction.
-- A seeded arm that fails to decode names the bytes that would not decode on
-  `undecodable_branch_targets`; the report carried the arm, which decodes, so
-  the failing address reached no channel. Refusing the arms that reach such
-  bytes stops at the next dispatch, so an arm reaching them only through
-  another table keeps its edge.
+  bytes were lifted in (`gcc -march=armv4t`'s `movne lr,pc; bxne r3`). A
+  lock-prefix re-entry is exact only where the region starts at that
+  instruction.
+- A seeded arm that fails to decode reports the undecodable bytes on
+  `undecodable_branch_targets`, not the arm itself. An arm reaching such bytes
+  only through another table keeps its edge.
 - A run of zero-p-code-op instructions between a call and bytes that hold no
   instruction ends that call as no-return, and a branch into such a run keeps
   its successor.
@@ -776,27 +1177,18 @@ Indirect branches and the CFG:
   deduplicated.
 - A decode that runs off the end of the image mid-instruction ends the region.
 - A branch into a region's last instruction, and a region split, keep every
-  edge: the build aborted, decoded an overlapping region or dropped a
-  successor.
+  edge.
 - `Cfg.region_at` finds an address inside a region's last instruction.
 - A reused engine decodes a function the same as a fresh one: ARM's
   `mov lr, pc` state and MIPS's `PAIR_INSTRUCTION_FLAG` and MIPS16e
   `ext_delay` no longer carry into the next decode.
 - A reused engine also re-derives the ARM context an instruction commits at a
-  LATER address, which outlived the `build_cfg` that produced it: the IT-block
-  state (`condit`) and the ThumbEE mode (`TEEMode`). Both are re-derived from
-  this build's own decode, so the bytes after an `IT` are predicated only where
-  this function's own `IT` predicates them, and a ThumbEE region decodes as
-  ThumbEE only where this function's own `enterx` entered it. Only the ARM
-  presets commit such a value: x86 and AArch64 commit nothing, MIPS commits the
-  ISA mode only at a `jalx` target analysis never decodes, and PowerPC's
-  `linkreg` selects constructors that emit identical p-code. An instruction
-  lifting to NO p-code ops (ARM `enterx`) now records its own commit too, where
-  the fallback used to overwrite it.
-- Two edges reaching one address with different IT state remains
-  first-decode-wins and unreported, which ARM calls UNPREDICTABLE.
-- `Cfg.isa_mode_conflicts()` is sorted and deduplicated, so an address
-  clashing on several edges appears once rather than once per arrival.
+  later address (IT-block `condit`, ThumbEE `TEEMode`) from this build's own
+  decode. An instruction with no p-code ops (ARM `enterx`) records its own
+  commit too.
+- Two edges reaching one address with different IT state stay
+  first-decode-wins and unreported (UNPREDICTABLE in ARM).
+- `Cfg.isa_mode_conflicts()` is sorted and deduplicated.
 - An `analyze` given a post-pass named `IndirectBranchClassify` still runs the
   real classifier.
 - Three inputs that crashed `build_cfg` raise `StriderError`: a malformed
@@ -808,29 +1200,20 @@ Patterns:
 - A commutative node with one pinned operand tries both orders, and a capture
   on an operand's sibling output keeps its binding.
 - A match's identity is its visible bindings, so a commutative swap that moved
-  two fanned-out sub-patterns between operands no longer reports the same match
-  twice (`bool_and(float_is_nan(_), float_is_nan(_))` gave two hits on one
-  root).
-- A `first_of` cut is scoped to the root attempt, and keyed on the IR node the
-  alternation was offered, rather than to one invocation of it. Scoped per
-  invocation, the two mirror spellings of a commutative query answered
-  differently; keyed on the pattern node alone, a commutative ordering or an
-  `any_input` slot re-offering the alternation a DIFFERENT node cut the arm
-  holding the match.
-- `inputs_of_width` checks the matched node's own inputs. Pushing the width
-  onto the input producers landed it on an alternation's ARMS and on the far
-  side of a cast walked through under `ignore_casts`, so
-  `inputs_of_width(64, one_of![int_eq(..)])` demanded a 64-bit `I1` compare and
-  matched nothing.
+  two fanned-out sub-patterns between operands no longer reports one match
+  twice (`bool_and(float_is_nan(_), float_is_nan(_))`).
+- A `first_of` cut is scoped to the root attempt and keyed on the IR node the
+  alternation was offered, so mirror spellings of a commutative query agree
+  and an `any_input` slot offering another node no longer cuts the matching
+  arm.
+- `inputs_of_width` checks the matched node's own inputs, not an
+  alternation's arms or the far side of an ignored cast.
 - A refusal an unmatchable `if_else` branch pattern left behind is dropped with
   that branch, so rebuilding the query no longer errors.
 - The node cap counts a pattern tree-unfolded, charging a shared vertex once
-  per consumer: the engine walks a vertex's producer once per slot reaching it,
-  so a sub-pattern feeding both operands of a chain of adds cost 2^depth walks
-  and stack frames, and a 12-node pattern overflowed a 2 MiB thread instead of
-  being refused. An alternation's inputs are alternatives, run one at a time
-  with the frame unwound between them, so it is charged its DEEPEST arm rather
-  than their sum, which refused patterns the engine runs.
+  per consumer, so a small pattern sharing a sub-pattern down a chain is
+  refused instead of overflowing the stack. An alternation is charged its
+  deepest arm, not the sum.
 - An `if_else` branch sub-pattern backtracks into its later bindings, and its
   captures are visible to join constraints; replacing a branch drops the old
   branch's captures.
@@ -841,8 +1224,7 @@ Patterns:
 - A second `.capture()` on one vertex binds both names.
 - A `Match` used after `Function.compact` reports stale instead of reading
   another node.
-- `int_not` refuses an output wider than 128 bits, where it matched `Xor`
-  against a saturated mask.
+- `int_not` refuses an output wider than 128 bits.
 - A guard in a `ctrl()` slot, a guard on a control-rooted pattern,
   `.ordered()` on an alternation, a multi-sink branch pattern and a `Template`
   with a gapped output slot are refused at build time.
@@ -850,11 +1232,11 @@ Patterns:
   node signature, and a comparison operand built fresh takes its operand's
   width, not `I1`.
 - Deep patterns, `JoinConstraint` trees and `if_else` towers drop without
-  recursing, where dropping one killed the interpreter.
+  recursing.
 - An exception inside a `.when()` predicate surfaces from its own query, not a
-  later one; a `.when()` predicate nested into another pattern is
-  garbage-collected correctly, where it leaked a reference cycle or segfaulted;
-  an `__index__` that re-enters the builder raises.
+  later one; a `.when()` predicate nested into another pattern no longer
+  leaks a reference cycle or segfaults; an `__index__` that re-enters the
+  builder raises.
 - A query that raises before doing any work, or fails partway through a
   multi-pattern call, leaves its one-shot patterns usable.
 - `Function.rewrite` with a float-typed root and an integer literal declines
@@ -864,9 +1246,7 @@ Patterns:
 Loading:
 
 - A PT_LOAD segment declaring more file than it maps (`p_filesz > p_memsz`)
-  serves only the bytes it maps. The tail belonged to no mapping yet was
-  readable as program memory, and on a writable segment the read-only view
-  answered for it, since permissions are tracked on `p_memsz`.
+  serves only the bytes it maps.
 - The read-only view leaves out every address a writable mapping covers, in one
   image and across `add_elf`, so `LoadReadOnly` no longer folds a stale file
   byte.
@@ -883,23 +1263,17 @@ Loading:
   amplification instead of exhausting memory.
 - A mapping ending at 2^64 loses its last byte instead of failing the load.
 - `load_elf` no longer aborts on a guarded parse or hangs on a FIFO.
-- An instruction relocation field is read and written in the INSTRUCTION byte
-  order, which on `aarch64_be` is little-endian whatever `EI_DATA` says: every
-  classified A64 field was byte-reversed, turning an `adrp` into an `adr`, an
-  `ldr` into a store and a `bl` into undecodable bytes.
+- An instruction relocation field is read and written in instruction byte
+  order, little-endian on `aarch64_be`; every A64 field was byte-reversed.
 - An `SHT_REL` `R_*_RELATIVE` / `R_MIPS_REL32` with no symbol is served as
-  assembled, its field already holding the whole value with the image base
-  modelled as 0; it fell through to a hole, so a read-only pointer table
-  served nothing on an image with text relocations.
+  assembled (image base 0), not as a hole, so a read-only pointer table reads
+  on an image with text relocations.
 - An undefined `STB_WEAK` symbol's synthetic address reaches only a call or
-  jump displacement, which reveals no address. Such a symbol resolves to 0 at
-  link or module-load time as readily as to an address, so handing every site
-  the address folded `if (&w)` to true and dropped the null path; its GOT slot
-  is left unmapped and a field that would hold the address outright is left
-  uncomputed.
+  jump displacement; its GOT slot is unmapped and an absolute field
+  uncomputed, so `if (&w)` keeps its null path.
 - A ppc64 ELFv1 `ET_REL` object's function symbols resolve through the
-  relocations on their `.opd` entry words, an unlinked `.opd` holding zeros, so
-  `analyze` by name no longer decodes descriptor bytes.
+  relocations on their `.opd` entry words, so `analyze` by name no longer
+  decodes descriptor bytes.
 - x86-64 `R_X86_64_GOT64` and `R_X86_64_PLTOFF64` resolve, so
   `-mcmodel=large -fPIC` code addresses its globals rather than reading a hole.
 - Walking the dynamic table depends on `.dynsym` being present rather than on
@@ -909,11 +1283,9 @@ Loading:
 Python and the explorer:
 
 - A mapping argument (`known_targets`, `call_other_abis`, `per_address_ccs`,
-  `add_symbols`) is snapshotted before its elements are converted. A `dict`
-  mutated during conversion, which a key's or value's `__index__` can do,
-  raised `PanicException`, a `BaseException` that `except Exception` does not
-  catch. `per_address_ccs` now also accepts any mapping, so the read-only
-  proxy its getter returns round-trips through the constructor.
+  `add_symbols`) is snapshotted before conversion, so mutating it meanwhile
+  (from an `__index__`) is safe. `per_address_ccs` accepts any
+  mapping, so its read-only getter value round-trips.
 - `analyze` releases the GIL on a custom pipeline too, and `OptimizerPipeline`
   is usable from any thread and survives being applied.
 - A `Function` or `Cfg` moved to another thread no longer leaks its `Lifter`,
@@ -922,52 +1294,37 @@ Python and the explorer:
 - A `MemReader` callback that panics raises `StriderError`, and one that
   re-enters `analyze` no longer aborts the process.
 - `Cfg.neighborhood_dot` raises on an out-of-range region id.
-- `add_elf` and `add_symbol_file` take a `pathlib.Path`, as `load_elf` does;
-  they handed the argument straight to Rust and raised a pyo3 `TypeError`.
-- `field` and `code_ptr` cut to their specific arm, so every field no longer
-  comes back twice under a permissive base (`one_of` is a union, and the bare
-  arm also matched the `base + K` node itself), and a negative field offset
-  reads back signed rather than as 2**64-8.
-- An empty `CallOtherAbi.custom(...)` reprs as a `custom`, not as the `pure()`
-  it is unequal to.
-- `explore.shutdown` leaves a server it did not stop able to serve: `stopping`
-  was set on every target before the wait could time out and never cleared on
-  the give-up path, so a server reported as not stopped answered with headers
-  and an empty body.
-- The explorer enforces its `Host` check on every loopback bind, not just the
-  three canonical spellings, so a server on 127.0.0.2 or an IPv4-mapped
-  loopback address can no longer be read through DNS rebinding.
-- The explorer's autocomplete and query evaluator offer one table of pattern
-  builders plus `Capture`, instead of everything in `dir(strider.pattern)`:
-  picking a type alias or protocol inserted e.g. `PatLike()` and produced a
-  multi-screen extraction error. The search placeholder names `int_add`, not
-  `add`.
+- `add_elf` and `add_symbol_file` take a `pathlib.Path`, as `load_elf` does.
+- `field` and `code_ptr` cut to their specific arm, so a field no longer comes
+  back twice under a permissive base, and a negative field offset reads back
+  signed rather than as 2**64-8.
+- An empty `CallOtherAbi.custom(...)` reprs as a `custom`, not `pure()`.
+- `explore.shutdown` leaves a server it did not stop able to serve.
+- The explorer enforces its `Host` check on every loopback bind (127.0.0.2, an
+  IPv4-mapped loopback), not just the three canonical spellings, closing DNS
+  rebinding there.
+- The explorer's autocomplete and query evaluator offer the pattern builders
+  plus `Capture`, not everything in `dir(strider.pattern)`. The search
+  placeholder names `int_add`, not `add`.
 - `build_cfg` reports only the `known_targets` seeds it seated, so a
-  whole-binary answer table no longer makes every `is_complete()` False and
-  name addresses the function does not dispatch from.
-- `pcode_at` answers the same whatever order the calls came in: a reused sweep
-  engine re-decoded an address a later instruction had already pinned a decode
-  mode at (an ARM backward `blx`).
-- `add_elf` does nothing when the image is already fully loaded byte for byte;
-  it appended every region and symbol again.
-  It also refuses off the handle's thread before merging anything, so a rebuild
-  that cannot run no longer leaves `symbol` and `read` seeing an ELF the
-  decoder does not.
-- A `custom(...)` `CallingConvention` or `CallOtherAbi` is checked against the
-  register table it froze its varnodes against, not the preset name, so one
-  built from `arm` works with an `arm_thumb` handle.
+  whole-binary answer table no longer makes every `is_complete()` False.
+- `pcode_at` answers the same whatever the call order (an ARM backward `blx`
+  pinned a decode mode).
+- `add_elf` does nothing when the image is already loaded byte for byte, and
+  refuses off the handle's thread before merging anything.
+- A `custom(...)` `CallingConvention` or `CallOtherAbi` is checked against its
+  register table, not the preset name, so one built from `arm` works with an
+  `arm_thumb` handle.
 - `Function.rewrite` / `rewrite_all` compile the replacement first, so an
   invalid one no longer consumes a one-shot `into_pat()` `find` pattern.
 - Importing strider no longer leaves `RUST_LIB_BACKTRACE=1` in the C
   environment every child process inherits.
 - A pattern that shares one `Pat` into both operands (`q = int_add(q, q)`) is
-  refused while it is lowered, instead of building its exponentially many
-  matcher closures before the node cap can refuse it.
+  refused while it is lowered, before building its exponentially many matcher
+  closures.
 - DOT, HTML and p-code text are deterministic, and a backslash in a symbol name
   is escaped.
-- `strider.explore.visualize(depth=-1)` raises `ValueError` rather than
-  rendering the whole graph. `Lifter.visualize(depth=-1)` rejects it earlier,
-  as the `OverflowError` of an unsigned argument.
+- `strider.explore.visualize(depth=-1)` raises `ValueError`.
 - The explorer no longer `eval`s its query string, refuses a request whose
   `Host` is not loopback, and a client that stalls, trickles or stops reading
   neither holds it nor blocks interpreter exit; `explore.shutdown` waits under a
@@ -976,76 +1333,18 @@ Python and the explorer:
 
 ### Fixed, decoder and sla
 
-The vendored Sleigh engine and specs under `externals/rsleigh`, one line per
-mnemonic group. A caller sees these only in the lift of the named instructions.
+`externals/rsleigh/sleigh/FORK.md`, "What the patches change", lists every
+fix in force in the vendored Sleigh specs and parser, including those 0.3.0
+adds. Outside the patches:
 
-- AArch64 `ldrsb` / `ldrsh` into a W register (every addressing form,
-  `ldursb` and `ldtrsb` included) sign-extend to 32 bits and clear the upper
-  half.
-- AArch64 scalar SIMD writes zero the rest of the vector register: 180
-  constructors over 56 mnemonics (`fmadd`, `uaddlv`, `umaxv`, `fmaxv`, ...), as
-  do `addv` into a byte destination and `frint32x` / `frint32z` / `frint64x` /
-  `frint64z`. Every AdvSIMD and SVE write to a sub-register destination now
-  clears what the machine clears, so no AArch64 constructor relies on the
-  lifter widening a user op's output for it: the 64- and 128-bit vector writes,
-  the SVE scalar reductions and extracts, the structure loads, and the
-  W-register forms of the SVE counters, `ldapr` and `cas`. `srhadd` writes the
-  register it names.
-- AArch64 `usdot` / `sudot` / `bfdot` by element read the right lane, and
-  `sudot` decodes.
-- AArch64 `FRINT{A,I,M,N,P,X,Z}` lift through an opaque `NEON_frint` user-op
-  instead of as a float-to-integer conversion, and the `FRINT32` / `FRINT64`
-  forms through `NEON_frint32` / `NEON_frint64`.
-- Thumb-2 `ands`, `bics`, `movs` and `mvns` set C from the shifter or the
-  expanded immediate.
-- ARM NEON `vmov.<dt> Dn[x], Rt` writes the element into its lane.
-- The big-endian ARM VFP register file overlays `s` and `d` registers
-  (`ARM7_be`, `ARM8_be`).
-- ARM `vcmp` sets FPSCR's C when unordered.
-- Thumb `sev` / `sev.w` raise `SendEvent`; A32 `csdb` no longer decodes as an
-  `msr`, and decodes only on ARMv7 and later, where the encoding is defined.
-- An ARM `vld4` / `vst4` single lane sits at the element size, Thumb
-  `vst4.16` included.
-- A Thumb-2 `0xEC8x`..`0xECFx` instruction no longer writes out of bounds in
-  the parser.
-- PowerPC `lhbrx` / `lwbrx` reverse the byte order on little-endian too, and
-  32-bit PowerPC decodes `popcntw`.
-- MIPS64 `clz` / `clo` count the word, `drotrv` rotates by the right amount,
-  and `dsllv` / `dsrlv` / `dsrav` take six count bits.
-- x86 `PSLLD` / `PSLLQ` / `PSRAD` read one count from `SRC[63:0]`, and
-  `psrlw` / `psrld` read a memory count once.
-- x86-64 32-bit destinations clear the upper half: `rdtsc`, `rdpmc`,
-  `xgetbv`, `RDPKRU`, `LOOP` / `LOOPcc` under an address-size override, the
-  `fsgsbase` and `rdpid` reads, `RDRAND`, `RDSEED`, `CMPXCHG8B`, 30 VEX and
-  EVEX constructors, string instructions under a 0x67 prefix (RSI, RDI and the
-  `rep` count), `LODSD`, `PEXTRW`, `MOVMSKPS` / `MOVMSKPD`, `MOVBE`, `LSL`,
-  `SLDT`, `SMSW` and `PCMP[EI]STRI`.
-- x86 `XADD` and `XCHG` with a 32-bit memory operand, `XSTORE`, `MONTMUL` and
-  the `XSHA*` ops write their documented destinations, and MMX `PSRLW` /
-  `PSRLD` / `PSRAD` with a register count latch that count once.
-- x86 `extractps` and VEX `vpextrw` take their SDM destination forms, and the
-  `fsgsbase` and `incssp` register operands require ModRM mod=3.
-- x86-64 `rdfsbase`, `rdgsbase`, `rdpid`, `wrfsbase`, `wrgsbase`, `incssp` and
-  `rdssp` honour `REX.B`; `rdsspd` decodes rather than as a reserved NOP, and
-  `incssp` scales its byte count at the pointer width, where the multiply
-  wrapped inside that byte.
-- x86-64 `VMREAD` / `VMWRITE` take 64-bit operands in long mode, and `GETSEC`
-  clears the upper halves of its results.
-- A decode whose own context commit changes a value, an out-of-band context
-  write, or a re-pinned context variable flushes the parse cache.
-- A memory reader overstating its read is an error rather than a panic across
-  the FFI boundary, a reader that panics is caught rather than unwinding out of
-  the callback, and `setOutOfBandState` checks its operand index rather than
-  reading uninitialised state. A region at the top of the address space no
-  longer overflows the read callback.
-- The Sleigh parse state bounds-checks the operand index, the descent depth
-  and its own size, and throws rather than writing out of bounds on a deep
-  constructor descent: PowerPC `vaddubm` and 126 VFP register lists no longer
-  corrupt it.
-- `Sleigh::clone` replays the pinned context the original held, so a cloned
-  engine decodes as its source does, up to `MAX_CONTEXT_COMMITS` (4096)
-  commits; past that the log is dropped and
-  `Sleigh::clone_would_replay_context` says which of the two a clone gets.
+- A memory reader overstating its read is an error, a reader that panics is
+  caught, and `setOutOfBandState` checks its operand index rather than reading
+  uninitialised state. A region at the top of the address space no longer
+  overflows the read callback.
+- `Sleigh::clone` replays the pinned context the original held, so a clone
+  decodes as its source does, up to `MAX_CONTEXT_COMMITS` (4096) commits; past
+  that the log is dropped and `Sleigh::clone_would_replay_context` says which
+  a clone gets.
 
 ## 0.1.0
 

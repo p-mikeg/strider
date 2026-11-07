@@ -1,10 +1,7 @@
 use super::*;
-use crate::error::Result;
-use crate::pipeline::OptCtx;
-use crate::test_support::{assert_returns_const, make_fn};
-use strider_ir::IRWalker;
+use crate::Result;
+use crate::test_support::{assert_returns_const, make_fn, run_pass_rom};
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;
@@ -18,7 +15,6 @@ fn test_rom() -> MockRom {
 /// asm is lost.
 #[test]
 fn load_fold_absorbs_address_fingerprint() -> Result<()> {
-    use strider_ir::IRViewer;
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_empty_fn};
     const ADDR_ADDR: u64 = 0xC0DE_0003;
 
@@ -27,19 +23,16 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
         // the sentinel, so ADDR_ADDR on the folded IntConst can only have
         // come from the address cone.
         b.set_lift_addr(Some(ADDR_ADDR));
-        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+        let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
     })?;
 
     let rom = test_rom();
-    assert!(
-        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
+    assert!(run_pass_rom(&LoadReadOnly, &mut fg, &rom)?);
     assert_returns_const(&fg, 42);
 
-    let folded = fg.producer(crate::test_support::return_value(fg.graph())?);
+    let folded = fg.producer(fg.returned());
     assert!(
         fg.side_tables()
             .asm_fingerprint(folded)
@@ -51,281 +44,111 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn load_non_rom_addr_no_change() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0xDEADu64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-    })?;
-    let rom = test_rom();
-    assert!(
-        !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
-    assert!(
-        fg.graph()
-            .all_node_ids()
-            .any(|n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-    );
-    Ok(())
+/// `Return(Load(space, addr):ty)` in `endian`, the address an `IntConst`.
+fn load_fn(
+    endian: Endianness,
+    addr: u64,
+    space: rsleigh::VnSpace,
+    ty: ValueType,
+) -> Result<strider_ir::Function> {
+    make_empty_fn_endian(endian, |b| {
+        let addr = b.build_int_const(addr, ValueType::int(64))?;
+        b.build_load(addr, space, ty)
+    })
 }
 
+/// A load folds to the bytes the image holds at its address, decoded per
+/// `Function::endianness` (the optimizer's job, not the reader's) across the
+/// whole type, past 16 bytes too, and masked to it.
 #[test]
-fn load_non_const_addr_no_change() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        // `LoadReadOnly` runs alone below, so `0x1000 + 0` stays an Add.
-        let base = b.build_int_const(0x1000u64, ValueType::I64)?;
-        let off = b.build_int_const(0u64, ValueType::I64)?;
-        let addr =
-            b.build_int_binary_operation(base, off, strider_ir::IntBinaryOp::Add, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-    })?;
-    let rom = test_rom();
-    assert!(
-        !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
-    Ok(())
-}
-
-/// The same four mapped bytes must fold differently per endianness: the
-/// byte-to-integer decode belongs to the optimizer and reads
-/// `Function::endianness`, not the reader.
-#[test]
-fn const_load_decodes_per_context_endianness() -> Result<()> {
-    let rom = MockRom::raw_bytes(0x1000, vec![0x01, 0x02, 0x03, 0x04]);
-
-    let build = |endian| {
-        make_empty_fn_endian(endian, |b| {
-            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-            b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
-        })
+fn a_const_load_folds_to_the_decoded_bytes() -> Result<()> {
+    use strider_ir::UBig;
+    let bytes: Vec<u8> = (0..64u8).map(|i| i.wrapping_mul(0x11)).collect();
+    let rom = MockRom::raw_bytes(0x1000, bytes.clone());
+    let decode = |endian, n: usize| {
+        let run = bytes[..n].iter();
+        let fold = |acc: UBig, &byte: &u8| (acc << 8usize) + UBig::from(byte);
+        match endian {
+            Endianness::Little => run.rev().fold(UBig::ZERO, fold),
+            Endianness::Big => run.fold(UBig::ZERO, fold),
+        }
     };
-
-    let mut le = build(Endianness::Little)?;
-    assert!(
-        crate::pipeline::run_one(&LoadReadOnly, &mut le, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
-    assert_returns_const(&le, 0x0403_0201);
-
-    let mut be = build(Endianness::Big)?;
-    assert!(
-        crate::pipeline::run_one(&LoadReadOnly, &mut be, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
-    assert_returns_const(&be, 0x0102_0304);
-
-    Ok(())
-}
-
-/// The widened fold path: `Endianness::read_uint` must decode the full
-/// `u128`, not truncate to the low 8 bytes.
-#[test]
-fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
-    // Distinct bytes so a truncation bug is visible.
-    let raw: Vec<u8> = vec![
-        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
-        0xff,
-    ];
-    let rom = MockRom::raw_bytes(0x1000, raw.clone());
-
-    let build = |endian| {
-        make_empty_fn_endian(endian, |b| {
-            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-            b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I128)
-        })
-    };
-
-    let raw_arr: [u8; 16] = raw.clone().try_into().unwrap();
-
-    let mut le = build(Endianness::Little)?;
-    assert!(
-        crate::pipeline::run_one(&LoadReadOnly, &mut le, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
-    // I128 constants are interned, so read through `int_const_u128` rather
-    // than comparing NodeKind.
-    {
-        use crate::test_support::return_value;
-        use strider_ir::IRViewer;
-        let ret = return_value(le.graph())?;
-        assert_eq!(
-            le.int_const_u128(ret),
-            Some(u128::from_le_bytes(raw_arr)),
-            "LE: folded I128 load must equal u128::from_le_bytes(raw)"
-        );
+    for endian in [Endianness::Little, Endianness::Big] {
+        for bits in [8, 32, 128, 256, 512] {
+            let ty = ValueType::int(bits);
+            let mut fg = load_fn(endian, 0x1000, rsleigh::VnSpace::RAM, ty)?;
+            assert!(
+                run_pass_rom(&LoadReadOnly, &mut fg, &rom)?,
+                "{endian:?} {ty}"
+            );
+            assert_eq!(
+                fg.int_const(fg.returned()),
+                Some(&decode(endian, ty.byte_size())),
+                "{endian:?} {ty}"
+            );
+        }
     }
-
-    let mut be = build(Endianness::Big)?;
-    assert!(
-        crate::pipeline::run_one(&LoadReadOnly, &mut be, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
-    {
-        use crate::test_support::return_value;
-        use strider_ir::IRViewer;
-        let ret = return_value(be.graph())?;
-        assert_eq!(
-            be.int_const_u128(ret),
-            Some(u128::from_be_bytes(raw_arr)),
-            "BE: folded I128 load must equal u128::from_be_bytes(raw)"
-        );
-    }
-
-    Ok(())
-}
-
-/// The decode tops out at a `u128`, so a wider load would silently truncate;
-/// the width guard blocks it.  The ROM maps 64 bytes so the read itself
-/// succeeds, isolating the guard; `load_oversize_read_no_change` covers the
-/// read-failure path.
-#[test]
-fn const_load_wider_than_16_bytes_does_not_fold() -> Result<()> {
-    use strider_ir::IRViewer;
-
-    let rom = MockRom::raw_bytes(0x1000, (0..64u8).collect());
-
-    for ty in [ValueType::I256, ValueType::I512] {
-        let mut fg = make_fn(|b| {
-            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-            b.build_load(addr, rsleigh::VnSpace::RAM, ty)
-        })?;
-        assert!(
-            !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
-                .changed(),
-            "{ty:?}: wider-than-16-byte load must not fold",
-        );
-        assert!(
-            fg.walk()
-                .any(|n| matches!(fg.node_kind(n), NodeKind::Load(_))),
-            "{ty:?}: Load node must remain in the graph",
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn load_oversize_read_no_change() -> Result<()> {
-    // The ROM answers only 1-byte reads at 0x1000; the load asks for 8.
-    let rom = MockRom::limited(0x1000, 1, 42);
-    let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-    })?;
-    assert!(
-        !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
-    Ok(())
-}
-
-/// A `Load(REGISTER, ...)` must not fold even though this rom answers any
-/// address.
-#[test]
-fn load_other_space_no_change() -> Result<()> {
-    let rom = MockRom::always_answer(0xdeadbeef);
-    let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::REGISTER, ValueType::I64)
-    })?;
-    assert!(
-        !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
-    Ok(())
-}
-
-#[test]
-fn load_u8_masks_to_byte() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x2000u64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I8)
-    })?;
-    let rom = test_rom();
-    assert!(
-        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
+    let mut fg = load_fn(
+        Endianness::Little,
+        0x2000,
+        rsleigh::VnSpace::RAM,
+        ValueType::int(8),
+    )?;
+    assert!(run_pass_rom(&LoadReadOnly, &mut fg, &test_rom())?);
     assert_returns_const(&fg, 0xFF);
+    Ok(())
+}
+
+/// A load the rom cannot answer stays: an unmapped address, an address that
+/// is no constant (`0x1000 + 0`, which LoadReadOnly alone does not fold), a
+/// read wider than the rom answers, and a `Load(REGISTER)` at an address
+/// this rom answers for any, which only the pass's RAM filter refuses.
+#[test]
+fn an_unanswerable_load_stays() -> Result<()> {
+    let i64 = ValueType::int(64);
+    let ram = rsleigh::VnSpace::RAM;
+    let mut cases = vec![
+        (
+            "unmapped",
+            load_fn(Endianness::Little, 0xDEAD, ram, i64)?,
+            test_rom(),
+        ),
+        (
+            "oversize",
+            load_fn(Endianness::Little, 0x1000, ram, i64)?,
+            MockRom::limited(0x1000, 1, 42),
+        ),
+        (
+            "register space",
+            load_fn(Endianness::Little, 0x1000, rsleigh::VnSpace::REGISTER, i64)?,
+            MockRom::always_answer(0xdeadbeef),
+        ),
+    ];
+    let non_const = make_fn(|b| {
+        let base = b.build_int_const(0x1000u64, i64)?;
+        let addr = b.build_const_binop(0u64, base, strider_ir::IntBinaryOp::Add, i64)?;
+        b.build_load(addr, ram, i64)
+    })?;
+    cases.push(("non-const address", non_const, test_rom()));
+    for (case, mut fg, rom) in cases {
+        assert!(!run_pass_rom(&LoadReadOnly, &mut fg, &rom)?, "{case}");
+        assert!(fg.has_kind(|k| matches!(k, NodeKind::Load(_))), "{case}");
+    }
     Ok(())
 }
 
 #[test]
 fn multiple_loads_fold_in_one_pass() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let a1 = b.build_int_const(0x1000u64, ValueType::I64)?;
-        let a2 = b.build_int_const(0x2000u64, ValueType::I64)?;
-        let l1 = b.build_load(a1, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        let a1 = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        let a2 = b.build_int_const(0x2000u64, ValueType::int(64))?;
+        let l1 = b.build_load(a1, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, ValueType::int(64))
     })?;
     let rom = test_rom();
-    assert!(
-        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
-            .changed()
-    );
+    assert!(run_pass_rom(&LoadReadOnly, &mut fg, &rom)?);
     let remaining_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(remaining_loads, 0, "both loads must have folded");
-    Ok(())
-}
-
-/// `LoadReadOnly` inspects only the Load's address operand, never its memory
-/// input, so a partitioned memory chain (here: an SP store before a `Call`
-/// barrier, stamped by `StackOffsetDetect`) cannot block the fold.
-#[test]
-fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
-    use crate::StackOffsetDetect;
-    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
-
-    let sp = stack_vn_x86();
-
-    // stack-store (SP-4), call 0xCAFE, load 0x1000, return loaded.
-    let mut fg = make_sp_fn(sp, |b, sp_v| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let stack_addr = b.build_sub_as_add_neg(sp_v, four, ValueType::I32)?;
-        let data = b.build_int_const(0x55u64, ValueType::I32)?;
-        b.build_store(stack_addr, data, rsleigh::VnSpace::RAM)?;
-
-        let call_tgt = b.build_int_const(0xCAFEu64, ValueType::I32)?;
-        b.build_call_cc(call_tgt, None)?;
-
-        // Non-SP-rooted, so no side-table entry gets stamped.
-        let rom_addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-        let loaded = b.build_load(rom_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    // Canonicalize first so the SP-aware post-pass sees the production shape:
-    // ConstantFold folds the lowered `Sub`, PhiCollapse drops the
-    // read_variable(sp) phi to a bare `InitialVar(sp) + k` terminal.
-    crate::test_support::cf_rp_pipeline().run(&mut fg, &mut OptCtx::at_floor(None))?;
-
-    crate::pipeline::run_post(&StackOffsetDetect, &mut fg, &mut OptCtx::at_floor(None))?;
-    assert!(
-        fg.graph()
-            .all_node_ids()
-            .any(|n| fg.stack_offset(n).is_some()),
-        "StackOffsetDetect must stamp the stack-store offset"
-    );
-
-    assert!(
-        fg.count_kind(|k| matches!(k, NodeKind::Load(_))) >= 1,
-        "ROM Load must survive StackOffsetDetect"
-    );
-
-    let rom = test_rom();
-    let fold_result =
-        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?;
-    assert!(fold_result.changed(), "LoadReadOnly must fold the ROM Load");
-
-    assert_eq!(
-        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
-        0,
-        "all Load nodes must be folded"
-    );
-
     Ok(())
 }

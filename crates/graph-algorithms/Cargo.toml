@@ -8,6 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# The brute-force `oracle` module, `walk::acyclic_postorder`, and
+# `dominance_frontiers` with the placement over it, for tests.
+test-util = []
+
 [dependencies]
 cranelift-entity.workspace = true
 entity-utils.workspace = true
@@ -16,6 +21,11 @@ rustc-hash.workspace = true
 [dev-dependencies]
 expect-test.workspace = true
 itertools.workspace = true
+# Oracles only: `simple_fast`, `toposort`.
+petgraph.workspace = true
+proptest.workspace = true
+# Gives `tests/` the feature `cfg(test)` cannot reach.
+graph-algorithms = { path = ".", features = ["test-util"] }
 
 [lints]
 workspace = true

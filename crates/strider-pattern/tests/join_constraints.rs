@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use strider_ir::UBig;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, CaptureExt, JoinConstraint, JoinedMatch, MatchPat, Matcher, anything, bool_const,
-    call, if_else, int_const, one_of,
+    call, if_else, int_const, one_of, region, var,
 };
 
 /// Diamond CFG with a `Call` in the true arm (`0xAAAA`), the false arm
@@ -26,21 +27,21 @@ fn diamond_with_calls() -> (strider_ir::Function, NodeId) {
 
     b.set_region(region_b); // true arm
     b.set_lift_addr(Some(0x1010));
-    let t1 = b.build_int_const(0xAAAAu64, ValueType::I64).unwrap();
+    let t1 = b.build_int_const(0xAAAAu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t1, None).unwrap();
     b.build_branch(region_d).unwrap();
     b.set_lift_addr(None);
 
     b.set_region(region_c); // false arm
     b.set_lift_addr(Some(0x1020));
-    let t2 = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
+    let t2 = b.build_int_const(0xBBBBu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t2, None).unwrap();
     b.build_branch(region_d).unwrap();
     b.set_lift_addr(None);
 
     b.set_region(region_d); // merge
     b.set_lift_addr(Some(0x1030));
-    let t3 = b.build_int_const(0xCCCCu64, ValueType::I64).unwrap();
+    let t3 = b.build_int_const(0xCCCCu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t3, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
@@ -75,14 +76,14 @@ fn empty_true_arm_with_calls() -> strider_ir::Function {
 
     b.set_region(region_c); // false arm
     b.set_lift_addr(Some(0x1020));
-    let t2 = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
+    let t2 = b.build_int_const(0xBBBBu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t2, None).unwrap();
     b.build_branch(region_d).unwrap();
     b.set_lift_addr(None);
 
     b.set_region(region_d); // merge, reachable through BOTH arms
     b.set_lift_addr(Some(0x1030));
-    let t3 = b.build_int_const(0xCCCCu64, ValueType::I64).unwrap();
+    let t3 = b.build_int_const(0xCCCCu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t3, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
@@ -512,15 +513,9 @@ fn a_constraint_prunes_before_the_rest_of_the_product_is_built() {
     );
 }
 
-/// The join is indexed on the captures both sides always bind, which prunes
-/// pairs that cannot agree. Agreement implies the bindings resolve to the same
-/// node, so the index can only ever remove impossible pairs, but that is the
-/// kind of claim worth checking rather than asserting.
-///
-/// This compares the real join against a brute-force cartesian reference over
-/// shapes chosen to exercise the tricky cases: a shared capture, no shared
-/// capture at all, a capture one side leaves unbound (an alternation arm that
-/// did not fire), and three-pattern joins.
+/// The indexed join equals a brute-force cartesian reference over a shared
+/// capture, no shared capture, a capture one side leaves unbound (an
+/// alternation arm that did not fire), and three-pattern joins.
 #[test]
 fn the_indexed_join_returns_exactly_the_cartesian_product() {
     let (function, _) = diamond_with_calls();
@@ -532,7 +527,7 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
         m: &Matcher<'_>,
         pats: &[&strider_pattern::Pattern],
         function: &strider_ir::Function,
-    ) -> Vec<Vec<Vec<(u32, u32)>>> {
+    ) -> Vec<Vec<Vec<(u32, u32, u32)>>> {
         let per: Vec<Vec<strider_pattern::Match>> =
             pats.iter().map(|p| m.find_all(p).unwrap()).collect();
         let mut rows: Vec<Vec<&strider_pattern::Match>> = vec![vec![]];
@@ -546,11 +541,11 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
                     let ok = row.iter().all(|prev| {
                         prev.capture_signature(function.graph())
                             .iter()
-                            .all(|(cap, node)| {
+                            .all(|(cap, node, _)| {
                                 cand_sig
                                     .iter()
-                                    .find(|(c, _)| c == cap)
-                                    .is_none_or(|(_, n)| n == node)
+                                    .find(|(c, _, _)| c == cap)
+                                    .is_none_or(|(_, n, _)| n == node)
                             })
                     });
                     if ok {
@@ -562,7 +557,7 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
             }
             rows = next;
         }
-        let mut out: Vec<Vec<Vec<(u32, u32)>>> = rows
+        let mut out: Vec<Vec<Vec<(u32, u32, u32)>>> = rows
             .iter()
             .map(|r| {
                 r.iter()
@@ -598,7 +593,7 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
 
     for (n, pats) in shapes.iter().enumerate() {
         let refs: Vec<&strider_pattern::Pattern> = pats.iter().collect();
-        let mut got: Vec<Vec<Vec<(u32, u32)>>> = m
+        let mut got: Vec<Vec<Vec<(u32, u32, u32)>>> = m
             .find_joined_constrained(&refs, &[])
             .unwrap()
             .iter()
@@ -619,10 +614,8 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
 }
 
 /// A pattern that binds no capture is still identified by where it matched, so
-/// a join holding one reports every one of its matches. Keying the dedup on
-/// bindings alone made all of them collapse to an arbitrary survivor, and
-/// then adding a capture to ONE side SHRANK the reported cross product, which
-/// is the opposite of what a capture does.
+/// a join holding one reports every one of its matches, and adding a capture
+/// to one side never shrinks the cross product.
 #[test]
 fn a_capture_free_pattern_does_not_collapse_the_cross_product() {
     let (function, _) = diamond_with_calls();
@@ -659,6 +652,27 @@ fn a_capture_free_pattern_does_not_collapse_the_cross_product() {
     );
 }
 
+/// `c` binds the `If` node in one pattern and one of its edges in the other; both arm regions
+/// join with it whichever pattern comes first.
+#[test]
+fn a_node_binding_does_not_collapse_value_bindings_of_its_capture() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let c = Capture::new();
+    let on_if = if_else().capture(c).build();
+    let on_edge = region().input(0, var(c)).build();
+    let if_first = m
+        .find_joined_constrained(&[&on_if, &on_edge], &[])
+        .unwrap()
+        .len();
+    let edge_first = m
+        .find_joined_constrained(&[&on_edge, &on_if], &[])
+        .unwrap()
+        .len();
+    assert_eq!(edge_first, 2);
+    assert_eq!(if_first, 2);
+}
+
 /// `if (true) { store } else { }`, joining at a merge region.
 fn diamond_with_a_store_in_the_true_arm() -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
@@ -676,8 +690,8 @@ fn diamond_with_a_store_in_the_true_arm() -> strider_ir::Function {
 
     b.set_region(region_b); // true arm
     b.set_lift_addr(Some(0x1010));
-    let addr = b.build_int_const(0x2000u64, ValueType::I64).unwrap();
-    let data = b.build_int_const(0xAAu64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x2000u64, ValueType::int(64)).unwrap();
+    let data = b.build_int_const(0xAAu64, ValueType::int(64)).unwrap();
     b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
     b.build_branch(region_d).unwrap();
     b.set_lift_addr(None);
@@ -756,7 +770,7 @@ fn diamond_with_a_phi() -> strider_ir::Function {
     for (arm, k) in [(t_arm, 10u64), (f_arm, 20u64)] {
         b.set_region(arm);
         b.set_lift_addr(Some(0x1010 + k));
-        let v = b.build_int_const(k, ValueType::I64).unwrap();
+        let v = b.build_int_const(k, ValueType::int(64)).unwrap();
         b.write_variable(&reg, v).unwrap();
         b.build_branch(merge).unwrap();
         b.set_lift_addr(None);
@@ -797,7 +811,7 @@ fn phi_input_from_edge_selects_the_arm_merged_from_that_edge() {
             .iter()
             .find_map(|hit| hit.bindings().get_uint(v, &function))
             .unwrap(),
-        10,
+        UBig::from(10u8),
         "the true arm merges 10"
     );
 }
@@ -962,4 +976,91 @@ fn a_deeply_nested_constraint_frees_on_a_small_stack() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+/// Two adds of one `x` bind `c` identically but match at different roots. A pattern sharing no
+/// capture with an earlier one keeps both rows, so an always-true constraint drops none.
+#[test]
+fn a_lone_capture_bearing_pattern_keeps_matches_that_differ_only_in_root() {
+    use strider_ir::node::IntBinaryOp;
+    use strider_pattern::int_add;
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
+    let r = b.create_region_all().unwrap();
+    b.set_entry_region_all(r).unwrap();
+    b.set_region(r);
+    b.set_lift_addr(Some(0x1000));
+    let t = ValueType::int(64);
+    let x = b.build_int_const(5u64, t).unwrap();
+    let one = b.build_int_const(1u64, t).unwrap();
+    let two = b.build_int_const(2u64, t).unwrap();
+    let a = b
+        .build_int_binary_operation(x, one, IntBinaryOp::Add, t)
+        .unwrap();
+    let c = b
+        .build_int_binary_operation(x, two, IntBinaryOp::Add, t)
+        .unwrap();
+    let sum = b
+        .build_int_binary_operation(a, c, IntBinaryOp::Add, t)
+        .unwrap();
+    b.build_return(Some(sum), &[]).unwrap();
+    let function = b.build().unwrap();
+    let m = Matcher::new(&function);
+
+    let cap = Capture::new();
+    let pat = int_add(int_const(5u128).capture(cap), anything())
+        .ordered()
+        .into_pattern();
+    assert_eq!(m.find_all(&pat).unwrap().len(), 2);
+    assert_eq!(m.find_joined_constrained(&[&pat], &[]).unwrap().len(), 2);
+    let always = JoinConstraint::And(Vec::new());
+    assert_eq!(
+        m.find_joined_constrained(&[&pat], &[always]).unwrap().len(),
+        2
+    );
+
+    // Sharing `cap` with an earlier pattern collapses the second pattern's roots.
+    let first = int_const(5u128).capture(cap).into_pattern();
+    assert_eq!(
+        m.find_joined_constrained(&[&first, &pat], &[])
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// At one root, `k` bound by the first pattern alone and by the second alone are two rows.
+#[test]
+fn a_capture_bound_by_either_pattern_alone_stays_two_rows() {
+    use strider_pattern::int_add;
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
+    let r = b.create_region_all().unwrap();
+    b.set_entry_region_all(r).unwrap();
+    b.set_region(r);
+    let t = ValueType::int(64);
+    let x = b.build_int_const(5u64, t).unwrap();
+    let y = b.build_int_const(6u64, t).unwrap();
+    let s = b
+        .build_int_binary_operation(x, y, strider_ir::node::IntBinaryOp::Add, t)
+        .unwrap();
+    b.build_return(Some(s), &[]).unwrap();
+    let function = b.build().unwrap();
+    let m = Matcher::new(&function);
+
+    let (k, j) = (Capture::new(), Capture::new());
+    let a = int_add(one_of![anything().capture(k), anything()], anything())
+        .ordered()
+        .into_pattern();
+    let b = int_add(
+        one_of![anything(), anything().capture(k)],
+        anything().capture(j),
+    )
+    .ordered()
+    .into_pattern();
+    let rows = m.find_joined_constrained(&[&a, &b], &[]).unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().any(|r| r[0].value(k).is_some()));
+    assert!(
+        rows.iter()
+            .any(|r| r[0].value(k).is_none() && r[1].value(k).is_some())
+    );
 }

@@ -23,15 +23,11 @@ fn rss_bytes() -> u64 {
 #[test]
 fn load_elf_does_not_leak_backing_bytes() {
     let path = elf_path("x64", "arithmetic");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let file_size = std::fs::metadata(&path).unwrap().len();
 
     // Warm up allocator arenas and one-time parse tables so the baseline is

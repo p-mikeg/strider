@@ -3,27 +3,21 @@
 //! across a region boundary still does.
 
 use strider_ir::IRViewer;
-use strider_lift::LiftOptions;
 
 /// The UNIQUE-space varnodes a lifted `Phi` carries.  Every node, not the
 /// control walk: a phi nothing consumes is still placed.
 fn temporary_phis(bytes: Vec<u8>) -> Vec<rsleigh::Vn> {
     let arch = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter =
+        strider_lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))
+            .expect("lifter");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(lifter.sleigh_regs())
         .expect("systemv");
-    let opts = LiftOptions::default();
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
         .expect("cfg");
-    let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
+    let f = lifter.build_ir(&cfg, cc).expect("ir").function;
     f.graph()
         .all_node_ids()
         .filter(|&node| matches!(f.node_kind(node), strider_ir::node::NodeKind::Phi))

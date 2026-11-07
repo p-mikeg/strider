@@ -1,9 +1,8 @@
-"""Python bindings for the Strider binary analysis pipeline.
+"""Strider: lift a native function to a sea-of-nodes IR and query it.
 
-The public API is the domain submodules `strider.ir`, `strider.lift`,
-`strider.cfg`, `strider.sleigh`, `strider.reader`, `strider.opt`,
-`strider.pattern` and `strider.template`, plus the top-level
-`StriderError`.
+The API is the submodules `strider.ir`, `strider.lift`, `strider.cfg`,
+`strider.sleigh`, `strider.reader`, `strider.opt`, `strider.pattern` and
+`strider.template`, plus `StriderError`.
 """
 
 import importlib as _importlib
@@ -13,18 +12,17 @@ import typing as _t
 _ext = _importlib.import_module("strider._strider")
 
 if _t.TYPE_CHECKING:
-    # The loop below binds these at runtime; the static import is what a type
-    # checker sees, so the stubs type the aliases built out of them.
+    # Bound by the loop below at runtime.
     from . import cfg, ir, lift, opt, pattern, reader, sleigh, template
 
-# The extension builds its submodules without a docstring; theirs live here.
+# The extension's submodules have no docstring of their own.
 _SUBMODULE_DOCS = {
     "ir": "The sea-of-nodes IR: `Function`, `Node`, and their readers.",
     "lift": "Lift, optimise and resolve: the `Lifter` handle, its options, "
             "and the ELF loaders.",
     "cfg": "The control-flow graph and its options.",
-    "sleigh": "Architecture, calling convention, and the low-level "
-              "disassembler and varnode surface.",
+    "sleigh": "Architecture, calling convention, user-op ABI and varnode "
+              "surface.",
     "reader": "The code and read-only-memory readers, and the ELF symbol "
               "table they come with.",
     "opt": "The optimizer pipeline and its passes.",
@@ -38,8 +36,7 @@ for _name in ("ir", "lift", "cfg", "sleigh", "reader", "opt", "pattern", "templa
     _sys.modules[f"strider.{_name}"] = _sub
     globals()[_name] = _sub
 
-# Give `strider.pattern.constraints` its own `sys.modules` key so
-# `import strider.pattern.constraints` resolves.
+# So `import strider.pattern.constraints` resolves.
 _sys.modules["strider.pattern.constraints"] = _ext.pattern.constraints
 _ext.pattern.constraints.__doc__ = (
     "Relational predicates over the captures a pattern binds."
@@ -50,31 +47,24 @@ __version__ = _ext.__version__
 
 
 def _export(module, *names: str) -> None:
-    """Publish `names` in `module.__all__`, skipping ones already there.
-
-    The extension submodules survive an `importlib.reload(strider)`, so a
-    plain `+=` would double every entry.
-    """
+    """Add `names` to `module.__all__` once (the extension submodules survive
+    `importlib.reload(strider)`)."""
     module.__all__ += [n for n in names if n not in module.__all__]
 
-# Bind the pure-Python facade members into their home submodule.
 from . import _api as _mod_api  # noqa: E402
 
-# `explore` is a submodule, not an attribute the extension binds; import it so
-# `strider.explore.shutdown(port)` works without `Lifter.visualize` having run.
+# So `strider.explore` works without an explicit import.
 from . import explore as explore  # noqa: E402
 
-lift.ElfLifter = _mod_api.ElfLifter          # type: ignore[attr-defined]
-lift.load_elf = _mod_api.load_elf            # type: ignore[attr-defined]
-_export(lift, "ElfLifter", "load_elf")
-pattern.FieldPat = _mod_api.FieldPat         # type: ignore[attr-defined]
-pattern.field = _mod_api.field               # type: ignore[attr-defined]
-pattern.code_ptr = _mod_api.code_ptr         # type: ignore[attr-defined]
-_export(pattern, "FieldPat", "field", "code_ptr")
+for _sub, _names in ((lift, ("ElfLifter", "load_elf")),
+                     (pattern, ("FieldPat", "field", "code_ptr"))):
+    for _name in _names:
+        getattr(_mod_api, _name).__module__ = f"strider.{_sub.__name__}"
+        setattr(_sub, _name, getattr(_mod_api, _name))
+    _export(_sub, *_names)
 
-# The type aliases live in the .pyi stubs; also bind them at runtime so
-# `p.PatLike` works in an annotation evaluated without
-# `from __future__ import annotations`, and so they can be imported.
+# The stubs' type aliases, bound at runtime too so they can be imported and
+# evaluated in annotations.
 _p = pattern
 _p.PatLike = _t.Union[  # type: ignore[attr-defined]
     int, _p.Capture, _p.Pat, _p.CallPat, _p.CallOtherPat, _p.RetPat,
@@ -82,54 +72,27 @@ _p.PatLike = _t.Union[  # type: ignore[attr-defined]
     _p.RegionPat, _p.IndirectBranchPat, _p.UnreachablePat, _p.SwitchPat,
     _p.FunctionArgPat, _p.IntBinaryPat, _p.FloatBinaryPat, _p.BoolBinaryPat,
 ]
-# A VALUE operand slot is narrower than a pattern position: the control-only
-# builders produce no value, so passing one raises at query time.
+# A value operand slot: builders producing no value are excluded.
 _p.ValueLike = _t.Union[  # type: ignore[attr-defined]
     int, _p.Capture, _p.Pat, _p.CallPat, _p.CallOtherPat, _p.LoadPat,
-    _p.PhiPat, _p.EntryPat, _p.RegionPat, _p.FunctionArgPat, _p.IntBinaryPat,
-    _p.FloatBinaryPat, _p.BoolBinaryPat,
+    _p.PhiPat, _p.FunctionArgPat, _p.IntBinaryPat, _p.FloatBinaryPat,
+    _p.BoolBinaryPat,
 ]
-# A MEMORY slot takes the four memory producers, or a `Pat`, which is how an
-# `one_of` over them arrives.
+# A memory slot: the four memory producers or a wildcard.
 _p.MemLike = _t.Union[  # type: ignore[attr-defined]
-    _p.Pat, _p.StorePat, _p.MemPhiPat, _p.CallPat, _p.CallOtherPat,
+    _p.Capture, _p.Pat, _p.StorePat, _p.MemPhiPat, _p.CallPat, _p.CallOtherPat,
 ]
 _p.CaptureKey = _t.Union[_p.Capture, str]  # type: ignore[attr-defined]
 _p.constraints.ConstraintLike = _t.Union[  # type: ignore[attr-defined]
     _p.constraints.JoinConstraint, _p.constraints.JoinPredicate
 ]
-_p.ValueTy = _t.Literal[  # type: ignore[attr-defined]
-    "i1", "i8", "i16", "i24", "i32", "i40", "i48", "i56", "i64", "i72",
-    "i80", "i96", "i112", "i128", "i256", "i512", "f16", "f32", "f64", "f80",
-    "f128",
-    "I1", "I8", "I16", "I24", "I32", "I40", "I48", "I56", "I64", "I72",
-    "I80", "I96", "I112", "I128", "I256", "I512", "F16", "F32", "F64", "F80",
-    "F128",
-]
-_p.IntCmpOpName = _t.Literal[  # type: ignore[attr-defined]
-    "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow",
-    "equal", "less", "sless", "carry", "scarry", "sborrow",
-    "EQUAL", "LESS", "SLESS", "CARRY", "SCARRY", "SBORROW",
-    "eq", "lt", "slt", "EQ", "LT", "SLT", "Eq", "Lt", "Slt",
-]
-_p.IntBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
-    "Add", "And", "Or", "Xor", "Div", "Sdiv", "Rem", "Srem",
-    "ShiftRight", "SShiftRight", "ShiftLeft", "Mul",
-    "add", "and", "or", "xor", "div", "sdiv", "rem", "srem",
-    "shiftright", "sshiftright", "shiftleft", "mul",
-    "ADD", "AND", "OR", "XOR", "DIV", "SDIV", "REM", "SREM",
-    "SHIFTRIGHT", "SSHIFTRIGHT", "SHIFTLEFT", "MUL",
-    "shl", "shr", "sshr", "SHL", "SHR", "SSHR", "Shl", "Shr", "Sshr",
-]
-_p.BoolBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
-    "And", "Or", "Xor", "and", "or", "xor", "AND", "OR", "XOR",
-]
-_p.FloatBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
-    "Add", "Mul", "Div", "add", "mul", "div", "ADD", "MUL", "DIV",
-]
-_p.ExtendOpName = _t.Literal[  # type: ignore[attr-defined]
-    "zero", "zero_extend", "ZeroExtend", "sign", "sign_extend", "SignExtend",
-]
+# Built from the name rosters Rust publishes.
+_p.ValueTy = _t.Literal[_p.VALUE_TYPES]  # type: ignore[attr-defined]
+_p.IntCmpOpName = _t.Literal[_p.INT_CMP_OPS]  # type: ignore[attr-defined]
+_p.IntBinaryOpName = _t.Literal[_p.INT_BINARY_OPS]  # type: ignore[attr-defined]
+_p.BoolBinaryOpName = _t.Literal[_p.BOOL_BINARY_OPS]  # type: ignore[attr-defined]
+_p.FloatBinaryOpName = _t.Literal[_p.FLOAT_BINARY_OPS]  # type: ignore[attr-defined]
+_p.ExtendOpName = _t.Literal[_p.EXTEND_OPS]  # type: ignore[attr-defined]
 _export(
     _p, "PatLike", "ValueLike", "MemLike", "CaptureKey", "ValueTy",
     "IntCmpOpName", "IntBinaryOpName", "BoolBinaryOpName", "FloatBinaryOpName",
@@ -137,10 +100,12 @@ _export(
 )
 _export(_p.constraints, "ConstraintLike")
 
-# PyO3's `#[pyclass(extends = ...)]` takes exactly one base, so the builders
-# cannot share a Rust base class. The shared vocabulary is declared here as
-# structural protocols instead: `isinstance` answers what a caller actually
-# wants to know, and the `.pyi` stubs list them as the builders' bases.
+# `Cfg.incomplete` names each reason by one of these.
+cfg.IncompleteReason = _t.Literal[cfg.INCOMPLETE_REASONS]  # type: ignore[attr-defined]
+_export(cfg, "IncompleteReason")
+
+# The builders' shared methods as protocols: a pyclass takes one base, so
+# they cannot share a Rust one. The stubs list these as the builders' bases.
 _S = _t.TypeVar("_S")
 
 
@@ -149,28 +114,42 @@ class _NodePat(_t.Protocol):
     """A node-pattern builder: captures, guards, and seals into a `Pat`."""
 
     def capture(self: _S, c: "pattern.CaptureKey") -> _S:
-        """Capture the matched node under `c`, a `Capture` or a name."""
+        """Bind the matched node to `c`, a `Capture` or a name."""
         ...
 
     def when(self: _S, f: _t.Callable[["pattern.Match"], bool]) -> _S:
-        """Attach a Python predicate that runs after the match."""
+        """Keep a match only when `f` returns `True`; a rejected binding
+        backtracks. A non-`bool` return is a `TypeError`. Raising aborts the
+        query and re-raises out of `find_all` / `find_unique`. `f` may run on
+        a partial match, more than once, or not at all."""
         ...
 
     def into_pat(self) -> "pattern.Pat":
-        """Finalise into a `Pat`."""
+        """Finalise to a reusable `Pat`. A wrong-typed operand raises here; one
+        that can never match its slot raises at the first query. Rarely
+        needed: a builder auto-finalises where a pattern is expected."""
         ...
 
 
 @_t.runtime_checkable
 class _InputPat(_t.Protocol):
-    """A builder whose node kind has input slots."""
+    """A builder whose node kind exposes raw input slots."""
 
     def input(self: _S, idx: int, p: "pattern.PatLike") -> _S:
-        """Match `p` against raw input slot `idx`."""
+        """Match `p` against raw input slot `idx`: `Call` is `[ctrl, mem,
+        target, sp, arg0, ...]`, `Load` `[mem, addr]`, `If` `[ctrl, cond]`.
+
+        A typed value sub-pattern binds only a value edge; `var` /
+        `anything` any edge; a control producer (`entry()`, `region()`, ...)
+        its control edge; a `call()` / `call_other()` any of its outputs
+        (`.res()` keeps it to the value).
+        """
         ...
 
     def any_input(self: _S, p: "pattern.PatLike") -> _S:
-        """Require SOME input of the node to match `p`."""
+        """Require some input of the node to match `p`, without pinning a
+        slot; binding follows `input`. Repeatable, each call a distinct
+        slot."""
         ...
 
 
@@ -179,7 +158,8 @@ class _CtrlPat(_t.Protocol):
     """A builder whose node kind has a control-predecessor input."""
 
     def ctrl(self: _S, p: "pattern.PatLike") -> _S:
-        """Match `p` against the node's direct ctrl predecessor."""
+        """Match `p` against the node's direct ctrl predecessor
+        (`inputs[0]`)."""
         ...
 
 
@@ -187,21 +167,28 @@ class _CtrlPat(_t.Protocol):
 class _MemPat(_t.Protocol):
     """A builder whose node kind has a memory input."""
 
-    def mem(self: _S, p: "pattern.PatLike") -> _S:
-        """Match `p` against the node's memory predecessor."""
+    def mem(self: _S, p: "pattern.MemLike") -> _S:
+        """Match `p` against the node's memory predecessor; takes a memory
+        producer (`store` / `mem_phi` / `call` / `call_other`)."""
         ...
 
 
 @_t.runtime_checkable
 class _MemAccessPat(_t.Protocol):
-    """A builder for a node kind that addresses memory: `load` / `store`."""
+    """A builder whose node kind addresses memory: `load()` and `store()`.
 
-    def addr(self: _S, p: "pattern.PatLike") -> _S:
-        """Constrain the address operand."""
+    `stack_offset`, `stack_only`, `non_stack` and `heap_only` set one region
+    filter; the last one called wins, except that `stack_only` keeps an
+    offset an earlier `stack_offset` pinned.
+    """
+
+    def addr(self: _S, p: "pattern.ValueLike") -> _S:
+        """Constrain the address operand (`inputs[1]`)."""
         ...
 
     def bit_width(self: _S, n: int) -> _S:
-        """Filter by accessed-value width in bits."""
+        """Filter by accessed-value width in bits. A width no value type has
+        raises `StriderError`."""
         ...
 
     def space(self: _S, s: "sleigh.VnSpace") -> _S:
@@ -209,20 +196,23 @@ class _MemAccessPat(_t.Protocol):
         ...
 
     def stack_offset(self: _S, k: int) -> _S:
-        """Match only accesses whose address decomposes to exactly `sp + k`."""
+        """Match only accesses whose address decomposes to exactly
+        `sp + k`."""
         ...
 
     def stack_only(self: _S) -> _S:
-        """Keep only accesses whose address decomposes to a stack base."""
+        """Keep only accesses whose address decomposes to a stack base.
+        Keeps an earlier `stack_offset`; replaces any other filter."""
         ...
 
     def non_stack(self: _S) -> _S:
         """Keep only accesses whose address decomposes to a heap base or is
-        proven not memory-rooted."""
+        proven not memory-rooted; an undecided address is rejected."""
         ...
 
     def heap_only(self: _S) -> _S:
-        """Keep only accesses whose address decomposes to a heap base."""
+        """Keep only accesses whose address decomposes to a heap base (a
+        pure allocator's return pointer)."""
         ...
 
 
@@ -231,20 +221,24 @@ class _OrderedPat(_t.Protocol):
     """A pattern whose root takes an operand pair `ordered` can pin."""
 
     def ordered(self: _S) -> _S:
-        """Stop the matcher retrying this op with its operands swapped."""
+        """Stop the matcher retrying this op with its operands swapped. Pins
+        this node alone (for `int_ne` / `float_ne`, the `Equal` under the
+        `Xor`). On a `Pat` with no operands to order (a wildcard, a constant,
+        a `one_of`) it raises."""
         ...
 
 
 @_t.runtime_checkable
 class _OutputPat(_t.Protocol):
-    """A builder whose node kind has output slots."""
+    """A builder whose node kind exposes raw output slots."""
 
     def output(self, slot: int) -> "pattern.OutputSlotPat":
-        """Bind or constrain the value at raw output `slot`."""
+        """Bind or constrain the value at raw output `slot` (a `Call` is
+        `[ctrl, mem, rets..., clobbers...]`, a `Load` `[value]`)."""
         ...
 
     def any_output(self) -> "pattern.OutputSlotPat":
-        """Some output rather than a fixed slot."""
+        """Like `output`, over some output rather than a fixed slot."""
         ...
 
 
@@ -258,33 +252,35 @@ for _proto, _proto_name in (
     setattr(_p, _proto_name, _proto)
     _export(_p, _proto_name)
 
-# The output terminal is shared by every builder that has outputs;
-# `CallPat.output` names it too.
+# `CallPat.output`'s name for the shared output terminal.
 _p.CallOutputPat = _p.OutputSlotPat  # type: ignore[attr-defined]
 _export(_p, "CallOutputPat")
-reader.MemLike = _t.Union[reader.MemReader, reader.BufferReader]  # type: ignore[attr-defined]
-reader.RomLike = _t.Union[reader.ReadOnlyMemory, reader.BufferReader]  # type: ignore[attr-defined]
+
+
+class _Readable(_t.Protocol):
+    def read(self, addr: int, size: int, /) -> _t.Optional[bytes]: ...
+
+
+_Readable.__module__ = "strider.reader"
+reader._Readable = _Readable  # type: ignore[attr-defined]
+reader.MemLike = _t.Union[reader.MemReader, reader.BufferReader, _Readable]  # type: ignore[attr-defined]
+reader.RomLike = _t.Union[reader.ReadOnlyMemory, reader.BufferReader, _Readable]  # type: ignore[attr-defined]
+del _Readable
 _export(reader, "MemLike", "RomLike")
 template.TemplateLike = _t.Union[  # type: ignore[attr-defined]
-    template.Template, _p.Pat, _p.Capture, int
+    template.Template, _p.Capture, int
 ]
 _export(template, "TemplateLike")
-cfg.DotStyle = _t.Literal["dark", "dark_cfg", "empty"]  # type: ignore[attr-defined]
+cfg.DotStyle = _t.Literal[cfg.DOT_STYLES]  # type: ignore[attr-defined]
 _export(cfg, "DotStyle")
 lift.StrPath = _mod_api.StrPath              # type: ignore[attr-defined]
 _export(lift, "StrPath")
-opt.MainOptimizerPass = _t.Union[tuple(  # type: ignore[attr-defined]
-    getattr(opt, _n) for _n in (
-        "ConstantFold", "KnownBits", "FlagCmpCanonicalize", "IfCondInversion",
-        "PhiCollapse", "RegionCollapse", "DeadBranchElimination", "CfgDetach",
-        "LoadForward", "LoadReadOnly",
-    )
-)]
-opt.PostOptimizerPass = _t.Union[tuple(  # type: ignore[attr-defined]
-    getattr(opt, _n) for _n in (
-        "StackOffsetDetect", "FunctionArgDetect", "CallStackArgCollect",
-    )
-)]
+opt.MainOptimizerPass = _t.Union[  # type: ignore[attr-defined]
+    tuple(getattr(opt, _n) for _n in opt._MAIN_PASS_NAMES)
+]
+opt.PostOptimizerPass = _t.Union[  # type: ignore[attr-defined]
+    tuple(getattr(opt, _n) for _n in opt._POST_PASS_NAMES)
+]
 opt.OptimizerPass = _t.Union[  # type: ignore[attr-defined]
     opt.MainOptimizerPass, opt.PostOptimizerPass
 ]
@@ -293,13 +289,11 @@ _export(opt, "OptimizerPass", "MainOptimizerPass", "PostOptimizerPass")
 __all__ = ["StriderError", "ir", "lift", "cfg", "sleigh", "reader",
            "opt", "pattern", "template"]
 
-# Drop import machinery from the public namespace, including the
-# `strider._strider` / `strider._api` attributes the import system binds.
-del _importlib, _sys, _ext, _name, _sub, _mod_api, _t, _p, _export
+# Drop import machinery from the public namespace.
+del _importlib, _sys, _ext, _name, _sub, _names, _mod_api, _t, _p, _export
 del _SUBMODULE_DOCS
 del _S, _NodePat, _InputPat, _CtrlPat, _MemPat, _MemAccessPat, _OrderedPat
 del _OutputPat, _proto, _proto_name
-# No statement here binds these two; they go through the module dict, and an
-# `importlib.reload` re-runs this after they are already gone.
+# Bound by the import system, and already gone on `importlib.reload`.
 globals().pop("_strider", None)
 globals().pop("_api", None)

@@ -1,22 +1,21 @@
 //! A split must carry the shadow index to the half that keeps the shadower.
 //!
-//! `find_region_containing_addr` falls back to `shadowed_starts`, which
-//! `add_region` keys on the SHADOWED region's start. `split_region` gives the
+//! The region lookup falls back to the shadowed starts, which the index
+//! keys on the SHADOWED region's start. `split_region` gives the
 //! second half a new start, so without re-indexing the lookup answers `None`
 //! for bytes that half owns and a fresh region is decoded INSIDE an
 //! instruction, with nothing reported.
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, Cfg, CfgOptions};
+use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 fn build(bytes: Vec<u8>, start: u64) -> Cfg {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, start);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .build()
+    DecodeEngine::new(arch, reader)
+        .expect("decode engine")
+        .build_cfg(start.into(), &CfgOptions::default())
         .expect("build")
 }
 
@@ -49,18 +48,14 @@ fn a_split_keeps_the_shadowed_half_reachable() {
     // and the interior target 0x100d is recognised as A's, not decoded.
     let no_split = build(bytes(false), 0x1000);
     assert!(
-        !no_split
-            .regions()
-            .any(|r| r.start_addr.machine_addr.addr == 0x100d),
+        !no_split.regions().any(|r| r.start_addr.machine() == 0x100d),
         "control: 0x100d is owned by region A, so no region may start there"
     );
 
     // Subject: the same graph plus an edge that splits A at 0x1004.
     let split = build(bytes(true), 0x1000);
     assert!(
-        !split
-            .regions()
-            .any(|r| r.start_addr.machine_addr.addr == 0x100d),
+        !split.regions().any(|r| r.start_addr.machine() == 0x100d),
         "after the split, 0x100d is owned by the second half; a region starting \
          there means the lookup missed it and decoded inside the movabs immediate"
     );

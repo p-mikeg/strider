@@ -149,14 +149,6 @@ def _class_members(tree: ast.Module) -> dict[str, set[str]]:
 #: Owner key for a function declared at module level rather than in a class.
 _MODULE = "<module>"
 
-#: `(module, class, method, parameter)` the stub deliberately declares as
-#: required while the binding gives it a default.
-#:
-#: `Lifter.analyze` takes `cc=None` only to raise "`cc` is required on a plain
-#: Lifter" for it; typing it optional would type-check a call that can never
-#: succeed. `ElfLifter.analyze`, which does derive a default, is not exempt.
-_OPTIONALITY_EXEMPT = {("strider.lift", "Lifter", "analyze", "cc")}
-
 #: One declared parameter: its name, how it may be passed, whether it is
 #: optional, and its default source when the stub spells one out (`...`, the
 #: conventional `.pyi` placeholder, says "optional" without naming the value).
@@ -360,8 +352,6 @@ def test_function_signatures_match_the_stub(mod_name):
                     f"runtime {got_kind.description}"
                 )
             elif opt != got_opt:
-                if (mod_name, owner_name, method, name) in _OPTIONALITY_EXEMPT:
-                    continue
                 state = "optional" if opt else "required"
                 wrong.append(f"{where}({name}=): stub {state}, runtime is not")
             elif want is not None and want != got:
@@ -557,10 +547,10 @@ _ZERO_ARG_RETURNS = {
         ("Node", "boolean"): "Optional[bool]",
         ("Node", "vn"): "Optional[Vn]",
         ("Node", "value_type"): "Optional[str]",
-        ("Node", "wide_const_bytes"): "Optional[bytes]",
         ("Node", "call_other_name"): "Optional[str]",
         ("Function", "cfg"): "Cfg",
         ("Function", "clone"): "Function",
+        ("Function", "assumptions"): "AssumptionOptions",
         ("Function", "compact"): "None",
         ("Function", "entry_node"): "int",
         ("Function", "node_count"): "int",
@@ -572,16 +562,13 @@ _ZERO_ARG_RETURNS = {
     },
     "strider.cfg": {
         ("Cfg", "entry"): "int",
-        ("Cfg", "unverified_seeded_sites"): "list[int]",
-        ("Cfg", "isa_mode_conflicts"): "list[int]",
-        ("Cfg", "interior_branch_targets"): "list[int]",
-        ("Cfg", "is_complete"): "bool",
+        ("Cfg", "incomplete"): "list[tuple[int, IncompleteReason]]",
     },
     "strider.lift": {
+        ("Lifter", "arch"): "SleighArch",
         ("Lifter", "reader"): "MemLike",
         ("Lifter", "rom"): "Optional[RomLike]",
         ("Lifter", "user_op_names"): "list[str]",
-        ("ElfLifter", "arch"): "SleighArch",
         ("ElfLifter", "cc"): "CallingConvention",
         ("ElfLifter", "entry_point"): "int",
         ("ElfLifter", "reader"): "BufferReader",
@@ -603,11 +590,9 @@ _ZERO_ARG_RETURNS = {
         ("SleighArch", "name"): "str",
         ("SleighArch", "endianness"): "str",
         ("CallingConvention", "x86_64_systemv"): "CallingConvention",
-        ("CallingConvention", "no_return"): "CallingConvention",
         ("CallingConvention", "preserves_all"): "CallingConvention",
         ("CallingConvention", "preserves_regs"): "CallingConvention",
         ("CallingConvention", "name"): "str",
-        ("Sleigh", "arch_name"): "str",
         ("Vn", "space"): "VnSpace",
         ("Vn", "off"): "int",
         ("Vn", "size"): "int",
@@ -631,12 +616,15 @@ _ZERO_ARG_RETURNS = {
 
 
 def _stub_returns(tree: ast.Module) -> dict[tuple[str, str], Optional[str]]:
-    """`(class, method) -> the declared return annotation`, quotes stripped."""
+    """`(class, method) -> the declared return annotation`, quotes stripped,
+    a class body's `if TYPE_CHECKING:` declarations included."""
     out: dict[tuple[str, str], Optional[str]] = {}
     for node in tree.body:
         if not isinstance(node, ast.ClassDef):
             continue
-        for item in node.body:
+        body = list(node.body)
+        body += [s for i in node.body if isinstance(i, ast.If) for s in i.body]
+        for item in body:
             if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             src = None if item.returns is None else ast.unparse(item.returns)
@@ -648,7 +636,11 @@ def _stub_returns(tree: ast.Module) -> dict[tuple[str, str], Optional[str]]:
 
 @pytest.mark.parametrize("mod_name", sorted(_ZERO_ARG_RETURNS))
 def test_zero_arg_accessors_return_what_the_stub_promises(mod_name):
-    declared = _stub_returns(_stub_ast(MODULES[mod_name]))
+    # A stub re-exports the pure-Python facade, whose source declares it.
+    declared = {
+        **_stub_returns(_stub_ast("_api.py")),
+        **_stub_returns(_stub_ast(MODULES[mod_name])),
+    }
     wrong = []
     for key, want in _ZERO_ARG_RETURNS[mod_name].items():
         got = declared.get(key)

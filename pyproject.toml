@@ -1,15 +1,11 @@
-# `license` as an SPDX expression and `license-files` below are PEP 639.
-# maturin up to 1.8.1 refuses to parse `license-files` at all; 1.8.2 to 1.9.x
-# parse it but ship only the first entry, and spell the expression as the
-# deprecated `License`. 1.10 is the first release that writes
-# `License-Expression` and every `License-File` line.
+# PEP 639 license fields need maturin >= 1.10.
 [build-system]
 requires = ["maturin>=1.10,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "strider"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python bindings for the Strider binary analysis pipeline"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -30,13 +26,7 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/p-mikeg/strider"
 
-# Dev / test dependencies, installable via `uv sync --group dev`
-# (PEP 735).  Kept separate from `[project.optional-dependencies]` so
-# end-users who `pip install strider` don't inherit the test-only deps.
-#
-# `maturin` is included so `uv run maturin develop` works without a
-# system-wide install.  `patchelf` is included so the rpath warning on
-# Linux goes away.
+# PEP 735 dev group: uv sync --group dev.
 [dependency-groups]
 dev = [
     "maturin>=1.10,<2.0",
@@ -55,26 +45,16 @@ include = [
     "crates/strider-py/examples/python",
 ]
 pythonVersion = "3.9"
-# The eight domain submodules live in the compiled extension: each ships a
-# `.pyi` with no `.py` beside it, which is exactly what this rule reports.
-# (`__init__`, `_api` and `explore` are real Python and resolve normally.)
+# The extension submodules ship .pyi stubs with no .py.
 reportMissingModuleSource = "none"
 
-# pytest discovery -- `uv run pytest` (or plain `pytest`) finds the
-# strider-py integration suite from the workspace root without arguments.
-# Excludes Rust target dirs, worktrees, and the `.venv` from the rootdir scan.
 [tool.pytest.ini_options]
 testpaths = ["crates/strider-py/tests/python"]
 norecursedirs = [".git", ".venv", ".worktrees", "target", "__pycache__"]
 
-# The Python bindings crate lives under `crates/strider-py`; the uv
-# project is hosted here at the workspace root so the dev workflow
-# (`uv sync --group dev` -> `uv run maturin develop` -> `uv run pytest`)
-# runs from one place.  maturin reaches the crate via `manifest-path`
-# and the `strider/` package via `python-source`.
+# The uv project lives at the workspace root; maturin builds crates/strider-py.
 [tool.maturin]
 manifest-path = "crates/strider-py/Cargo.toml"
-features = ["pyo3/extension-module"]
 python-source = "crates/strider-py"
 module-name = "strider._strider"
 include = [

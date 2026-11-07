@@ -6,7 +6,9 @@ because one machine instruction lifts to several p-code instructions and the
 address a caller reads out of `unresolved` has to be the address that seats.
 """
 
-from typing import Dict, List, Literal, Union
+from typing import Dict, List, Literal, Optional, Union
+
+import pytest
 
 import strider
 from .conftest import fixture_path
@@ -18,7 +20,9 @@ ARMS = [0x401145, 0x40114C]
 
 
 def _resolution_off():
-    return strider.lift.LifterOptions(resolve_indirect_branches=False)
+    return strider.lift.LifterOptions(
+        resolve_indirect_branches=False
+    )
 
 
 def _program():
@@ -105,14 +109,11 @@ def test_an_empty_seed_leaves_the_classifier_free_to_resolve():
         assert cfg.region_at(arm) is not None
 
 
-def test_a_seed_that_displaces_the_classifier_is_reported_unverified():
-    """A seed the classifier never confirmed is not `unresolved` (the caller
-    asserted the answer), but nothing checked it, so it is reported.
-
-    Seeding x64 `main`'s dispatch with only itself changes the CFG the
-    classifier reads: the selector stops deriving and the site converges
-    holding just the seed.
-    """
+def test_a_seed_that_folds_the_selector_keeps_the_derived_arms():
+    """Seeding x64 `main`'s dispatch with only itself folds its selector to a
+    constant; seating that constant re-forms the loop, so the table derives
+    again and the site holds the seed beside every derived arm. A site the
+    classifier also answered is not an unverified seed."""
     dispatch = 0x401042
     result = strider.lift.load_elf(str(fixture_path("x64", "switch"))).analyze(
         "main",
@@ -121,12 +122,29 @@ def test_a_seed_that_displaces_the_classifier_is_reported_unverified():
         ),
     )
     assert result.unresolved == []
-    assert result.cfg.unverified_seeded_sites() == [dispatch]
+    assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == []
+    derived = (0x401050, 0x401070, 0x401078, 0x401090, 0x401098, 0x4010A0, 0x4010A8, 0x4010AD)
+    for arm in derived:
+        assert result.cfg.region_at(arm) is not None, f"no region at derived arm {arm:#x}"
+
+
+def test_a_seed_with_resolution_off_is_reported_unverified():
+    """With resolution off nothing derives the site, so the seed is its only
+    answer and nothing checked it."""
+    dispatch = 0x401042
+    result = strider.lift.load_elf(str(fixture_path("x64", "switch"))).analyze(
+        "main",
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(known_targets={dispatch: [dispatch]}),
+            resolve_indirect_branches=False,
+        ),
+    )
+    assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == [dispatch]
 
 
 def test_an_unseeded_analysis_reports_nothing_unverified():
     result = _program().analyze("dispatch_value")
-    assert result.cfg.unverified_seeded_sites() == []
+    assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == []
 
 
 def test_a_link_register_seed_is_reported_as_unverified():
@@ -147,9 +165,49 @@ def test_a_link_register_seed_is_reported_as_unverified():
             base,
             strider.sleigh.CallingConvention.x86_64_systemv(),
             strider.lift.LifterOptions(
-                cfg=strider.cfg.CfgOptions(known_targets=targets)
+                cfg=strider.cfg.CfgOptions(known_targets=targets),
             ),
         )
 
-    assert analyze(seed=False).cfg.unverified_seeded_sites() == []
-    assert analyze(seed=True).cfg.unverified_seeded_sites() == [dispatch]
+    assert [a for a, r in analyze(seed=False).cfg.incomplete if r == "unverified_seed"] == []
+    assert [a for a, r in analyze(seed=True).cfg.incomplete if r == "unverified_seed"] == [dispatch]
+
+
+# 0x0ff0: c3     ret       (a function below the entry)
+# 0x1000: ff e0  jmp rax   (an indirect tail call to it)
+_TAIL_BASE = 0xFF0
+_TAIL_SITE = 0x1000
+_TAIL_CODE = bytes([0xC3]) + bytes([0x90] * 15) + bytes([0xFF, 0xE0])
+
+
+@pytest.mark.parametrize(
+    "seed", [[_TAIL_BASE], [_TAIL_BASE, _TAIL_BASE]], ids=["one", "twice"]
+)
+@pytest.mark.parametrize("resolve", [True, False])
+@pytest.mark.parametrize("bound", [None, 2])
+def test_a_one_target_seed_outside_the_function_is_a_tail_call(
+    bound: Optional[int], resolve: bool, seed: List[int]
+):
+    """One target is the caller's declared dispatch, not a table read: out of
+    range it leaves the function, unverified, rather than deferring. A target
+    listed twice is still one."""
+    lift = strider.lift.lifter(
+        strider.sleigh.SleighArch.x86_64(),
+        strider.reader.BufferReader(_TAIL_BASE, _TAIL_CODE),
+    )
+    opts = strider.cfg.CfgOptions(
+        known_targets={_TAIL_SITE: seed}, function_max_size=bound
+    )
+    result = lift.analyze(
+        _TAIL_SITE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(
+            cfg=opts,
+            resolve_indirect_branches=resolve,
+        ),
+    )
+    assert result.unresolved == []
+    assert result.cfg.incomplete == [(_TAIL_SITE, "unverified_seed")]
+    assert result.cfg.region_at(_TAIL_BASE) is None, "the callee was decoded inline"
+    built = lift.build_cfg(_TAIL_SITE, opts)
+    assert built.incomplete == [(_TAIL_SITE, "unverified_seed")]

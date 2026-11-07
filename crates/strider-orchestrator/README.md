@@ -1,115 +1,48 @@
 # strider-orchestrator
 
-Drives one function all the way from bytes to optimised IR: decode, lift,
-optimise, resolve the indirect branches that the first decode could not see, and
-re-run the whole thing until the control-flow graph stops changing.
+Drives one function from bytes to optimised IR: decode, lift, optimise,
+resolve indirect branches, and rebuild until the CFG stops changing.
 
-## What's here
+## API
 
-- `Strider<R>`, the per-binary handle: `new(arch, sleigh, rom)` over an
-  `rsleigh::Sleigh` and an optional read-only image (what `LoadReadOnly` folds
-  against and what the jump-table classifier reads tables from; `None` disables
-  both).
-- `Strider::analyze(entry, cc, lift_opts, opt_opts, pipeline)` -> `AnalyzeResult`:
-  the loop below. `pipeline` defaults to `strider_opt::default_pipeline`, and
-  `strider_opt::IndirectBranchClassify` is appended as a post-pass unless the
-  supplied pipeline already runs it. `lift_opts.compact` applies once after the
-  loop.
-- `Strider::build_cfg(entry, cfg_opts)`: a structural decode only, no lift, no
-  optimisation, no resolution.
-- Accessors that let a caller run its own pipeline against the same state:
-  `arch`, `sleigh`, `sleigh_regs`, `user_op_names`, `rom`.
-- Re-exports, so a caller needs one dependency: `strider_opt` as `opt`, and
-  `Lifter` / `LiftOptions` / `LiftOutcome` from `strider-lift`.
+- `Strider::new(arch, reader, rom)`: the per-binary handle. `rom` is the
+  read-only image `LoadReadOnly` and the jump-table classifier read; `None`
+  disables both.
+- `Strider::analyze(entry, cc, opts, pipeline)` -> `Result<AnalyzeResult>`,
+  the loop below; `pipeline` defaults to `strider_opt::default_pipeline`.
+- `Strider::build_cfg(entry, cfg_opts)`: a structural decode only.
+- Accessors for running your own pipeline: `arch`, `lifter`, `sleigh`,
+  `sleigh_regs`, `user_op_names`, `rom`.
+- Re-exports: `strider_opt` as `opt`, `Lifter` / `LiftOutcome` / `LiftSites`,
+  and `Incompleteness` / `Reason`.
 
-## One round
+## The loop
 
-`build_lift` is the unit the loop repeats: build the CFG from the current
-`known_targets`, lift it, run the pipeline. Every `BranchIndirect` the CFG could
-not seat became an `IndirectBranch` placeholder anchored to its pcode address,
-and every `Switch` the CFG did seat kept an anchor of its own so a table can
-still widen. The `IndirectBranchClassify` post-pass walks the optimised IR and
-answers each anchor with a `ResolvedTargets`, or with `None` for a site it
-cannot derive.
+Each round builds the CFG from the caller's `known_targets` and the loop's
+own seats (`CfgOptions::derived_targets`), lifts and optimises it, and
+classifies every dispatch site: each `IndirectBranch` placeholder and each
+seated `Switch`, which can still widen. The answers fold into the seats, so
+one round seats one level of discovery. Each round rebuilds the whole
+function, so code reachable only through k nested or chained tables costs
+k+1 full rebuilds.
 
-The classifier only REPORTS targets. Nothing rewrites the graph in place: the
-orchestrator folds the answers into `known_targets` and rebuilds the CFG from
-them, so a resolved branch becomes a real CFG edge and the next round's IR is
-lifted with that edge present. That is what makes a chain of trampolines
-resolve: one round seats one level of discovery.
+It converges when no site is left, or a round changes no seat and refuses
+none. 256 folds is the cap; sites still growing there are reported. These
+freeze a site:
 
-## The fixed-point loop
+- A site that narrows twice is withdrawn.
+- A seat naming a target that does not decode, or that reaches code that does
+  not, is withdrawn whole. A target two edges reach in different ISA modes
+  loses only that arm.
 
-`apply_resolutions` folds a round's classifications into `known_targets` and
-reports what changed. Two anchors sharing one pcode address merge within the
-round; across rounds the staged set replaces the previous entry. The caller's
-own seed is unioned back in by address every round, and the caller's map is
-never mutated. A seated `Switch` keeps the ISA mode its instruction commits, so
-a widened arm is evaluated in its own mode; a re-derivation reporting no mode
-adopts the mode already proved for that address, rather than re-decoding proved
-arms in whatever mode flows into the branch.
+## Incompleteness
 
-The loop converges when no anchor is left, or when a round changes no address's
-successor set. `MAX_RESOLUTION_ITERATIONS` (256) is the one other thing that
-stops it, and not as an error: one iteration seats one level of discovery, so
-the cap is also the discovery-depth limit, and exhausting it while sites are
-still growing is that limit being hit, not an oscillation. Those sites are
-reported.
+`AnalyzeResult::incomplete()` is one `Incompleteness` set of
+`(PcodeInsnAddr, Reason)`; check it before trusting an absence. Each reason's
+contract is on `Reason`. The five target reasons accumulate over every round,
+since an inexact edge fed the classifier whether or not the final CFG keeps
+it; the two site reasons are the final round's.
 
-Two verdicts freeze a single site, leaving the loop to run on without it:
-
-- A site that NARROWS twice is abandoned. Every narrowing is reported
-  unresolved, since nothing tells a tighter proof of an over-approximated index
-  bound from a lost arm; a second means the answer depends on what the previous
-  round seated, so no member of the cycle is trustworthy. Its seat is dropped
-  and its placeholder left live.
-- A site naming a target that failed to decode, or that led to code that did,
-  is abandoned whole: the bound that produced it is what is wrong, so no arm of
-  that answer stands. The site is reported; the address that failed is named in
-  no channel, since the CFG reports the arm it was reached from and not the
-  bytes. A site naming an address two edges reached in different ISA modes loses
-  just that arm, since any two edges raise a clash, direct ones included. Either
-  way the site is frozen, taking no further classification.
-
-## Six channels
-
-A converged CFG may be incomplete, and `AnalyzeResult` says so six ways.
-`is_complete()` is the question "may this be incomplete?"; none of the six
-answers it alone, so it reads all of them. A false `is_complete()` over
-`unverified_seeded_sites` alone usually reads "complete but unverified": a
-`Switch` holding exactly the caller's seed is the plain case, except for a
-caller-seeded `Return` whose re-check failed, which lands there too.
-
-- `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
-  `Switch` whose selector no longer derives, a site still growing when the cap
-  ran out, a site whose fold dropped a successor the classifier proved, a site
-  whose answer narrowed in any round, a site the loop abandoned, and a return
-  whose folded target is not provably the entry return address.
-- `unverified_seeded_sites`: answers that are whole but that nothing verified. A
-  `Switch` holding exactly the caller's seed and nothing derived; a site the CFG
-  CONSUMED, where a caller's `LinkRegister` seat became a `Return` and a lone
-  out-of-function target became a `TailCall`, leaving no placeholder and no
-  anchor to report through, which for a caller-seeded `Return` is also where a
-  FAILED re-check lands (a `Return` the CLASSIFIER derived rides no channel once
-  `return_slots_survive_untracked_writes` carries its proof; clearing that claim
-  and re-running is how a caller audits one); and an arm seated on the mode a
-  caller seed gave its siblings, which nobody evaluated for that arm.
-- `isa_mode_conflicts`, `interior_branch_targets`, `unmapped_branch_targets`
-  and `undecodable_branch_targets`: losses no indirect site owns, since a
-  direct edge produces them too. An address two edges reached in different
-  modes, a target off every instruction boundary, a target the image had no
-  bytes for, seated as an empty `TailCall` stub, and bytes that hold no
-  instruction (Sleigh rejects them, or `CfgOptions::data_ranges` marks them),
-  reached by a branch, which leaves through a `TailCall` stub, or by a
-  fall-through past a call, which ends that call as no-return. All four
-  accumulate across rounds rather than being read off the final CFG: the round
-  that decoded an address twice fed the classifier whether or not a later
-  rebuild still carries that edge.
-
-A caller seed asserts the site is settled, which suppresses the unclassifiable
-seated `Switch` report until the site outgrows the seed. It suppresses nothing
-else: not a live placeholder, and not a successor the classifier proved and the
-fold dropped.
-
-Depends on `strider-cfg`, `strider-ir`, `strider-lift`, `strider-opt`,
-`strider-target`, `rsleigh`, `anyhow` and `rustc-hash`.
+A seed turns a site's `UnresolvedBranch` into `UnverifiedSeed`: an
+unclassified `Switch` until the site outgrows the seed, and an unproven return
+seeded `LinkRegister`.

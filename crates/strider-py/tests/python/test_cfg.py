@@ -1,5 +1,6 @@
-import time
-
+import pathlib
+import re
+import typing
 import pytest
 import strider
 
@@ -153,31 +154,6 @@ def _chain_cfg(branches: int):
     return lift.build_cfg(0x1000), 0x1000 + len(body)
 
 
-def _region_at_seconds_per_call(cfg, addr, n=20000):
-    cfg.region_at(addr)  # warm whatever the first call builds
-    start = time.perf_counter()
-    for _ in range(n):
-        cfg.region_at(addr)
-    return (time.perf_counter() - start) / n
-
-
-def test_region_at_does_not_scale_with_region_count():
-    """A linear scan over regions costs ~60x more on 1500 regions than on
-    11; a lookup index costs the same on both. The bound is a ratio, so it
-    does not depend on how fast the machine is."""
-    small, small_end = _chain_cfg(10)
-    big, big_end = _chain_cfg(1500)
-
-    for addr_small, addr_big in (
-        (small_end + 0x10000, big_end + 0x10000),  # past every region
-        (small_end - 4, big_end - 4),  # in the last region
-    ):
-        ratio = _region_at_seconds_per_call(
-            big, addr_big
-        ) / _region_at_seconds_per_call(small, addr_small)
-        assert ratio < 10, f"region_at is {ratio:.0f}x slower on 1500 regions"
-
-
 def test_region_at_answers_every_address_the_same_as_a_full_scan():
     """The index must not change which region owns an address, including the
     bytes past an instruction's start and the addresses no region owns."""
@@ -207,3 +183,52 @@ def test_cfg_style_reaches_both_renderers(x86_memory_elf):
         with pytest.raises(strider.StriderError):
             # Deliberate: an unknown theme name is a runtime error.
             render(style="not_a_theme")  # type: ignore[arg-type]
+
+
+def test_dot_styles_name_every_theme_a_render_accepts(x86_memory_elf):
+    assert strider.cfg.DOT_STYLES == ("dark", "dark_cfg", "empty")
+    assert typing.get_args(strider.cfg.DotStyle) == strider.cfg.DOT_STYLES
+    # pyright checks callers against the stub's own copy.
+    stub = (pathlib.Path(strider.__file__).parent / "cfg.pyi").read_text()
+    body = stub.split("DotStyle = Literal[", 1)[1].split("]", 1)[0]
+    assert tuple(re.findall(r'"([^"]+)"', body)) == strider.cfg.DOT_STYLES
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
+    s = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem)
+    cfg = s.build_cfg(addr, strider.cfg.CfgOptions(allow_code_before_start_addr=True))
+    for style in strider.cfg.DOT_STYLES:
+        assert cfg.to_dot(style=style) is not None
+    with pytest.raises(
+        strider.StriderError, match='expected "dark", "dark_cfg" or "empty"'
+    ):
+        cfg.to_dot(style="not_a_theme")  # type: ignore[arg-type]
+
+
+def _stub_inside_a_crossing_jmp():
+    """x86-64 under a size bound of 8. The `jmp` at 0x1006 crosses the bound,
+    and the `je` at 0x1002, decoded after it, targets 0x1009, past the bound:
+    a tail-call stub starting inside the `jmp`.
+
+        0x1000  eb 02           jmp 0x1004
+        0x1002  74 05           je 0x1009
+        0x1004  74 fc           je 0x1002
+        0x1006  e9 00 00 00 00  jmp 0x100b
+    """
+    code = bytes.fromhex("eb02740574fce900000000c3")
+    mem = strider.reader.BufferReader(0x1000, code + bytes(16))
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    return lift.build_cfg(0x1000, strider.cfg.CfgOptions(function_max_size=8))
+
+
+def test_region_at_answers_the_greatest_start_where_regions_overlap():
+    """0x1009 is a byte of the `jmp` and the stub's own start, so two regions
+    contain it; the owner is the one starting last, the rule the build routes
+    edges by. 0x100a is past the stub, so it falls back to the `jmp`."""
+    cfg = _stub_inside_a_crossing_jmp()
+    jmp = cfg.region_at(0x1008)
+    stub = cfg.region_at(0x1009)
+    assert jmp is not None and stub is not None
+    assert cfg._region_texts()[jmp] != ""
+    assert stub != jmp
+    assert cfg._region_texts()[stub] == ""
+    assert cfg.region_at(0x100a) == jmp

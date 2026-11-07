@@ -27,12 +27,8 @@ fn build_chain() -> strider_ir::Function {
 }
 
 /// `n` diamonds in sequence, each with a `Call` in its true arm, false arm
-/// and merge region. The matcher runs on the raw built function, so no DCE
-/// eats the filler and every call is a real hit.
-///
-/// The merge of diamond `i` dominates every node of diamond `i+1`, giving a
-/// deep dominator chain; without that depth the node-vs-split tree depth
-/// difference isn't visible at all.
+/// and merge region, unoptimized so every call is a hit. The merge of diamond
+/// `i` dominates every node of diamond `i+1`: a deep dominator chain.
 fn build_diamond_chain(n: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
 
@@ -61,7 +57,7 @@ fn build_diamond_chain(n: u64) -> strider_ir::Function {
         for (arm, off) in [(t_arm, 0x10), (f_arm, 0x20)] {
             b.set_region(arm);
             b.set_lift_addr(Some(base + off));
-            let target = b.build_int_const(base + off, ValueType::I64).unwrap();
+            let target = b.build_int_const(base + off, ValueType::int(64)).unwrap();
             b.build_call_cc(target, None).unwrap();
             b.build_branch(merge).unwrap();
             b.set_lift_addr(None);
@@ -152,7 +148,7 @@ fn matcher_benches(c: &mut Criterion) {
         });
     });
 
-    // No ShiftLeft node exists in the chain, so only the prefilter runs.
+    // No ShiftLeft node exists in the chain, so no candidate is attempted.
     let no_match_pat = int_shl(int_const(0xDEAD_BEEFu128), int_const(7u128)).into_pattern();
     let hits = Matcher::new(&function).find_all(&no_match_pat).unwrap();
     assert!(hits.is_empty(), "shl pattern must never match");
@@ -202,7 +198,7 @@ fn build_phi_diamond_chain(n: u64) -> strider_ir::Function {
         for (arm, k) in [(t_arm, 1u64), (f_arm, 2u64)] {
             b.set_region(arm);
             b.set_lift_addr(Some(base + k * 0x10));
-            let v = b.build_int_const(k, ValueType::I64).unwrap();
+            let v = b.build_int_const(k, ValueType::int(64)).unwrap();
             b.write_variable(&reg, v).unwrap();
             b.build_branch(merge).unwrap();
             b.set_lift_addr(None);
@@ -267,8 +263,58 @@ fn phi_input_from_edge_benches(c: &mut Criterion) {
     }
 }
 
+/// Instantiates a template once per `int_add(x, k)` hit of the chain, 334
+/// rewrites per iteration, into a fresh clone (the clone is untimed).
+fn template_benches(c: &mut Criterion) {
+    use strider_ir::EditFunction;
+    use strider_pattern::{
+        CaptureExt, TemplatePat, any_int_const, instantiate, int_const_with, template, var,
+    };
+    let function = build_chain();
+    let (x, k) = (Capture::new(), Capture::new());
+    let lhs = int_add(var(x), any_int_const().capture(k)).into_pattern();
+    let hits: Vec<_> = Matcher::new(&function)
+        .find_all(&lhs)
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.root(), m.bindings().clone(), m.matched_nodes().to_vec()))
+        .collect();
+    assert!(hits.len() >= 334);
+    let ty = ValueType::int(64);
+    let shapes = [
+        (
+            "template_instantiate_ops",
+            TemplatePat::into_template(template::int_sub(
+                template::int_xor(var(x), var(k)),
+                int_const(1u128),
+            )),
+        ),
+        (
+            "template_instantiate_const_with",
+            TemplatePat::into_template(int_const_with!([k: uint] => k + 1u8)),
+        ),
+    ];
+    for (name, rhs) in shapes {
+        c.bench_function(name, |b| {
+            b.iter_batched(
+                || function.clone(),
+                |mut f| {
+                    let mut e = EditFunction::new(&mut f);
+                    for (root, binds, matched) in &hits {
+                        black_box(instantiate(&rhs, &mut e, binds, *root, matched, ty).unwrap());
+                    }
+                    drop(e);
+                    f
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        });
+    }
+}
+
 criterion_group!(
     benches,
+    template_benches,
     matcher_benches,
     join_constraint_benches,
     phi_input_from_edge_benches

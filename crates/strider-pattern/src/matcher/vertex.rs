@@ -4,29 +4,28 @@ use strider_ir::node::{NodeId, NodeKind, ValueType};
 
 use crate::matcher::Matcher;
 
+#[derive(PartialEq, Eq)]
 pub enum KindSpec {
     Any,
-    /// Variant-agnostic: any node sharing the discriminant, e.g. "any
-    /// `IntBinaryOp`".
+    /// Any node sharing the discriminant, e.g. any `IntBinaryOp`.
     Variant(Discriminant<NodeKind>),
     /// Variant and payload.
     Exact(NodeKind),
-    VariantWith {
-        discriminant: Discriminant<NodeKind>,
-        check: Box<dyn Fn(&NodeKind) -> bool + Send>,
-    },
 }
 
 impl KindSpec {
     pub fn discriminant(&self) -> Option<Discriminant<NodeKind>> {
         match self {
             Self::Any => None,
-            Self::Variant(d)
-            | Self::VariantWith {
-                discriminant: d, ..
-            } => Some(*d),
+            Self::Variant(d) => Some(*d),
             Self::Exact(k) => Some(std::mem::discriminant(k)),
         }
+    }
+
+    /// Whether the spec names the variant of one of `kinds`; never for `Any`.
+    pub(crate) fn is_variant_in(&self, kinds: &[NodeKind]) -> bool {
+        self.discriminant()
+            .is_some_and(|d| kinds.iter().any(|k| std::mem::discriminant(k) == d))
     }
 
     pub fn variant_of(exemplar: &NodeKind) -> Self {
@@ -38,165 +37,131 @@ impl KindSpec {
             Self::Any => true,
             Self::Variant(d) => *d == std::mem::discriminant(kind),
             Self::Exact(k) => k == kind,
-            Self::VariantWith {
-                discriminant,
-                check,
-            } => *discriminant == std::mem::discriminant(kind) && check(kind),
         }
     }
 }
 
-/// Accept or reject the matched IR node. Takes no output type; a closure that
-/// needs one derives it from the node.
+/// Accept or reject the matched IR node. May run more than once per candidate, and on nodes the
+/// full match rejects (operands are screened before the root is matched).
 pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool + Send>;
 
-/// Runs once every input has resolved, so it sees the accumulated bindings.
-/// The type is that of the matched output, `None` where there is none: a
-/// control, memory or `PhiToken` edge, or a zero-output node.
+/// Runs once the node's inputs have matched. Below the root it sees the
+/// captures of its own cone and of fixed operands written before it;
+/// `any_input` operands match after every fixed one. The type is the anchored
+/// output's (a root with several output vertices is anchored at each output in
+/// turn), `None` for a control, memory or `PhiToken` edge or a zero-output
+/// node.
 pub type PostMatchFn =
     Box<dyn Fn(&Matcher, NodeId, Option<ValueType>, &crate::bindings::Bindings) -> bool + Send>;
 
-/// A sideways sub-walk run after [`PostMatchFn`], matching against the LIVE
-/// journal so what it binds must agree with the enclosing match and survives
-/// into it.
-///
-/// Continuation-passing like the main engine: the walk calls `k` once per
-/// configuration it reaches, `true` accepting and stopping, `false` driving the
-/// next. Returning `false` overall fails the configuration.
-pub type BindingWalkFn = Box<
-    dyn Fn(
-            &Matcher,
-            NodeId,
-            &mut crate::bindings::Bindings,
-            &mut dyn FnMut(&mut crate::bindings::Bindings) -> bool,
-        ) -> bool
-        + Send,
->;
-
-/// What a [`BindingWalkFn`]'s sub-pattern binds. The sub-pattern's graph is
-/// held inside the closure rather than wired into the enclosing pattern, so
-/// [`Pattern::bound_captures`](crate::Pattern::bound_captures) and
-/// [`guaranteed_captures`](crate::Pattern::guaranteed_captures) read it from
-/// here.
-#[derive(Default)]
-pub struct WalkCaptures {
-    pub bound: Vec<crate::capture::Capture>,
-    /// Bound on every successful walk.
-    pub guaranteed: Vec<crate::capture::Capture>,
+/// Where a pattern input sits on its consumer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InputSlot {
+    /// One IR input slot.
+    At(usize),
+    /// An input no fixed operand pins (`any_input`), any input on a commutative node; no
+    /// kind filter, the sub-pattern discriminates.
+    Any,
 }
 
-pub struct PatNode {
-    pub kind: KindSpec,
-    /// Binds the matched *node* (`Binding::Node`). Only for value-less roots
-    /// (`Return`, `IndirectBranch`, `Switch`, `Unreachable`, `If`) with no
-    /// value output vertex to anchor a value capture on. Repeatable: every
-    /// listed capture binds that node.
-    pub captures: Vec<crate::capture::Capture>,
-    /// Runs before descending into inputs.
-    pub node_predicate: Option<NodePredicate>,
-    pub post_match: Option<PostMatchFn>,
-    /// A `when_match` guard sits in `post_match`, so retyping this node's
-    /// output to `Control` has to re-run the refusal that guard was admitted
-    /// under.
-    pub typed_post_match: bool,
-    /// Runs after `post_match`; may bind.
-    pub binding_walk: Option<BindingWalkFn>,
-    /// Declares what `binding_walk` binds.
-    pub walk_captures: WalkCaptures,
-    /// Suppresses commutative operand reordering for this node.
-    pub force_ordered: bool,
-    /// Marks a `one_of` / `first_of` node: its inputs are independent
-    /// alternative sub-patterns tried against the *same* IR node, not operands.
-    pub alternation: bool,
-    /// On an alternation node, `true` cuts to the first arm that matches
-    /// (`first_of`); `false` enumerates every matching arm (`one_of`, a union).
-    pub first_match: bool,
-    /// Consumer input slot per input, parallel to the generic graph's input
-    /// order. A pattern's inputs are sparse (`call().arg(0, ..)` wires only
-    /// raw slot 4), so the original slot is recorded here.
-    pub input_slots: Vec<usize>,
+pub(crate) struct PatNode {
+    pub(crate) kind: KindSpec,
+    /// Each binds the matched node (`Binding::Node`).
+    pub(crate) captures: Vec<crate::capture::Capture>,
+    /// Run before descending into inputs; all must hold.
+    pub(crate) node_predicates: Vec<NodePredicate>,
+    pub(crate) post_matches: Vec<PostMatchFn>,
+    pub(crate) role: Role,
+    /// The IR input slot of each pattern input, in graph input order (inputs are sparse).
+    pub(crate) input_slots: Vec<InputSlot>,
+}
+
+/// How a node's inputs are read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
+    /// Operands; `ordered` suppresses commutative reordering.
+    Operands { ordered: bool },
+    /// `one_of`: alternative sub-patterns tried against the same IR node, every matching arm kept.
+    OneOf,
+    /// `first_of`: [`Role::OneOf`] kept to the first arm that matches.
+    FirstOf,
 }
 
 impl crate::graph_ext::HasInputSlots for PatNode {
-    fn input_slots(&self) -> &[usize] {
+    type Slot = InputSlot;
+    fn input_slots(&self) -> &[InputSlot] {
         &self.input_slots
     }
 }
 
 impl PatNode {
-    pub fn exact(k: NodeKind) -> Self {
+    pub(crate) fn exact(k: NodeKind) -> Self {
         Self::from_kind(KindSpec::Exact(k))
     }
 
-    /// No constraints beyond the kind spec.
-    pub fn from_kind(kind: KindSpec) -> Self {
+    pub(crate) fn from_kind(kind: KindSpec) -> Self {
         Self {
             kind,
             captures: Vec::new(),
-            node_predicate: None,
-            post_match: None,
-            typed_post_match: false,
-            binding_walk: None,
-            walk_captures: WalkCaptures::default(),
-            force_ordered: false,
-            alternation: false,
-            first_match: false,
+            node_predicates: Vec::new(),
+            post_matches: Vec::new(),
+            role: Role::Operands { ordered: false },
             input_slots: Vec::new(),
         }
     }
+
+    pub(crate) fn is_alternation(&self) -> bool {
+        !matches!(self.role, Role::Operands { .. })
+    }
 }
 
-pub enum OutputKindSpec {
-    /// Value, control, memory, or phi-token: the unconstrained wildcard behind
-    /// `anything()` / `var()`. A `width` constraint can still narrow it to a value
-    /// output of that width.
+#[derive(PartialEq)]
+pub(crate) enum OutputKindSpec {
+    /// Any output, including phi-token: `anything()` / `var()`.
     Any,
     AnyValue,
     Value(ValueType),
     Control,
     Memory,
-    PhiToken,
 }
 
-pub struct PatValue {
-    /// Structural anchor position only, NOT a match filter; see `match_slot`.
-    pub slot: usize,
-    pub kind: OutputKindSpec,
-    pub width: Option<u32>,
-    /// Enforced producer output-slot constraint. `None` leaves the slot
-    /// unchecked, so any output kind-ok against `kind` matches; `Some(s)` pins
-    /// the slot.
-    pub match_slot: Option<usize>,
-    /// `any_output()`: satisfied by ANY of the node's outputs, enumerated
-    /// rather than pinned to `slot`. Unlike an existential input, sibling
-    /// `any_slot` vertices on one node are NOT injective: each enumerates every
-    /// output independently, so two of them can settle on the same one.
-    pub any_slot: bool,
-    /// Where value captures live: `int_add(var(x), ..)` binds `x` here.
-    /// Repeatable: `var(x).capture(y)` binds both to the matched value.
-    pub captures: Vec<crate::capture::Capture>,
+/// How a value vertex reads its `slot`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlotMode {
+    /// As an anchor (root's sole vertex, or an operand's producer), the output being matched; as
+    /// a sibling, `slot`.
+    Loose,
+    /// The matched output must be produced at `slot`.
+    Pinned,
+    /// `any_output()`: each of the node's outputs in turn.
+    Enumerated,
+}
+
+pub(crate) struct PatValue {
+    pub(crate) slot: usize,
+    /// What `slot` means. Sibling `Enumerated` vertices may settle on the same output.
+    pub(crate) slot_mode: SlotMode,
+    pub(crate) kind: OutputKindSpec,
+    /// A width of any value type, which no `kind` arm spells.
+    pub(crate) width: Option<u32>,
+    /// Each binds the matched value.
+    pub(crate) captures: Vec<crate::capture::Capture>,
     /// Widens an `AnyValue` vertex to also accept the memory token of a node
-    /// that produces no value output. Set only on an alternation arm at the
-    /// root, where nothing consumes the edge.
-    pub token_fallback: bool,
-    /// A crate-minted capture pinning ONE vertex consumed at several pattern
-    /// slots to a single IR value. Structural sharing alone does not do it:
-    /// each slot is matched on its own, so `float_eq(x, x)` would otherwise
-    /// accept two different operands. Never a caller's capture, and filtered
-    /// out of a `Match`.
-    pub identity: Option<crate::capture::Capture>,
+    /// with no value output. Set on a pattern root's output (and its
+    /// alternation arms), where nothing consumes the edge.
+    pub(crate) token_fallback: bool,
+    /// An internal capture pinning a vertex consumed at several slots to one IR value (each slot
+    /// is matched on its own). Filtered out of a `Match`.
+    pub(crate) identity: Option<crate::capture::Capture>,
 }
 
 impl PatValue {
-    /// Unconstrained but for the kind, which is what separates the three
-    /// constructors below; every other field starts empty.
     fn of_kind(slot: usize, kind: OutputKindSpec) -> Self {
         Self {
             slot,
             kind,
             width: None,
-            match_slot: None,
-            any_slot: false,
+            slot_mode: SlotMode::Loose,
             captures: Vec::new(),
             token_fallback: false,
             identity: None,
@@ -204,26 +169,15 @@ impl PatValue {
     }
 
     /// No type or width constraint.
-    pub fn value(slot: usize) -> Self {
+    pub(crate) fn value(slot: usize) -> Self {
         Self::of_kind(slot, OutputKindSpec::AnyValue)
     }
 
-    pub fn control(slot: usize) -> Self {
+    pub(crate) fn control(slot: usize) -> Self {
         Self::of_kind(slot, OutputKindSpec::Control)
     }
 
-    /// The IR's memory side channel.
-    pub fn memory(slot: usize) -> Self {
+    pub(crate) fn memory(slot: usize) -> Self {
         Self::of_kind(slot, OutputKindSpec::Memory)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bare_value_output_is_any_value() {
-        assert!(matches!(PatValue::value(0).kind, OutputKindSpec::AnyValue));
     }
 }

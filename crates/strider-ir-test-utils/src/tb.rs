@@ -73,8 +73,7 @@ impl Tb {
         Self { fb }
     }
 
-    /// Creates NO region, for multi-region graphs (branches, merges) where the
-    /// caller picks the entry region.
+    /// Creates no region; the caller picks the entry.
     pub fn bare(
         vars: Vec<rsleigh::Vn>,
         arg_passing: &[rsleigh::Vn],
@@ -99,10 +98,10 @@ impl Tb {
     }
 
     pub fn u64(&mut self, v: u64) -> ValueId {
-        self.fb.build_int_const(v, ValueType::I64).unwrap()
+        self.fb.build_int_const(v, ValueType::int(64)).unwrap()
     }
     pub fn u32(&mut self, v: u64) -> ValueId {
-        self.fb.build_int_const(v, ValueType::I32).unwrap()
+        self.fb.build_int_const(v, ValueType::int(32)).unwrap()
     }
     pub fn int_of(&mut self, v: u64, ty: ValueType) -> ValueId {
         self.fb.build_int_const(v, ty).unwrap()
@@ -111,7 +110,7 @@ impl Tb {
         self.fb.build_boolean_const(v)
     }
     pub fn f64(&mut self, v: f64) -> ValueId {
-        self.fb.build_float_const(v.to_bits(), ValueType::F64)
+        self.fb.build_float_const(v.to_bits(), ValueType::float(64))
     }
     pub fn float_bits(&mut self, bits: u64, ty: ValueType) -> ValueId {
         self.fb.build_float_const(bits, ty)
@@ -120,10 +119,10 @@ impl Tb {
     pub fn add(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Add)
     }
-    /// `Add(l, Neg(r))`, the shape pcode-lift produces.
+    /// `Add(l, Neg(r))`, the lifter's lowering of `IntSub`.
     pub fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.fb
-            .build_sub_as_add_neg(l, r, ValueType::I64)
+            .build_sub_as_add_neg(l, r, ValueType::int(64))
             .expect("sub_as_add_neg")
     }
     pub fn mul(&mut self, l: ValueId, r: ValueId) -> ValueId {
@@ -136,7 +135,7 @@ impl Tb {
         self.int_bin(l, r, IntBinaryOp::Or)
     }
     pub fn int_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
-        self.int_bin_at(l, r, op, ValueType::I64)
+        self.int_bin_at(l, r, op, ValueType::int(64))
     }
     pub fn int_bin_at(
         &mut self,
@@ -158,23 +157,26 @@ impl Tb {
     }
     pub fn int_un(&mut self, v: ValueId, op: IntUnaryOp) -> ValueId {
         self.fb
-            .build_int_unary_operation(v, op, ValueType::I64)
+            .build_int_unary_operation(v, op, ValueType::int(64))
             .expect("int_unary_operation")
     }
     pub fn int_cmp(&mut self, l: ValueId, r: ValueId, op: IntCmpOp) -> ValueId {
         self.fb
-            .build_int_cmp_operation(l, r, op, ValueType::I64)
+            .build_int_cmp_operation(l, r, op, ValueType::int(64))
             .expect("int_cmp_operation")
     }
     pub fn popcount(&mut self, v: ValueId) -> ValueId {
-        self.fb.build_popcount(v, ValueType::I64).expect("popcount")
+        self.fb
+            .build_popcount(v, ValueType::int(64))
+            .expect("popcount")
     }
     pub fn lzcount(&mut self, v: ValueId) -> ValueId {
-        self.fb.build_lzcount(v, ValueType::I64).expect("lzcount")
+        self.fb
+            .build_lzcount(v, ValueType::int(64))
+            .expect("lzcount")
     }
 
-    // Booleans are 1-bit (`I1`) integers, so a boolean binary op is an
-    // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`.
+    /// An `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`.
     pub fn bool_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
         self.fb
             .build_int_binary_operation(l, r, op, ValueType::I1)
@@ -251,7 +253,7 @@ impl Tb {
         self.fb.build_call_cc(tgt, None).expect("call");
     }
     /// [`strider_ir::FunctionBuilder::build_call_other`] plus the user-op name
-    /// stamp, which patterns and dumps read.
+    /// stamp.
     pub fn named_call_other(
         fb: &mut FunctionBuilder,
         user_op_id: u64,
