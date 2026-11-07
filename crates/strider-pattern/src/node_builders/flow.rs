@@ -125,7 +125,8 @@ impl CallOtherPat {
         })))
     }
 
-    /// Raw input slot `idx`, unshifted.
+    /// Raw input slot `idx`, as `input` does, unlike [`CallPat::arg`]: slots 0 and 1 are
+    /// control and memory, so the first argument is `idx` 2.
     pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(self.0.raw_input(idx, p))
     }

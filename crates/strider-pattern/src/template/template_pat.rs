@@ -6,7 +6,8 @@ pub(crate) mod sealed {
     pub trait Sealed {}
 }
 
-/// A build-side `var()` and its `.capture()` are templates:
+/// A build-side `var()` and its `.capture()` are templates; `var(a).capture(b)` builds `b`'s
+/// binding, not `a`'s:
 ///
 /// ```
 /// use strider_pattern::{Capture, CaptureExt, TemplatePat, template, var};
