@@ -784,8 +784,8 @@ function.optimize(pipeline=pipe)                 # runs in place, against the li
 ```
 
 Main passes (`add`): `ConstantFold`, `LoadReadOnly`, `KnownBits`,
-`FlagCmpCanonicalize`, `IfCondInversion`, `PhiCollapse`, `RegionCollapse`,
-`DeadBranchElimination`, `LoadForward`. Post-passes (`add_post` only):
+`FlagCmpCanonicalize`, `IfCondInversion`, `DeadBranchElimination`,
+`PhiCollapse`, `RegionCollapse`, `LoadForward`. Post-passes (`add_post` only):
 `CallStackArgCollect`, `FunctionArgDetect`; `add_post` also takes a main pass,
 run once. The `MainOptimizerPass`, `PostOptimizerPass` and `OptimizerPass`
 aliases name those groups. [optimizations.md](optimizations.md) says what each

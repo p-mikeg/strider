@@ -49,19 +49,22 @@ overflow) back into a plain comparison: `sign != overflow` is signed `a < b`.
 **IfCondInversion.** An `if` on a logical NOT drops the NOT and swaps the arms,
 so you only match the positive form.
 
-**PhiCollapse.** A phi or memory phi whose inputs other than itself are all one
-value becomes that value (`[x, itself]` is `x`). A strongly connected group of
-phis with a single outside input folds to it too. An `and` of a phi with a
-constant mask becomes the value every arm agrees on under that mask.
-
-**RegionCollapse.** A region with one control input is removed; its phis and
-memory phis become their single value input.
-
 **DeadBranchElimination.** An `if` on a constant, or a `switch` whose dispatch
 address is a constant naming one arm, is removed along with the arms no longer
 reached. It folds only if the surviving arm still reaches a terminator. Every
 run also removes never-taken control edges into merge regions, with their phi
 and memory-phi inputs.
+
+**PhiCollapse.** A phi or memory phi whose inputs other than itself are all one
+value becomes that value (`[x, itself]` is `x`). A strongly connected group of
+phis with a single outside input folds to it too. An `and` of a phi with a
+constant mask becomes the value every arm agrees on under that mask. Below the
+edge where an `if` finds a phi equal to a value computed from entry values and
+constants (`x + c == y`), reads of `x + c` take `y` and reads of the phi take `y
+- c`, so a loop's exit reads its bound.
+
+**RegionCollapse.** A region with one control input is removed; its phis and
+memory phis become their single value input.
 
 **LoadForward.** A load from exactly the location an earlier store wrote, with
 nothing overwriting it between, takes the stored value; a wider store is
@@ -199,9 +202,6 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   attempts, even when nothing matches; `.ordered()` pins the operand order.
 - Sibling KnownBits folds over one unfolded chain of depth `d` each copy the
   chain's instruction addresses, quadratic in `d`.
-- A return after a stack-clash probe loop (gcc `-fstack-clash-protection`;
-  gcc 11 emits it from 16 KiB frames on x86, 64 KiB on ppc64le) is reported:
-  the loop's exit SP is not derived.
 
 ## Using a different pipeline
 
