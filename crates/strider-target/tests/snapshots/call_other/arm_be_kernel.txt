@@ -303,9 +303,9 @@ setUndefinedMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "l
 setUserMode call reads=[] writes=["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"] mem=false noret=false
 software_bkpt call reads=[] writes=[] mem=true noret=false
 software_hlt call reads=[] writes=[] mem=true noret=false
-software_hvc call reads=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] writes=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"] mem=true noret=false
+software_hvc call reads=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] writes=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] mem=true noret=false
 software_interrupt call reads=["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"] writes=["r0"] mem=true noret=false
-software_smc call reads=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] writes=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"] mem=true noret=false
+software_smc call reads=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] writes=["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] mem=true noret=false
 software_udf call reads=[] writes=[] mem=false noret=true
 vectorFusedMultiplyAccumulate UNCLASSIFIED
 vrev call reads=[] writes=[] mem=false noret=false
