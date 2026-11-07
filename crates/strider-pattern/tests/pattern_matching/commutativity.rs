@@ -905,3 +905,46 @@ fn an_existential_wildcard_skips_the_slot_the_roaming_operand_took() {
         Some(UBig::from(3u8))
     );
 }
+
+/// Two fixed operands wired to one slot both read that slot on a commutative kind too, rather
+/// than splitting across the two operand slots.
+#[test]
+fn two_operands_on_one_slot_do_not_commute() {
+    use strider_ir::IRViewer;
+    let mut t = Tb::empty();
+    let a = t.u64(1);
+    let b = t.u64(2);
+    let c = t.u64(3);
+    let inner = t.add(a, b);
+    let outer = t.add(c, inner);
+    let function = t.ret_val(outer);
+
+    let int_const =
+        || KindSpec::variant_of(&NodeKind::IntConst(strider_ir::IntConstId::from_u32(0)));
+    let mut mb = MatcherBuilder::new();
+    let k1 = mb.leaf(int_const());
+    let k2 = mb.leaf(int_const());
+    // A capture keeps the pair from being interchangeable, so the swap path runs.
+    let cap = Capture::new();
+    mb.capture_output(k2, cap);
+    let add = mb.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+    mb.input(add, 0, k1);
+    mb.input(add, 0, k2);
+    mb.value_output(add, 0);
+    let mut got: Vec<_> = Matcher::new(&function)
+        .find_all(&mb.finish())
+        .unwrap()
+        .iter()
+        .map(|m| (m.root(), m.value(cap)))
+        .collect();
+    got.sort_by_key(|&(n, v)| (n, v.map(|v| v.as_u32())));
+    let mut want: Vec<_> = [inner, outer]
+        .iter()
+        .map(|&v| {
+            let n = function.producer(v);
+            (n, function.nth_input(n, 0))
+        })
+        .collect();
+    want.sort_by_key(|&(n, v)| (n, v.map(|v| v.as_u32())));
+    assert_eq!(got, want);
+}

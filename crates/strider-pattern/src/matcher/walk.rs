@@ -253,7 +253,7 @@ fn try_match_at(
         return try_alternation(ctx, site, bindings, k);
     }
 
-    // Swap one or two fixed operands at slots {0,1} of a commutative IR kind, unless
+    // Swap one or two fixed operands at distinct slots of {0,1} of a commutative IR kind, unless
     // `.ordered()`, the pair is interchangeable, or both IR slots hold one value. A single pinned
     // operand swaps too, so a query does not answer by which slot it names.
     let commutative = nd.role == (Role::Operands { ordered: false })
@@ -262,6 +262,7 @@ fn try_match_at(
         && inputs[..n_fixed]
             .iter()
             .all(|e| matches!(e.consumer_slot, InputSlot::At(s) if s < COMM_ORDER.len()))
+        && (n_fixed == 1 || inputs[0].consumer_slot != inputs[1].consumer_slot)
         && ctx.function().node_kind(ir_node).is_commutative()
         && ctx.function().nth_input(ir_node, 0) != ctx.function().nth_input(ir_node, 1);
 
