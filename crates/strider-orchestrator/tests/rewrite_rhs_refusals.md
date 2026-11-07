@@ -12,186 +12,50 @@ let _rule = rewrite_rule(int_add(var(a), var(b)), template::int_add(var(b), var(
 
 ## Wildcards and match-only leaves
 
+Every value wildcard and match-only leaf other than `anything()` (`any_float`,
+`any_int_const`, `value_of_width`, `initial_var`, `any_int_binary`,
+`float_le`, ...) returns `MatchOnly`, so `any_int()` stands for all of them.
+
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), anything());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), any_int());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_float());
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_bool());
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_int_const());
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_float_const());
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_bool_const());
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), int_const_all_ones());
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), int_const([1u8, 2]));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), int_const_any_width([1i64, 2]));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), bool_const(a));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), float_const(a));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), value_of_width(32));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), inputs_of_width(32, var(a)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), bool_inputs(var(a)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), initial_var());
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), initial_var_for(strider_ir_test_utils::reg_vn(0, 8)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_int_binary(var(a), var(b)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_int_unary(var(a)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_int_cmp(var(a), var(b)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_float_binary(var(a), var(b)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_float_unary(var(a)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_float_cmp(var(a), var(b)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_bool_binary(var(a), var(b)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), float_le(var(a), var(b)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), float_is_nan(var(a)));
 ```
 
 ## Predicates and decorations
@@ -199,49 +63,49 @@ rewrite_rule(int_add(var(a), var(b)), float_is_nan(var(a)));
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), predicate(|_, _| true));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), var(a).when_match(|_, _, _| true));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), var(a).filter(|_, _| true));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), template::int_add(var(a), var(b)).ordered());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), var(a).of_width(32));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), var(a).value_ty(strider_ir::node::ValueType::int(32)));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), var(a).bool_valued());
 ```
 
@@ -250,21 +114,21 @@ rewrite_rule(int_add(var(a), var(b)), var(a).bool_valued());
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), one_of![var(a), var(b)]);
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), first_of![var(a), var(b)]);
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), boxed_alt(var(a)));
 ```
 
@@ -293,137 +157,105 @@ rewrite_rule(int_add(var(a), var(b)), anything().capture(c));
 
 ## Node builders, none of which has a template form
 
+`phi_for` returns the `PhiPat` of `phi()`, and every `function_arg*` builder
+the `FunctionArgPat` of `function_arg(0)`.
+
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), call());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), call_other());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), ret());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), indirect_branch());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), unreachable());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), entry());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), region());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), switch());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), if_else());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), load());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), store());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), phi());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), phi_for(strider_ir_test_utils::reg_vn(0, 8)));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), mem_phi());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), function_arg(0));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), function_arg_float(0));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), any_function_arg());
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), function_arg_reg(strider_ir_test_utils::reg_vn(0, 8), 0));
-```
-
-```rust,compile_fail,E0277
-# use strider_orchestrator::opt::rewrite_rule;
-# use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-rewrite_rule(int_add(var(a), var(b)), function_arg_stack(rsleigh::VnSpace::RAM, 8, 0));
 ```
 
 ## A value op over a match-only operand, nested two deep
@@ -431,21 +263,21 @@ rewrite_rule(int_add(var(a), var(b)), function_arg_stack(rsleigh::VnSpace::RAM, 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), template::int_add(var(a), template::int_neg(anything())));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), template::int_xor(template::int_and(var(a), any_int_const()), var(b)));
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), int_add(var(a), int_mul(var(b), load())));
 ```
 
@@ -454,28 +286,28 @@ rewrite_rule(int_add(var(a), var(b)), int_add(var(a), int_mul(var(b), load())));
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), int_add(var(a), var(b)).into_pattern());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), load().build());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), int_add(var(a), var(b)).into_pattern().ignore_casts());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), int_add(var(a), var(b)).into_pattern().ignore_casts_mask(strider_pattern::CastMask::all()));
 ```
 
@@ -486,14 +318,14 @@ The front-end tree is not a template either, whatever it holds:
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), anything().into_expr());
 ```
 
 ```rust,compile_fail,E0277
 # use strider_orchestrator::opt::rewrite_rule;
 # use strider_pattern::*;
-# let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+# let (a, b) = (Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), template::int_add(var(a), anything().into_expr()));
 ```
 
