@@ -32,7 +32,7 @@ enum Op {
 }
 
 /// The A32 word; the Thumb word is the same with `0xff` for `0xf3`.
-const CASES: [(&str, u32, Op, bool, u32); 15] = [
+const CASES: [(&str, u32, Op, bool, u32); 16] = [
     ("vtrn.8 d0, d1", 0xf3b2_0081, Op::Trn, false, 1),
     ("vtrn.16 d0, d1", 0xf3b6_0081, Op::Trn, false, 2),
     ("vtrn.32 d0, d1", 0xf3ba_0081, Op::Trn, false, 4),
@@ -48,6 +48,7 @@ const CASES: [(&str, u32, Op, bool, u32); 15] = [
     ("vzip.32 q0, q1", 0xf3ba_01c2, Op::Zip, true, 4),
     ("vuzp.8 q0, q1", 0xf3b2_0142, Op::Uzp, true, 1),
     ("vuzp.16 q0, q1", 0xf3b6_0142, Op::Uzp, true, 2),
+    ("vuzp.32 q0, q1", 0xf3ba_0142, Op::Uzp, true, 4),
 ];
 
 /// Element `i` of `esize` bytes.
@@ -123,7 +124,12 @@ fn lift(arch: Arch, word: u32, n: u32) -> ([Function; 2], Vec<rsleigh::Vn>) {
     } else {
         let mut words = PRELUDE.to_vec();
         words.extend([word, vmov_r0_r1(n), BX_LR]);
-        let image = crate::common::words_image(&words, arch.sleigh().endianness());
+        // BE8 code is little-endian.
+        let endian = match arch {
+            Arch::ArmBe8 => strider_target::Endianness::Little,
+            _ => arch.sleigh().endianness(),
+        };
+        let image = crate::common::words_image(&words, endian);
         (image, BASE)
     };
     let size = image.len() as u64;
@@ -189,7 +195,7 @@ fn run(f: &Function, gprs: &[rsleigh::Vn], d: &[u64; 4]) -> Option<u64> {
 fn vtrn_vzip_and_vuzp_write_both_registers() {
     let mut rng = Rng(0x7e2a_9b1f_0000_0001);
     let mut wrong = Vec::new();
-    for arch in [Arch::Arm, Arch::ArmBe, Arch::ArmThumb] {
+    for arch in [Arch::Arm, Arch::ArmBe, Arch::ArmBe8, Arch::ArmThumb] {
         for (name, word, op, quad, esize) in CASES {
             for n in 0..4 {
                 let (fs, gprs) = lift(arch, word, n);
@@ -214,4 +220,38 @@ fn vtrn_vzip_and_vuzp_write_both_registers() {
         wrong.len(),
         &wrong[..wrong.len().min(12)]
     );
+}
+
+#[test]
+fn vtrn_of_64_bit_elements_does_not_decode() {
+    // `vtrn.64 d0, d1` and `vtrn.64 q0, q1`: size 11 is UNDEFINED.
+    for word in [0xf3be_0081, 0xf3be_00c2] {
+        for arch in [Arch::Arm, Arch::ArmThumb] {
+            let (image, entry) = if arch == Arch::ArmThumb {
+                let w = word | 0x0c00_0000;
+                let halves = [(w >> 16) as u16, w as u16, THUMB_BX_LR];
+                (
+                    halves.iter().flat_map(|h| h.to_le_bytes()).collect(),
+                    BASE | 1,
+                )
+            } else {
+                let words = [word, BX_LR];
+                (
+                    crate::common::words_image(&words, arch.sleigh().endianness()),
+                    BASE,
+                )
+            };
+            let (mut lifter, _) = driver_for_reader(arch, BufMemReader::new(image, BASE));
+            let opts = CfgOptions {
+                bound: FunctionBound::size(8),
+                ..Default::default()
+            };
+            assert!(
+                lifter
+                    .build_cfg(MachineInsnAddr::from(entry), &opts)
+                    .is_err(),
+                "{arch:?} {word:#x} decoded"
+            );
+        }
+    }
 }
