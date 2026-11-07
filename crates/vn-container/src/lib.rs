@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use rustc_hash::FxHashMap;
 
 #[cfg(test)]
@@ -31,49 +33,40 @@ pub fn vn_overlaps(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 
 /// Folds each run of overlapping REGISTER / UNIQUE varnodes into one: the
 /// member enclosing the rest (`rdi` over `edi`), else their union. Other
-/// spaces pass through. Each result keeps its run's earliest input position.
+/// spaces pass through, first and in input order.
 ///
 /// # Panics
 ///
 /// If a union spans more than `u32::MAX` bytes.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
-    let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
-    let mut out: Vec<Option<rsleigh::Vn>> = Vec::with_capacity(all_used_variables.len());
-    for (i, v) in all_used_variables.iter().enumerate() {
-        if is_aliasable_space(v.addr_space) {
-            by_space.entry(v.addr_space).or_default().push((i, *v));
-            out.push(None);
-        } else {
-            out.push(Some(*v));
-        }
-    }
-
-    // `head` starts the run and is its widest member at that offset.
-    let mut emit = |earliest: usize, head: rsleigh::Vn, end: u128| {
+    let (mut nested, mut out): (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) = all_used_variables
+        .iter()
+        .partition(|v| is_aliasable_space(v.addr_space));
+    // The widest member at an offset leads its run.
+    nested.sort_by_key(|v| (v.addr_space.shortcut_raw(), v.addr_off, Reverse(v.size)));
+    let mut emit = |head: rsleigh::Vn, end: u128| {
         let size = u32::try_from(end - u128::from(head.addr_off)).expect("union under 4 GiB");
-        out[earliest] = Some(rsleigh::Vn { size, ..head });
+        out.push(rsleigh::Vn { size, ..head });
     };
-    for (_space, mut bucket) in by_space {
-        bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
-        let mut run: Option<(usize, rsleigh::Vn, u128)> = None;
-        for (idx, v) in bucket {
-            match &mut run {
-                Some((earliest, _, end)) if u128::from(v.addr_off) < *end => {
-                    *earliest = (*earliest).min(idx);
-                    *end = (*end).max(vn_end(&v));
-                }
-                _ => {
-                    if let Some((earliest, head, end)) = run.replace((idx, v, vn_end(&v))) {
-                        emit(earliest, head, end);
-                    }
+    let mut run: Option<(rsleigh::Vn, u128)> = None;
+    for v in nested {
+        match &mut run {
+            Some((head, end))
+                if head.addr_space == v.addr_space && u128::from(v.addr_off) < *end =>
+            {
+                *end = (*end).max(vn_end(&v));
+            }
+            _ => {
+                if let Some((head, end)) = run.replace((v, vn_end(&v))) {
+                    emit(head, end);
                 }
             }
         }
-        if let Some((earliest, head, end)) = run {
-            emit(earliest, head, end);
-        }
     }
-    out.into_iter().flatten().collect()
+    if let Some((head, end)) = run {
+        emit(head, end);
+    }
+    out
 }
 
 /// Largest same-space varnode in `vns` containing `vn`, else `vn` itself;

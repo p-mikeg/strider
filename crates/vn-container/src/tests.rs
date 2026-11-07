@@ -31,10 +31,10 @@ fn dedup_drops_enclosed_and_merges_partial_overlaps() {
     assert_eq!(dedup_overlapping_largest(&[rdi, edi]), vec![rdi]);
     assert_eq!(dedup_overlapping_largest(&[edi, rdi]), vec![rdi]);
     // Partial overlap: neither encloses the other, so their union stands
-    // for both, at the earlier input's position.
+    // for both.
     assert_eq!(
         dedup_overlapping_largest(&[reg(16, 4), reg(4, 8), reg(0, 8)]),
-        vec![reg(16, 4), reg(0, 12)]
+        vec![reg(0, 12), reg(16, 4)]
     );
     // A chain merges whole, though its ends share no byte.
     assert_eq!(
