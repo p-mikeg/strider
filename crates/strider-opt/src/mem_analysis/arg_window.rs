@@ -122,11 +122,11 @@ impl ArgPrefix {
     }
 }
 
-/// The slots after `prefix`, up to the first that is neither: one whose
-/// nearest clobber is a `MemPhi` every arm of which reaches a whole store of
-/// one type at its start (`Some(phi)`, the stores in arm order), or, once one
-/// such slot is taken, one whose nearest clobber is a whole store at its start
-/// (`None`, it).
+/// The argument slots past `prefix` that a `MemPhi` splits, in order: a
+/// slot every arm of which reaches a whole store of one type at its start
+/// is `(Some(phi), the stores in arm order)`; after the first such slot, a
+/// whole store at a slot's start above the merge is `(None, [it])`. Ends
+/// at the first slot that is neither.
 pub(crate) fn merged_slots(
     function: &Function,
     query: &MemQuery,
@@ -303,7 +303,7 @@ impl<'a> ArgStoreScan<'a> {
             if !matches!(function.node_kind(def), NodeKind::InitialMemory) {
                 return self.probed(function, def, slot_off, slot_end);
             }
-            let def = self.nearest(function, slot_off, size);
+            let def = self.nearest(function, self.mem_start, slot_off, size);
             return self.probed(function, def, slot_off, slot_end);
         }
         match self.anchored.get(&slot_off) {
@@ -338,14 +338,14 @@ impl<'a> ArgStoreScan<'a> {
             return None;
         }
         self.fallbacks += 1;
-        Some(self.nearest(function, slot_off, 1))
+        Some(self.nearest(function, self.mem_start, slot_off, 1))
     }
 
-    fn nearest(&self, function: &Function, offset: i128, size: i128) -> NodeId {
+    fn nearest(&self, function: &Function, from: ValueId, offset: i128, size: i128) -> NodeId {
         self.query.nearest_sp_clobber(
             function,
             self.policy,
-            self.mem_start,
+            from,
             self.base,
             offset,
             size,
@@ -368,7 +368,7 @@ impl<'a> ArgStoreScan<'a> {
                 // A path patching the rest of the store shows only to a
                 // probe of its full width.
                 let whole = !self.overlaps_covered(hit.store_offset, hit.end(function))
-                    && self.nearest(function, hit.store_offset, size) == def;
+                    && self.nearest(function, self.mem_start, hit.store_offset, size) == def;
                 SlotReach::Anchored {
                     store: hit,
                     whole,
@@ -386,15 +386,7 @@ impl<'a> ArgStoreScan<'a> {
         let ScanAt::Resume(cur) = self.at else {
             return false;
         };
-        let def = self.query.nearest_sp_clobber(
-            function,
-            self.policy,
-            cur,
-            self.base,
-            self.lo,
-            self.size,
-            rsleigh::VnSpace::RAM,
-        );
+        let def = self.nearest(function, cur, self.lo, self.size);
         let hit = self
             .seen
             .insert(def)

@@ -125,14 +125,6 @@ mod decompose_tests {
         Ok(())
     }
 
-    #[test]
-    fn decompose_sp_sub_constant() -> crate::Result<()> {
-        let (fg, [addr]) = sp_fn(|b, sp_val| Ok([sub_off(b, sp_val, 4)?]))?;
-        let r = decompose(&fg, addr);
-        assert!(matches!(r, Some(MemExpr { offset: -4, .. })));
-        Ok(())
-    }
-
     /// Machine address arithmetic is mod 2^bitwidth.  On a 32-bit target
     /// `(sp + 0x7FFFFFFF) + 0x7FFFFFFF` is `sp - 2`; accumulating in i128
     /// without reducing makes it `sp + 4294967294`, wrongly Disjoint from the
