@@ -154,7 +154,8 @@ class LifterOptions:
     also matches a call to `Symbol.local_entry` for a key at
     `Symbol.address`. A call to an override whose `stack_pointer` is not
     the analysed function's own raises `StriderError`. `pipeline`, when
-    set, replaces the default optimizer pipeline.
+    set, replaces the default optimizer pipeline; it is held, not copied, so
+    passes added to it later apply to later calls.
     """
 
     @property

@@ -443,7 +443,7 @@ operator keeps the order written. `.ordered()` pins the order on any binary
 pattern (it raises on one with no operand pair, such as `anything()`):
 
 ```python
-p.int_binary("Add", p.int_const(k), p.anything()).ordered()   # k on the left
+p.int_binary("Add", p.int_const(8), p.anything()).ordered()   # 8 on the left
 ```
 
 ### Node builders

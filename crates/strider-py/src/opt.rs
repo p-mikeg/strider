@@ -198,13 +198,11 @@ opt_passes! {
     }
     post {
         "FunctionArgDetect" => PyFunctionArgDetect = strider_orchestrator::opt::FunctionArgDetect,
-            "Numbers the incoming stack slots the entry-SP loads read, after the \
-             register arguments: one ordinal per run of slots one load spans, \
-             stopping at the first slot no clean load reads (one a store or call \
-             may have overwritten does not count), so no slot past it is an \
-             argument, read or not. An argument read in pieces takes one ordinal \
-             per piece. Register arguments are recorded at lift \
-             time.";
+            "Numbers the incoming stack arguments the entry-SP loads read, after \
+             the register arguments: one ordinal per run of slots one load spans, \
+             up to the first slot no clean load reads (a slot a store or call may \
+             have overwritten is not clean). A `long long` read as two 4-byte \
+             loads takes two. Register arguments are recorded at lift time.";
         "CallStackArgCollect" => PyCallStackArgCollect =
             strider_orchestrator::opt::CallStackArgCollect,
             "Wires the stores into a call's outgoing argument slots in as its \

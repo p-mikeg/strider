@@ -1,11 +1,5 @@
-"""The one Linux calling-convention preset that diverges from a userland
-ABI: `x86_linux_kernel` (regparm-3).
-
-Mirror of `crates/strider-target/tests/linux_cc_presets.rs`.  Every other
-arch's kernel CC is byte-identical to its userland preset (callers use
-that directly), and syscall ABIs are `CallOther` rather than calling
-conventions, so neither gets a Python binding.
-"""
+"""`x86_linux_kernel` (regparm-3): register arguments EAX/EDX/ECX; a
+stack-only callee needs `x86_cdecl`."""
 
 from __future__ import annotations
 
