@@ -30,11 +30,9 @@ strider-reader = { workspace = true }
 strider-pattern = { workspace = true }
 dot.workspace = true
 object.workspace = true
-# Test-only IR surface (build_branch, live_snapshot, cc_ret_and_clobber_vns, …).
-# The assertion vocabulary (count_kind, has_kind, build_sub_as_add_neg) is in
-# strider-ir-test-utils below.
+# Test-only IR builders.
 strider-ir = { workspace = true, features = ["test-util"] }
-# Test-only single-pass runners (run_one / run_post) and classify_target.
+# `test-util` runners.
 strider-opt = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true, features = ["proptest-gen"] }
 strider-target = { workspace = true, features = ["test-util"] }

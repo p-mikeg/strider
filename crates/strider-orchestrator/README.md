@@ -45,4 +45,5 @@ it; the two site reasons are the final round's.
 
 A seed turns a site's `UnresolvedBranch` into `UnverifiedSeed`: an
 unclassified `Switch` until the site outgrows the seed, and an unproven return
-seeded `LinkRegister`.
+seeded `LinkRegister`. Every `TailCall` seat, and an arm seated in a guessed
+ISA mode, is `UnverifiedSeed` too.
