@@ -68,7 +68,9 @@ lft = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)      # rom=... option
 ```
 
 `lifter(arch, mem, rom=None)` builds a plain `Lifter`: `mem` is the instruction
-source, `rom` the optional read-only memory for constant folding.
+source, `rom` the optional read-only memory for constant folding. The bytes
+`mem` serves must not change while the `Lifter` lives: decodes are cached by
+address, so patched code needs a fresh `Lifter`.
 `BufferReader(base_addr, data)` takes `bytes`, a `bytearray` or a sequence of
 ints. No preset decodes microMIPS (a MIPS preset reads an odd address as
 MIPS16e); `load_elf` refuses a microMIPS image unless given both `arch=` and

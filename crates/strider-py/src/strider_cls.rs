@@ -420,7 +420,8 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 /// Lifts, optimises and resolves functions for one architecture. Build one
 /// with `strider.lift.lifter(arch, mem, rom=None)`. While an `analyze`,
 /// `build_cfg` or `add_elf` is in flight, every `Lifter` method raises
-/// `StriderError`.
+/// `StriderError`. The bytes `mem` serves must not change while the handle
+/// lives: decodes are cached by address.
 #[pyclass(name = "Lifter", module = "strider.lift", subclass, weakref)]
 pub struct PyLifter {
     /// `None` once `__clear__` has released it.
@@ -491,7 +492,7 @@ impl PyLifter {
     }
 
     /// A handle for `arch` reading code from `mem`, with optional read-only
-    /// memory `rom`.
+    /// memory `rom`. `mem`'s bytes must stay fixed while the handle lives.
     #[new]
     #[pyo3(signature = (arch, mem, rom = None))]
     fn new(
@@ -910,7 +911,7 @@ impl PyLifter {
 }
 
 /// A `Lifter` for `arch` reading code from `mem`, with optional read-only
-/// memory `rom`.
+/// memory `rom`. `mem`'s bytes must stay fixed while the `Lifter` lives.
 #[pyfunction]
 #[pyo3(name = "lifter", signature = (arch, mem, rom = None))]
 pub fn lifter(

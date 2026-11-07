@@ -186,13 +186,15 @@ class Lifter:
     """Lifts, optimises and resolves functions for one architecture. Build
     one with `strider.lift.lifter(arch, mem, rom=None)`. While an `analyze`,
     `build_cfg` or `add_elf` is in flight, every `Lifter` method raises
-    `StriderError`."""
+    `StriderError`. The bytes `mem` serves must not change while the handle
+    lives: decodes are cached by address."""
 
     def __init__(
         self, arch: SleighArch, mem: MemLike, rom: Optional[RomLike] = ...
     ) -> None:
         """A handle for `arch` reading code from `mem`, with optional
-        read-only memory `rom`."""
+        read-only memory `rom`. `mem`'s bytes must stay fixed while the handle
+        lives."""
         ...
     # A subclass (`ElfLifter`) constructs the base through `__new__`.
     def __new__(
@@ -298,5 +300,5 @@ def lifter(
     rom: Optional[RomLike] = ...,
 ) -> Lifter:
     """A `Lifter` for `arch` reading code from `mem`, with optional read-only
-    memory `rom`."""
+    memory `rom`. `mem`'s bytes must stay fixed while the `Lifter` lives."""
     ...
