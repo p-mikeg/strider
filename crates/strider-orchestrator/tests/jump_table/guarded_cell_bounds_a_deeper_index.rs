@@ -1,5 +1,6 @@
-//! `switch (map[c])` over a ROM byte map, from gcc 11 -O2 for ARM and
-//! Thumb-2:
+//! `switch (map[c])` over a ROM byte map.
+//!
+//! gcc 11 -O2 for ARM and Thumb-2:
 //!
 //! ```c
 //! static const unsigned char map[256] = {['a']=1, ['b']=2, ['c']=3, ['d']=4,
@@ -24,29 +25,38 @@ use crate::common;
 
 const BASE: u64 = 0x4001a8;
 
-/// `map`, with `map['f'] = f`.
-fn map(f: u8) -> Vec<u8> {
+/// A 256-byte map holding `cells`, zero elsewhere.
+fn map(cells: &[(u8, u8)]) -> Vec<u8> {
     let mut map = vec![0u8; 256];
-    for (c, v) in [b'a', b'b', b'c', b'd', b'e', b'h', b'0', b'1']
-        .into_iter()
-        .zip([1, 2, 3, 4, 5, 6, 7, 8])
-    {
+    for &(c, v) in cells {
         map[usize::from(c)] = v;
     }
-    map[usize::from(b'f')] = f;
     map
 }
 
-/// The sorted `Switch` arms and the incompleteness reasons of `two_s`, with
-/// `map` placed right after `code`.
-fn analyze(arch: common::Arch, code: &[&str], f: u8, entry: u64) -> (Vec<u64>, String) {
-    let mut bytes = common::hex(&code.concat());
-    bytes.extend(map(f));
+/// The `two_s` map, with `map['f'] = f`.
+fn two_s_map(f: u8) -> Vec<u8> {
+    map(&[
+        (b'a', 1),
+        (b'b', 2),
+        (b'c', 3),
+        (b'd', 4),
+        (b'e', 5),
+        (b'f', f),
+        (b'h', 6),
+        (b'0', 7),
+        (b'1', 8),
+    ])
+}
+
+/// The sorted `Switch` arms and the incompleteness reasons of the function at
+/// `entry` in `bytes`, mapped and served as ROM at `base`.
+fn analyze_image(arch: common::Arch, base: u64, bytes: Vec<u8>, entry: u64) -> (Vec<u64>, String) {
     let r = common::analyze_bytes(
         arch,
         bytes.clone(),
-        BASE,
-        Some(Box::new(MockRom::raw_bytes(BASE, bytes))),
+        base,
+        Some(Box::new(MockRom::raw_bytes(base, bytes))),
         entry,
     );
     let mut arms: Vec<u64> = r
@@ -61,6 +71,13 @@ fn analyze(arch: common::Arch, code: &[&str], f: u8, entry: u64) -> (Vec<u64>, S
         .collect();
     arms.sort_unstable();
     (arms, r.incomplete().to_string())
+}
+
+/// `two_s` with its map placed right after `code`.
+fn analyze(arch: common::Arch, code: &[&str], f: u8, entry: u64) -> (Vec<u64>, String) {
+    let mut bytes = common::hex(&code.concat());
+    bytes.extend(two_s_map(f));
+    analyze_image(arch, BASE, bytes, entry)
 }
 
 /// ARM `two_s`, 0xc8 bytes.
@@ -103,5 +120,54 @@ fn thumb_cell_guard_excludes_a_cell_past_the_table() {
         ],
         "{arms:#x?}"
     );
+    assert!(incomplete.is_empty(), "{incomplete}");
+}
+
+/// clang 14 -O2 AArch64 `g_phi2`, 0xa4 bytes at 0x40031c, over an extern
+/// `xm8` holding `['b']=2, ['f']=9, ['g']=13`:
+///
+/// ```c
+/// int g_phi2(int k) { int r = k; unsigned char c;
+///     if (k > 5) c = 'g'; else if (k < 0) c = 'b'; else c = 'f';
+///     sink = c; switch (xm8[c]) { case 0: ... case 8: ... } return r; }
+/// ```
+///
+/// The index is a phi of the constants `'b'`, `'f'` and `'g'`; only `'b'`
+/// passes the cell's `cmp w9,#8; b.hi`.
+const G_PHI2: &[&str] = &[
+    "c80c8052490c80521f00007128b1881a1f140071e90c80522ac1881a08000090",
+    "08a1169109496a38880000b00a0100b93f210071680300540a0000904a251691",
+    "8b0000104c6969386b090c8b60011fd600280011c0035fd6680180520000084a",
+    "c0035fd60804000b00751e53c0035fd600340051c0035fd6080140b90001000b",
+    "c0035fd6000c0032c0035fd600001c12c0035fd600440011c0035fd640028052",
+    "c0035fd6",
+];
+
+/// Mutation: drop the cell-guard filter on the phi-constants path of
+/// `dispatch_domain`.
+#[test]
+fn aarch64_cell_guard_filters_phi_constants() {
+    const G_PHI2_AT: u64 = 0x40031c;
+    const TABLE_AT: u64 = 0x400589;
+    const XM8_AT: u64 = 0x4005a8;
+    let mut bytes = common::hex(&G_PHI2.concat());
+    bytes.resize(usize::try_from(TABLE_AT - G_PHI2_AT).expect("small"), 0);
+    bytes.extend(common::hex("000205080a0d0f1113"));
+    bytes.resize(usize::try_from(XM8_AT - G_PHI2_AT).expect("small"), 0);
+    bytes.extend(map(&[
+        (b'a', 1),
+        (b'b', 2),
+        (b'c', 3),
+        (b'd', 4),
+        (b'e', 5),
+        (b'f', 9),
+        (b'g', 13),
+        (b'h', 6),
+        (b'0', 7),
+        (b'1', 8),
+        (b'2', 255),
+    ]));
+    let (arms, incomplete) = analyze_image(common::Arch::Aarch64, G_PHI2_AT, bytes, G_PHI2_AT);
+    assert_eq!(arms, [0x400380], "{arms:#x?}");
     assert!(incomplete.is_empty(), "{incomplete}");
 }

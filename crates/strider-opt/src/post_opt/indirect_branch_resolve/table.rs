@@ -97,7 +97,8 @@ impl SiteClassifier<'_> {
     /// index across its range. With both, constants outside the index range are
     /// dropped; if the index does not fold under some constant, the range wins.
     /// `shallow` keeps the bounded index nearest the target, and only a
-    /// guard-narrowed one.
+    /// guard-narrowed one. Values under which a guard-narrowed cell above the
+    /// index folds outside the guard are dropped.
     fn dispatch_domain(
         &mut self,
         target: ValueId,
@@ -121,9 +122,7 @@ impl SiteClassifier<'_> {
             return constants.map(|values| (source, values));
         };
         if let Some(mut values) = constants.and_then(|k| self.constants_in_range(k, hit, source)) {
-            if let Some(cell) = cell {
-                self.retain_in_cell_range(cell, source, &mut values);
-            }
+            self.retain_in_cell_range(cell, source, &mut values);
             return Some((source, values));
         }
         // `stride` divides the value spacing; one wider than `usize` defers.
@@ -140,16 +139,22 @@ impl SiteClassifier<'_> {
                     })
             })
             .collect();
-        if let Some(cell) = cell {
-            self.retain_in_cell_range(cell, hit.index, &mut values);
-        }
+        self.retain_in_cell_range(cell, hit.index, &mut values);
         Some((hit.index, values))
     }
 
     /// Drops the `values` of `pinned` under which the guarded `cell` folds
     /// outside its range: the guard sends those to another edge. A value the
     /// cell does not fold under stays, for the seat to defer on.
-    fn retain_in_cell_range(&mut self, cell: PinnedIndex, pinned: ValueId, values: &mut Vec<u128>) {
+    fn retain_in_cell_range(
+        &mut self,
+        cell: Option<PinnedIndex>,
+        pinned: ValueId,
+        values: &mut Vec<u128>,
+    ) {
+        let Some(cell) = cell else {
+            return;
+        };
         let order = super::eval::cone_order_pruned(self.function, cell.index, pinned);
         values.retain(|&x| {
             self.eval.begin_index(pinned, x);
@@ -209,7 +214,7 @@ impl SiteClassifier<'_> {
             .filter(|_| !shallow)
             .and_then(|cell| chain.iter().position(|&v| v == cell))
             .and_then(|at| first_hit(self, at + 1));
-        let cell = deep.and(Some(shallowest.1)).filter(|cell| cell.narrowed);
+        let cell = deep.map(|_| shallowest.1).filter(|cell| cell.narrowed);
         let (depth, hit) = deep.unwrap_or(shallowest);
         if shallow && !hit.narrowed {
             return None;
