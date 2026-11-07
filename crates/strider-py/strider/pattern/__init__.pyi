@@ -538,7 +538,8 @@ class CallOtherPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):
         """Constrain the matched node's user-op name."""
         ...
     def arg(self, idx: int, p: ValueLike) -> "CallOtherPat":
-        """Constrain raw `inputs[idx]`, unshifted."""
+        """Constrain raw `inputs[idx]`, unshifted: slots 0 and 1 are control and
+        memory, so the first argument is `idx` 2."""
         ...
     def res(self) -> "CallOtherPat":
         """When nested as a value or raw-slot operand, pin it to the declared
