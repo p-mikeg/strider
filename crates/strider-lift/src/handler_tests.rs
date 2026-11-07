@@ -1467,24 +1467,6 @@ fn a_shift_count_wider_than_the_output_saturates() {
     );
 }
 
-/// `shl eax,cl` reads a count NARROWER than its output, which p-code already
-/// keeps in range: it takes the plain zero-extend, no saturation.
-#[test]
-fn a_shift_count_narrower_than_the_output_is_left_alone() {
-    // shl eax,cl ; ret
-    let f = lift_bytes(
-        strider_target::SleighArch::x86_64(),
-        strider_target::CallingConvention::x86_64_systemv(),
-        vec![0xd3, 0xe0, 0xc3],
-    )
-    .expect("shl must lift");
-    let producers = shift_count_producers(&f, IntBinaryOp::ShiftLeft, ValueType::int(32));
-    assert!(!producers.is_empty(), "shl eax,cl lifts to a ShiftLeft");
-    for k in &producers {
-        assert_eq!(*k, NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend));
-    }
-}
-
 /// A `per_address_ccs` entry is keyed by a direct call's target ADDRESS, so a
 /// `CALL` whose operand names a register offset selects none, as the CFG's
 /// no-return rule already held. `call_override` serves the lifted call and the

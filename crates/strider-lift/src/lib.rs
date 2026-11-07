@@ -14,7 +14,7 @@ mod float;
 mod function_lifter;
 mod memory;
 mod pcode_consts;
-pub(crate) mod pcode_util;
+mod pcode_util;
 mod pruned_ssa;
 mod regions;
 mod tracked;
