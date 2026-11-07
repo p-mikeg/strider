@@ -42,8 +42,8 @@ file into memory instead.
 
 ET_EXEC / ET_DYN load from PT_LOAD headers, everything else from sections.
 
-Relocating an ET_REL stands in for the link: an undefined or `SHN_COMMON`
-symbol gets an address in an unmapped range past the image, and a GOT
+Relocating an ET_REL stands in for the link: an undefined, `SHN_COMMON` or
+defined IFUNC symbol gets an address in an unmapped range past the image, and a GOT
 reference loads from a synthetic slot. The synthetic link binds every symbol
 locally, so those slots are ROM whatever `got_is_rom` says. An undefined weak
 symbol's address is computed only where it cannot be observed (a branch
@@ -56,8 +56,8 @@ that cannot be computed (TLS, MIPS GP-relative, a branch needing a veneer)
 makes its field a hole, so a read across it fails naming the type; in writable
 non-executable bytes the file-initial bytes stay. A MIPS `-mabicalls` object,
 GCC's default, therefore holes each function's `$gp` setup and GOT loads;
-build with `-mno-abicalls -G0` to analyse a `.o` (clang keeps `$gp` small
-data without `-G0`).
+build with `-mno-abicalls -G0` to analyse a `.o` (without `-G0`, clang
+addresses small data off `$gp` even under `-mno-abicalls`).
 
 An image whose only PT_LOAD is RWX (the MIPS `vmlinux` shape) has an empty ROM
 view (`got_is_rom`'s sections aside); supply your own `ReadOnlyMemory` over
