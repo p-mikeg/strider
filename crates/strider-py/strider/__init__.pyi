@@ -24,13 +24,11 @@ __all__: list[str]
 
 class StriderError(Exception):
     """Raised when an analysis fails, a pattern is malformed, or an argument
-    (a malformed ELF included) has a bad value. Otherwise a wrong type raises
-    `TypeError` (a `bool` address or index included), an out-of-range
-    unsigned argument (address, id, index, size or count) `StriderError` and
-    another out-of-range int `OverflowError`, and a range-checked option
-    `ValueError`. `load_elf`, `add_elf` and `add_symbol_file` raise
-    `FileNotFoundError` for a missing path and `ValueError` for a non-ELF
-    file; `load_elf` also raises `ValueError` for an unsupported arch or ABI.
+    has a bad value (a malformed ELF; an unsigned address, id, index, size or
+    count out of range). A wrong type raises `TypeError` (a `bool` address or
+    index included), another out-of-range int `OverflowError`, a range-checked
+    option `ValueError`, a missing input file `FileNotFoundError`, a non-ELF
+    file or an unsupported arch or ABI `ValueError`, a failed write `OSError`.
 
     `.backtrace` is the message plus the Rust backtrace (empty when raised
     from Python); `STRIDER_BACKTRACE=1` appends it to the message."""

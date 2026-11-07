@@ -30,19 +30,26 @@ pub fn dot_style_for(name: &str) -> PyResult<dot::DotStyle> {
 }
 
 /// Writes `d` (HTML when `html`, else DOT) to `path`, or returns it without
-/// one.
+/// one. A failed write raises `OSError` naming `path`.
 pub fn render<G: dot::GraphDotDumper>(
     d: &dot::GraphDot<G>,
     html: bool,
     path: Option<std::path::PathBuf>,
 ) -> PyResult<Option<String>> {
-    match (html, path) {
-        (true, Some(p)) => d.dump_as_html(p).map(|()| None),
-        (false, Some(p)) => d.dump_as_dot(p).map(|()| None),
-        (true, None) => d.as_html_from_dot().map(Some),
-        (false, None) => d.as_dot().map(Some),
+    let text = if html {
+        d.as_html_from_dot()
+    } else {
+        d.as_dot()
     }
-    .map_err(into_strider_err)
+    .map_err(into_strider_err)?;
+    let Some(p) = path else { return Ok(Some(text)) };
+    // `(errno, strerror, filename)` lets CPython pick the `OSError` subclass.
+    std::fs::write(&p, text).map_err(|e| {
+        let msg = e.to_string();
+        let strerror = msg.split(" (os error").next().unwrap_or(&msg).to_owned();
+        pyo3::exceptions::PyOSError::new_err((e.raw_os_error().unwrap_or(0), strerror, p))
+    })?;
+    Ok(None)
 }
 
 /// `pretty=`: `False` is the raw render, `True` the pretty one in the default

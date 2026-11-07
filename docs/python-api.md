@@ -1039,6 +1039,7 @@ given.
   `allow_code_before_start_addr=True`, a `known_targets` string other than
   `"return"`, a string `call_other_abis` value, an empty `data_ranges` /
   `fragment_ranges` range, a `BufferReader` region past the address space.
+- `OSError`: a failed `to_dot` / `to_html` write to `path`.
 - `StriderError`: analysis failures, a malformed ELF, and every other bad
   value (an unknown `style=`, a reserved capture name, an unknown node id, an
   unbound capture read without `_opt`, a `Match` read after `compact`,
