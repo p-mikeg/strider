@@ -228,7 +228,7 @@ struct ElfMemo {
     symbols: OnceLock<SymbolTable>,
     data_ranges: OnceLock<strider_cfg::DataRanges>,
     local_entries: OnceLock<Arc<strider_cfg::LocalEntries>>,
-    /// Whether an ELF or symbol file has a `<base>.cold` function symbol.
+    /// Whether any symbol source has a `<base>.cold` symbol.
     has_cold_symbols: OnceLock<bool>,
     /// ppc64 ELFv1 function entries to their descriptors' TOC pointers;
     /// `None` where two descriptors disagree.
@@ -563,17 +563,18 @@ impl PyLoadedElf {
             Some(&has) => has,
             None => {
                 self.check_unchanged()?;
-                let has = self.elfs.iter().chain(&self.symbol_elfs).any(|obj| {
-                    obj.checked_file().is_ok_and(|file| {
-                        file.symbols()
-                            .chain(file.dynamic_symbols())
-                            .any(|s| s.name().is_ok_and(names_cold))
-                    })
-                });
+                let has = self.extra_symbols.iter().any(|s| names_cold(&s.name))
+                    || self.elfs.iter().chain(&self.symbol_elfs).any(|obj| {
+                        obj.checked_file().is_ok_and(|file| {
+                            file.symbols()
+                                .chain(file.dynamic_symbols())
+                                .any(|s| s.name().is_ok_and(names_cold))
+                        })
+                    });
                 *self.memo.has_cold_symbols.get_or_init(|| has)
             }
         };
-        if !has_cold && !self.extra_symbols.iter().any(|s| names_cold(&s.name)) {
+        if !has_cold {
             return Ok(strider_cfg::DataRanges::default());
         }
         self.with_symbols(|t| {
@@ -1063,11 +1064,16 @@ impl PyLoadedElf {
                 region: None,
             });
         }
+        let has_cold_symbols = if added.iter().any(|s| cold_fragment_base(&s.name).is_some()) {
+            OnceLock::from(true)
+        } else {
+            std::mem::take(&mut self.memo.has_cold_symbols)
+        };
         self.extra_symbols.append(&mut added);
-        // `$d` spans, the files' cold symbols and TOCs come from the ELFs alone.
+        // `$d` spans and TOCs come from the ELFs alone.
         self.memo = ElfMemo {
             data_ranges: std::mem::take(&mut self.memo.data_ranges),
-            has_cold_symbols: std::mem::take(&mut self.memo.has_cold_symbols),
+            has_cold_symbols,
             entry_tocs: std::mem::take(&mut self.memo.entry_tocs),
             ..ElfMemo::default()
         };
