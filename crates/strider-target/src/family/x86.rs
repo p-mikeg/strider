@@ -132,9 +132,19 @@ const CALL_OTHER: &[Row] = &[
     // MWAIT / MWAITX wait for the monitored line to be written: EAX = hints,
     // ECX = extensions.
     Row::new(
-        &["mwait", "mwaitx"],
+        &["mwait"],
         CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["EAX", "ECX"],
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    ),
+    // MWAITX: EBX = timer (ECX[1]).
+    Row::new(
+        &["mwaitx"],
+        CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["EAX", "ECX", "EBX"],
             implicit_writes: &[],
             clobbers_memory: true,
             no_return: false,

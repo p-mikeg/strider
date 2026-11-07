@@ -179,7 +179,7 @@ movmskps UNCLASSIFIED
 movntdqa call reads=[] writes=[] mem=false noret=false
 mpsadbw UNCLASSIFIED
 mwait call reads=["EAX", "ECX"] writes=[] mem=true noret=false
-mwaitx call reads=["EAX", "ECX"] writes=[] mem=true noret=false
+mwaitx call reads=["EAX", "ECX", "EBX"] writes=[] mem=true noret=false
 mxcsrRoundingControl lowered:rounding
 out call reads=[] writes=[] mem=true noret=false
 pabsb UNCLASSIFIED
