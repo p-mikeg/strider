@@ -20,6 +20,7 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    ([options](python-api.md#liftlifteroptions-per-call-tuning)).
 3. Build a **CFG**: which regions (straight runs of instructions) jump to
    which. ARM/Thumb and MIPS16 code decodes in the mode its edge carries.
+   From an ELF, GCC `.cold` fragments are followed as part of their function.
 4. Build the **IR**, a graph with one node per computed value and one edge per
    dependency. Values carry their exact width, from the 1-bit `I1` up to
    `I512`. This is what you query; `function.to_text()` prints one line per
