@@ -469,6 +469,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 !self.is_branch_tail_call(cur_addr),
                 "decoding {cur_addr:?} outside the function bound"
             );
+            // Exact key: a start inside an instruction is stepped over (see
+            // `note_stepped_over_region_starts`). Checked before the decode,
+            // which may fail in this region's ISA mode.
+            if cur_addr.machine_addr != self.start_addr.machine_addr
+                && let Some(existing) = self.builder.index.get(cur_addr)
+            {
+                self.note_empty_span_to(cur_addr);
+                return self.seal_onto(cur_addr, existing);
+            }
             let lift_res = match self.lift_code(cur_addr.machine()) {
                 Ok(lift_res) => lift_res,
                 Err(e) if cur_addr.machine_addr != self.start_addr.machine_addr => {
@@ -520,11 +529,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
             if cur_addr.machine_addr != self.start_addr.machine_addr {
                 self.note_empty_span_to(cur_addr);
-                // Exact key: a start inside an instruction is stepped over
-                // (see `note_stepped_over_region_starts`).
-                if let Some(existing) = self.builder.index.get(cur_addr) {
-                    return self.seal_onto(cur_addr, existing);
-                }
                 // Every zero-p-code-op instruction is its own empty region, so
                 // a non-empty region starts at `insns[0].addr`.
                 if self.insns.is_empty() || is_zero_op {

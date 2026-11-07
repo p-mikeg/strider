@@ -637,3 +637,58 @@ fn a_mips16_arm_calling_a_no_return_function_before_its_pool_is_kept() {
     );
     assert_no_dangling_successor(&cfg);
 }
+
+/// A MIPS32 arm falling into a sibling's MIPS16 region seals onto it and
+/// reports the clash, though those bytes do not decode as MIPS32.
+///
+/// ```text
+/// 1000  jr a0; nop        ; arms 0x1010 (MIPS16) and 0x1020
+/// 1008  nop
+/// 100c  nop
+/// 1010  li v0, 1; jrc ra  ; MIPS16
+/// 1020  b 0x1008; nop
+/// ```
+#[test]
+fn an_arm_falling_into_a_region_of_the_other_mode_seals_onto_it() {
+    let words: [u32; 12] = [
+        0x0080_0008,
+        0,
+        0,
+        0,
+        0x6a01_e8a0,
+        0,
+        0,
+        0,
+        0x1000_fff9,
+        0,
+        0,
+        0,
+    ];
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
+    let known = FxHashMap::from_iter([(
+        PcodeInsnAddr::at_machine_start(BASE),
+        ResolvedTargets::table(vec![
+            strider_cfg::ResolvedTarget::new(0x1010, Some(true)),
+            strider_cfg::ResolvedTarget::new(0x1020, None),
+        ]),
+    )]);
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(0x30),
+        known_targets: &known,
+        ..CfgOptions::default()
+    };
+    let cfg = DecodeEngine::new(SleighArch::mipsbe32(), BufMemReader::new(bytes, BASE))
+        .expect("decode engine")
+        .build_cfg(BASE.into(), &opts)
+        .expect("build");
+    assert_eq!(switch_arms(&cfg), [0x1010, 0x1020]);
+    assert_eq!(undecodable(&cfg), Vec::<u64>::new());
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::IsaModeConflict)
+            .map(|a| a.machine())
+            .collect::<Vec<_>>(),
+        [0x1010],
+    );
+    assert_no_dangling_successor(&cfg);
+}

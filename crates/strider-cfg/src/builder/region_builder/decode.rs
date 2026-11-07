@@ -130,16 +130,6 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         if prev.is_none() && self.start_addr.insn_index != 0 {
             return Ok(());
         }
-        // Sealed onto rather than decoded: `build` discards this lift.
-        if prev.is_some()
-            && self
-                .builder
-                .index
-                .get(PcodeInsnAddr::at_machine_start(addr))
-                .is_some()
-        {
-            return Ok(());
-        }
         let mut wrote = false;
         for &(name, default) in defaults {
             wrote |= hold_var(&mut self.builder.engine.sleigh, addr, name, default)?;
