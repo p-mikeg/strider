@@ -46,11 +46,11 @@ impl KindSpec {
 pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool + Send>;
 
 /// Runs once the node's inputs have matched. Below the root it sees the
-/// captures of its own cone and of fixed operands written before it; `any_input`
-/// operands match after every fixed one. The type is the
-/// anchored output's (a root with several output vertices is anchored at each
-/// output in turn), `None` for a control, memory or `PhiToken` edge or a
-/// zero-output node.
+/// captures of its own cone and of fixed operands written before it;
+/// `any_input` operands match after every fixed one. The type is the anchored
+/// output's (a root with several output vertices is anchored at each output in
+/// turn), `None` for a control, memory or `PhiToken` edge or a zero-output
+/// node.
 pub type PostMatchFn =
     Box<dyn Fn(&Matcher, NodeId, Option<ValueType>, &crate::bindings::Bindings) -> bool + Send>;
 

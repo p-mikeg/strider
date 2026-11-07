@@ -43,8 +43,8 @@ pub trait CaptureExt: MatchPat + 'static {
     }
     /// Run `f` after the whole sub-pattern matches; `false` fails the match. Below the root, `f`
     /// sees only the captures of its own cone and of fixed operands written before it;
-    /// `any_input` operands match after every fixed one. Refused where
-    /// the matched output carries no value; a valueless root takes
+    /// `any_input` operands match after every fixed one. Refused where the matched output
+    /// carries no value; a valueless root takes
     /// [`Pattern::with_root_post_match`](crate::Pattern::with_root_post_match).
     fn when_match<F>(self, f: F) -> MatchOnly
     where
