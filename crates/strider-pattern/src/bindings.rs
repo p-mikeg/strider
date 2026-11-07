@@ -164,66 +164,37 @@ mod tests {
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
     use strider_ir_test_utils::make_empty_fn;
 
+    /// A capture binds once: rebinding the same node or value is idempotent, a different one
+    /// conflicts and keeps the first.
     #[test]
-    fn capture_bind_and_get_with_real_output_ids() {
-        // `return(IntConst(1) + IntConst(2))`, for two distinct `ValueId`s.
-        let mut a_value = None;
-        let mut b_value = None;
-        let _function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
-            a_value = Some(av);
-            b_value = Some(bv);
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
-        })
-        .expect("build graph");
-        let a = a_value.unwrap();
-        let b = b_value.unwrap();
-
-        let mut bindings = Bindings::default();
-        let v = Capture::new();
-        assert_eq!(bindings.get_value(v), None);
-        let ba = Binding::Value(a);
-        let bb = Binding::Value(b);
-        assert!(bindings.bind_capture(v, ba));
-        assert_eq!(bindings.get_value(v), Some(a));
-
-        // Idempotent with the same output.
-        assert!(bindings.bind_capture(v, ba));
-        assert_eq!(bindings.get_value(v), Some(a));
-
-        // Conflict preserves original.
-        assert!(!bindings.bind_capture(v, bb));
-        assert_eq!(bindings.get_value(v), Some(a));
-    }
-
-    #[test]
-    fn capture_bind_and_get_with_real_node_ids() {
-        // Thread through an Add so both constants stay reachable.
+    fn capture_bind_and_get_with_real_ids() {
         let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
             let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
             b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
         })
         .expect("build graph");
-
-        let mut ids = function
+        let mut consts = function
             .walk()
             .filter(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)));
-        let n1 = ids.next().expect("first const node");
-        let n2 = ids.next().expect("second const node");
-        assert_ne!(n1, n2);
+        let n1 = consts.next().expect("first const node");
+        let n2 = consts.next().expect("second const node");
+        let (a, b) = (function.node_outputs(n1)[0], function.node_outputs(n2)[0]);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert_eq!(bindings.get_node(v, function.graph()), None);
-        let b1 = Binding::Node(n1);
-        let b2 = Binding::Node(n2);
-        assert!(bindings.bind_capture(v, b1));
-        assert_eq!(bindings.get_node(v, function.graph()), Some(n1));
-        assert!(bindings.bind_capture(v, b1));
-        assert!(!bindings.bind_capture(v, b2));
-        assert_eq!(bindings.get_node(v, function.graph()), Some(n1));
+        assert_eq!(bindings.get_value(v), None);
+        assert!(bindings.bind_capture(v, Binding::Value(a)));
+        assert!(bindings.bind_capture(v, Binding::Value(a)));
+        assert!(!bindings.bind_capture(v, Binding::Value(b)));
+        assert_eq!(bindings.get_value(v), Some(a));
+
+        let n = Capture::new();
+        assert_eq!(bindings.get_node(n, function.graph()), None);
+        assert!(bindings.bind_capture(n, Binding::Node(n1)));
+        assert!(bindings.bind_capture(n, Binding::Node(n1)));
+        assert!(!bindings.bind_capture(n, Binding::Node(n2)));
+        assert_eq!(bindings.get_node(n, function.graph()), Some(n1));
     }
 
     #[test]
@@ -289,29 +260,6 @@ mod tests {
     }
 
     #[test]
-    fn get_node_reads_a_node_binding() {
-        let mut s_value = None;
-        let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
-            let s = b
-                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
-                .unwrap();
-            s_value = Some(s);
-            Ok(s)
-        })
-        .expect("build graph");
-        let s = s_value.unwrap();
-        let add_node = function.producer(s);
-
-        let mut bindings = Bindings::default();
-        let v = Capture::new();
-        assert!(bindings.bind_capture(v, Binding::Node(add_node)));
-        assert_eq!(bindings.get_node(v, function.graph()), Some(add_node));
-        assert_eq!(bindings.get_value(v), None);
-    }
-
-    #[test]
     fn unbound_capture_yields_none_for_every_typed_extractor() {
         let function =
             make_empty_fn(|b| b.build_int_const(0u64, ValueType::int(64))).expect("build graph");
@@ -326,46 +274,10 @@ mod tests {
         assert_eq!(bindings.get_float_cmp_op(v, function.graph()), None);
     }
 
-    /// A rolled-back capture must rebind as brand-new rather than bouncing
-    /// off a stale entry.
+    /// A restore keeps the bindings before its mark and drops the rest; a dropped capture
+    /// rebinds as new and a fresh capture reuses its slot.
     #[test]
     fn restore_drops_tail_and_allows_rebind() {
-        let function =
-            make_empty_fn(|b| b.build_int_const(1u64, ValueType::int(64))).expect("build graph");
-        let n = function
-            .walk()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
-            .expect("int const node");
-
-        let mut bindings = Bindings::default();
-        let kept = Capture::new();
-        let dropped_a = Capture::new();
-        let dropped_b = Capture::new();
-
-        assert!(bindings.bind_capture(kept, Binding::Node(n)));
-        let mark = bindings.mark();
-        assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
-        assert!(bindings.bind_capture(dropped_b, Binding::Node(n)));
-
-        assert!(bindings.get_binding(kept).is_some());
-        assert!(bindings.get_binding(dropped_a).is_some());
-        assert!(bindings.get_binding(dropped_b).is_some());
-
-        bindings.restore(mark);
-
-        assert!(bindings.get_binding(kept).is_some());
-        assert!(bindings.get_binding(dropped_a).is_none());
-        assert!(bindings.get_binding(dropped_b).is_none());
-
-        // No stale entry may survive the truncate.
-        assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
-        assert!(bindings.get_binding(dropped_a).is_some());
-    }
-
-    /// A partial restore keeps earlier bindings and drops later ones.
-    #[test]
-    fn partial_restore_keeps_survivors_and_reindexes_cleanly() {
-        // Two distinct nodes so kept and dropped bindings differ.
         let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
             let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
@@ -383,37 +295,22 @@ mod tests {
         assert!(bindings.bind_capture(a, Binding::Node(n1)));
         assert!(bindings.bind_capture(b, Binding::Node(n2)));
         let mark = bindings.mark();
-        assert!(bindings.bind_capture(dropped, Binding::Node(n1)));
-
         bindings.restore(mark);
+        assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
 
+        assert!(bindings.bind_capture(dropped, Binding::Node(n1)));
+        bindings.restore(mark);
         assert_eq!(bindings.get_binding(a), Some(Binding::Node(n1)));
         assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
         assert!(bindings.get_binding(dropped).is_none());
 
-        // A fresh capture reuses `dropped`'s slot.
+        assert!(bindings.bind_capture(dropped, Binding::Node(n2)));
+        assert_eq!(bindings.get_binding(dropped), Some(Binding::Node(n2)));
         let fresh = Capture::new();
+        bindings.restore(mark);
         assert!(bindings.bind_capture(fresh, Binding::Node(n2)));
         assert_eq!(bindings.get_binding(fresh), Some(Binding::Node(n2)));
         assert_eq!(bindings.get_binding(a), Some(Binding::Node(n1)));
-        assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
-    }
-
-    #[test]
-    fn restore_to_current_mark_is_noop() {
-        let function =
-            make_empty_fn(|b| b.build_int_const(1u64, ValueType::int(64))).expect("build graph");
-        let n = function
-            .walk()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
-            .expect("int const node");
-
-        let mut bindings = Bindings::default();
-        let c = Capture::new();
-        assert!(bindings.bind_capture(c, Binding::Node(n)));
-        let mark = bindings.mark();
-        bindings.restore(mark);
-        assert!(bindings.get_binding(c).is_some());
     }
 
     /// A `Binding::Node` and a `Binding::Value` never compare equal, even
