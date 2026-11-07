@@ -104,11 +104,11 @@ class Cfg:
           `fragment_ranges` end.
 
         A seeded arm whose own decode reaches unmapped or undecodable bytes,
-        or falls through past the end, is dropped unless a call precedes them,
-        which then ends the arm; one landing on a stub an earlier edge or
-        fall-through reported keeps it. From `analyze`, target
-        reasons accumulate over the resolver's rounds; site reasons are the
-        final round's.
+        or falls through past the end, is dropped, unless a call precedes the
+        bad bytes or the end, which then ends the arm; one landing on a stub
+        an earlier edge or fall-through reported keeps it. From `analyze`,
+        target reasons accumulate over the resolver's rounds; site reasons
+        are the final round's.
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:

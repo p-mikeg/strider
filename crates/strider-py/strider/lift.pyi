@@ -288,8 +288,9 @@ class Lifter:
 
         Raises `StriderError` unless `addr` is on the linear stream from
         `entry`. A MIPS branch's text includes its delay slot, so the slot's
-        own address raises. On ARM or MIPS `entry`'s low bit selects the ISA mode, the
-        sweep starts at `entry & ~1` and `addr`'s low bit is ignored.
+        own address raises. On ARM or MIPS `entry`'s low bit selects the ISA
+        mode, the sweep starts at `entry & ~1` and `addr`'s low bit is
+        ignored.
 
         A new `entry` clones the decoder; `build_cfg(entry).pcode_at(addr)`
         is far cheaper and follows a mode switch.

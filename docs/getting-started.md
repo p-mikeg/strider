@@ -2,8 +2,9 @@
 
 Strider answers questions about a compiled function without source or debug
 symbols: write a pattern in Python, get back every place it matches. The
-[README](../README.md#quickstart) shows this end to end; this page maps the
-pipeline. [What's new since 0.1.0](../README.md#whats-new-since-010).
+[README](../README.md#quickstart) shows this end to end and lists
+[what's new since 0.1.0](../README.md#whats-new-since-010); this page maps
+the pipeline.
 
 ## How it works
 
