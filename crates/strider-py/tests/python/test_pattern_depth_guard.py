@@ -95,11 +95,10 @@ def test_a_deep_query_on_a_small_thread_stack_survives():
         assert "too deep" in str(value) or "nodes, over the" in str(value)
 
 
-@pytest.mark.parametrize("nested", [20, 40])
-def test_a_query_on_a_quarter_megabyte_thread_raises_rather_than_crashing(nested):
-    """The budget comes from the thread's own stack bounds, so a stack smaller
-    than any fixed budget still refuses in time. A SIGSEGV takes the whole
-    process down, so the run is a child and the parent reads its exit code."""
+def _child_matches_or_raises(step: str, n: int, stack: int) -> None:
+    """Run a query on a `stack`-byte thread over `n` applications of `step`
+    (an expression in `pat`) in a child process, since a SIGSEGV takes the
+    whole process down, and require that it matched or raised."""
     body = textwrap.dedent(
         f"""\
         import threading
@@ -115,14 +114,14 @@ def test_a_query_on_a_quarter_megabyte_thread_raises_rather_than_crashing(nested
 
         def run():
             pat = p.anything()
-            for _ in range({nested}):
-                pat = p.int_add(pat, p.anything())
+            for _ in range({n}):
+                pat = {step}
             try:
                 print("matches", len(list(fn.find_all(pat))), flush=True)
             except strider.StriderError as e:
                 print("raised", e, flush=True)
 
-        threading.stack_size({_TINY_STACK})
+        threading.stack_size({stack})
         t = threading.Thread(target=run)
         t.start()
         t.join()
@@ -133,46 +132,20 @@ def test_a_query_on_a_quarter_megabyte_thread_raises_rather_than_crashing(nested
     )
     assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
     assert out.stdout.startswith(("raised", "matches")), out.stdout
+
+
+@pytest.mark.parametrize("nested", [20, 40])
+def test_a_query_on_a_quarter_megabyte_thread_raises_rather_than_crashing(nested):
+    """The budget comes from the thread's own stack bounds, so a stack smaller
+    than any fixed budget still refuses in time."""
+    _child_matches_or_raises("p.int_add(pat, p.anything())", nested, _TINY_STACK)
 
 
 def test_nested_alternations_on_a_one_megabyte_thread_match_or_raise():
     """Each alternation level recurses through the matcher, which costs most
     in an unoptimised build; 255 of them and their leaf are exactly the node
-    budget. A SIGSEGV takes the whole process down, so the run is a child and
-    the parent reads its exit code."""
-    body = textwrap.dedent(
-        f"""\
-        import threading
-
-        import strider
-        from strider import pattern as p
-
-        mem = strider.reader.BufferReader(0x1000, bytes([0x48, 0x01, 0xF8, 0xC3]))
-        lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-        fn = lift.analyze(
-            0x1000, strider.sleigh.CallingConvention.x86_64_systemv()
-        ).function
-
-        def run():
-            pat = p.anything()
-            for _ in range({_NESTED}):
-                pat = p.one_of([pat])
-            try:
-                print("matches", len(list(fn.find_all(pat))), flush=True)
-            except strider.StriderError as e:
-                print("raised", e, flush=True)
-
-        threading.stack_size({_SMALL_STACK})
-        t = threading.Thread(target=run)
-        t.start()
-        t.join()
-        """
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", body], capture_output=True, text=True, timeout=120
-    )
-    assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
-    assert out.stdout.startswith(("raised", "matches")), out.stdout
+    budget."""
+    _child_matches_or_raises("p.one_of([pat])", _NESTED, _SMALL_STACK)
 
 
 def test_the_count_bound_still_answers_for_a_pathological_chain():
