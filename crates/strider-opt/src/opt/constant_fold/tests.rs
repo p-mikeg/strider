@@ -2481,6 +2481,30 @@ fn overflow_flag_against_zero_folds_to_false() -> Result<()> {
     Ok(())
 }
 
+/// A compare of a value against itself is constant: `x == x`, and neither
+/// `x < x`, `x <s x` nor `x - x` overflowing.
+#[test]
+fn self_compare_folds_to_a_constant() -> Result<()> {
+    for (op, want) in [
+        (IntCmpOp::Equal, 1),
+        (IntCmpOp::Less, 0),
+        (IntCmpOp::Sless, 0),
+        (IntCmpOp::Sborrow, 0),
+    ] {
+        let (mut fg, _x) = make_fn_with_var(reg_vn(0x1000, 4), |b, x| {
+            b.build_int_cmp_operation(x, x, op, ValueType::int(32))
+        })?;
+        run_to_fixed_point(&ConstantFold, &mut fg)?;
+        let ret = fg.returned();
+        assert_eq!(
+            (fg.int_const_u128(ret), fg.value_type_opt(ret)),
+            (Some(want), Some(ValueType::I1)),
+            "{op:?}(x, x)"
+        );
+    }
+    Ok(())
+}
+
 /// A `Capture` draws its id from a process-wide counter, so a capture minted
 /// inside a rule body renumbers every later rule's captures. Keeping the pool
 /// at the top of each builder is what makes reordering the rules within a
