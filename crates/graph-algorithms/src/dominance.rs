@@ -300,7 +300,7 @@ where
 
 /// Lengauer-Tarjan over a DFS preorder numbering: `parent[w]` is `w`'s tree
 /// parent; `preds(w)` yields `w`'s predecessors' numbers, in range, and is asked
-/// at most once per `w`, never for the root. Indexed by preorder number; the
+/// exactly once per non-root `w`. Indexed by preorder number; the
 /// root is 0 and its own immediate dominator. Every vertex must be reachable.
 #[must_use]
 pub fn immediate_dominators<I>(parent: &[u32], mut preds: impl FnMut(u32) -> I) -> Vec<u32>

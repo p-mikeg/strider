@@ -15,7 +15,7 @@ pub enum WalkPhase {
 pub trait GraphRef {
     type NodeId: EntityRef;
 
-    /// Calls `f` once per successor of `node`, in push order.
+    /// Calls `f` once per successor of `node`.
     fn successors(&self, node: Self::NodeId, f: impl FnMut(Self::NodeId));
 }
 
@@ -81,12 +81,10 @@ impl<G: GraphRef> Iterator for PreOrder<G> {
         } = self;
         let node = loop {
             let node = stack.pop()?;
-            if !visited.contains(node) {
+            if visited.insert(node) {
                 break node;
             }
         };
-
-        visited.insert(node);
 
         graph.successors(node, |succ| {
             // A pruning only: a node can still be pushed twice before its visit.
@@ -132,8 +130,7 @@ impl<G: GraphRef> PostOrder<G> {
             let (phase, node) = stack.pop()?;
             match phase {
                 WalkPhase::Pre => {
-                    if !visited.contains(node) {
-                        visited.insert(node);
+                    if visited.insert(node) {
                         stack.push((WalkPhase::Post, node));
                         graph.successors(node, |succ| {
                             // A pruning only: a node can still be pushed twice before its visit.

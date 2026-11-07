@@ -52,12 +52,8 @@ impl<'a, N, V, C: NodeCacheable<N, V>> Inputs<'a, N, V, C> {
     }
 
     /// Same yield as `into_iter()`, borrowing instead of consuming.
-    pub fn iter(&self) -> impl Iterator<Item = ValueId> + Clone + 'a {
-        let graph = self.graph;
-        self.use_list.iter().map(move |id| {
-            count_edge_read();
-            graph.store.inputs[*id].value_id
-        })
+    pub fn iter(&self) -> InputIter<'a, N, V, C> {
+        (*self).into_iter()
     }
 }
 

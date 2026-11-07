@@ -80,12 +80,6 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
 
-/// Successors: every input's producer, then the control consumers (so
-/// `PreOrder` visits consumers first). A dead control predecessor is reached
-/// through the live node using it.
-#[derive(Clone, Copy)]
-pub struct GraphWalkSuccs<'a>(&'a Graph);
-
 /// Forward def-use successors, dead consumers included.
 pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     graph
@@ -94,6 +88,12 @@ pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item =
         .flat_map(move |output| graph.value_uses(*output))
         .map(|(succ, _use_idx)| succ)
 }
+
+/// Successors: every input's producer, then the control consumers (so
+/// `PreOrder` visits consumers first). A dead control predecessor is reached
+/// through the live node using it.
+#[derive(Clone, Copy)]
+pub struct GraphWalkSuccs<'a>(&'a Graph);
 
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;

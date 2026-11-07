@@ -5,7 +5,7 @@
 /// so an impl may hold a `RefCell` memo.
 pub trait ReadOnlyMemory: Send {
     /// Fills all of `buf` with the raw bytes at `[addr, addr + buf.len())`, no
-    /// endianness swap; never a partial fill.
+    /// endianness swap.
     ///
     /// # Errors
     ///
