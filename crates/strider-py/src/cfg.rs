@@ -150,7 +150,8 @@ impl PyCfg {
     /// The p-code ops this CFG decoded at `addr`, joined with `"; "`, or
     /// `None`; on ARM or MIPS `addr`'s low bit is ignored. An instruction
     /// lifting to no ops (x86 `endbr64`) also gives `None`; `Lifter.pcode_at`
-    /// returns `""` for it.
+    /// returns `""` for it. A MIPS branch's text includes its delay slot,
+    /// whose own address gives `None`.
     fn pcode_at(&self, addr: crate::bigint::Addr) -> Option<String> {
         let addr = if self.arch.isa_mode_var().is_some() {
             addr.0 & !1

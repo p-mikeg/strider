@@ -56,6 +56,8 @@ class Cfg:
         `None`. Correct across an ISA-mode switch; on ARM or MIPS `addr`'s low
         bit is ignored, as in `Lifter.pcode_at`. An instruction lifting to no
         ops (`endbr64`) also gives `None`; `Lifter.pcode_at` returns `""`.
+        A MIPS branch's text includes its delay slot, whose own address gives
+        `None`.
         """
         ...
     def fingerprint_pcode(self, node: Node) -> list[tuple[int, str]]:

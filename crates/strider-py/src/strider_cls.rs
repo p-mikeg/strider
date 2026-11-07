@@ -349,12 +349,50 @@ fn cfg_options_from<'a>(
     }
 }
 
-fn stepped_past(entry: u64, addr: u64) -> PyErr {
+/// `answers` holds every instruction start from entry up to the cursor, so
+/// the largest one below `addr` is the decode `addr` lies in. `slots` is the
+/// sweep's decoder on an arch with delay slots.
+fn stepped_past(
+    entry: u64,
+    addr: u64,
+    answers: &std::collections::HashMap<u64, String>,
+    slots: Option<&mut rsleigh::Sleigh<AnyMemReader>>,
+) -> PyErr {
+    let within = answers
+        .keys()
+        .copied()
+        .filter(|&a| a < addr)
+        .max()
+        .unwrap_or(entry);
+    let why = if slots.is_some_and(|s| is_delay_slot(s, within, addr)) {
+        "; a branch decodes together with its delay slot"
+    } else {
+        ""
+    };
     into_strider_err(anyhow::anyhow!(
-        "pcode_at: linear sweep from entry {entry:#x} stepped past target {addr:#x} \
-         (misaligned: {addr:#x} is not a machine-instruction boundary on the linear \
-         path from entry)"
+        "pcode_at: {addr:#x} is not an instruction start on the linear path from \
+         entry {entry:#x}; it lies in the decode at {within:#x}{why}"
     ))
+}
+
+/// Whether `addr` is the delay slot of the decode at `within`: that decode
+/// branches and an instruction at `addr` ends where it does.
+fn is_delay_slot(sleigh: &mut rsleigh::Sleigh<AnyMemReader>, within: u64, addr: u64) -> bool {
+    use rsleigh::Opcode as O;
+    let Ok(decode) = sleigh.lift_one(within) else {
+        return false;
+    };
+    let branches = decode.insns.iter().any(|i| {
+        matches!(
+            i.opcode,
+            O::Branch | O::CondBranch | O::BranchIndirect | O::Call | O::CallIndirect | O::Return
+        )
+    });
+    let end = within.saturating_add(decode.machine_insn_len as u64);
+    branches
+        && sleigh
+            .lift_one(addr)
+            .is_ok_and(|slot| addr.saturating_add(slot.machine_insn_len as u64) == end)
 }
 
 /// Sorted and deduped: two p-code sites in one machine instruction are one
@@ -685,7 +723,8 @@ impl PyLifter {
     /// `addr`, decoding linearly from `entry` on a fresh decoder with only
     /// `entry`'s ISA mode pinned. A new `entry` clones the decoder;
     /// `build_cfg(entry).pcode_at(addr)` is far cheaper and follows a mode
-    /// switch.
+    /// switch. A MIPS branch's text includes its delay slot, so the slot's
+    /// own address is an error.
     fn pcode_at(
         slf: &Bound<'_, Self>,
         entry: &Bound<'_, PyAny>,
@@ -695,7 +734,9 @@ impl PyLifter {
         let py = slf.py();
         let this = try_borrow_lifter(slf)?;
         crate::reader::check_mem_unchanged(py, &[&this.mem_obj])?;
-        let entry_mode = this.target()?.entry_mode_context(entry);
+        let target = this.target()?;
+        let entry_mode = target.entry_mode_context(entry);
+        let delay_slots = target.has_delay_slots();
         let (start, addr) = if entry_mode.is_some() {
             (entry & !1, addr & !1)
         } else {
@@ -737,7 +778,8 @@ impl PyLifter {
                 return Ok(text.clone());
             }
             if addr < sweep.cursor {
-                return Err(stepped_past(entry, addr));
+                let slots = delay_slots.then_some(&mut sweep.sleigh);
+                return Err(stepped_past(entry, addr, &sweep.answers, slots));
             }
             let SweepSleigh {
                 sleigh,
@@ -773,7 +815,8 @@ impl PyLifter {
                     )));
                 }
                 if *cursor > addr {
-                    return Err(stepped_past(entry, addr));
+                    let slots = delay_slots.then_some(&mut *sleigh);
+                    return Err(stepped_past(entry, addr, answers, slots));
                 }
             }
         });

@@ -10,6 +10,8 @@ assembly mnemonics.
 
 from __future__ import annotations
 
+import struct
+
 import pytest
 
 import strider
@@ -148,6 +150,41 @@ def test_lifter_pcode_at_rejects_misaligned_target():
     entry = prog.symbol("array_sum").address
     with pytest.raises(strider.StriderError):
         prog.pcode_at(entry, entry + 1)
+
+
+def test_mips_delay_slot_text_is_in_its_branch():
+    """MIPS decodes a branch with its delay slot as one instruction, so the
+    slot's address has no text of its own: `Cfg.pcode_at` gives `None` and
+    `Lifter.pcode_at` raises naming the branch, not a misaligned address."""
+    prog = strider.lift.load_elf(str(fixture_path("mips32le", "arithmetic")))
+    entry = prog.symbol("add").address  # jr ra; addu v0,a0,a1
+    cfg, _function, _unresolved = prog.analyze("add")
+    branch = cfg.pcode_at(entry)
+    assert branch is not None and "IntAdd" in branch
+    assert cfg.pcode_at(entry + 4) is None
+    says = f"decode at {entry:#x}; a branch decodes together with its delay slot"
+    with pytest.raises(strider.StriderError, match=says):
+        prog.pcode_at(entry, entry + 4)
+    prog.pcode_at(entry, entry)
+    with pytest.raises(strider.StriderError, match=says):
+        prog.pcode_at(entry, entry + 4)
+
+
+@pytest.mark.parametrize("addr", [0x1002, 0x1006])
+def test_mips_mid_instruction_address_is_not_called_a_delay_slot(addr):
+    """Inside `addu` (0x1002) or inside `jr` (0x1006) is off a boundary;
+    only 0x1008 is a delay slot."""
+    code = struct.pack("<4I", 0x00851021, 0x03E00008, 0, 0)  # addu; jr ra; nop
+    lft = strider.lift.lifter(
+        strider.sleigh.SleighArch.preset("mipsle32"),
+        strider.reader.BufferReader(0x1000, code),
+    )
+    with pytest.raises(strider.StriderError, match="delay slot"):
+        lft.pcode_at(0x1000, 0x1008)
+    with pytest.raises(strider.StriderError) as err:
+        lft.pcode_at(0x1000, addr)
+    assert "is not an instruction start" in str(err.value)
+    assert "delay slot" not in str(err.value)
 
 
 def _image(code: bytes, base: int = 0x1000):
