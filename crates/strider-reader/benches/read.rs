@@ -10,7 +10,7 @@ use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
 use object::{Object as _, ObjectSection as _, SectionFlags};
 use strider_reader::elf::{LoadFilter, RegionSource, RelocationMode};
-use strider_reader::{ElfFileMemReader, MemRegionsLookupTable, OwnedElf};
+use strider_reader::{ElfFileMemReader, MemRegionsLookupTable, load_elf};
 
 /// At most this many reads of each kind per iteration.
 const PROBES: usize = 1 << 20;
@@ -20,7 +20,7 @@ fn read_benches(c: &mut Criterion) {
         eprintln!("STRIDER_BENCH_ELF is unset: no relocated image to bench");
         return;
     };
-    let elf = OwnedElf::open(&path).expect("open STRIDER_BENCH_ELF");
+    let elf = load_elf(&path).expect("open STRIDER_BENCH_ELF");
     let obj = elf.checked_file().expect("parse STRIDER_BENCH_ELF");
     // The first `PROBES` of every 4th executable address, in section order,
     // as instruction fetch reads them.

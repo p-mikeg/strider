@@ -1504,7 +1504,7 @@ fn a_mips32_copy_off_the_dynsym_is_a_hole_to_its_mappings_end() {
 fn an_uncomputed_8_byte_mips64_composite_serves_no_byte() {
     use strider_reader::ReadOnlyMemory as _;
     let path = common::fixtures_out().join("mips64be/switch_masked_loop.o");
-    let elf = strider_reader::OwnedElf::open(&path).expect("open");
+    let elf = strider_reader::load_elf(&path).expect("open");
     let obj = elf.checked_file().expect("file");
     let rodata = obj.section_by_name(".rodata").expect(".rodata");
     let base = strider_reader::elf::ElfSectionLayout::new(&obj).section_base(&rodata);

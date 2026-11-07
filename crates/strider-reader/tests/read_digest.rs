@@ -26,7 +26,7 @@ use object::Endianness::{Big, Little};
 use object::elf;
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::{LoadFilter, RegionSource, RelocationMode};
-use strider_reader::{ElfFileMemReader, MemRegionsLookupTable, OwnedElf, ReadOnlyMemory};
+use strider_reader::{ElfFileMemReader, MemRegionsLookupTable, OwnedElf, ReadOnlyMemory, load_elf};
 
 const SOURCES: [(&str, RegionSource); 2] = [
     ("auto", RegionSource::Auto),
@@ -448,7 +448,7 @@ fn every_image_serves_its_recorded_bytes() {
             .expect("under the root")
             .to_string_lossy()
             .replace('\\', "/");
-        rows(&mut actual, &image, OwnedElf::open(&path));
+        rows(&mut actual, &image, load_elf(&path));
     }
     for (name, bytes) in crafted() {
         rows(
