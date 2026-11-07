@@ -1,11 +1,11 @@
 //! Frame-escape analysis: does any stack address reach a callee? If none
 //! does, every spill slot is private and a `Load` may forward across a `Call`.
 //!
-//! `U` is the set of values [`decompose()`] reduces to `sp + k`. The frame
-//! escapes iff a member of `U` is used other than as a `Load` / `Store`
-//! address, an `Add` / `And` input whose output is again in `U`, or a `Call`'s
-//! SP anchor, or is held in a register the call clobbers. One leak poisons
-//! every call.
+//! `U` is the set of values [`decompose()`] roots on a stack base: `sp + k` or
+//! an aligned `(sp & -a) + k`. The frame escapes iff a member of `U` is used
+//! other than as a `Load` / `Store` address, an `Add` / `And` input whose
+//! output is again in `U`, or a `Call`'s SP anchor, or is held in a register
+//! the call clobbers. One leak poisons every call.
 //!
 //! Sound modulo two claims: a callee writes the caller's frame outside the
 //! argument area only through a pointer it was handed, and no pointer is

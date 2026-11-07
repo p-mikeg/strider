@@ -24,8 +24,7 @@ pub(crate) fn stamp_all(edit: &crate::EditFunction<'_>) {
     }
 }
 
-/// Re-derives the per-access memory classes `stack_only()` / `heap_only()`
-/// read. Call it after editing outside a pipeline.
+/// Re-derives the memory classes after an edit outside a pipeline.
 pub fn refresh_memory_classes(edit: &mut crate::EditFunction<'_>) {
     edit.clean();
     edit.function().invalidate_analyses();
