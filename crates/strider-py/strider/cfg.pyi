@@ -127,7 +127,8 @@ class CfgOptions:
       it as a function return. An empty list seats nothing. A Thumb or
       MIPS16 target goes at `addr & ~1`; each decodes in the dispatch's mode.
     - `call_other_abis`: Sleigh user-op names to a `CallOtherAbi`, over the
-      built-in table.
+      built-in table; a name the arch's sla does not declare is ignored, so
+      one table serves several arches.
     - `no_return_targets`: direct-call targets that never return, a Thumb or
       MIPS16 one at `addr & ~1`. On ppc64 ELFv2 a plain `Lifter` also needs
       each `Symbol.local_entry`; `ElfLifter` adds it.

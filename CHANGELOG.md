@@ -6,6 +6,11 @@
 
 These change an answer without an error:
 
+- `Node.vn()` / `Match.vn()` of a call whose convention returns nothing is
+  `None`; it named one of the call's clobbered registers.
+- A `<name>.cold` fragment goes to the function of that name in its own
+  object file (STT_FILE group), else to a global one, else to every function
+  of that name, so two statics sharing a name no longer share fragments.
 - A `one_of` / `first_of` arm nests through its slot's edge:
   `store().mem(one_of([call().res()]))` and the `load()` twin, which matched
   nothing, match the call's memory token.
@@ -71,6 +76,9 @@ These raise:
   `float_const`, `stack_offset`, `source_stack`, `function_arg_stack`,
   `custom()`'s stack fields) raises `OverflowError`, where it raised
   `TypeError` or `StriderError`.
+- An out-of-range unsigned `add_symbols` size, `value_of_width` /
+  `inputs_of_width` width or `Vn` size raises `StriderError`, where it raised
+  `OverflowError`.
 - `entry()` / `region()` as a value operand raise at query time; they
   returned `[]`.
 - `find_unique_value` raises `StriderError` for a capture no pattern binds;
@@ -179,6 +187,9 @@ replaced the rest.
   `test-util` feature are gone; `strider_ir::walk::CastMask` is
   `strider_ir::node::CastMask`; `first_value_input_type` is
   `slot0_input_type`.
+- `FunctionBuilder::new` returns the builder, not a `Result`;
+  `Function::new` takes the tracked varnodes as a slice.
+- `OwnedElf::open` is gone: `load_elf(path)` maps the file.
 - `float_le(x, y).ordered()` pins both comparisons.
 
 ### Added, Python
@@ -264,6 +275,9 @@ replaced the rest.
 
 Matching and rewriting:
 
+- `find_joined_constrained` keeps rows that differ only in a later
+  pattern's binding of a shared capture; the answer depended on pattern
+  order.
 - A template reading a capture its pattern bound to a node says so; it
   reported the capture as unbound.
 - `rewrite` binds the same match `find_all` lists first at a root under
@@ -292,6 +306,20 @@ Matching and rewriting:
 
 Analysis:
 
+- An ARM `addls pc` or Thumb `tbb` jump table indexed through a guarded
+  ROM cell (`switch (map[c])`) seats only the arms the cell's guard admits;
+  it seated arms past the table, silently.
+- A 32-bit PowerPC `_Complex double` returns in r3..r6; i386 cdecl returns
+  no float in ST1.
+- An ARM SMCCC call (`smc` / `hvc`) preserves r8..r14.
+- A call's stack arguments take a narrow big-endian store at a merged
+  slot's start, and only a RAM load reads an incoming stack argument.
+- A call's stack arguments stored before a branch are collected when the
+  two paths store the other arguments differently (gcc -O2 aarch64, mips64).
+- `x == x`, `x < x` (signed and unsigned) and a signed borrow of `x - x`
+  fold.
+- `ElfLifter` no longer rescans every `add_symbols` symbol for `.cold`
+  names on each `analyze`.
 - A jump table behind an IT-block early return (`cmp; itt hi; movhi; bxhi lr;
   tbb`) seats only the arms its dispatch reaches; it seated bytes past the
   table and the next function with an empty `incomplete`.
@@ -357,6 +385,9 @@ Analysis:
 
 Lifting and decoding (most in the vendored Sleigh):
 
+- ARM NEON `vtrn`, `vzip` and `vuzp` (D and Q) write both registers; they
+  wrote only Vd, from an opaque op of Vm alone, leaving Vm stale. A `vtrn`
+  of 64-bit elements (UNDEFINED) no longer decodes.
 - Partially overlapping views of one register (AArch64 `ldr h21` then a read
   of `s21`, v8-v31) share one variable; the read kept stale bytes.
 - x86 VEX shifts by an immediate (`vpsrldq`, `vpsraw`, ...) zero the
