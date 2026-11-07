@@ -13,7 +13,7 @@ use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 #[must_use]
 pub fn mask(v: &UBig, ty: ValueType) -> UBig {
     match ty {
-        // Up to 128 bits, mask without allocating.
+        // Up to 128 bits, a u128-sized value masks without allocating.
         ValueType::Int(w) if w <= 128 => match u128::try_from(v) {
             Ok(n) => UBig::from(n & mask_below(w.into())),
             Err(_) => v & UBig::from(mask_below(w.into())),

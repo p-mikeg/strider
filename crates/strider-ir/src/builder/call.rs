@@ -131,8 +131,8 @@ impl FunctionBuilder {
         let kind = NodeKind::CallOther { user_op_id };
         let (node, outputs) = self.emit_call_node(kind, inputs, output_vns)?;
 
-        // A terminating op advances neither edge: the closed region has no
-        // successor to read them (e.g. a PowerPC `BUG()` trap).
+        // A terminating op (a PowerPC `BUG()` trap) ends in an `Unreachable`;
+        // the closed region's edges are never read.
         if terminate {
             self.create_node(
                 NodeKind::Unreachable,
@@ -150,7 +150,7 @@ impl FunctionBuilder {
         Ok((node, outputs[kind.output_head_len()..].to_vec()))
     }
 
-    /// The lifter's CC-aware `Call` construction.
+    /// Test mirror of the lifter's CC-aware `Call` construction.
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_call_cc(
         &mut self,
@@ -194,7 +194,7 @@ impl FunctionBuilder {
         Ok(call)
     }
 
-    /// The lifter's sub-register read: shift out of the container, truncate.
+    /// Test mirror of the lifter's sub-register read: shift out of the container, truncate.
     #[cfg(any(test, feature = "test-util"))]
     fn read_arg_slice(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let container = vn_container::largest_container_in(self.function().all_vns(), vn);

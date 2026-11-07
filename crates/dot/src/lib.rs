@@ -107,8 +107,8 @@ impl DotStyle {
         Self::dark_with_font("monospace")
     }
 
-    /// `Courier`: the only font whose metrics viz.js bundles, so multiline
-    /// labels fit their boxes.
+    /// `Courier`: viz.js sizes the generic `monospace` with Times metrics, so
+    /// its labels overflow their boxes.
     pub fn dark_cfg() -> Self {
         Self::dark_with_font("Courier")
     }

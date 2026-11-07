@@ -256,7 +256,8 @@ fn children(idom: &[u32]) -> Vec<Vec<u32>> {
 }
 
 /// Lengauer-Tarjan with path compression, O(m log n) over the `m` edges
-/// `successors` yields from the vertices `root` reaches.
+/// `successors` yields from the vertices `root` reaches. `successors` is
+/// called once per reached vertex.
 pub fn dominators<N, I>(root: N, mut successors: impl FnMut(N) -> I) -> Dominators<N>
 where
     N: Copy + Eq + Hash,

@@ -100,8 +100,8 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Edits that moved, added or removed a use, or killed a node. Creating a
-    /// node and [`Self::function_mut`] writes do not count.
+    /// Edits that moved or removed a use, appended an input, or killed a node;
+    /// creating a node and [`Self::function_mut`] writes do not count.
     pub fn generation(&self) -> u64 {
         self.generation
     }

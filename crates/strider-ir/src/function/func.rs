@@ -45,10 +45,11 @@ impl Function {
     /// A function holding only `Entry` (node 0); `FunctionBuilder` adds
     /// `InitialMemory`.
     ///
-    /// `tracked_vns` folds into disjoint containers, each the largest of
-    /// nested varnodes or the union of partially overlapping ones
-    /// ([`vn_container::dedup_overlapping_largest`]), sorted by space
-    /// shortcut, offset and size so `InitialVnId` numbering is reproducible.
+    /// Register and unique varnodes in `tracked_vns` fold into disjoint
+    /// containers, each the largest of nested ones or the union of partially
+    /// overlapping ones ([`vn_container::dedup_overlapping_largest`]); exact
+    /// duplicates collapse. Sorted by space shortcut, offset and size so
+    /// `InitialVnId` numbering is reproducible.
     /// A bare `Endianness` is the order of every space.
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,

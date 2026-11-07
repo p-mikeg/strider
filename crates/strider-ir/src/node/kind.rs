@@ -18,8 +18,8 @@ pub enum FunctionArgSource {
     },
 }
 
-/// Dense id of a tracked varnode, assigned in `(space, offset, size)` order.
-/// Resolve via [`crate::Function::initial_vn`].
+/// Dense id of a tracked varnode, assigned in `(space shortcut, offset, size)`
+/// order. Resolve via [`crate::Function::initial_vn`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InitialVnId(u32);
 cranelift_entity::entity_impl!(InitialVnId);
