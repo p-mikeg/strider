@@ -19,7 +19,8 @@ In default pipeline order:
 **ConstantFold.** Computes constant expressions, applies algebraic identities
 (`x + 0`, `x * 1`, ...) and folds constant truncations and extensions. Any sum
 or difference of `x`, `x*C` and `x<<C` becomes one `x * K`: `x + x*2` and
-`x + (x<<1)` are both `x*3`; search for `int_mul(x, int_const(k))`, `k` a value or a `Capture`.
+`x + (x<<1)` are both `x*3`; search for `int_mul(x, int_const(k))`, `k` a
+value or a `Capture`.
 Also:
 
 - a truncate of an add, mul, and, or or xor of two extends (or an extend and a
@@ -91,12 +92,13 @@ In default pipeline order:
 
 **CallStackArgCollect.** Attaches the stores into each call's outgoing argument
 window to the call as ordinary arguments, up to the first slot no whole store
-reaches, so arguments past an unwritten slot (an alignment hole, or a ppc64
-slot whose FP argument travels in an FPR) are missed. A store of the entry
-value of a register the function's own convention preserves (a prologue save),
-or a call between store and call, also ends the arguments; other stores just
-above them can come along (an alignment push such as x86-64 clang's `push rax`
-or ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a
+reaches, so arguments past an unwritten slot (an alignment hole, or a ppc64 slot
+whose FP argument travels in an FPR) are missed, and a tail call whose leading
+arguments are the caller's own, left in place, collects none. A store of the
+entry value of a register the function's own convention preserves (a prologue
+save), or a call between store and call, also ends the arguments; other stores
+just above them can come along (an alignment push such as x86-64 clang's `push
+rax` or ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a
 non-loop join stores whole is collected as the phi of those values, and past
 those a slot stored whole before the branch as its value.
 
@@ -179,13 +181,15 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
   another) are found one re-lift round per level; past 256 levels the next
   site is reported `"unresolved_branch"` and deeper levels are never decoded.
   Each level re-lifts the whole function, so time grows with the square of the
-  depth (200 levels of 8-way switches: about 11 s).
+  depth (200 levels of 8-way switches: about 3 s).
 - PowerPC float code lifts to far more p-code than other ISAs because the
   FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
 - A chain of about 500 constant guards held only in registers reaches the
-  1024-iteration cap, and the analysis returns it partly folded. A chain whose
-  guards each test a different stack slot, with stores between them, still
-  costs quadratic settle work in the guard count.
+  1024-iteration cap, and the analysis returns it partly folded. So does a
+  chain of about 1000 guards that each reload a stack slot the previous
+  guard's arms store (`-O0` code), which folds one guard per iteration. A
+  chain whose guards each test a different stack slot, with stores between
+  them, still costs quadratic settle work in the guard count.
 - Reloads of `n` distinct stack slots cost quadratic climb work past `n`
   diamonds inside an irreducible loop, where the climb steps one dominator at
   a time, and past `n` calls under `escape_analysis`, where every call is a

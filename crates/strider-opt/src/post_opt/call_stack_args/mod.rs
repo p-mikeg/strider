@@ -105,15 +105,16 @@ fn register_arity(
     NodeKind::Call { cc: None }.input_head_len() + cc.arg_passing_regs.len() + float_args
 }
 
-/// Wires positional stack args into each `Call`. A per-`Call` CC override
-/// wins over the convention default; a CC without `stack_args` collects none.
+/// Wires positional stack args into each `Call`. A per-`Call` CC override wins
+/// over the convention default; a CC without `stack_args` collects none.
 /// Collection stops at the first unwritten slot, so arguments past a gap (an
 /// alignment hole, a ppc64 slot whose FP argument travels in an FPR) are
-/// missed. Other writes to the slots past the last argument are collected
-/// too: a local, an alignment push (x86-64 clang's `push rax`, Thumb gcc's
-/// `push {r3, lr}`), or o32's `gp` save just above the outgoing arguments
-/// (`sp+16` when there are none), which the IR cannot tell from an argument
-/// without the call-time `gp`.
+/// missed, and a tail call whose leading arguments are the caller's own, left
+/// in place, collects none. Other writes to the slots past the last argument
+/// are collected too: a local, an alignment push (x86-64 clang's `push rax`,
+/// Thumb gcc's `push {r3, lr}`), or o32's `gp` save just above the outgoing
+/// arguments (`sp+16` when there are none), which the IR cannot tell from an
+/// argument without the call-time `gp`.
 pub struct CallStackArgCollect;
 
 impl Optimizer for CallStackArgCollect {

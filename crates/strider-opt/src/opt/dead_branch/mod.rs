@@ -49,9 +49,8 @@ impl PeepholePass for DeadBranchElimination {
     }
 
     fn after_sweep(&self, edit: &mut crate::EditFunction<'_>, changed: bool) -> Result<()> {
-        // Drain the queue first: the resync below drops it. The resync is for
-        // the detached dead arm, which the incremental bookkeeping does not
-        // track.
+        // Drain the queue before the resync drops it; the resync culls the
+        // detached dead arm.
         if changed {
             edit.clean();
         }
@@ -90,9 +89,8 @@ fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     stripped
 }
 
-/// The control output a constant-selector branch takes.
+/// A constant-selector branch's selector and the control output it takes.
 struct Selection {
-    /// The constant the branch tests.
     selector: ValueId,
     live: ValueId,
 }
