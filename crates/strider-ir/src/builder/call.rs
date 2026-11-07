@@ -20,6 +20,17 @@ fn require_reg_or_unique(vn: &rsleigh::Vn) -> Result<()> {
     }
 }
 
+/// REGISTER / UNIQUE space, no duplicates. Does not check containers.
+fn validate_call_output_vns(output_vns: &[rsleigh::Vn]) -> Result<()> {
+    for (i, vn) in output_vns.iter().enumerate() {
+        require_reg_or_unique(vn)?;
+        if output_vns[..i].contains(vn) {
+            return Err(anyhow!("duplicate call output varnode {vn:?}"));
+        }
+    }
+    Ok(())
+}
+
 impl FunctionBuilder {
     /// Outputs `[Control, Memory]` then one value per output vn, tagged with
     /// it. The caller advances control and memory.
@@ -57,7 +68,7 @@ impl FunctionBuilder {
     ) -> Result<(NodeId, Vec<ValueId>)> {
         require_value_kind(self.function(), call_address)?;
         validate_value_inputs(self.function(), args)?;
-        self.validate_call_output_vns(output_vns)?;
+        validate_call_output_vns(output_vns)?;
 
         let sp_vn = self.function.default_cc().stack_ptr;
         let sp_value = self.read_variable(&sp_vn)?;
@@ -100,17 +111,6 @@ impl FunctionBuilder {
         Ok((node, outputs[kind.output_head_len()..].to_vec()))
     }
 
-    /// REGISTER / UNIQUE space, no duplicates. Does not check containers.
-    fn validate_call_output_vns(&self, output_vns: &[rsleigh::Vn]) -> Result<()> {
-        for (i, vn) in output_vns.iter().enumerate() {
-            require_reg_or_unique(vn)?;
-            if output_vns[..i].contains(vn) {
-                return Err(anyhow!("duplicate call output varnode {vn:?}"));
-            }
-        }
-        Ok(())
-    }
-
     /// Inputs `[ctrl, mem, args...]`; outputs `[Control, Memory]` then the
     /// `output_vns`. `terminate` closes the region and ignores
     /// `advance_memory`. The caller writes the outputs back.
@@ -122,7 +122,7 @@ impl FunctionBuilder {
         advance_memory: bool,
         terminate: bool,
     ) -> Result<(NodeId, Vec<ValueId>)> {
-        self.validate_call_output_vns(output_vns)?;
+        validate_call_output_vns(output_vns)?;
         validate_value_inputs(self.function(), args)?;
 
         let ctrl = self.cur_region_control()?;

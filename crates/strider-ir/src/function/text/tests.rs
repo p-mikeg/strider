@@ -119,7 +119,7 @@ impl Net {
         let mut f = Function::new(
             self.default_cc.clone(),
             strider_target::Endianness::Little,
-            self.tracked.clone(),
+            &self.tracked,
         );
         if reverse {
             // Zombies ahead of the live nodes shift every arena id.
@@ -513,7 +513,7 @@ fn every_node_kind_prints() {
     let mut f = Function::new(
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Big,
-        Vec::new(),
+        &[],
     );
     let mut kinds = crate::node::signature::every_node_kind();
     kinds.push(NodeKind::Call {
@@ -635,7 +635,7 @@ fn a_frame_address_in_a_call_register_prints_in_the_header() {
         let mut f = Function::new(
             strider_target::BuiltCallingConvention::default(),
             strider_target::Endianness::Little,
-            Vec::new(),
+            &[],
         );
         let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
         f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
@@ -665,7 +665,7 @@ fn the_claims_in_force_print_in_the_header() {
     let mut f = Function::new(
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
-        Vec::new(),
+        &[],
     );
     let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
     f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
@@ -698,7 +698,7 @@ fn a_register_order_unlike_the_data_order_prints_in_the_header() {
                 data: strider_target::Endianness::Big,
                 register,
             },
-            Vec::new(),
+            &[],
         );
         let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
         f.graph_mut().create_node(NodeKind::Return, [ctrl], []);

@@ -74,7 +74,7 @@ pub trait IRViewer {
     fn int_inputs(&self, value: ValueId) -> impl Iterator<Item = ValueId> + '_ {
         self.node_inputs(self.producer(value))
             .into_iter()
-            .filter(move |&i| self.value_type_opt(i).is_some_and(|t| t.is_integer()))
+            .filter(move |&i| self.value_type_opt(i).is_some_and(ValueType::is_integer))
     }
 
     fn node_outputs_exact<const N: usize>(&self, node: NodeId) -> crate::Result<[ValueId; N]> {
