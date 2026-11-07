@@ -9,7 +9,7 @@
 # float_to_int: float_to_int
 # int_to_float: int_to_float or float.add and float.neg|fconst[0xc330000080000000] and float_to_float
 endian little
-default_cc arg_passing_regs=[r3, r4, r5, r6, r7, r8, r9, r10] arg_passing_regs_float=[f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45] callee_saved_regs=[r2, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31, LR, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31, cr2, cr3, cr4, vs52, vs53, vs54, vs55, vs56, vs57, vs58, vs59, vs60, vs61, vs62, vs63] ret_val_regs=[r3, r4] ret_val_regs_float=[f1, f2, f3, f4, vs34] stack_vn=r1 stack_args=8+4n ret_stack_pop=0 link_register_vn=LR preserves_memory=false preserves_all_registers=false entry_address_vn=none
+default_cc arg_passing_regs=[r3, r4, r5, r6, r7, r8, r9, r10] arg_passing_regs_float=[f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45] callee_saved_regs=[r2, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31, LR, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31, cr2, cr3, cr4, vs52, vs53, vs54, vs55, vs56, vs57, vs58, vs59, vs60, vs61, vs62, vs63] ret_val_regs=[r3, r4, r5, r6] ret_val_regs_float=[f1, f2, f3, f4, vs34] stack_vn=r1 stack_args=8+4n ret_stack_pop=0 link_register_vn=LR preserves_memory=false preserves_all_registers=false entry_address_vn=none
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == f32_arith @0x10010108
@@ -17,11 +17,13 @@ cfg
   0x10010108 586 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, fp_fx, fp_fex, fp_vx, fp_ox, fp_ux, fp_zx, fp_xx, fp_vxsnan, fp_vxisi, fp_vxidi, fp_vxzdz, fp_vximz, fp_vxvc, fp_fr, fp_fi, fp_c, fp_cc0, fp_cc1, fp_cc2, fp_cc3, fp_vxsoft, fp_vxsqrt, fp_vxcvi, fp_ve, fp_oe, fp_ue, fp_ze, fp_xe, LR, f0, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x6d00:8, u:0x6e00:1, u:0x6f00:8, u:0x7000:1, u:0x7100:1, u:0x7200:1, u:0x7300:1, u:0x7400:1, u:0x7500:1, u:0x7600:1, u:0x7b00:8, u:0x7d00:1, u:0x7e00:1, u:0x7f00:1, u:0x8000:1, u:0x8100:1, u:0x8200:1, u:0x8300:1, u:0x8500:1, u:0x8600:1, u:0x8700:1, u:0x8800:1, u:0x8900:1, u:0x8a00:1, u:0x8b00:1, u:0x8c00:1, u:0x9b00:1, u:0x9c00:1, u:0x9d00:1, u:0xa000:1, u:0xa100:8, u:0xa200:1, u:0xa300:1, u:0xa900:1, u:0xab00:1, u:0xac00:1, u:0xb100:1, u:0xb200:1, u:0xb300:1, u:0xb400:1, u:0xb500:1, u:0xbb00:1, u:0xbc00:1, u:0xbd00:1, u:0xbe00:8, u:0xbf00:1, u:0xc000:1, u:0xc200:1, u:0xc300:1, u:0xc400:1, u:0xc500:1, u:0xc600:1, u:0xc700:1, u:0xc800:1, u:0xca00:1, u:0xcb00:1, u:0xd100:1, u:0xd200:1, u:0xd300:1, u:0xd400:1, u:0xd500:1, u:0xdb00:1, u:0xdc00:1, u:0xdd00:1, u:0xde00:1, u:0xdf00:1, u:0x23800:4, u:0x23a00:8, u:0x23c00:1, u:0x23d00:4, u:0x23e00:8, u:0x23f00:8, u:0x24000:8, u:0x24100:4, u:0x24200:8, u:0x24300:8, u:0x24500:8, u:0x24600:8, u:0x24700:8, u:0x24800:1, u:0x24900:8, u:0x24a00:8, u:0x24c00:8, u:0x24d00:8, u:0x24f00:8, u:0x25000:1, u:0x25100:8, u:0x25200:1, u:0x25400:1, u:0x25500:8, u:0x25600:8, u:0x25700:8, u:0x25800:8, u:0x25a00:8, u:0x25b00:8, u:0x25d00:8, u:0x25e00:8, u:0x25f00:8, u:0x26000:8, u:0x26100:8, u:0x26200:8, u:0x26400:8, u:0x26500:8, u:0x26600:8, u:0x26700:1, u:0x26800:8, u:0x26900:8, u:0x26b00:8, u:0x2fc00:4, u:0x2fe00:4, u:0x46c00:8, u:0x46d00:8, u:0x46e00:8, u:0x47000:4, u:0x4a500:8, u:0x4a600:8, u:0x4a700:8, u:0x4a900:4, u:0x4ef00:8, u:0x4f000:8, u:0x4f100:8, u:0x4f300:4, u:0x57b00:8, u:0x57c00:8, u:0x57d00:8, u:0x57f00:4]
 arg 1 [%v207]
+arg 2 [%v208]
+arg 3 [%v209]
 float_arg 0 [%v13]
 float_arg 1 [%v57]
-float_arg 2 [%v212]
-float_arg 3 [%v213]
-float_arg 8 [%v214]
+float_arg 2 [%v214]
+float_arg 3 [%v215]
+float_arg 8 [%v216]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -190,25 +192,29 @@ float_arg 8 [%v214]
 %v203:ctrl, %v204:mem, %v205:i8<u:0xab00:1> = callother[26 "floatDivUnderflow"] %v200, %v84, %v189, %v193
 %v206:i32 = iconst[0x10000000]
 %v207:i32 = initial_var[r4]
-%v208:f64 = float.div %v188, %v192
-%v209:f32 = float_to_float %v208
-%v210:f64 = float_to_float %v209
-%v211:i64 = float_bits_to_int %v210
-%v212:i64 = initial_var[f3]
-%v213:i64 = initial_var[f4]
-%v214:i128 = initial_var[vs34]
-return %v203, %v84, %v206, %v207, %v211, %v172, %v212, %v213, %v214
+%v208:i32 = initial_var[r5]
+%v209:i32 = initial_var[r6]
+%v210:f64 = float.div %v188, %v192
+%v211:f32 = float_to_float %v210
+%v212:f64 = float_to_float %v211
+%v213:i64 = float_bits_to_int %v212
+%v214:i64 = initial_var[f3]
+%v215:i64 = initial_var[f4]
+%v216:i128 = initial_var[vs34]
+return %v203, %v84, %v206, %v207, %v208, %v209, %v213, %v172, %v214, %v215, %v216
 
 == f64_arith @0x1001014c
 cfg
   0x1001014c 492 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, fp_fx, fp_fex, fp_vx, fp_ox, fp_ux, fp_zx, fp_xx, fp_vxsnan, fp_vxisi, fp_vxidi, fp_vxzdz, fp_vximz, fp_vxvc, fp_fr, fp_fi, fp_c, fp_cc0, fp_cc1, fp_cc2, fp_cc3, fp_vxsoft, fp_vxsqrt, fp_vxcvi, fp_ve, fp_oe, fp_ue, fp_ze, fp_xe, LR, f0, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x6d00:8, u:0x6e00:1, u:0x6f00:8, u:0x7000:1, u:0x7100:1, u:0x7200:1, u:0x7300:1, u:0x7400:1, u:0x7500:1, u:0x7600:1, u:0x7b00:8, u:0x7d00:1, u:0x7e00:1, u:0x7f00:1, u:0x8000:1, u:0x8100:1, u:0x8200:1, u:0x8300:1, u:0x8500:1, u:0x8600:1, u:0x8700:1, u:0x8800:1, u:0x8900:1, u:0x8a00:1, u:0x8b00:1, u:0x8c00:1, u:0x9b00:1, u:0x9c00:1, u:0x9d00:1, u:0xa000:1, u:0xa100:8, u:0xa200:1, u:0xa300:1, u:0xa900:1, u:0xab00:1, u:0xac00:1, u:0xb100:1, u:0xb200:1, u:0xb300:1, u:0xb400:1, u:0xb500:1, u:0xbb00:1, u:0xbc00:1, u:0xbd00:1, u:0xbe00:8, u:0xbf00:1, u:0xc000:1, u:0xc200:1, u:0xc300:1, u:0xc400:1, u:0xc500:1, u:0xc600:1, u:0xc700:1, u:0xc800:1, u:0xca00:1, u:0xcb00:1, u:0xd100:1, u:0xd200:1, u:0xd300:1, u:0xd400:1, u:0xd500:1, u:0xdb00:1, u:0xdc00:1, u:0xdd00:1, u:0xde00:1, u:0xdf00:1, u:0x23800:4, u:0x23a00:8, u:0x23c00:1, u:0x23d00:4, u:0x23e00:8, u:0x23f00:8, u:0x24000:8, u:0x24100:4, u:0x24200:8, u:0x24300:8, u:0x24500:8, u:0x24600:8, u:0x24700:8, u:0x24800:1, u:0x24900:8, u:0x24a00:8, u:0x2fc00:4, u:0x2fe00:4, u:0x46600:8, u:0x46700:8, u:0x49f00:8, u:0x4a000:8, u:0x4e900:8, u:0x4ea00:8, u:0x57500:8, u:0x57600:8]
 arg 1 [%v93]
+arg 2 [%v94]
+arg 3 [%v95]
 float_arg 0 [%v12]
 float_arg 1 [%v16]
-float_arg 2 [%v96]
-float_arg 3 [%v97]
-float_arg 8 [%v98]
+float_arg 2 [%v98]
+float_arg 3 [%v99]
+float_arg 8 [%v100]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -263,12 +269,14 @@ float_arg 8 [%v98]
 %v89:ctrl, %v90:mem, %v91:i8<u:0xab00:1> = callother[26 "floatDivUnderflow"] %v86, %v17, %v77, %v79
 %v92:i32 = iconst[0x10000000]
 %v93:i32 = initial_var[r4]
-%v94:f64 = float.div %v76, %v78
-%v95:i64 = float_bits_to_int %v94
-%v96:i64 = initial_var[f3]
-%v97:i64 = initial_var[f4]
-%v98:i128 = initial_var[vs34]
-return %v89, %v17, %v92, %v93, %v95, %v62, %v96, %v97, %v98
+%v94:i32 = initial_var[r5]
+%v95:i32 = initial_var[r6]
+%v96:f64 = float.div %v76, %v78
+%v97:i64 = float_bits_to_int %v96
+%v98:i64 = initial_var[f3]
+%v99:i64 = initial_var[f4]
+%v100:i128 = initial_var[vs34]
+return %v89, %v17, %v92, %v93, %v94, %v95, %v97, %v62, %v98, %v99, %v100
 
 == f32_to_f64 @0x10010190
 cfg
@@ -276,11 +284,13 @@ cfg
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x23800:4, u:0x23a00:8, u:0x23c00:1, u:0x23d00:4, u:0x23e00:8, u:0x23f00:8, u:0x24000:8, u:0x24100:4, u:0x24200:8, u:0x24300:8, u:0x24500:8, u:0x24600:8, u:0x24700:8, u:0x24800:1, u:0x24900:8, u:0x24a00:8, u:0x24c00:8, u:0x24d00:8, u:0x24f00:8, u:0x25000:1, u:0x25100:8, u:0x25200:1, u:0x25400:1, u:0x25500:8, u:0x25600:8, u:0x25700:8, u:0x25800:8, u:0x25a00:8, u:0x25b00:8, u:0x25d00:8, u:0x25e00:8, u:0x25f00:8, u:0x26000:8, u:0x26100:8, u:0x26200:8, u:0x26400:8, u:0x26500:8, u:0x26600:8, u:0x26700:1, u:0x26800:8, u:0x26900:8, u:0x26b00:8, u:0x2fc00:4, u:0x2fe00:4]
 arg 0 [%v55]
 arg 1 [%v56]
+arg 2 [%v57]
+arg 3 [%v58]
 float_arg 0 [%v13]
-float_arg 1 [%v78]
-float_arg 2 [%v79]
-float_arg 3 [%v80]
-float_arg 8 [%v81]
+float_arg 1 [%v80]
+float_arg 2 [%v81]
+float_arg 3 [%v82]
+float_arg 8 [%v83]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -338,32 +348,34 @@ float_arg 8 [%v81]
 %v54:mem = store[r] %v9, %v11, %v53
 %v55:i32 = initial_var[r3]
 %v56:i32 = initial_var[r4]
-%v57:f32 = int_bits_to_float %v53
-%v58:i1 = fcmp.equal %v57, %v57
-%v59:i1 = int.xor %v58, %v35
-%v60:i64 = extend.zero %v59
-%v61:i32 = iconst[0x80000000]
-%v62:i32 = int.and %v53, %v61
-%v63:i64 = extend.zero %v62
-%v64:i64 = int.shift_left %v63, %v25
-%v65:i64 = iconst[0x7ff0000000000000]
-%v66:i64 = int.or %v64, %v65
-%v67:i32 = iconst[0x7fffff]
-%v68:i32 = int.and %v53, %v67
-%v69:i64 = extend.zero %v68
-%v70:i64 = int.shift_left %v69, %v29
-%v71:i64 = int.or %v66, %v70
-%v72:i64 = int.mul %v60, %v71
-%v73:i64 = extend.zero %v58
-%v74:f64 = float_to_float %v57
-%v75:i64 = float_bits_to_int %v74
-%v76:i64 = int.mul %v73, %v75
-%v77:i64 = int.add %v72, %v76
-%v78:i64 = initial_var[f2]
-%v79:i64 = initial_var[f3]
-%v80:i64 = initial_var[f4]
-%v81:i128 = initial_var[vs34]
-return %v0, %v54, %v55, %v56, %v77, %v78, %v79, %v80, %v81
+%v57:i32 = initial_var[r5]
+%v58:i32 = initial_var[r6]
+%v59:f32 = int_bits_to_float %v53
+%v60:i1 = fcmp.equal %v59, %v59
+%v61:i1 = int.xor %v60, %v35
+%v62:i64 = extend.zero %v61
+%v63:i32 = iconst[0x80000000]
+%v64:i32 = int.and %v53, %v63
+%v65:i64 = extend.zero %v64
+%v66:i64 = int.shift_left %v65, %v25
+%v67:i64 = iconst[0x7ff0000000000000]
+%v68:i64 = int.or %v66, %v67
+%v69:i32 = iconst[0x7fffff]
+%v70:i32 = int.and %v53, %v69
+%v71:i64 = extend.zero %v70
+%v72:i64 = int.shift_left %v71, %v29
+%v73:i64 = int.or %v68, %v72
+%v74:i64 = int.mul %v62, %v73
+%v75:i64 = extend.zero %v60
+%v76:f64 = float_to_float %v59
+%v77:i64 = float_bits_to_int %v76
+%v78:i64 = int.mul %v75, %v77
+%v79:i64 = int.add %v74, %v78
+%v80:i64 = initial_var[f2]
+%v81:i64 = initial_var[f3]
+%v82:i64 = initial_var[f4]
+%v83:i128 = initial_var[vs34]
+return %v0, %v54, %v55, %v56, %v57, %v58, %v79, %v80, %v81, %v82, %v83
 
 == f64_to_f32 @0x100101b0
 cfg
@@ -371,11 +383,13 @@ cfg
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, fp_fx, fp_fex, fp_vx, fp_ox, fp_ux, fp_zx, fp_xx, fp_vxsnan, fp_vxisi, fp_vxidi, fp_vxzdz, fp_vximz, fp_vxvc, fp_fr, fp_fi, fp_c, fp_cc0, fp_cc1, fp_cc2, fp_cc3, fp_vxsoft, fp_vxsqrt, fp_vxcvi, fp_ve, fp_oe, fp_ue, fp_ze, fp_xe, fp_rn0, fp_rn1, LR, f0, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x6d00:8, u:0x6e00:1, u:0x6f00:8, u:0x7000:1, u:0x7100:1, u:0x7200:1, u:0x7300:1, u:0x7400:1, u:0x7500:1, u:0x7600:1, u:0x7b00:8, u:0x7d00:1, u:0x7e00:1, u:0x7f00:1, u:0x8000:1, u:0x8100:1, u:0x8200:1, u:0x8300:1, u:0x8500:1, u:0x8600:1, u:0x8700:1, u:0x8800:1, u:0x8900:1, u:0x8a00:1, u:0x8b00:1, u:0x8c00:1, u:0x9b00:1, u:0x9c00:1, u:0x9d00:1, u:0xa000:1, u:0xa100:8, u:0xa200:1, u:0xa900:1, u:0xab00:1, u:0xac00:1, u:0x2fc00:4, u:0x2fe00:4, u:0xad000:1, u:0xad100:1, u:0xad200:1, u:0xad300:1, u:0xad500:1, u:0xad600:1, u:0xad700:1, u:0xad800:1, u:0xad900:1, u:0xadb00:1, u:0xadc00:1, u:0xadd00:1, u:0xade00:1, u:0xadf00:1, u:0xae100:1, u:0xae200:1, u:0xae300:1, u:0xae400:1, u:0xae600:1, u:0xae700:1, u:0xae800:1, u:0xae900:1, u:0xaeb00:1, u:0xaec00:4, u:0xaed00:4, u:0xaee00:4, u:0xaf600:8, u:0xaf900:8, u:0xafa00:1, u:0xafb00:1, u:0xafc00:1, u:0xb1d00:8, u:0xb2000:8, u:0xb2100:1, u:0xb2200:4]
 arg 0 [%v29]
 arg 1 [%v30]
+arg 2 [%v31]
+arg 3 [%v32]
 float_arg 0 [%v12]
-float_arg 1 [%v35]
-float_arg 2 [%v36]
-float_arg 3 [%v37]
-float_arg 8 [%v38]
+float_arg 1 [%v37]
+float_arg 2 [%v38]
+float_arg 3 [%v39]
+float_arg 8 [%v40]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -399,25 +413,29 @@ float_arg 8 [%v38]
 %v26:ctrl, %v27:mem, %v28:i8<u:0xab00:1> = callother[25 "floatAddUnderflow"] %v23, %v13, %v16, %v12
 %v29:i32 = initial_var[r3]
 %v30:i32 = initial_var[r4]
-%v31:f64 = int_bits_to_float %v12
-%v32:f32 = float_to_float %v31
-%v33:f64 = float_to_float %v32
-%v34:i64 = float_bits_to_int %v33
-%v35:i64 = initial_var[f2]
-%v36:i64 = initial_var[f3]
-%v37:i64 = initial_var[f4]
-%v38:i128 = initial_var[vs34]
-return %v26, %v13, %v29, %v30, %v34, %v35, %v36, %v37, %v38
+%v31:i32 = initial_var[r5]
+%v32:i32 = initial_var[r6]
+%v33:f64 = int_bits_to_float %v12
+%v34:f32 = float_to_float %v33
+%v35:f64 = float_to_float %v34
+%v36:i64 = float_bits_to_int %v35
+%v37:i64 = initial_var[f2]
+%v38:i64 = initial_var[f3]
+%v39:i64 = initial_var[f4]
+%v40:i128 = initial_var[vs34]
+return %v26, %v13, %v29, %v30, %v31, %v32, %v36, %v37, %v38, %v39, %v40
 
 == int_to_float @0x100101d4
 cfg
   0x100101d4 230 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, fp_fx, fp_fex, fp_vx, fp_ox, fp_ux, fp_zx, fp_xx, fp_vxsnan, fp_vxisi, fp_vxidi, fp_vxzdz, fp_vximz, fp_vxvc, fp_fr, fp_fi, fp_c, fp_cc0, fp_cc1, fp_cc2, fp_cc3, fp_vxsoft, fp_vxsqrt, fp_vxcvi, fp_ve, fp_oe, fp_ue, fp_ze, fp_xe, fp_rn0, fp_rn1, LR, f0, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x6d00:8, u:0x6e00:1, u:0x6f00:8, u:0x7000:1, u:0x7100:1, u:0x7200:1, u:0x7300:1, u:0x7400:1, u:0x7500:1, u:0x7600:1, u:0x7b00:8, u:0x7d00:1, u:0x7e00:1, u:0x7f00:1, u:0x8000:1, u:0x8100:1, u:0x8200:1, u:0x8300:1, u:0x8500:1, u:0x8600:1, u:0x8700:1, u:0x8800:1, u:0x8900:1, u:0x8a00:1, u:0x8b00:1, u:0x8c00:1, u:0x9b00:1, u:0x9c00:1, u:0x9d00:1, u:0xa000:1, u:0xa100:8, u:0xa200:1, u:0xa300:1, u:0xa900:1, u:0xab00:1, u:0xac00:1, u:0xdb00:1, u:0xdc00:1, u:0xdd00:1, u:0xde00:1, u:0xdf00:1, u:0x23800:4, u:0x23a00:8, u:0x23c00:1, u:0x23d00:4, u:0x23e00:8, u:0x23f00:8, u:0x24000:8, u:0x24100:4, u:0x24200:8, u:0x24300:8, u:0x24500:8, u:0x24600:8, u:0x24700:8, u:0x24800:1, u:0x24900:8, u:0x24a00:8, u:0x2fc00:4, u:0x2fe00:4, u:0x57500:8, u:0x57600:8, u:0x8b900:4, u:0xad000:1, u:0xad100:1, u:0xad200:1, u:0xad300:1, u:0xad500:1, u:0xad600:1, u:0xad700:1, u:0xad800:1, u:0xad900:1, u:0xadb00:1, u:0xadc00:1, u:0xadd00:1, u:0xade00:1, u:0xadf00:1, u:0xae100:1, u:0xae200:1, u:0xae300:1, u:0xae400:1, u:0xae600:1, u:0xae700:1, u:0xae800:1, u:0xae900:1, u:0xaeb00:1, u:0xaec00:4, u:0xaed00:4, u:0xaee00:4, u:0xaf600:8, u:0xaf900:8, u:0xafa00:1, u:0xafb00:1, u:0xafc00:1, u:0xb1d00:8, u:0xb2000:8, u:0xb2100:1, u:0xb2200:4]
 arg 0 [%v12]
-float_arg 1 [%v62]
-float_arg 2 [%v63]
-float_arg 3 [%v64]
-float_arg 8 [%v65]
+arg 2 [%v59]
+arg 3 [%v60]
+float_arg 1 [%v64]
+float_arg 2 [%v65]
+float_arg 3 [%v66]
+float_arg 8 [%v67]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -461,25 +479,29 @@ float_arg 8 [%v65]
 %v52:ctrl, %v53:mem, %v54:i8<u:0xab00:1> = callother[19 "floatAddOverflow"] %v49, %v22, %v41, %v45
 %v55:ctrl, %v56:mem, %v57:i8<u:0xab00:1> = callother[25 "floatAddUnderflow"] %v52, %v22, %v41, %v45
 %v58:i32 = iconst[0x10000000]
-%v59:f32 = float_to_float %v44
-%v60:f64 = float_to_float %v59
-%v61:i64 = float_bits_to_int %v60
-%v62:i64 = initial_var[f2]
-%v63:i64 = initial_var[f3]
-%v64:i64 = initial_var[f4]
-%v65:i128 = initial_var[vs34]
-return %v55, %v22, %v58, %v16, %v61, %v62, %v63, %v64, %v65
+%v59:i32 = initial_var[r5]
+%v60:i32 = initial_var[r6]
+%v61:f32 = float_to_float %v44
+%v62:f64 = float_to_float %v61
+%v63:i64 = float_bits_to_int %v62
+%v64:i64 = initial_var[f2]
+%v65:i64 = initial_var[f3]
+%v66:i64 = initial_var[f4]
+%v67:i128 = initial_var[vs34]
+return %v55, %v22, %v58, %v16, %v59, %v60, %v63, %v64, %v65, %v66, %v67
 
 == float_to_int @0x10010218
 cfg
   0x10010218 130 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, fp_fx, fp_fex, fp_vx, fp_ox, fp_ux, fp_zx, fp_xx, fp_vxsnan, fp_vxisi, fp_vxidi, fp_vxzdz, fp_vximz, fp_vxvc, fp_fr, fp_fi, fp_c, fp_cc0, fp_cc1, fp_cc2, fp_cc3, fp_vxsoft, fp_vxsqrt, fp_vxcvi, fp_ve, fp_oe, fp_ue, fp_ze, fp_xe, LR, f0, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x7d00:1, u:0x7e00:1, u:0x7f00:1, u:0x8000:1, u:0x8100:1, u:0x8200:1, u:0x8300:1, u:0x8500:1, u:0x8600:1, u:0x8700:1, u:0x8800:1, u:0x8900:1, u:0x8a00:1, u:0x8b00:1, u:0x8c00:1, u:0x9b00:1, u:0x9c00:1, u:0x9d00:1, u:0xa000:1, u:0xa100:8, u:0xa200:1, u:0x22100:8, u:0x22200:1, u:0x22300:1, u:0x22500:1, u:0x22600:4, u:0x22800:1, u:0x22900:1, u:0x22b00:1, u:0x22c00:4, u:0x22d00:4, u:0x22e00:4, u:0x22f00:4, u:0x23000:4, u:0x23100:1, u:0x23200:1, u:0x23300:1, u:0x23400:4, u:0x23500:4, u:0x23800:4, u:0x23a00:8, u:0x23c00:1, u:0x23d00:4, u:0x23e00:8, u:0x23f00:8, u:0x24000:8, u:0x24100:4, u:0x24200:8, u:0x24300:8, u:0x24500:8, u:0x24600:8, u:0x24700:8, u:0x24800:1, u:0x24900:8, u:0x24a00:8, u:0x24c00:8, u:0x24d00:8, u:0x24f00:8, u:0x25000:1, u:0x25100:8, u:0x25200:1, u:0x25400:1, u:0x25500:8, u:0x25600:8, u:0x25700:8, u:0x25800:8, u:0x25a00:8, u:0x25b00:8, u:0x25d00:8, u:0x25e00:8, u:0x25f00:8, u:0x26000:8, u:0x26100:8, u:0x26200:8, u:0x26400:8, u:0x26500:8, u:0x26600:8, u:0x26700:1, u:0x26800:8, u:0x26900:8, u:0x26b00:8, u:0x2fc00:4, u:0x2fe00:4, u:0xac500:1, u:0xac600:1, u:0xac800:1, u:0xaca00:1, u:0xacc00:1, u:0xace00:1, u:0xb3900:1, u:0xb3a00:4]
 arg 1 [%v111]
+arg 2 [%v112]
+arg 3 [%v113]
 float_arg 0 [%v13]
-float_arg 1 [%v112]
-float_arg 2 [%v113]
-float_arg 3 [%v114]
-float_arg 8 [%v115]
+float_arg 1 [%v114]
+float_arg 2 [%v115]
+float_arg 3 [%v116]
+float_arg 8 [%v117]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -588,11 +610,13 @@ float_arg 8 [%v115]
 %v109:i32 = int.add %v2, %v108
 %v110:i32 = load[r] %v107, %v109
 %v111:i32 = initial_var[r4]
-%v112:i64 = initial_var[f2]
-%v113:i64 = initial_var[f3]
-%v114:i64 = initial_var[f4]
-%v115:i128 = initial_var[vs34]
-return %v79, %v107, %v110, %v111, %v13, %v112, %v113, %v114, %v115
+%v112:i32 = initial_var[r5]
+%v113:i32 = initial_var[r6]
+%v114:i64 = initial_var[f2]
+%v115:i64 = initial_var[f3]
+%v116:i64 = initial_var[f4]
+%v117:i128 = initial_var[vs34]
+return %v79, %v107, %v110, %v111, %v112, %v113, %v13, %v114, %v115, %v116, %v117
 
 == f32_compare @0x10010244
 cfg
@@ -606,11 +630,13 @@ cfg
   0x100102a4 6 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, fp_fx, fp_fex, fp_vx, fp_ox, fp_ux, fp_zx, fp_xx, fp_vxsnan, fp_vxisi, fp_vxidi, fp_vxzdz, fp_vximz, fp_vxvc, fp_cc0, fp_cc1, fp_cc2, fp_cc3, fp_vxsoft, fp_vxsqrt, fp_vxcvi, fp_ve, fp_oe, fp_ue, fp_ze, fp_xe, cr0, LR, f0, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x7d00:1, u:0x7e00:1, u:0x7f00:1, u:0x8000:1, u:0x8100:1, u:0x8200:1, u:0x8300:1, u:0x8500:1, u:0x8600:1, u:0x8700:1, u:0x8800:1, u:0x8900:1, u:0x8a00:1, u:0x8b00:1, u:0x8c00:1, u:0x9b00:1, u:0x9c00:1, u:0x9d00:1, u:0xa000:1, u:0xa100:8, u:0xa200:1, u:0xa300:1, u:0x23800:4, u:0x23a00:8, u:0x23c00:1, u:0x23d00:4, u:0x23e00:8, u:0x23f00:8, u:0x24000:8, u:0x24100:4, u:0x24200:8, u:0x24300:8, u:0x24500:8, u:0x24600:8, u:0x24700:8, u:0x24800:1, u:0x24900:8, u:0x24a00:8, u:0x24c00:8, u:0x24d00:8, u:0x24f00:8, u:0x25000:1, u:0x25100:8, u:0x25200:1, u:0x25400:1, u:0x25500:8, u:0x25600:8, u:0x25700:8, u:0x25800:8, u:0x25a00:8, u:0x25b00:8, u:0x25d00:8, u:0x25e00:8, u:0x25f00:8, u:0x26000:8, u:0x26100:8, u:0x26200:8, u:0x26400:8, u:0x26500:8, u:0x26600:8, u:0x26700:1, u:0x26800:8, u:0x26900:8, u:0x26b00:8, u:0x2c700:1, u:0x2ca00:1, u:0x2fc00:4, u:0x2fe00:4, u:0x49200:1, u:0x49300:1, u:0x49500:1, u:0x49900:1, u:0x49a00:1, u:0x49b00:1, u:0x49c00:1, u:0x49d00:1]
 arg 1 [%v144]
+arg 2 [%v145]
+arg 3 [%v146]
 float_arg 0 [%v2]
 float_arg 1 [%v65]
-float_arg 2 [%v145]
-float_arg 3 [%v146]
-float_arg 8 [%v147]
+float_arg 2 [%v147]
+float_arg 3 [%v148]
+float_arg 8 [%v149]
 %v0:ctrl = entry
 %v1:i64 = iconst[0x380]
 %v2:i64 = initial_var[f1]
@@ -754,10 +780,12 @@ float_arg 8 [%v147]
 %v142:i32 = int.add %v140, %v141
 %v143:i32 = load[r] %v139, %v142
 %v144:i32 = initial_var[r4]
-%v145:i64 = initial_var[f3]
-%v146:i64 = initial_var[f4]
-%v147:i128 = initial_var[vs34]
-return %v137, %v139, %v143, %v144, %v109, %v65, %v145, %v146, %v147
+%v145:i32 = initial_var[r5]
+%v146:i32 = initial_var[r6]
+%v147:i64 = initial_var[f3]
+%v148:i64 = initial_var[f4]
+%v149:i128 = initial_var[vs34]
+return %v137, %v139, %v143, %v144, %v145, %v146, %v109, %v65, %v147, %v148, %v149
 
 == f64_compare @0x100102b4
 cfg
@@ -771,11 +799,13 @@ cfg
   0x10010314 6 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, fp_fx, fp_fex, fp_vx, fp_ox, fp_ux, fp_zx, fp_xx, fp_vxsnan, fp_vxisi, fp_vxidi, fp_vxzdz, fp_vximz, fp_vxvc, fp_cc0, fp_cc1, fp_cc2, fp_cc3, fp_vxsoft, fp_vxsqrt, fp_vxcvi, fp_ve, fp_oe, fp_ue, fp_ze, fp_xe, cr0, LR, f0, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x7d00:1, u:0x7e00:1, u:0x7f00:1, u:0x8000:1, u:0x8100:1, u:0x8200:1, u:0x8300:1, u:0x8500:1, u:0x8600:1, u:0x8700:1, u:0x8800:1, u:0x8900:1, u:0x8a00:1, u:0x8b00:1, u:0x8c00:1, u:0x9b00:1, u:0x9c00:1, u:0x9d00:1, u:0xa000:1, u:0xa100:8, u:0xa200:1, u:0xa300:1, u:0x2c700:1, u:0x2ca00:1, u:0x2fc00:4, u:0x2fe00:4, u:0x49200:1, u:0x49300:1, u:0x49500:1, u:0x49900:1, u:0x49a00:1, u:0x49b00:1, u:0x49c00:1, u:0x49d00:1]
 arg 1 [%v38]
+arg 2 [%v39]
+arg 3 [%v40]
 float_arg 0 [%v1]
 float_arg 1 [%v3]
-float_arg 2 [%v39]
-float_arg 3 [%v40]
-float_arg 8 [%v41]
+float_arg 2 [%v41]
+float_arg 3 [%v42]
+float_arg 8 [%v43]
 %v0:ctrl = entry
 %v1:i64 = initial_var[f1]
 %v2:f64 = int_bits_to_float %v1
@@ -813,10 +843,12 @@ float_arg 8 [%v41]
 %v36:i32 = int.add %v34, %v35
 %v37:i32 = load[r] %v33, %v36
 %v38:i32 = initial_var[r4]
-%v39:i64 = initial_var[f3]
-%v40:i64 = initial_var[f4]
-%v41:i128 = initial_var[vs34]
-return %v31, %v33, %v37, %v38, %v3, %v3, %v39, %v40, %v41
+%v39:i32 = initial_var[r5]
+%v40:i32 = initial_var[r6]
+%v41:i64 = initial_var[f3]
+%v42:i64 = initial_var[f4]
+%v43:i128 = initial_var[vs34]
+return %v31, %v33, %v37, %v38, %v39, %v40, %v3, %v3, %v41, %v42, %v43
 
 == f32_neg_abs @0x10010324
 cfg
@@ -824,11 +856,13 @@ cfg
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f0, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x23800:4, u:0x23a00:8, u:0x23c00:1, u:0x23d00:4, u:0x23e00:8, u:0x23f00:8, u:0x24000:8, u:0x24100:4, u:0x24200:8, u:0x24300:8, u:0x24500:8, u:0x24600:8, u:0x24700:8, u:0x24800:1, u:0x24900:8, u:0x24a00:8, u:0x24c00:8, u:0x24d00:8, u:0x24f00:8, u:0x25000:1, u:0x25100:8, u:0x25200:1, u:0x25400:1, u:0x25500:8, u:0x25600:8, u:0x25700:8, u:0x25800:8, u:0x25a00:8, u:0x25b00:8, u:0x25d00:8, u:0x25e00:8, u:0x25f00:8, u:0x26000:8, u:0x26100:8, u:0x26200:8, u:0x26400:8, u:0x26500:8, u:0x26600:8, u:0x26700:1, u:0x26800:8, u:0x26900:8, u:0x26b00:8, u:0x2fc00:4, u:0x2fe00:4]
 arg 0 [%v55]
 arg 1 [%v56]
+arg 2 [%v57]
+arg 3 [%v58]
 float_arg 0 [%v13]
-float_arg 1 [%v81]
-float_arg 2 [%v82]
-float_arg 3 [%v83]
-float_arg 8 [%v84]
+float_arg 1 [%v83]
+float_arg 2 [%v84]
+float_arg 3 [%v85]
+float_arg 8 [%v86]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -886,35 +920,37 @@ float_arg 8 [%v84]
 %v54:mem = store[r] %v9, %v11, %v53
 %v55:i32 = initial_var[r3]
 %v56:i32 = initial_var[r4]
-%v57:f32 = int_bits_to_float %v53
-%v58:i1 = fcmp.equal %v57, %v57
-%v59:i1 = int.xor %v58, %v35
-%v60:i64 = extend.zero %v59
-%v61:i32 = iconst[0x80000000]
-%v62:i32 = int.and %v53, %v61
-%v63:i64 = extend.zero %v62
-%v64:i64 = int.shift_left %v63, %v25
-%v65:i64 = iconst[0x7ff0000000000000]
-%v66:i64 = int.or %v64, %v65
-%v67:i32 = iconst[0x7fffff]
-%v68:i32 = int.and %v53, %v67
-%v69:i64 = extend.zero %v68
-%v70:i64 = int.shift_left %v69, %v29
-%v71:i64 = int.or %v66, %v70
-%v72:i64 = int.mul %v60, %v71
-%v73:i64 = extend.zero %v58
-%v74:f64 = float_to_float %v57
-%v75:i64 = float_bits_to_int %v74
-%v76:i64 = int.mul %v73, %v75
-%v77:i64 = int.add %v72, %v76
-%v78:f64 = int_bits_to_float %v77
-%v79:f64 = float.neg %v78
-%v80:i64 = float_bits_to_int %v79
-%v81:i64 = initial_var[f2]
-%v82:i64 = initial_var[f3]
-%v83:i64 = initial_var[f4]
-%v84:i128 = initial_var[vs34]
-return %v0, %v54, %v55, %v56, %v80, %v81, %v82, %v83, %v84
+%v57:i32 = initial_var[r5]
+%v58:i32 = initial_var[r6]
+%v59:f32 = int_bits_to_float %v53
+%v60:i1 = fcmp.equal %v59, %v59
+%v61:i1 = int.xor %v60, %v35
+%v62:i64 = extend.zero %v61
+%v63:i32 = iconst[0x80000000]
+%v64:i32 = int.and %v53, %v63
+%v65:i64 = extend.zero %v64
+%v66:i64 = int.shift_left %v65, %v25
+%v67:i64 = iconst[0x7ff0000000000000]
+%v68:i64 = int.or %v66, %v67
+%v69:i32 = iconst[0x7fffff]
+%v70:i32 = int.and %v53, %v69
+%v71:i64 = extend.zero %v70
+%v72:i64 = int.shift_left %v71, %v29
+%v73:i64 = int.or %v68, %v72
+%v74:i64 = int.mul %v62, %v73
+%v75:i64 = extend.zero %v60
+%v76:f64 = float_to_float %v59
+%v77:i64 = float_bits_to_int %v76
+%v78:i64 = int.mul %v75, %v77
+%v79:i64 = int.add %v74, %v78
+%v80:f64 = int_bits_to_float %v79
+%v81:f64 = float.neg %v80
+%v82:i64 = float_bits_to_int %v81
+%v83:i64 = initial_var[f2]
+%v84:i64 = initial_var[f3]
+%v85:i64 = initial_var[f4]
+%v86:i128 = initial_var[vs34]
+return %v0, %v54, %v55, %v56, %v57, %v58, %v82, %v83, %v84, %v85, %v86
 
 == main @0x10010348
 cfg
@@ -1069,13 +1105,13 @@ float_arg 19 [%v123]
 %v121:i128 = initial_var[vs43]
 %v122:i128 = initial_var[vs44]
 %v123:i128 = initial_var[vs45]
-%v124:ctrl, %v125:mem, %v126:i32<r3>, %v127:i32<r4>, %v128:i64<f1>, %v129:i64<f2>, %v130:i64<f3>, %v131:i64<f4>, %v132:i128<vs34>, %v133:i32<r0>, %v134:i32<r5>, %v135:i32<r6>, %v136:i32<r7>, %v137:i32<r8>, %v138:i32<r9>, %v139:i32<r10>, %v140:i8<fp_fx>, %v141:i8<fp_fex>, %v142:i8<fp_vx>, %v143:i8<fp_ox>, %v144:i8<fp_ux>, %v145:i8<fp_zx>, %v146:i8<fp_xx>, %v147:i8<fp_vxsnan>, %v148:i8<fp_vxisi>, %v149:i8<fp_vxidi>, %v150:i8<fp_vxzdz>, %v151:i8<fp_vximz>, %v152:i8<fp_vxvc>, %v153:i8<fp_fr>, %v154:i8<fp_fi>, %v155:i8<fp_c>, %v156:i8<fp_cc0>, %v157:i8<fp_cc1>, %v158:i8<fp_cc2>, %v159:i8<fp_cc3>, %v160:i8<fp_vxsoft>, %v161:i8<fp_vxsqrt>, %v162:i8<fp_vxcvi>, %v163:i8<fp_ve>, %v164:i8<fp_oe>, %v165:i8<fp_ue>, %v166:i8<fp_ze>, %v167:i8<fp_xe>, %v168:i32<r2Save>, %v169:i64<f0>, %v170:i64<f5>, %v171:i64<f6>, %v172:i64<f7>, %v173:i64<f8>, %v174:i128<vs35>, %v175:i128<vs36>, %v176:i128<vs37>, %v177:i128<vs38>, %v178:i128<vs39>, %v179:i128<vs40>, %v180:i128<vs41>, %v181:i128<vs42>, %v182:i128<vs43>, %v183:i128<vs44>, %v184:i128<vs45> = call %v0, %v96, %v97, %v8, %v98, %v99, %v100, %v101, %v102, %v103, %v104, %v105, %v23, %v69, %v106, %v107, %v108, %v109, %v110, %v111, %v112, %v113, %v114, %v115, %v116, %v117, %v118, %v119, %v120, %v121, %v122, %v123
-%v185:ctrl, %v186:mem, %v187:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v124, %v125, %v128
-%v188:ctrl, %v189:mem, %v190:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v185, %v125, %v128
+%v124:ctrl, %v125:mem, %v126:i32<r3>, %v127:i32<r4>, %v128:i32<r5>, %v129:i32<r6>, %v130:i64<f1>, %v131:i64<f2>, %v132:i64<f3>, %v133:i64<f4>, %v134:i128<vs34>, %v135:i32<r0>, %v136:i32<r7>, %v137:i32<r8>, %v138:i32<r9>, %v139:i32<r10>, %v140:i8<fp_fx>, %v141:i8<fp_fex>, %v142:i8<fp_vx>, %v143:i8<fp_ox>, %v144:i8<fp_ux>, %v145:i8<fp_zx>, %v146:i8<fp_xx>, %v147:i8<fp_vxsnan>, %v148:i8<fp_vxisi>, %v149:i8<fp_vxidi>, %v150:i8<fp_vxzdz>, %v151:i8<fp_vximz>, %v152:i8<fp_vxvc>, %v153:i8<fp_fr>, %v154:i8<fp_fi>, %v155:i8<fp_c>, %v156:i8<fp_cc0>, %v157:i8<fp_cc1>, %v158:i8<fp_cc2>, %v159:i8<fp_cc3>, %v160:i8<fp_vxsoft>, %v161:i8<fp_vxsqrt>, %v162:i8<fp_vxcvi>, %v163:i8<fp_ve>, %v164:i8<fp_oe>, %v165:i8<fp_ue>, %v166:i8<fp_ze>, %v167:i8<fp_xe>, %v168:i32<r2Save>, %v169:i64<f0>, %v170:i64<f5>, %v171:i64<f6>, %v172:i64<f7>, %v173:i64<f8>, %v174:i128<vs35>, %v175:i128<vs36>, %v176:i128<vs37>, %v177:i128<vs38>, %v178:i128<vs39>, %v179:i128<vs40>, %v180:i128<vs41>, %v181:i128<vs42>, %v182:i128<vs43>, %v183:i128<vs44>, %v184:i128<vs45> = call %v0, %v96, %v97, %v8, %v98, %v99, %v100, %v101, %v102, %v103, %v104, %v105, %v23, %v69, %v106, %v107, %v108, %v109, %v110, %v111, %v112, %v113, %v114, %v115, %v116, %v117, %v118, %v119, %v120, %v121, %v122, %v123
+%v185:ctrl, %v186:mem, %v187:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v124, %v125, %v130
+%v188:ctrl, %v189:mem, %v190:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v185, %v125, %v130
 %v191:i32 = iconst[0xffffffc8]
 %v192:i32 = int.add %v2, %v191
 %v193:f64 = fconst[0xc1e0000000200000]
-%v194:f64 = int_bits_to_float %v128
+%v194:f64 = int_bits_to_float %v130
 %v195:i1 = fcmp.less %v193, %v194
 %v196:f64 = fconst[0x41e0000000000000]
 %v197:i1 = fcmp.less %v194, %v196
@@ -1149,12 +1185,12 @@ float_arg 19 [%v123]
 %v265:i64 = float_bits_to_int %v264
 %v266:i64 = int.mul %v263, %v265
 %v267:i64 = int.add %v262, %v266
-%v268:ctrl, %v269:mem, %v270:i32<r3>, %v271:i32<r4>, %v272:i64<f1>, %v273:i64<f2>, %v274:i64<f3>, %v275:i64<f4>, %v276:i128<vs34>, %v277:i32<r0>, %v278:i32<r5>, %v279:i32<r6>, %v280:i32<r7>, %v281:i32<r8>, %v282:i32<r9>, %v283:i32<r10>, %v284:i8<fp_fx>, %v285:i8<fp_fex>, %v286:i8<fp_vx>, %v287:i8<fp_ox>, %v288:i8<fp_ux>, %v289:i8<fp_zx>, %v290:i8<fp_xx>, %v291:i8<fp_vxsnan>, %v292:i8<fp_vxisi>, %v293:i8<fp_vxidi>, %v294:i8<fp_vxzdz>, %v295:i8<fp_vximz>, %v296:i8<fp_vxvc>, %v297:i8<fp_fr>, %v298:i8<fp_fi>, %v299:i8<fp_c>, %v300:i8<fp_cc0>, %v301:i8<fp_cc1>, %v302:i8<fp_cc2>, %v303:i8<fp_cc3>, %v304:i8<fp_vxsoft>, %v305:i8<fp_vxsqrt>, %v306:i8<fp_vxcvi>, %v307:i8<fp_ve>, %v308:i8<fp_oe>, %v309:i8<fp_ue>, %v310:i8<fp_ze>, %v311:i8<fp_xe>, %v312:i32<r2Save>, %v313:i64<f0>, %v314:i64<f5>, %v315:i64<f6>, %v316:i64<f7>, %v317:i64<f8>, %v318:i128<vs35>, %v319:i128<vs36>, %v320:i128<vs37>, %v321:i128<vs38>, %v322:i128<vs39>, %v323:i128<vs40>, %v324:i128<vs41>, %v325:i128<vs42>, %v326:i128<vs43>, %v327:i128<vs44>, %v328:i128<vs45> = call %v188, %v247, %v248, %v8, %v222, %v221, %v134, %v135, %v136, %v137, %v138, %v139, %v246, %v267, %v130, %v131, %v170, %v171, %v172, %v173, %v132, %v174, %v175, %v176, %v177, %v178, %v179, %v180, %v181, %v182, %v183, %v184
-%v329:ctrl, %v330:mem, %v331:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v268, %v269, %v272
-%v332:ctrl, %v333:mem, %v334:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v329, %v269, %v272
+%v268:ctrl, %v269:mem, %v270:i32<r3>, %v271:i32<r4>, %v272:i32<r5>, %v273:i32<r6>, %v274:i64<f1>, %v275:i64<f2>, %v276:i64<f3>, %v277:i64<f4>, %v278:i128<vs34>, %v279:i32<r0>, %v280:i32<r7>, %v281:i32<r8>, %v282:i32<r9>, %v283:i32<r10>, %v284:i8<fp_fx>, %v285:i8<fp_fex>, %v286:i8<fp_vx>, %v287:i8<fp_ox>, %v288:i8<fp_ux>, %v289:i8<fp_zx>, %v290:i8<fp_xx>, %v291:i8<fp_vxsnan>, %v292:i8<fp_vxisi>, %v293:i8<fp_vxidi>, %v294:i8<fp_vxzdz>, %v295:i8<fp_vximz>, %v296:i8<fp_vxvc>, %v297:i8<fp_fr>, %v298:i8<fp_fi>, %v299:i8<fp_c>, %v300:i8<fp_cc0>, %v301:i8<fp_cc1>, %v302:i8<fp_cc2>, %v303:i8<fp_cc3>, %v304:i8<fp_vxsoft>, %v305:i8<fp_vxsqrt>, %v306:i8<fp_vxcvi>, %v307:i8<fp_ve>, %v308:i8<fp_oe>, %v309:i8<fp_ue>, %v310:i8<fp_ze>, %v311:i8<fp_xe>, %v312:i32<r2Save>, %v313:i64<f0>, %v314:i64<f5>, %v315:i64<f6>, %v316:i64<f7>, %v317:i64<f8>, %v318:i128<vs35>, %v319:i128<vs36>, %v320:i128<vs37>, %v321:i128<vs38>, %v322:i128<vs39>, %v323:i128<vs40>, %v324:i128<vs41>, %v325:i128<vs42>, %v326:i128<vs43>, %v327:i128<vs44>, %v328:i128<vs45> = call %v188, %v247, %v248, %v8, %v222, %v221, %v128, %v129, %v136, %v137, %v138, %v139, %v246, %v267, %v132, %v133, %v170, %v171, %v172, %v173, %v134, %v174, %v175, %v176, %v177, %v178, %v179, %v180, %v181, %v182, %v183, %v184
+%v329:ctrl, %v330:mem, %v331:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v268, %v269, %v274
+%v332:ctrl, %v333:mem, %v334:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v329, %v269, %v274
 %v335:i32 = iconst[0xffffffd0]
 %v336:i32 = int.add %v2, %v335
-%v337:f64 = int_bits_to_float %v272
+%v337:f64 = int_bits_to_float %v274
 %v338:i1 = fcmp.less %v193, %v337
 %v339:i1 = fcmp.less %v337, %v196
 %v340:i1 = int.and %v338, %v339
@@ -1200,12 +1236,12 @@ float_arg 19 [%v123]
 %v380:i64 = float_bits_to_int %v379
 %v381:i64 = int.mul %v378, %v380
 %v382:i64 = int.add %v377, %v381
-%v383:ctrl, %v384:mem, %v385:i32<r3>, %v386:i32<r4>, %v387:i64<f1>, %v388:i64<f2>, %v389:i64<f3>, %v390:i64<f4>, %v391:i128<vs34>, %v392:i32<r0>, %v393:i32<r5>, %v394:i32<r6>, %v395:i32<r7>, %v396:i32<r8>, %v397:i32<r9>, %v398:i32<r10>, %v399:i8<fp_fx>, %v400:i8<fp_fex>, %v401:i8<fp_vx>, %v402:i8<fp_ox>, %v403:i8<fp_ux>, %v404:i8<fp_zx>, %v405:i8<fp_xx>, %v406:i8<fp_vxsnan>, %v407:i8<fp_vxisi>, %v408:i8<fp_vxidi>, %v409:i8<fp_vxzdz>, %v410:i8<fp_vximz>, %v411:i8<fp_vxvc>, %v412:i8<fp_fr>, %v413:i8<fp_fi>, %v414:i8<fp_c>, %v415:i8<fp_cc0>, %v416:i8<fp_cc1>, %v417:i8<fp_cc2>, %v418:i8<fp_cc3>, %v419:i8<fp_vxsoft>, %v420:i8<fp_vxsqrt>, %v421:i8<fp_vxcvi>, %v422:i8<fp_ve>, %v423:i8<fp_oe>, %v424:i8<fp_ue>, %v425:i8<fp_ze>, %v426:i8<fp_xe>, %v427:i32<r2Save>, %v428:i64<f0>, %v429:i64<f5>, %v430:i64<f6>, %v431:i64<f7>, %v432:i64<f8>, %v433:i128<vs35>, %v434:i128<vs36>, %v435:i128<vs37>, %v436:i128<vs38>, %v437:i128<vs39>, %v438:i128<vs40>, %v439:i128<vs41>, %v440:i128<vs42>, %v441:i128<vs43>, %v442:i128<vs44>, %v443:i128<vs45> = call %v332, %v362, %v363, %v8, %v361, %v360, %v278, %v279, %v280, %v281, %v282, %v283, %v382, %v273, %v274, %v275, %v314, %v315, %v316, %v317, %v276, %v318, %v319, %v320, %v321, %v322, %v323, %v324, %v325, %v326, %v327, %v328
-%v444:ctrl, %v445:mem, %v446:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v383, %v384, %v387
-%v447:ctrl, %v448:mem, %v449:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v444, %v384, %v387
+%v383:ctrl, %v384:mem, %v385:i32<r3>, %v386:i32<r4>, %v387:i32<r5>, %v388:i32<r6>, %v389:i64<f1>, %v390:i64<f2>, %v391:i64<f3>, %v392:i64<f4>, %v393:i128<vs34>, %v394:i32<r0>, %v395:i32<r7>, %v396:i32<r8>, %v397:i32<r9>, %v398:i32<r10>, %v399:i8<fp_fx>, %v400:i8<fp_fex>, %v401:i8<fp_vx>, %v402:i8<fp_ox>, %v403:i8<fp_ux>, %v404:i8<fp_zx>, %v405:i8<fp_xx>, %v406:i8<fp_vxsnan>, %v407:i8<fp_vxisi>, %v408:i8<fp_vxidi>, %v409:i8<fp_vxzdz>, %v410:i8<fp_vximz>, %v411:i8<fp_vxvc>, %v412:i8<fp_fr>, %v413:i8<fp_fi>, %v414:i8<fp_c>, %v415:i8<fp_cc0>, %v416:i8<fp_cc1>, %v417:i8<fp_cc2>, %v418:i8<fp_cc3>, %v419:i8<fp_vxsoft>, %v420:i8<fp_vxsqrt>, %v421:i8<fp_vxcvi>, %v422:i8<fp_ve>, %v423:i8<fp_oe>, %v424:i8<fp_ue>, %v425:i8<fp_ze>, %v426:i8<fp_xe>, %v427:i32<r2Save>, %v428:i64<f0>, %v429:i64<f5>, %v430:i64<f6>, %v431:i64<f7>, %v432:i64<f8>, %v433:i128<vs35>, %v434:i128<vs36>, %v435:i128<vs37>, %v436:i128<vs38>, %v437:i128<vs39>, %v438:i128<vs40>, %v439:i128<vs41>, %v440:i128<vs42>, %v441:i128<vs43>, %v442:i128<vs44>, %v443:i128<vs45> = call %v332, %v362, %v363, %v8, %v361, %v360, %v272, %v273, %v280, %v281, %v282, %v283, %v382, %v275, %v276, %v277, %v314, %v315, %v316, %v317, %v278, %v318, %v319, %v320, %v321, %v322, %v323, %v324, %v325, %v326, %v327, %v328
+%v444:ctrl, %v445:mem, %v446:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v383, %v384, %v389
+%v447:ctrl, %v448:mem, %v449:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v444, %v384, %v389
 %v450:i32 = iconst[0xffffffd8]
 %v451:i32 = int.add %v2, %v450
-%v452:f64 = int_bits_to_float %v387
+%v452:f64 = int_bits_to_float %v389
 %v453:i1 = fcmp.less %v193, %v452
 %v454:i1 = fcmp.less %v452, %v196
 %v455:i1 = int.and %v453, %v454
@@ -1233,12 +1269,12 @@ float_arg 19 [%v123]
 %v477:mem = store[r] %v471, %v15, %v476
 %v478:i32 = iconst[0x100101b0]
 %v479:i64 = load[r] %v384, %v225
-%v480:ctrl, %v481:mem, %v482:i32<r3>, %v483:i32<r4>, %v484:i64<f1>, %v485:i64<f2>, %v486:i64<f3>, %v487:i64<f4>, %v488:i128<vs34>, %v489:i32<r0>, %v490:i32<r5>, %v491:i32<r6>, %v492:i32<r7>, %v493:i32<r8>, %v494:i32<r9>, %v495:i32<r10>, %v496:i8<fp_fx>, %v497:i8<fp_fex>, %v498:i8<fp_vx>, %v499:i8<fp_ox>, %v500:i8<fp_ux>, %v501:i8<fp_zx>, %v502:i8<fp_xx>, %v503:i8<fp_vxsnan>, %v504:i8<fp_vxisi>, %v505:i8<fp_vxidi>, %v506:i8<fp_vxzdz>, %v507:i8<fp_vximz>, %v508:i8<fp_vxvc>, %v509:i8<fp_fr>, %v510:i8<fp_fi>, %v511:i8<fp_c>, %v512:i8<fp_cc0>, %v513:i8<fp_cc1>, %v514:i8<fp_cc2>, %v515:i8<fp_cc3>, %v516:i8<fp_vxsoft>, %v517:i8<fp_vxsqrt>, %v518:i8<fp_vxcvi>, %v519:i8<fp_ve>, %v520:i8<fp_oe>, %v521:i8<fp_ue>, %v522:i8<fp_ze>, %v523:i8<fp_xe>, %v524:i32<r2Save>, %v525:i64<f0>, %v526:i64<f5>, %v527:i64<f6>, %v528:i64<f7>, %v529:i64<f8>, %v530:i128<vs35>, %v531:i128<vs36>, %v532:i128<vs37>, %v533:i128<vs38>, %v534:i128<vs39>, %v535:i128<vs40>, %v536:i128<vs41>, %v537:i128<vs42>, %v538:i128<vs43>, %v539:i128<vs44>, %v540:i128<vs45> = call %v447, %v477, %v478, %v8, %v476, %v475, %v393, %v394, %v395, %v396, %v397, %v398, %v479, %v388, %v389, %v390, %v429, %v430, %v431, %v432, %v391, %v433, %v434, %v435, %v436, %v437, %v438, %v439, %v440, %v441, %v442, %v443
-%v541:ctrl, %v542:mem, %v543:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v480, %v481, %v484
-%v544:ctrl, %v545:mem, %v546:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v541, %v481, %v484
+%v480:ctrl, %v481:mem, %v482:i32<r3>, %v483:i32<r4>, %v484:i32<r5>, %v485:i32<r6>, %v486:i64<f1>, %v487:i64<f2>, %v488:i64<f3>, %v489:i64<f4>, %v490:i128<vs34>, %v491:i32<r0>, %v492:i32<r7>, %v493:i32<r8>, %v494:i32<r9>, %v495:i32<r10>, %v496:i8<fp_fx>, %v497:i8<fp_fex>, %v498:i8<fp_vx>, %v499:i8<fp_ox>, %v500:i8<fp_ux>, %v501:i8<fp_zx>, %v502:i8<fp_xx>, %v503:i8<fp_vxsnan>, %v504:i8<fp_vxisi>, %v505:i8<fp_vxidi>, %v506:i8<fp_vxzdz>, %v507:i8<fp_vximz>, %v508:i8<fp_vxvc>, %v509:i8<fp_fr>, %v510:i8<fp_fi>, %v511:i8<fp_c>, %v512:i8<fp_cc0>, %v513:i8<fp_cc1>, %v514:i8<fp_cc2>, %v515:i8<fp_cc3>, %v516:i8<fp_vxsoft>, %v517:i8<fp_vxsqrt>, %v518:i8<fp_vxcvi>, %v519:i8<fp_ve>, %v520:i8<fp_oe>, %v521:i8<fp_ue>, %v522:i8<fp_ze>, %v523:i8<fp_xe>, %v524:i32<r2Save>, %v525:i64<f0>, %v526:i64<f5>, %v527:i64<f6>, %v528:i64<f7>, %v529:i64<f8>, %v530:i128<vs35>, %v531:i128<vs36>, %v532:i128<vs37>, %v533:i128<vs38>, %v534:i128<vs39>, %v535:i128<vs40>, %v536:i128<vs41>, %v537:i128<vs42>, %v538:i128<vs43>, %v539:i128<vs44>, %v540:i128<vs45> = call %v447, %v477, %v478, %v8, %v476, %v475, %v387, %v388, %v395, %v396, %v397, %v398, %v479, %v390, %v391, %v392, %v429, %v430, %v431, %v432, %v393, %v433, %v434, %v435, %v436, %v437, %v438, %v439, %v440, %v441, %v442, %v443
+%v541:ctrl, %v542:mem, %v543:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v480, %v481, %v486
+%v544:ctrl, %v545:mem, %v546:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v541, %v481, %v486
 %v547:i32 = iconst[0xffffffe0]
 %v548:i32 = int.add %v2, %v547
-%v549:f64 = int_bits_to_float %v484
+%v549:f64 = int_bits_to_float %v486
 %v550:i1 = fcmp.less %v193, %v549
 %v551:i1 = fcmp.less %v549, %v196
 %v552:i1 = int.and %v550, %v551
@@ -1266,12 +1302,12 @@ float_arg 19 [%v123]
 %v574:mem = store[r] %v568, %v15, %v573
 %v575:i32 = iconst[0x100101d4]
 %v576:i32 = iconst[0x7]
-%v577:ctrl, %v578:mem, %v579:i32<r3>, %v580:i32<r4>, %v581:i64<f1>, %v582:i64<f2>, %v583:i64<f3>, %v584:i64<f4>, %v585:i128<vs34>, %v586:i32<r0>, %v587:i32<r5>, %v588:i32<r6>, %v589:i32<r7>, %v590:i32<r8>, %v591:i32<r9>, %v592:i32<r10>, %v593:i8<fp_fx>, %v594:i8<fp_fex>, %v595:i8<fp_vx>, %v596:i8<fp_ox>, %v597:i8<fp_ux>, %v598:i8<fp_zx>, %v599:i8<fp_xx>, %v600:i8<fp_vxsnan>, %v601:i8<fp_vxisi>, %v602:i8<fp_vxidi>, %v603:i8<fp_vxzdz>, %v604:i8<fp_vximz>, %v605:i8<fp_vxvc>, %v606:i8<fp_fr>, %v607:i8<fp_fi>, %v608:i8<fp_c>, %v609:i8<fp_cc0>, %v610:i8<fp_cc1>, %v611:i8<fp_cc2>, %v612:i8<fp_cc3>, %v613:i8<fp_vxsoft>, %v614:i8<fp_vxsqrt>, %v615:i8<fp_vxcvi>, %v616:i8<fp_ve>, %v617:i8<fp_oe>, %v618:i8<fp_ue>, %v619:i8<fp_ze>, %v620:i8<fp_xe>, %v621:i32<r2Save>, %v622:i64<f0>, %v623:i64<f5>, %v624:i64<f6>, %v625:i64<f7>, %v626:i64<f8>, %v627:i128<vs35>, %v628:i128<vs36>, %v629:i128<vs37>, %v630:i128<vs38>, %v631:i128<vs39>, %v632:i128<vs40>, %v633:i128<vs41>, %v634:i128<vs42>, %v635:i128<vs43>, %v636:i128<vs44>, %v637:i128<vs45> = call %v544, %v574, %v575, %v8, %v576, %v572, %v490, %v491, %v492, %v493, %v494, %v495, %v484, %v485, %v486, %v487, %v526, %v527, %v528, %v529, %v488, %v530, %v531, %v532, %v533, %v534, %v535, %v536, %v537, %v538, %v539, %v540
-%v638:ctrl, %v639:mem, %v640:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v577, %v578, %v581
-%v641:ctrl, %v642:mem, %v643:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v638, %v578, %v581
+%v577:ctrl, %v578:mem, %v579:i32<r3>, %v580:i32<r4>, %v581:i32<r5>, %v582:i32<r6>, %v583:i64<f1>, %v584:i64<f2>, %v585:i64<f3>, %v586:i64<f4>, %v587:i128<vs34>, %v588:i32<r0>, %v589:i32<r7>, %v590:i32<r8>, %v591:i32<r9>, %v592:i32<r10>, %v593:i8<fp_fx>, %v594:i8<fp_fex>, %v595:i8<fp_vx>, %v596:i8<fp_ox>, %v597:i8<fp_ux>, %v598:i8<fp_zx>, %v599:i8<fp_xx>, %v600:i8<fp_vxsnan>, %v601:i8<fp_vxisi>, %v602:i8<fp_vxidi>, %v603:i8<fp_vxzdz>, %v604:i8<fp_vximz>, %v605:i8<fp_vxvc>, %v606:i8<fp_fr>, %v607:i8<fp_fi>, %v608:i8<fp_c>, %v609:i8<fp_cc0>, %v610:i8<fp_cc1>, %v611:i8<fp_cc2>, %v612:i8<fp_cc3>, %v613:i8<fp_vxsoft>, %v614:i8<fp_vxsqrt>, %v615:i8<fp_vxcvi>, %v616:i8<fp_ve>, %v617:i8<fp_oe>, %v618:i8<fp_ue>, %v619:i8<fp_ze>, %v620:i8<fp_xe>, %v621:i32<r2Save>, %v622:i64<f0>, %v623:i64<f5>, %v624:i64<f6>, %v625:i64<f7>, %v626:i64<f8>, %v627:i128<vs35>, %v628:i128<vs36>, %v629:i128<vs37>, %v630:i128<vs38>, %v631:i128<vs39>, %v632:i128<vs40>, %v633:i128<vs41>, %v634:i128<vs42>, %v635:i128<vs43>, %v636:i128<vs44>, %v637:i128<vs45> = call %v544, %v574, %v575, %v8, %v576, %v572, %v484, %v485, %v492, %v493, %v494, %v495, %v486, %v487, %v488, %v489, %v526, %v527, %v528, %v529, %v490, %v530, %v531, %v532, %v533, %v534, %v535, %v536, %v537, %v538, %v539, %v540
+%v638:ctrl, %v639:mem, %v640:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v577, %v578, %v583
+%v641:ctrl, %v642:mem, %v643:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v638, %v578, %v583
 %v644:i32 = iconst[0xffffffe8]
 %v645:i32 = int.add %v2, %v644
-%v646:f64 = int_bits_to_float %v581
+%v646:f64 = int_bits_to_float %v583
 %v647:i1 = fcmp.less %v193, %v646
 %v648:i1 = fcmp.less %v646, %v196
 %v649:i1 = int.and %v647, %v648
@@ -1301,7 +1337,7 @@ float_arg 19 [%v123]
 %v673:f32 = fconst[0x40f00000]
 %v674:f64 = float_to_float %v673
 %v675:i64 = float_bits_to_int %v674
-%v676:ctrl, %v677:mem, %v678:i32<r3>, %v679:i32<r4>, %v680:i64<f1>, %v681:i64<f2>, %v682:i64<f3>, %v683:i64<f4>, %v684:i128<vs34>, %v685:i32<r0>, %v686:i32<r5>, %v687:i32<r6>, %v688:i32<r7>, %v689:i32<r8>, %v690:i32<r9>, %v691:i32<r10>, %v692:i8<fp_fx>, %v693:i8<fp_fex>, %v694:i8<fp_vx>, %v695:i8<fp_ox>, %v696:i8<fp_ux>, %v697:i8<fp_zx>, %v698:i8<fp_xx>, %v699:i8<fp_vxsnan>, %v700:i8<fp_vxisi>, %v701:i8<fp_vxidi>, %v702:i8<fp_vxzdz>, %v703:i8<fp_vximz>, %v704:i8<fp_vxvc>, %v705:i8<fp_fr>, %v706:i8<fp_fi>, %v707:i8<fp_c>, %v708:i8<fp_cc0>, %v709:i8<fp_cc1>, %v710:i8<fp_cc2>, %v711:i8<fp_cc3>, %v712:i8<fp_vxsoft>, %v713:i8<fp_vxsqrt>, %v714:i8<fp_vxcvi>, %v715:i8<fp_ve>, %v716:i8<fp_oe>, %v717:i8<fp_ue>, %v718:i8<fp_ze>, %v719:i8<fp_xe>, %v720:i32<r2Save>, %v721:i64<f0>, %v722:i64<f5>, %v723:i64<f6>, %v724:i64<f7>, %v725:i64<f8>, %v726:i128<vs35>, %v727:i128<vs36>, %v728:i128<vs37>, %v729:i128<vs38>, %v730:i128<vs39>, %v731:i128<vs40>, %v732:i128<vs41>, %v733:i128<vs42>, %v734:i128<vs43>, %v735:i128<vs44>, %v736:i128<vs45> = call %v641, %v671, %v672, %v8, %v98, %v669, %v587, %v588, %v589, %v590, %v591, %v592, %v675, %v582, %v583, %v584, %v623, %v624, %v625, %v626, %v585, %v627, %v628, %v629, %v630, %v631, %v632, %v633, %v634, %v635, %v636, %v637
+%v676:ctrl, %v677:mem, %v678:i32<r3>, %v679:i32<r4>, %v680:i32<r5>, %v681:i32<r6>, %v682:i64<f1>, %v683:i64<f2>, %v684:i64<f3>, %v685:i64<f4>, %v686:i128<vs34>, %v687:i32<r0>, %v688:i32<r7>, %v689:i32<r8>, %v690:i32<r9>, %v691:i32<r10>, %v692:i8<fp_fx>, %v693:i8<fp_fex>, %v694:i8<fp_vx>, %v695:i8<fp_ox>, %v696:i8<fp_ux>, %v697:i8<fp_zx>, %v698:i8<fp_xx>, %v699:i8<fp_vxsnan>, %v700:i8<fp_vxisi>, %v701:i8<fp_vxidi>, %v702:i8<fp_vxzdz>, %v703:i8<fp_vximz>, %v704:i8<fp_vxvc>, %v705:i8<fp_fr>, %v706:i8<fp_fi>, %v707:i8<fp_c>, %v708:i8<fp_cc0>, %v709:i8<fp_cc1>, %v710:i8<fp_cc2>, %v711:i8<fp_cc3>, %v712:i8<fp_vxsoft>, %v713:i8<fp_vxsqrt>, %v714:i8<fp_vxcvi>, %v715:i8<fp_ve>, %v716:i8<fp_oe>, %v717:i8<fp_ue>, %v718:i8<fp_ze>, %v719:i8<fp_xe>, %v720:i32<r2Save>, %v721:i64<f0>, %v722:i64<f5>, %v723:i64<f6>, %v724:i64<f7>, %v725:i64<f8>, %v726:i128<vs35>, %v727:i128<vs36>, %v728:i128<vs37>, %v729:i128<vs38>, %v730:i128<vs39>, %v731:i128<vs40>, %v732:i128<vs41>, %v733:i128<vs42>, %v734:i128<vs43>, %v735:i128<vs44>, %v736:i128<vs45> = call %v641, %v671, %v672, %v8, %v98, %v669, %v581, %v582, %v589, %v590, %v591, %v592, %v675, %v584, %v585, %v586, %v623, %v624, %v625, %v626, %v587, %v627, %v628, %v629, %v630, %v631, %v632, %v633, %v634, %v635, %v636, %v637
 %v737:i32 = load[r] %v677, %v15
 %v738:i32 = int.xor %v737, %v678
 %v739:mem = store[r] %v677, %v15, %v738
@@ -1370,7 +1406,7 @@ float_arg 19 [%v123]
 %v802:i32 = truncate %v801
 %v803:mem = store[r] %v771, %v773, %v802
 %v804:i32 = iconst[0x10010244]
-%v805:ctrl, %v806:mem, %v807:i32<r3>, %v808:i32<r4>, %v809:i64<f1>, %v810:i64<f2>, %v811:i64<f3>, %v812:i64<f4>, %v813:i128<vs34>, %v814:i32<r0>, %v815:i32<r5>, %v816:i32<r6>, %v817:i32<r7>, %v818:i32<r8>, %v819:i32<r9>, %v820:i32<r10>, %v821:i8<fp_fx>, %v822:i8<fp_fex>, %v823:i8<fp_vx>, %v824:i8<fp_ox>, %v825:i8<fp_ux>, %v826:i8<fp_zx>, %v827:i8<fp_xx>, %v828:i8<fp_vxsnan>, %v829:i8<fp_vxisi>, %v830:i8<fp_vxidi>, %v831:i8<fp_vxzdz>, %v832:i8<fp_vximz>, %v833:i8<fp_vxvc>, %v834:i8<fp_fr>, %v835:i8<fp_fi>, %v836:i8<fp_c>, %v837:i8<fp_cc0>, %v838:i8<fp_cc1>, %v839:i8<fp_cc2>, %v840:i8<fp_cc3>, %v841:i8<fp_vxsoft>, %v842:i8<fp_vxsqrt>, %v843:i8<fp_vxcvi>, %v844:i8<fp_ve>, %v845:i8<fp_oe>, %v846:i8<fp_ue>, %v847:i8<fp_ze>, %v848:i8<fp_xe>, %v849:i32<r2Save>, %v850:i64<f0>, %v851:i64<f5>, %v852:i64<f6>, %v853:i64<f7>, %v854:i64<f8>, %v855:i128<vs35>, %v856:i128<vs36>, %v857:i128<vs37>, %v858:i128<vs38>, %v859:i128<vs39>, %v860:i128<vs40>, %v861:i128<vs41>, %v862:i128<vs42>, %v863:i128<vs43>, %v864:i128<vs44>, %v865:i128<vs45> = call %v676, %v803, %v804, %v8, %v98, %v678, %v686, %v687, %v688, %v689, %v690, %v691, %v744, %v776, %v682, %v683, %v722, %v723, %v724, %v725, %v684, %v726, %v727, %v728, %v729, %v730, %v731, %v732, %v733, %v734, %v735, %v736
+%v805:ctrl, %v806:mem, %v807:i32<r3>, %v808:i32<r4>, %v809:i32<r5>, %v810:i32<r6>, %v811:i64<f1>, %v812:i64<f2>, %v813:i64<f3>, %v814:i64<f4>, %v815:i128<vs34>, %v816:i32<r0>, %v817:i32<r7>, %v818:i32<r8>, %v819:i32<r9>, %v820:i32<r10>, %v821:i8<fp_fx>, %v822:i8<fp_fex>, %v823:i8<fp_vx>, %v824:i8<fp_ox>, %v825:i8<fp_ux>, %v826:i8<fp_zx>, %v827:i8<fp_xx>, %v828:i8<fp_vxsnan>, %v829:i8<fp_vxisi>, %v830:i8<fp_vxidi>, %v831:i8<fp_vxzdz>, %v832:i8<fp_vximz>, %v833:i8<fp_vxvc>, %v834:i8<fp_fr>, %v835:i8<fp_fi>, %v836:i8<fp_c>, %v837:i8<fp_cc0>, %v838:i8<fp_cc1>, %v839:i8<fp_cc2>, %v840:i8<fp_cc3>, %v841:i8<fp_vxsoft>, %v842:i8<fp_vxsqrt>, %v843:i8<fp_vxcvi>, %v844:i8<fp_ve>, %v845:i8<fp_oe>, %v846:i8<fp_ue>, %v847:i8<fp_ze>, %v848:i8<fp_xe>, %v849:i32<r2Save>, %v850:i64<f0>, %v851:i64<f5>, %v852:i64<f6>, %v853:i64<f7>, %v854:i64<f8>, %v855:i128<vs35>, %v856:i128<vs36>, %v857:i128<vs37>, %v858:i128<vs38>, %v859:i128<vs39>, %v860:i128<vs40>, %v861:i128<vs41>, %v862:i128<vs42>, %v863:i128<vs43>, %v864:i128<vs44>, %v865:i128<vs45> = call %v676, %v803, %v804, %v8, %v98, %v678, %v680, %v681, %v688, %v689, %v690, %v691, %v744, %v776, %v684, %v685, %v722, %v723, %v724, %v725, %v686, %v726, %v727, %v728, %v729, %v730, %v731, %v732, %v733, %v734, %v735, %v736
 %v866:i32 = load[r] %v806, %v15
 %v867:i32 = int.xor %v866, %v807
 %v868:mem = store[r] %v806, %v15, %v867
@@ -1413,7 +1449,7 @@ float_arg 19 [%v123]
 %v905:i64 = float_bits_to_int %v904
 %v906:i64 = int.mul %v903, %v905
 %v907:i64 = int.add %v902, %v906
-%v908:ctrl, %v909:mem, %v910:i32<r3>, %v911:i32<r4>, %v912:i64<f1>, %v913:i64<f2>, %v914:i64<f3>, %v915:i64<f4>, %v916:i128<vs34>, %v917:i32<r0>, %v918:i32<r5>, %v919:i32<r6>, %v920:i32<r7>, %v921:i32<r8>, %v922:i32<r9>, %v923:i32<r10>, %v924:i8<fp_fx>, %v925:i8<fp_fex>, %v926:i8<fp_vx>, %v927:i8<fp_ox>, %v928:i8<fp_ux>, %v929:i8<fp_zx>, %v930:i8<fp_xx>, %v931:i8<fp_vxsnan>, %v932:i8<fp_vxisi>, %v933:i8<fp_vxidi>, %v934:i8<fp_vxzdz>, %v935:i8<fp_vximz>, %v936:i8<fp_vxvc>, %v937:i8<fp_fr>, %v938:i8<fp_fi>, %v939:i8<fp_c>, %v940:i8<fp_cc0>, %v941:i8<fp_cc1>, %v942:i8<fp_cc2>, %v943:i8<fp_cc3>, %v944:i8<fp_vxsoft>, %v945:i8<fp_vxsqrt>, %v946:i8<fp_vxcvi>, %v947:i8<fp_ve>, %v948:i8<fp_oe>, %v949:i8<fp_ue>, %v950:i8<fp_ze>, %v951:i8<fp_xe>, %v952:i32<r2Save>, %v953:i64<f0>, %v954:i64<f5>, %v955:i64<f6>, %v956:i64<f7>, %v957:i64<f8>, %v958:i128<vs35>, %v959:i128<vs36>, %v960:i128<vs37>, %v961:i128<vs38>, %v962:i128<vs39>, %v963:i128<vs40>, %v964:i128<vs41>, %v965:i128<vs42>, %v966:i128<vs43>, %v967:i128<vs44>, %v968:i128<vs45> = call %v805, %v868, %v869, %v8, %v867, %v807, %v815, %v816, %v817, %v818, %v819, %v820, %v888, %v907, %v811, %v812, %v851, %v852, %v853, %v854, %v813, %v855, %v856, %v857, %v858, %v859, %v860, %v861, %v862, %v863, %v864, %v865
+%v908:ctrl, %v909:mem, %v910:i32<r3>, %v911:i32<r4>, %v912:i32<r5>, %v913:i32<r6>, %v914:i64<f1>, %v915:i64<f2>, %v916:i64<f3>, %v917:i64<f4>, %v918:i128<vs34>, %v919:i32<r0>, %v920:i32<r7>, %v921:i32<r8>, %v922:i32<r9>, %v923:i32<r10>, %v924:i8<fp_fx>, %v925:i8<fp_fex>, %v926:i8<fp_vx>, %v927:i8<fp_ox>, %v928:i8<fp_ux>, %v929:i8<fp_zx>, %v930:i8<fp_xx>, %v931:i8<fp_vxsnan>, %v932:i8<fp_vxisi>, %v933:i8<fp_vxidi>, %v934:i8<fp_vxzdz>, %v935:i8<fp_vximz>, %v936:i8<fp_vxvc>, %v937:i8<fp_fr>, %v938:i8<fp_fi>, %v939:i8<fp_c>, %v940:i8<fp_cc0>, %v941:i8<fp_cc1>, %v942:i8<fp_cc2>, %v943:i8<fp_cc3>, %v944:i8<fp_vxsoft>, %v945:i8<fp_vxsqrt>, %v946:i8<fp_vxcvi>, %v947:i8<fp_ve>, %v948:i8<fp_oe>, %v949:i8<fp_ue>, %v950:i8<fp_ze>, %v951:i8<fp_xe>, %v952:i32<r2Save>, %v953:i64<f0>, %v954:i64<f5>, %v955:i64<f6>, %v956:i64<f7>, %v957:i64<f8>, %v958:i128<vs35>, %v959:i128<vs36>, %v960:i128<vs37>, %v961:i128<vs38>, %v962:i128<vs39>, %v963:i128<vs40>, %v964:i128<vs41>, %v965:i128<vs42>, %v966:i128<vs43>, %v967:i128<vs44>, %v968:i128<vs45> = call %v805, %v868, %v869, %v8, %v867, %v807, %v809, %v810, %v817, %v818, %v819, %v820, %v888, %v907, %v813, %v814, %v851, %v852, %v853, %v854, %v815, %v855, %v856, %v857, %v858, %v859, %v860, %v861, %v862, %v863, %v864, %v865
 %v969:i32 = load[r] %v909, %v15
 %v970:i32 = int.xor %v969, %v910
 %v971:mem = store[r] %v909, %v15, %v970
@@ -1421,12 +1457,12 @@ float_arg 19 [%v123]
 %v973:f32 = fconst[0xc0600000]
 %v974:f64 = float_to_float %v973
 %v975:i64 = float_bits_to_int %v974
-%v976:ctrl, %v977:mem, %v978:i32<r3>, %v979:i32<r4>, %v980:i64<f1>, %v981:i64<f2>, %v982:i64<f3>, %v983:i64<f4>, %v984:i128<vs34>, %v985:i32<r0>, %v986:i32<r5>, %v987:i32<r6>, %v988:i32<r7>, %v989:i32<r8>, %v990:i32<r9>, %v991:i32<r10>, %v992:i8<fp_fx>, %v993:i8<fp_fex>, %v994:i8<fp_vx>, %v995:i8<fp_ox>, %v996:i8<fp_ux>, %v997:i8<fp_zx>, %v998:i8<fp_xx>, %v999:i8<fp_vxsnan>, %v1000:i8<fp_vxisi>, %v1001:i8<fp_vxidi>, %v1002:i8<fp_vxzdz>, %v1003:i8<fp_vximz>, %v1004:i8<fp_vxvc>, %v1005:i8<fp_fr>, %v1006:i8<fp_fi>, %v1007:i8<fp_c>, %v1008:i8<fp_cc0>, %v1009:i8<fp_cc1>, %v1010:i8<fp_cc2>, %v1011:i8<fp_cc3>, %v1012:i8<fp_vxsoft>, %v1013:i8<fp_vxsqrt>, %v1014:i8<fp_vxcvi>, %v1015:i8<fp_ve>, %v1016:i8<fp_oe>, %v1017:i8<fp_ue>, %v1018:i8<fp_ze>, %v1019:i8<fp_xe>, %v1020:i32<r2Save>, %v1021:i64<f0>, %v1022:i64<f5>, %v1023:i64<f6>, %v1024:i64<f7>, %v1025:i64<f8>, %v1026:i128<vs35>, %v1027:i128<vs36>, %v1028:i128<vs37>, %v1029:i128<vs38>, %v1030:i128<vs39>, %v1031:i128<vs40>, %v1032:i128<vs41>, %v1033:i128<vs42>, %v1034:i128<vs43>, %v1035:i128<vs44>, %v1036:i128<vs45> = call %v908, %v971, %v972, %v8, %v98, %v910, %v918, %v919, %v920, %v921, %v922, %v923, %v975, %v913, %v914, %v915, %v954, %v955, %v956, %v957, %v916, %v958, %v959, %v960, %v961, %v962, %v963, %v964, %v965, %v966, %v967, %v968
-%v1037:ctrl, %v1038:mem, %v1039:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v976, %v977, %v980
-%v1040:ctrl, %v1041:mem, %v1042:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v1037, %v977, %v980
+%v976:ctrl, %v977:mem, %v978:i32<r3>, %v979:i32<r4>, %v980:i32<r5>, %v981:i32<r6>, %v982:i64<f1>, %v983:i64<f2>, %v984:i64<f3>, %v985:i64<f4>, %v986:i128<vs34>, %v987:i32<r0>, %v988:i32<r7>, %v989:i32<r8>, %v990:i32<r9>, %v991:i32<r10>, %v992:i8<fp_fx>, %v993:i8<fp_fex>, %v994:i8<fp_vx>, %v995:i8<fp_ox>, %v996:i8<fp_ux>, %v997:i8<fp_zx>, %v998:i8<fp_xx>, %v999:i8<fp_vxsnan>, %v1000:i8<fp_vxisi>, %v1001:i8<fp_vxidi>, %v1002:i8<fp_vxzdz>, %v1003:i8<fp_vximz>, %v1004:i8<fp_vxvc>, %v1005:i8<fp_fr>, %v1006:i8<fp_fi>, %v1007:i8<fp_c>, %v1008:i8<fp_cc0>, %v1009:i8<fp_cc1>, %v1010:i8<fp_cc2>, %v1011:i8<fp_cc3>, %v1012:i8<fp_vxsoft>, %v1013:i8<fp_vxsqrt>, %v1014:i8<fp_vxcvi>, %v1015:i8<fp_ve>, %v1016:i8<fp_oe>, %v1017:i8<fp_ue>, %v1018:i8<fp_ze>, %v1019:i8<fp_xe>, %v1020:i32<r2Save>, %v1021:i64<f0>, %v1022:i64<f5>, %v1023:i64<f6>, %v1024:i64<f7>, %v1025:i64<f8>, %v1026:i128<vs35>, %v1027:i128<vs36>, %v1028:i128<vs37>, %v1029:i128<vs38>, %v1030:i128<vs39>, %v1031:i128<vs40>, %v1032:i128<vs41>, %v1033:i128<vs42>, %v1034:i128<vs43>, %v1035:i128<vs44>, %v1036:i128<vs45> = call %v908, %v971, %v972, %v8, %v98, %v910, %v912, %v913, %v920, %v921, %v922, %v923, %v975, %v915, %v916, %v917, %v954, %v955, %v956, %v957, %v918, %v958, %v959, %v960, %v961, %v962, %v963, %v964, %v965, %v966, %v967, %v968
+%v1037:ctrl, %v1038:mem, %v1039:i8<u:0xb3900:1> = callother[32 "floatToIntInexact"] %v976, %v977, %v982
+%v1040:ctrl, %v1041:mem, %v1042:i8<u:0xac500:1> = callother[415 "fpscrUndefined"] %v1037, %v977, %v982
 %v1043:i32 = iconst[0xfffffff0]
 %v1044:i32 = int.add %v2, %v1043
-%v1045:f64 = int_bits_to_float %v980
+%v1045:f64 = int_bits_to_float %v982
 %v1046:i1 = fcmp.less %v193, %v1045
 %v1047:i1 = fcmp.less %v1045, %v196
 %v1048:i1 = int.and %v1046, %v1047
@@ -1452,4 +1488,4 @@ float_arg 19 [%v123]
 %v1068:i32 = load[r] %v1064, %v1067
 %v1069:i32 = int.xor %v1065, %v1068
 %v1070:mem = store[r] %v1064, %v15, %v1069
-return %v1040, %v1070, %v1069, %v1068, %v980, %v981, %v982, %v983, %v984
+return %v1040, %v1070, %v1069, %v1068, %v980, %v981, %v982, %v983, %v984, %v985, %v986

@@ -567,6 +567,10 @@ impl CallingConvention {
                 increment: 4,
             }),
             reg_args_adjoin_stack_args: false,
+            // gcc returns `_Complex double` in r3..r6, not f1:f2. Its
+            // `_Complex long double` in r3..r10 is left out: four more
+            // `Return` inputs on every function for a rare type.
+            ret_val_regs: &["r3", "r4", "r5", "r6"],
             ..Self::powerpc64_elf_v1()
         }
     }
@@ -646,6 +650,8 @@ impl CallingConvention {
     pub const fn powerpc_sysv32_linux_kernel() -> Self {
         CallingConvention {
             arg_passing_regs_float: PPC32_SCALAR_ARGS_F,
+            // Kernel code returns no `_Complex`.
+            ret_val_regs: &["r3", "r4"],
             ret_val_regs_float: PPC_SCALAR_RET_F,
             ..Self::powerpc_sysv32()
         }
