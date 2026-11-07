@@ -344,7 +344,7 @@ fn builder_with_region() -> crate::Result<crate::FunctionBuilder> {
         vec![],
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
-    )?;
+    );
     let r = b.create_region_all()?;
     b.set_entry_region_all(r)?;
     b.set_region(r);
@@ -457,8 +457,7 @@ fn memory_reachable_terminates_on_a_loop_header_mem_phi_cycle() {
         vec![],
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
-    )
-    .unwrap();
+    );
 
     let r0 = b.create_region_all().unwrap();
     b.set_entry_region_all(r0).unwrap();

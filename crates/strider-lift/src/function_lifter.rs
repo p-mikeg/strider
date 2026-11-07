@@ -60,7 +60,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             tracked.iter().copied().collect(),
             cc,
             lifter.arch().byte_order(),
-        )?;
+        );
         builder.set_internal_registers(&lifter.tables().internal_register_vns);
         // Query every CC register too, so an ABI register narrower than its
         // tracked container (`eax` in `rax`) resolves.

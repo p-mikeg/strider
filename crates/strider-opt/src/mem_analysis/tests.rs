@@ -1294,7 +1294,7 @@ mod heap_tests {
                 vec![sp(), ret_reg()],
                 cc,
                 strider_target::Endianness::Little,
-            )?;
+            );
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             let region = b.create_region_all()?;
             b.set_entry_region_all(region)?;

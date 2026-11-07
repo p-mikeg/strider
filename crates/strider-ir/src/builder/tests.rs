@@ -41,7 +41,7 @@ fn raw_builder(
     if !tracked.contains(&cc.stack_ptr) {
         tracked.push(cc.stack_ptr);
     }
-    FunctionBuilder::new(tracked, cc, endianness)
+    Ok(FunctionBuilder::new(tracked, cc, endianness))
 }
 
 fn empty_builder() -> Result<FunctionBuilder> {
@@ -523,7 +523,7 @@ fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
         entry_address: None,
         reg_args_adjoin_stack_args: false,
     };
-    let mut b = FunctionBuilder::new(vec![q0, r0, sp], cc, strider_target::Endianness::Little)?;
+    let mut b = FunctionBuilder::new(vec![q0, r0, sp], cc, strider_target::Endianness::Little);
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
     b.set_region(region);
@@ -2238,7 +2238,7 @@ mod build_call_with_cc {
         // Reading an untracked arg register errors, so track them all.
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
-        let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little).unwrap();
+        let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little);
         let _ = rdi;
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
@@ -2284,8 +2284,7 @@ mod build_call_with_cc {
             vec![rdi, rsi, xmm0, xmm1, rsp],
             cc,
             strider_target::Endianness::Little,
-        )
-        .unwrap();
+        );
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
@@ -2334,8 +2333,7 @@ mod build_call_with_cc {
             stack_ptr: rsp,
             ..Default::default()
         };
-        let mut b =
-            FunctionBuilder::new(vec![xmm0, rsp], cc, strider_target::Endianness::Little).unwrap();
+        let mut b = FunctionBuilder::new(vec![xmm0, rsp], cc, strider_target::Endianness::Little);
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
@@ -2373,8 +2371,7 @@ mod build_call_with_cc {
             stack_ptr: rsp,
             ..Default::default()
         };
-        let mut b =
-            FunctionBuilder::new(vec![xmm0, rsp], cc, strider_target::Endianness::Little).unwrap();
+        let mut b = FunctionBuilder::new(vec![xmm0, rsp], cc, strider_target::Endianness::Little);
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
@@ -2418,8 +2415,7 @@ mod build_call_with_cc {
                 .chain(cc.ret_val_regs_float.iter())
                 .chain(cc.arg_passing_regs_float.iter()),
         );
-        let mut b =
-            FunctionBuilder::new(vec![rax, rsp], cc, strider_target::Endianness::Little).unwrap();
+        let mut b = FunctionBuilder::new(vec![rax, rsp], cc, strider_target::Endianness::Little);
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
@@ -2479,7 +2475,7 @@ mod build_call_with_cc {
         // Reading an untracked arg register errors, so track them all.
         let mut tracked = vec![rax, rsp];
         tracked.extend(x86_64_arg_regs(&regs));
-        let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little).unwrap();
+        let mut b = FunctionBuilder::new(tracked, cc, strider_target::Endianness::Little);
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
@@ -2731,7 +2727,7 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         stack_ptr: sp,
         ..Default::default()
     };
-    let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little)?;
+    let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little);
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
     // In prod the lifter does this right after `set_entry_region`.
@@ -2767,7 +2763,7 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
     };
     // `FunctionBuilder::new` seeds edi then drops it as enclosed by rdi, so
     // the var table is keyed by rdi.
-    let mut b = FunctionBuilder::new(vec![rdi, sp], cc, strider_target::Endianness::Little)?;
+    let mut b = FunctionBuilder::new(vec![rdi, sp], cc, strider_target::Endianness::Little);
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
     // In prod the lifter does this right after `set_entry_region`.
@@ -2899,7 +2895,7 @@ fn call_with_register_holding(
         stack_ptr: sp,
         ..Default::default()
     };
-    let mut b = FunctionBuilder::new(vec![rax, rbx, sp], cc, strider_target::Endianness::Little)?;
+    let mut b = FunctionBuilder::new(vec![rax, rbx, sp], cc, strider_target::Endianness::Little);
     if internal {
         b.set_internal_registers(vec![rax].leak());
     }

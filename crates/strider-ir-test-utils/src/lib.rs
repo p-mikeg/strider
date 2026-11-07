@@ -190,7 +190,7 @@ impl RegisterSet {
             reg_args_adjoin_stack_args: false,
         };
         let byte_order = self.byte_order.unwrap_or_default();
-        let mut b = FunctionBuilder::new(tracked, cc, byte_order)?;
+        let mut b = FunctionBuilder::new(tracked, cc, byte_order);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }

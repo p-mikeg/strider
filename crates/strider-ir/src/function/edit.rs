@@ -670,8 +670,7 @@ pub(crate) mod test_fixtures {
     /// pre-stamped.
     pub(crate) fn single_region_builder() -> FunctionBuilder {
         let cc = strider_target::BuiltCallingConvention::default();
-        let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
-            .expect("FunctionBuilder::new");
+        let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little);
         let region = b.create_region_all().expect("create_region");
         b.set_entry_region_all(region).expect("set_entry_region");
         b.set_region(region);
