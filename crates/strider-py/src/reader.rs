@@ -266,7 +266,7 @@ fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, 
         .flat_map(|r| [r.start_addr(), r.end_addr()])
         .collect();
     old_bounds.sort_unstable();
-    let mut spans: Vec<(u64, u64)> = new.iter().map(|r| (r.start_addr(), r.end_addr())).collect();
+    let mut spans = region_spans(new);
     spans.sort_unstable();
     let mut cuts: Vec<u64> = Vec::new();
     let mut covered_to = 0u64;
