@@ -825,15 +825,17 @@ impl PyLoadedElf {
         let extents: Vec<(u64, u64)> = syms.iter().map(|s| (s.start(), s.covered_end())).collect();
         let functions = || syms.iter().enumerate().filter(|(_, s)| s.is_function);
         let mut owners: HashMap<(&str, Option<usize>), Vec<usize>> = HashMap::new();
+        let mut any_named: HashMap<&str, Vec<usize>> = HashMap::new();
         for (i, sym) in functions() {
             owners
                 .entry((sym.name.as_str(), file_scope[i]))
                 .or_default()
                 .push(i);
+            any_named.entry(sym.name.as_str()).or_default().push(i);
         }
-        // GCC emits `<f>.cold` local to `f`'s object, and the linker gathers
-        // every object's cold code apart from the bodies; a global `f` owns
-        // the fragments of an object with no local `f`.
+        // `<f>.cold` is local to `f`'s object, but the linker moves cold code
+        // away from the bodies and makes a hidden `f` local in its own group.
+        // Owner: the local `f` of that object, else a global `f`, else any `f`.
         let mut cold_fragments: HashMap<usize, Vec<std::ops::Range<u64>>> = HashMap::new();
         for (i, sym) in functions() {
             let (Some(base), Some(size)) = (cold_fragment_base(&sym.name), sym.size) else {
@@ -841,7 +843,8 @@ impl PyLoadedElf {
             };
             let owner = owners
                 .get(&(base, file_scope[i]))
-                .or_else(|| owners.get(&(base, None)));
+                .or_else(|| owners.get(&(base, None)))
+                .or_else(|| any_named.get(base));
             for &o in owner.into_iter().flatten() {
                 cold_fragments
                     .entry(o)

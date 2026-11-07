@@ -98,6 +98,27 @@ def test_a_cold_fragment_belongs_to_the_function_of_its_own_file(
     assert (lift.build_cfg(_FOO).pcode_at(_COLD_JMP) is not None) == followed
 
 
+@pytest.mark.parametrize("name", ["foo", "foo.lto_priv.0"])
+def test_a_function_the_linker_made_local_keeps_its_cold_fragment(tmp_path, name):
+    """GNU ld makes a hidden function, or one LTO promoted from a static,
+    local in its own trailing group behind an empty-name `FILE`, and leaves
+    `<f>.cold` in the object's group (gcc -O2 / -flto, x86-64 PIE and .so)."""
+    local = eb.STB_LOCAL
+    path = tmp_path / "linker_local.elf"
+    eb.Elf(
+        loads=[(eb.PF_R | eb.PF_X, _COLD, 0)],
+        sections=[eb.Section(".text", _COLD, _CODE)],
+        symbols=[
+            eb.Sym("a.c", 0, None, kind=eb.STT_FILE, bind=local),
+            eb.Sym(f"{name}.cold", _COLD, 0, size=5, bind=local),
+            eb.Sym("", 0, None, kind=eb.STT_FILE, bind=local),
+            eb.Sym(name, _FOO, 0, size=6, bind=local),
+        ],
+    ).write(path)
+    lift = strider.lift.load_elf(str(path))
+    assert lift.build_cfg(_FOO).pcode_at(_COLD_JMP) is not None
+
+
 def test_a_cold_symbol_added_after_an_analysis_is_followed(tmp_path):
     lift = _split(tmp_path, "bar")
     assert lift.build_cfg(_FOO).pcode_at(_COLD_JMP) is None
