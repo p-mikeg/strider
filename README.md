@@ -55,18 +55,17 @@ strider.explore.shutdown(port)
   its reason; `analyze` and `build_cfg` report it rather than raise (the few
   cases that raise are in the
   [API reference](docs/python-api.md#2-analyzing-a-function)).
-- Claims live on the function: `Function.optimize(assumptions=...)` adds to
-  `Function.assumptions`, and `Function.optimizer_converged` flags a run
-  stopped at its cap. Two lift-time claims are new,
+- Claims live on the function: `Function.assumptions`, extended by
+  `Function.optimize(assumptions=...)`; new lift-time claims
   `fp_rounding_mode_is_nearest` and `msr_register_keeps_mode`.
-- `CfgOptions(no_return_targets=..., fragment_ranges=...)`: `ElfLifter`
-  fills the fragments from GCC `.cold` symbols. A ppc64 ELFv1 function
-  enters with `r2` holding its TOC.
-- Jump tables are bounded by their guards, known bits and phis of constants;
-  a table that cannot be bounded is deferred and reported, not over-seated.
-- Presets by name (`SleighArch.preset`, `CallingConvention.preset`,
-  `CC_PRESETS`), constants up to 512 bits, and handles usable from any
-  thread.
+  `Function.optimizer_converged` flags a run stopped at its cap.
+- `CfgOptions(no_return_targets=..., fragment_ranges=...)`; `ElfLifter`
+  follows GCC `.cold` fragments and enters a ppc64 ELFv1 function with its
+  TOC in `r2`.
+- Jump tables are bounded by guards, known bits and phis of constants; one
+  that cannot be bounded is deferred and reported.
+- Presets by name (`CC_PRESETS`, `.preset(name)`), constants up to 512 bits,
+  handles usable from any thread.
 - Sleigh fixes on every arch: float conversions round and saturate as the
   ISA does; x87 / SSE / VEX, PowerPC FPSCR, AArch64 narrow-register writes,
   ARM NEON, MIPS64 sign extension.
@@ -75,15 +74,14 @@ strider.explore.shutdown(port)
 
 - Inputs: unlinked `.o` files, ppc64 ELFv1 `.opd` descriptors, stripped
   images (`add_symbol_file`, `add_symbols`), ARM / AArch64 `$d` literal
-  pools, and `load_elf(relocated_got_is_rom=True)` to fold loads through the
-  GOT and `.data.rel.ro`.
+  pools, `load_elf(relocated_got_is_rom=True)`; PowerPC `*_linux_kernel`
+  conventions picked from the entry address.
 - ARM/Thumb and MIPS16 code decodes in the mode its edge carries.
 - Your own answers: `CfgOptions` branch targets, data ranges and user-op
   ABIs; `cc.preserves_all()` / `preserves_regs()` for a `per_address_ccs`
   callee.
 - `AssumptionOptions`, the claims the analysis cannot check; `none()` is the
-  sound floor. PowerPC `*_linux_kernel` conventions, picked from the entry
-  address.
+  sound floor.
 - Queries: `first_of`, `field`, `code_ptr`, joins with constraints and
   `JoinPredicate`, heap / non-stack filters, float and stack arguments.
 - `Function.to_text` and a background explorer.
