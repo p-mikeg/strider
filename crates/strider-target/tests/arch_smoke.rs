@@ -88,7 +88,7 @@ fn mips_presets_clear_both_forward_painted_noflow_vars() {
             "{preset:?}"
         );
     }
-    // ARM's three are unrelated and must not have picked it up.
+    // ARM's LRset is unrelated and must not have picked it up.
     for preset in [ArchPreset::Arm, ArchPreset::ArmThumb] {
         let vars = preset.arch().transient_decode_vars();
         assert!(!vars.contains(&"PAIR_INSTRUCTION_FLAG"), "{preset:?}");

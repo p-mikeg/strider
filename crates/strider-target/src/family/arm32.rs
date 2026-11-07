@@ -12,7 +12,7 @@ pub(crate) static ARM32: Family = Family {
         isa_mode_var: Some("TMode"),
         flow_commit_vars: &["condit", "TEEMode"],
         // Not `condit`: `flow_commit_vars` re-derives it.
-        transient_decode_vars: &["LRset", "REToverride", "CALLoverride"],
+        transient_decode_vars: &["LRset"],
         has_delay_slots: false,
         callother_output_exact: false,
         // Every `*[register]` access is NEON: `&Dreg` (d0..d31, 0x300..0x400)
