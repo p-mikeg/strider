@@ -68,7 +68,7 @@ fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     let entry = edit.entry();
     let reachable = cfg_reachable(edit.function().graph(), entry);
 
-    // Every live join: one kept live by a phi's use can still have dead slots.
+    // Live, not only reachable: a join kept live by a phi use can have dead slots.
     let regions: Vec<NodeId> = edit
         .live_reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
         .collect();

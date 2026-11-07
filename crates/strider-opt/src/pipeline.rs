@@ -35,8 +35,8 @@ pub trait Optimizer: Sync {
     }
 }
 
-/// Runs one pass through a throwaway `EditFunction`: drops the memory
-/// analysis, culls dead nodes before and drains after. `true` when the pass
+/// Runs one pass through a throwaway `EditFunction`: drops every memo,
+/// culls dead nodes before and drains after. `true` when the pass
 /// changed the graph.
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
