@@ -234,7 +234,7 @@ class _OutputPat(_t.Protocol):
 
     def output(self, slot: int) -> "pattern.OutputSlotPat":
         """Bind or constrain the value at raw output `slot` (a `Call` is
-        `[ctrl, mem, result, ...clobbers]`, a `Load` `[value]`)."""
+        `[ctrl, mem, rets..., clobbers...]`, a `Load` `[value]`)."""
         ...
 
     def any_output(self) -> "pattern.OutputSlotPat":

@@ -347,9 +347,10 @@ n.value_type()                 # "I64" / "I1" / "F64" / ... or None
 n.inputs(), n.outputs()        # neighbouring nodes (Node handles, not ids)
 n.uint(), n.sint(), n.boolean(), n.float_bits()   # constants, at any width
 n.call_other_name()            # a CallOther's user-op name, else None
-n.vn()                         # an InitialVar's register, a Call's return
-                               # register (first value output), a CallOther's
-                               # result varnode, else None
+n.vn()                         # an InitialVar's register, a Call's first
+                               # return register (None when its convention
+                               # has none), a CallOther's result varnode,
+                               # else None
 n.asm_fingerprint()            # machine addresses recorded on it (a superset:
                                # a shared constant carries every user's)
 ```
@@ -518,7 +519,7 @@ isinstance(p.entry(), p.InputPat)     # False
 `.input(i, p)` and `.output(slot)` address raw slots, numbered per node kind
 (`crates/strider-ir/src/node/signature.rs`): `Call` inputs are
 `[ctrl, mem, target, sp, arg0, ...]`, `Load`'s `[mem, addr]`, `If`'s
-`[ctrl, cond]`; `Call` outputs are `[ctrl, mem, result, ...clobbers]`, `Load`'s
+`[ctrl, cond]`; `Call` outputs are `[ctrl, mem, rets..., clobbers...]`, `Load`'s
 `[value]`. In a raw slot a typed value pattern binds a value edge, a wildcard
 any edge, a control producer (`entry()`, `region()`, `if_else()`) its control
 edge, and a `call()` / `call_other()` any of its outputs (`.res()` keeps it to

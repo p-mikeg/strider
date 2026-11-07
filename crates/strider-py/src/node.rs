@@ -38,7 +38,7 @@ impl PyNode {
         })?
     }
 
-    /// The first value output; a `Call`'s return value, ahead of its clobbers.
+    /// The first value output; a `Call`'s first return register, else its first clobber.
     fn value_output(
         function: &strider_ir::Function,
         nid: strider_ir::node::NodeId,
@@ -191,14 +191,21 @@ impl PyNode {
         })
     }
 
-    /// The varnode an `InitialVar` reads, a `Call` returns in, or a
-    /// `CallOther` result is assigned to; else `None`.
+    /// The varnode an `InitialVar` reads, a `Call`'s first return register
+    /// (`None` when its convention has none), or a `CallOther` result is
+    /// assigned to; else `None`.
     pub(crate) fn vn(&self, py: Python<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
         let vn = self.with_node(py, |function, nid| {
-            if matches!(
-                function.node_kind(nid),
-                NodeKind::Call { .. } | NodeKind::CallOther { .. }
-            ) && let Some(value) = Self::value_output(function, nid)
+            let returns = match function.node_kind(nid) {
+                NodeKind::Call { .. } => {
+                    let cc = function.get_cc(nid);
+                    !cc.ret_val_regs.is_empty() || !cc.ret_val_regs_float.is_empty()
+                }
+                NodeKind::CallOther { .. } => true,
+                _ => false,
+            };
+            if returns
+                && let Some(value) = Self::value_output(function, nid)
                 && let Some(vn) = function.get_vn_for_value(value)
             {
                 return Some(vn);

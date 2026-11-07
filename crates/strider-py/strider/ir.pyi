@@ -55,8 +55,9 @@ class Node:
         """A float constant's IEEE 754 bits, else `None`."""
         ...
     def vn(self) -> Optional[Vn]:
-        """The varnode an `InitialVar` reads, a `Call` returns in, or a
-        `CallOther` result is assigned to; else `None`."""
+        """The varnode an `InitialVar` reads, a `Call`'s first return register
+        (`None` when its convention has none), or a `CallOther` result is
+        assigned to; else `None`."""
         ...
     def asm_fingerprint(self) -> list[int]:
         """The machine-instruction addresses recorded on this node, sorted
