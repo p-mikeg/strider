@@ -1078,7 +1078,7 @@ mod tests {
     /// iteration, so a long one stops at the cap with a valid graph.
     #[test]
     fn a_capped_default_run_is_valid_and_not_converged() -> crate::Result<()> {
-        for (n, converged) in [(50, true), (800, false)] {
+        for (n, converged) in [(50, true), (800, true), (1200, false)] {
             let mut function = constant_branch_chain(n)?;
             crate::default_pipeline().run(&mut function, &OptCtx::new(None))?;
             assert_eq!(function.optimizer_converged(), converged, "n={n}");

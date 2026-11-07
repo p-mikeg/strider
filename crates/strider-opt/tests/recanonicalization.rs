@@ -141,9 +141,9 @@ fn default_pipeline_runs_its_passes_in_the_documented_order() {
             "KnownBits",
             "FlagCmpCanonicalize",
             "IfCondInversion",
+            "DeadBranchElimination",
             "PhiCollapse",
             "RegionCollapse",
-            "DeadBranchElimination",
             "LoadForward",
         ]
     );

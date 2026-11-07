@@ -51,9 +51,11 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(&FlagCmpCanonicalize);
     // After both, so a cond is at most one `Xor(_,1)` deep.
     p.add(&IfCondInversion);
+    // Before the collapses, so a join its fold leaves single-armed collapses
+    // in the same iteration.
+    p.add(&DeadBranchElimination);
     p.add(&PhiCollapse);
     p.add(&RegionCollapse);
-    p.add(&DeadBranchElimination);
     p.add(&LoadForward);
     p.add_post_pass(&CallStackArgCollect);
     p.add_post_pass(&FunctionArgDetect);
