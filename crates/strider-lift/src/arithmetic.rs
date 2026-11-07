@@ -1,6 +1,3 @@
-//! BOOL ops read their input's low bit, truncating it to `I1` (p-code acts on
-//! the whole byte); every vendored spec feeds them 0/1.
-
 use strider_ir::node::ValueId;
 use strider_ir::{
     ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,

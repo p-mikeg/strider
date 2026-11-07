@@ -148,7 +148,7 @@ fn walk_to_cycle(graph: &Graph, stranded: &NodeIdSet, start: NodeId) -> NodeIdSe
     path[closed..].iter().copied().collect()
 }
 
-/// Drops every stranded node reaching `cycle`, now terminated by its sink.
+/// Drops every stranded node reaching `cycle`, which its sink terminates.
 /// Each node leaves once, so seating is linear overall.
 fn drop_escaped(graph: &Graph, stranded: &mut NodeIdSet, cycle: &NodeIdSet) {
     let mut work: Vec<NodeId> = cycle.iter().collect();
