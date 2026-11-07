@@ -475,8 +475,8 @@ p.entry(); p.region(); p.switch(); p.indirect_branch(); p.unreachable()
 ```
 
 Call slots: `.target(p)` (an int address or a list is fine), `.arg(i, p)`,
-`.mem(m)`, `.ctrl(p)`, `.res()` (pin to the return value when nested as a value
-or in a raw slot), `.output(slot)`. `indirect_branch().target` and
+`.mem(m)`, `.ctrl(p)`, `.res()` (pin to output slot 2, the first return
+register, when nested as a value or in a raw slot), `.output(slot)`. `indirect_branch().target` and
 `switch().selector` take a list too.
 
 A call's argument index counts the integer registers, then the float ones,
@@ -525,7 +525,7 @@ isinstance(p.entry(), p.InputPat)     # False
 `[value]`. In a raw slot a typed value pattern binds a value edge, a wildcard
 any edge, a control producer (`entry()`, `region()`, `if_else()`) its control
 edge, and a `call()` / `call_other()` any of its outputs (`.res()` keeps it to
-the value).
+slot 2).
 
 Every typed builder nests in every slot but a memory one; one that can never
 match where it sits (a `store()` or `ret()`, `entry()` or `region()` as a value)
@@ -1013,9 +1013,10 @@ a tail call, and a fall-through past one's end is `"past_function_end"`.
 `ElfLifter.analyze` and `build_cfg` fill it, unless the options name some,
 from the sized function symbols `<name>.cold` and `<name>.cold.N` of every
 function symbol at the entry. A local fragment belongs to the function of
-that name in its own object file (`STT_FILE` group), else to the global one. A `<name>.part.N`,
-`.constprop.N` or `.isra.N` clone is a separate callee, and a branch into a
-cold partition named for another function stays a tail call.
+that name in its own object file (`STT_FILE` group), else to the global one,
+else to every function of that name. A `<name>.part.N`, `.constprop.N` or
+`.isra.N` clone is a separate callee, and a branch into a cold partition
+named for another function stays a tail call.
 
 `no_return_targets` lists direct-call targets that never return (`exit`,
 `abort`); it is the only way to mark one. List the address the call names: a

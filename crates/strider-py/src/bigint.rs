@@ -134,8 +134,8 @@ impl<'py, T: TryFrom<IBig>> FromPyObject<'py> for Ranged<T> {
     }
 }
 
-/// An unsigned argument: an address, id, index, size or count. A `bool` raises `TypeError`, an int outside `T`
-/// (or an `__index__` giving one) `StriderError`.
+/// An unsigned argument: an address, id, index, size or count. A `bool` raises
+/// `TypeError`, an int outside `T` (or an `__index__` giving one) `StriderError`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Unsigned<T>(pub T);
 
