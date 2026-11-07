@@ -259,9 +259,9 @@ impl BuiltCallingConvention {
         )
     }
 
-    /// [`Self::validate`], plus a callee-saved link register: the tradeoff
-    /// that carries `InitialVar(lr)` through call sites, so a function's own
-    /// convention, unlike a per-address callee's, needs it.
+    /// [`Self::validate`], plus `link_register` in `callee_saved_regs`, which
+    /// a function's own convention needs so `InitialVar(lr)` survives its
+    /// calls.
     ///
     /// # Errors
     /// As [`Self::validate`], or a link register missing from
@@ -363,7 +363,7 @@ impl BuiltCallingConvention {
                     sa.increment,
                 ));
             }
-            // `slot_of` relies on it.
+            // Keeps `slot_of`'s `offset - base_offset` from overflowing.
             if sa.base_offset < 0 {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: stack-arg base_offset must be >= 0, got {}",
@@ -422,12 +422,12 @@ pub struct StackArgs {
 impl StackArgs {
     /// Saturating.
     #[must_use]
-    pub fn offset_of(&self, n: usize) -> i128 {
+    pub(crate) fn offset_of(&self, n: usize) -> i128 {
         self.base_offset
             .saturating_add((n as i128).saturating_mul(self.increment))
     }
 
-    /// [`Self::offset_of`] from `sp_offset`. Saturating, so a caller stepping
+    /// `offset_of(n)` from `sp_offset`. Saturating, so a caller stepping
     /// the series stops when the offset stops advancing.
     #[must_use]
     pub fn slot_offset(&self, sp_offset: i128, n: usize) -> i128 {
