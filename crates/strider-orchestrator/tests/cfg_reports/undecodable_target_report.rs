@@ -6,13 +6,13 @@ use crate::common;
 
 const BASE: u64 = 0x1000;
 
-fn be_words(words: &[u32]) -> Vec<u8> {
-    words.iter().flat_map(|w| w.to_be_bytes()).collect()
-}
-
 fn analyze(words: &[u32]) -> strider_orchestrator::AnalyzeResult {
-    let (mut strider, cc) =
-        common::strider_over_bytes(common::Arch::Ppc32be, be_words(words), BASE, None);
+    let (mut strider, cc) = common::strider_over_bytes(
+        common::Arch::Ppc32be,
+        common::words_image(words, strider_target::Endianness::Big),
+        BASE,
+        None,
+    );
     let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(u64::try_from(words.len() * 4).expect("size")),

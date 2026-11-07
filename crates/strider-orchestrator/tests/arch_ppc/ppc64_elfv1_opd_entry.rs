@@ -179,7 +179,7 @@ fn toc_relative_r3(
     entry_values: impl FnOnce(&rsleigh::SleighRegs) -> Vec<(rsleigh::Vn, u64)>,
 ) -> Option<u128> {
     let code = [0x3862_8000u32, 0x4e80_0020];
-    let bytes: Vec<u8> = code.iter().flat_map(|w| w.to_be_bytes()).collect();
+    let bytes = common::words_image(&code, strider_target::Endianness::Big);
     let mut strider = strider_orchestrator::Strider::new(
         SleighArch::ppc64be(),
         rsleigh::mem_readers::BufMemReader::new(bytes, ADD7_ENTRY),

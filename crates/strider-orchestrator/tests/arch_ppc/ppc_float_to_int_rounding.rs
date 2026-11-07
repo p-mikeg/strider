@@ -137,7 +137,7 @@ fn image_raw(word: u32, rn: Option<u32>, data: u64) -> Vec<u8> {
         .map(|rn| vec![0xff80_010c | rn << 12])
         .unwrap_or_default();
     words.extend([0x3d20_0001, 0xc829_0040, word, 0x7c23_0066, 0x4e80_0020]);
-    let mut bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let mut bytes = common::words_image(&words, strider_target::Endianness::Little);
     assert!(bytes.len() <= DATA);
     bytes.resize(DATA, 0);
     bytes.extend_from_slice(&data.to_le_bytes());
@@ -224,7 +224,7 @@ fn the_claim_rounds_to_nearest_whatever_fpscr_holds() {
 fn mtfsfi_writes_its_immediate() {
     for u in 0..16u32 {
         let words = [0xff80_010c | u << 12, 0xfc20_048e, 0x7c23_0066, 0x4e80_0020];
-        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let bytes = common::words_image(&words, strider_target::Endianness::Little);
         for init in [0, u128::MAX] {
             let got = common::cone::returned_from_under(
                 Arch::Ppc64le,
@@ -377,7 +377,7 @@ fn frsp_rounds_by_fpscr_rn() {
 fn xscvdpspn_reads_no_fpscr_rn() {
     // xscvdpspn vs34, vs34; blr, vs34 the vector return register
     let words = [0xf040_142f_u32, 0x4e80_0020];
-    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let bytes = common::words_image(&words, strider_target::Endianness::Little);
     let (mut strider, cc) = common::strider_over_bytes(Arch::Ppc64le, bytes, BASE, None);
     let rn1 = strider.sleigh_regs().name_to_vn("fp_rn1").expect("fp_rn1");
     let opts = strider_orchestrator::AnalyzeOptions {
@@ -408,7 +408,7 @@ fn mtfsfi_of_field_zero_recomputes_fex_and_vx() {
         let mut words = clears.to_vec();
         // mtfsfi 0, U; mffs f1; mffprd r3, f1; blr
         words.extend([0xfc00_010c | u << 12, 0xfc20_048e, 0x7c23_0066, 0x4e80_0020]);
-        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let bytes = common::words_image(&words, strider_target::Endianness::Little);
         let got = common::cone::returned_from_under(
             Arch::Ppc64le,
             bytes,
@@ -435,7 +435,7 @@ fn mtfsfi_of_any_field_keeps_fex_and_vx_the_summaries() {
     ];
     // mffs f1; mffprd r3, f1; blr
     words.extend([0xfc20_048e, 0x7c23_0066, 0x4e80_0020]);
-    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let bytes = common::words_image(&words, strider_target::Endianness::Little);
     let got = common::cone::returned_from_under(
         Arch::Ppc64le,
         bytes,
@@ -454,7 +454,7 @@ fn mtfsfi_of_any_field_keeps_fex_and_vx_the_summaries() {
 #[test]
 fn fpscr_summaries_are_ors_and_fx_follows_vx() {
     let run = |words: &[u32]| {
-        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let bytes = common::words_image(words, strider_target::Endianness::Little);
         common::cone::returned_from_with(
             Arch::Ppc64le,
             bytes,

@@ -8,12 +8,13 @@
 //! `width` bits against `N`. x86-64 `cmp dil, imm8` is checked over every
 //! `(x, N)` pair at 8 bits; the wider forms over a boundary grid.
 
-use crate::common::{Arch, driver_for_reader};
+use crate::common::{Arch, driver_for_reader, words_image};
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, FunctionBound, MachineInsnAddr};
 use strider_ir::node::NodeKind;
 use strider_ir::{Function, IRViewer, IRWalker, IntCmpOp, UBig, ValueType, eval};
 use strider_ir_test_utils::interp::{self, EntryVar, Env, Outcome, Slot};
+use strider_target::Endianness;
 
 const BASE: u64 = 0x1000;
 const STACK: u128 = 0x7fff_0000;
@@ -69,10 +70,6 @@ struct Case {
     n: i128,
     cond: Cond,
     pre_add: u128,
-}
-
-fn le32(words: &[u32]) -> Vec<u8> {
-    words.iter().flat_map(|w| w.to_le_bytes()).collect()
 }
 
 fn le16(halves: &[u16]) -> Vec<u8> {
@@ -197,7 +194,7 @@ fn arm(imm: u32, cmn: bool, cond: Cond) -> Case {
     let n = i128::from(imm as i32);
     Case {
         arch: Arch::Arm,
-        bytes: le32(&words),
+        bytes: words_image(&words, Endianness::Little),
         reg: "r0",
         width: 32,
         n: if cmn { -n } else { n },
@@ -276,7 +273,7 @@ fn a64(imm: u16, wide: bool, cmn: bool, cond: Cond) -> Case {
     ];
     Case {
         arch: Arch::Aarch64,
-        bytes: le32(&words),
+        bytes: words_image(&words, Endianness::Little),
         reg: "x0",
         width: if wide { 64 } else { 32 },
         n: if cmn {

@@ -53,7 +53,7 @@ fn analyze(
     per_address_ccs: impl FnOnce(&rsleigh::SleighRegs) -> Vec<(u64, BuiltCallingConvention)>,
     default: impl FnOnce(&rsleigh::SleighRegs) -> BuiltCallingConvention,
 ) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
-    let bytes = WORDS.iter().flat_map(|w| w.to_be_bytes()).collect();
+    let bytes = common::words_image(&WORDS, strider_target::Endianness::Big);
     let (mut strider, _) = common::strider_over_bytes(common::Arch::Ppc32be, bytes, BASE, None);
     let regs = strider.sleigh_regs();
     let per_address_ccs = per_address_ccs(regs).into_iter().collect();
