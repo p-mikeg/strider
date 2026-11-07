@@ -71,10 +71,10 @@ as `__fentry__`). Memory is taken to be RAM: a memory-mapped register polled
 after a write folds to the value written.
 
 Each examined load's memory edge is also moved past definitions that cannot
-overwrite it (disjoint slots or addresses, and under `stack_global_disjoint` /
-`noalias_allocators`), never through a call a claim makes transparent: the
-jump-table walk and return-target verification read that edge without those
-claims.
+overwrite it (a provably disjoint slot or address, or one that
+`stack_global_disjoint` or `noalias_allocators` separates), never through a
+call a claim makes transparent: the jump-table walk and return-target
+verification read that edge without those claims.
 
 With `escape_analysis`, when no stack address escapes the frame, a spill load
 forwards across a call if the slot is outside the callee's argument window, and
@@ -96,8 +96,8 @@ slot whose FP argument travels in an FPR) are missed. A store of the entry
 value of a register the function's own convention preserves (a prologue save),
 or a call between store and call, also ends the arguments; other stores just
 above them can come along (an alignment push such as x86-64 clang's `push rax`
-or ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a non-loop join stores whole is
-collected as the phi of those values.
+or ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a
+non-loop join stores whole is collected as the phi of those values.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
 stack pointer read, after the register arguments: one ordinal per run of slots
