@@ -1027,8 +1027,8 @@ given.
 - `TypeError`: a wrongly typed argument, a `bool` address or index, a `str`
   `entry` outside `ElfLifter.analyze`.
 - `OverflowError`: an out-of-range fixed-width int (a constant, a stack
-  offset); an address, node id or operand index out of its unsigned range is a
-  `StriderError` instead, as is an integer constant over 512 bits.
+  offset); an address, id, index, size or count out of its unsigned range is
+  a `StriderError` instead, as is an integer constant over 512 bits.
 - `FileNotFoundError` / `ValueError`: a missing path / a non-ELF file
   (`load_elf`, `add_elf`, `add_symbol_file`). `ValueError` also for an
   unsupported arch or ABI (microMIPS included) and for range-checked

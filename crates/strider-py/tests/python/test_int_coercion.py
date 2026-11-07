@@ -3,7 +3,7 @@ import pytest
 import strider
 from strider import pattern as p
 from strider import template as t
-from .conftest import lift_bytes as _lift
+from .conftest import fixture_path, lift_bytes as _lift
 
 
 def test_int_operand_matches_like_int_const():
@@ -42,3 +42,15 @@ def test_an_int_operand_past_the_widest_value_type_is_rejected():
             p.int_const([1, v])
         with pytest.raises(strider.StriderError, match="512 bits"):
             t.int_const(v)
+
+
+def test_an_out_of_range_size_or_width_raises_strider_error():
+    lifter = strider.lift.load_elf(str(fixture_path("x64", "arithmetic")))
+    with pytest.raises(strider.StriderError, match="out of range"):
+        lifter.add_symbols({"f": (0x1000, -1)})
+    with pytest.raises(strider.StriderError, match="out of range"):
+        p.value_of_width(-3)
+    with pytest.raises(strider.StriderError, match="out of range"):
+        p.inputs_of_width(-3, p.anything())
+    with pytest.raises(strider.StriderError, match="out of range"):
+        strider.sleigh.Vn(strider.sleigh.VnSpace.REGISTER, 0, -1)

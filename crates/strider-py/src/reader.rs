@@ -1019,8 +1019,9 @@ impl PyLoadedElf {
         for (name, value) in symbols {
             let name: String = name.extract()?;
             let (address, size) = if value.is_instance_of::<pyo3::types::PyTuple>() {
-                let (a, n): (crate::bigint::Addr, u64) = value.extract()?;
-                (a.0, (n != 0).then_some(n))
+                let (a, n): (crate::bigint::Addr, crate::bigint::Unsigned<u64>) =
+                    value.extract()?;
+                (a.0, (n.0 != 0).then_some(n.0))
             } else {
                 (value.extract::<crate::bigint::Addr>()?.0, None)
             };
