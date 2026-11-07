@@ -36,7 +36,7 @@ macro_rules! delegate_node_pat {
     };
 
     (@m $inner:tt, capture) => {
-        /// Binds this node to `c`, so a match reports which node matched.
+        /// Binds the anchor output to `c`, or the node when it has no anchor.
         pub fn capture(mut self, c: $crate::capture::Capture) -> Self {
             self.$inner = self.$inner.capture(c);
             self
@@ -71,7 +71,7 @@ macro_rules! delegate_node_pat {
         }
     };
     (@m $inner:tt, any_input) => {
-        /// Matches some input no fixed operand pinned (on a commutative node, any input).
+        /// Matches some input no fixed operand pinned.
         /// Repeatable; several on one node take distinct slots, so `k` of them over `n` inputs
         /// explore `n!/(n-k)!` assignments.
         pub fn any_input<P: $crate::matcher::match_pat::MatchPat + 'static>(
