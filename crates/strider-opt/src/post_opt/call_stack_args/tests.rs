@@ -791,3 +791,73 @@ fn a_listed_allocator_ends_the_collection_like_any_call() -> Result<()> {
     assert_eq!(args_past_an_allocator(&[0x2000])?, 0, "a listed allocator");
     Ok(())
 }
+
+/// Slot 0 stored before an `if`, then each arm storing a 4-byte value at the
+/// start of 8-byte slot 1, as gcc mips64 n64 passes a `float`: the arguments
+/// collected under `order`.
+fn collect_narrow_merged(order: strider_target::Endianness) -> Result<Vec<NodeKind>> {
+    let sp = strider_ir_test_utils::stack_vn_x86_64();
+    let i64_ty = ValueType::int(64);
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(8, 8))
+        .byte_order(order)
+        .build_fn()?;
+    let entry = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    let sp_v0 = b.read_variable(&sp)?;
+    let call_sp = b.build_const_binop((-32i64) as u64, sp_v0, IntBinaryOp::Add, i64_ty)?;
+    b.write_variable(&sp, call_sp)?;
+    let slot0 = b.build_const_binop(8u64, call_sp, IntBinaryOp::Add, i64_ty)?;
+    let a = b.build_int_const(0xAu64, i64_ty)?;
+    b.build_store(slot0, a, rsleigh::VnSpace::RAM)?;
+    let (then, els, merge) = (
+        b.create_region_all()?,
+        b.create_region_all()?,
+        b.create_region_all()?,
+    );
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, then, els)?;
+    for (region, value) in [(then, 0xBu64), (els, 0xC)] {
+        b.set_region(region);
+        let call_sp = b.read_variable(&sp)?;
+        let slot1 = b.build_const_binop(16u64, call_sp, IntBinaryOp::Add, i64_ty)?;
+        let v = b.build_int_const(value, ValueType::int(32))?;
+        b.build_store(slot1, v, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+    }
+    b.set_region(merge);
+    let target = b.build_int_const(0x1000u64, i64_ty)?;
+    b.build_call_cc(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_passes(&mut fg, COLLAPSE)?;
+    crate::pipeline::run_post(&CallStackArgCollect, &mut fg, &crate::OptCtx::new(None))?;
+    let head = NodeKind::Call { cc: None }.input_head_len();
+    Ok(fg
+        .node_inputs(find_call(&fg))
+        .into_iter()
+        .skip(head)
+        .map(|v| *fg.node_kind(fg.producer(v)))
+        .collect())
+}
+
+/// The merged continuation takes a store at a slot's start whatever its width,
+/// as the prefix does, on either byte order.
+///
+/// Mutation: refuse a big-endian store narrower than its slot.
+#[test]
+fn a_narrow_store_at_a_merged_slots_start_is_its_argument() -> Result<()> {
+    for order in [
+        strider_target::Endianness::Big,
+        strider_target::Endianness::Little,
+    ] {
+        let kinds = collect_narrow_merged(order)?;
+        assert!(
+            matches!(kinds[..], [NodeKind::IntConst(_), NodeKind::Phi]),
+            "{order:?}: {kinds:?}",
+        );
+    }
+    Ok(())
+}
