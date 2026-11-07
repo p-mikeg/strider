@@ -80,9 +80,9 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// ISA mode. Keyed on the site, since another site decodes the same
     /// address in another context.
     pub(super) refused_arms: Vec<(NodeIndex, PcodeInsnAddr)>,
-    /// Regions sealed onto a stub at non-code bytes, with the error
-    /// [`Self::finish`] returns unless a call falls into it (`None`: marked
-    /// data).
+    /// Regions sealed onto a stub at non-code bytes or past the function
+    /// end, with the error [`Self::finish`] returns unless a call falls into
+    /// it (`None` for marked data or past the end).
     pub(super) sealed_into_no_code: Vec<(NodeIndex, Option<anyhow::Error>)>,
 }
 

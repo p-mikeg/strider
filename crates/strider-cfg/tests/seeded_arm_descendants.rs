@@ -538,3 +538,102 @@ fn a_seat_inside_a_refused_arm_is_not_reported() {
             .is_none()
     );
 }
+
+/// An arm whose call falls through to a run past the bound is kept, ending at
+/// the call, like a call before data or unmapped bytes.
+///
+/// ```text
+/// 1010  call 0x1100       ; arm
+/// 1015  xor eax, eax × 4
+/// 101d  mov rax, rax      ; falls through to 0x1020, the bound
+/// ```
+#[test]
+fn an_arm_calling_before_the_function_end_is_kept_and_ends_at_the_call() {
+    let mut arm = CALL_OUT.to_vec();
+    arm.extend_from_slice(&XOR_EAX.repeat(4));
+    arm.extend_from_slice(&[0x48, 0x89, 0xc0]);
+    let cfg = build_falling_arm(0x28, &arm, None);
+    assert_eq!(switch_arms(&cfg), [0x1002, 0x1010]);
+    assert_eq!(undecodable(&cfg), Vec::<u64>::new());
+    let arm = cfg
+        .regions()
+        .find(|r| r.start_addr.machine() == 0x1010)
+        .expect("the arm's region");
+    assert_eq!(arm.terminator, RegionTerminator::NoReturn);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::PastFunctionEnd)
+            .map(|a| a.machine())
+            .collect::<Vec<_>>(),
+        [0x1020],
+    );
+    assert_no_dangling_successor(&cfg);
+}
+
+/// gcc -O2 -mips16 `sw`: case 5 calls a no-return `h` the build is not told
+/// about, and its literal pool runs past the 156-byte symbol.
+///
+/// ```text
+/// 40016a  jrc v0              ; seven MIPS16 arms
+/// 4001c0  jal h               ; arm
+/// 4001c4  nop                 ; slot
+/// 4001c6  nop
+/// 4001c8  .word 0x55555556    ; literal pool
+/// 4001cc  <loop>              ; past the symbol
+/// ```
+#[test]
+fn a_mips16_arm_calling_a_no_return_function_before_its_pool_is_kept() {
+    const SW: [u8; 0xa0] = [
+        0x5c, 0x07, 0xf0, 0x08, 0x64, 0xf4, 0x61, 0x13, 0x92, 0x08, 0x69, 0x01, 0xe9, 0x2b, 0x52,
+        0x01, 0x61, 0x0b, 0x68, 0x00, 0x1a, 0x00, 0x00, 0x84, 0x67, 0x90, 0x48, 0x01, 0x93, 0x09,
+        0xea, 0x6c, 0xe1, 0x45, 0x92, 0x08, 0xe8, 0x42, 0x61, 0xf6, 0x67, 0x51, 0x64, 0x74, 0xe8,
+        0xa0, 0x67, 0x44, 0x33, 0x44, 0x0a, 0x03, 0xe2, 0x6d, 0x8b, 0x60, 0xe2, 0x69, 0xea, 0x80,
+        0x00, 0x2b, 0x00, 0x39, 0x00, 0x41, 0x00, 0x4f, 0x00, 0x0f, 0x00, 0x55, 0x00, 0x19, 0x1a,
+        0x00, 0x00, 0x84, 0x6c, 0x05, 0x67, 0x22, 0x17, 0xdf, 0xb2, 0x11, 0x93, 0x09, 0xeb, 0x58,
+        0x92, 0x09, 0xf7, 0xc0, 0x31, 0x43, 0xeb, 0x10, 0xe3, 0x27, 0x17, 0xd6, 0x1a, 0x00, 0x00,
+        0x84, 0x94, 0x09, 0x42, 0x21, 0x67, 0x51, 0x64, 0x74, 0xe8, 0xa0, 0x92, 0x09, 0x31, 0x4c,
+        0xe1, 0x47, 0x17, 0xcb, 0x92, 0x09, 0x1a, 0x00, 0x00, 0x84, 0x42, 0x8d, 0x91, 0x09, 0xe9,
+        0x4e, 0x17, 0xc4, 0x92, 0x09, 0x31, 0x4c, 0x17, 0xc1, 0x1a, 0x00, 0x00, 0x86, 0x65, 0x00,
+        0x65, 0x00, 0x55, 0x55, 0x55, 0x56, 0x55, 0x01, 0x61, 0x1b,
+    ];
+    const BASE: u64 = 0x40_0130;
+    const ARMS: [u64; 7] = [
+        0x40_0196, 0x40_01a4, 0x40_01ac, 0x40_01ba, 0x40_017a, 0x40_01c0, 0x40_0184,
+    ];
+    let site = PcodeInsnAddr::at_machine_start(0x40_016a);
+    let known = FxHashMap::from_iter([(
+        site,
+        ResolvedTargets::table(
+            ARMS.iter()
+                .map(|&a| strider_cfg::ResolvedTarget::new(a, Some(true))),
+        ),
+    )]);
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(156),
+        known_targets: &known,
+        ..CfgOptions::default()
+    };
+    let cfg = DecodeEngine::new(SleighArch::mipsbe32(), BufMemReader::new(SW.to_vec(), BASE))
+        .expect("decode engine")
+        .build_cfg((BASE | 1).into(), &opts)
+        .expect("build");
+    let mut arms = arms_at(&cfg, 0x40_016a);
+    arms.sort_unstable();
+    let mut want = ARMS.to_vec();
+    want.sort_unstable();
+    assert_eq!(arms, want);
+    assert_eq!(undecodable(&cfg), Vec::<u64>::new());
+    let h_arm = cfg
+        .regions()
+        .find(|r| r.start_addr.machine() == 0x40_01c0)
+        .expect("the arm's region");
+    assert_eq!(h_arm.terminator, RegionTerminator::NoReturn);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::PastFunctionEnd)
+            .map(|a| a.machine())
+            .collect::<Vec<_>>(),
+        [0x40_01cc],
+    );
+    assert_no_dangling_successor(&cfg);
+}

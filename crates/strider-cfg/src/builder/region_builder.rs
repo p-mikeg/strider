@@ -596,9 +596,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Ends the region `NoReturn` at its last call, dropping what follows,
-    /// when the fall-through reached `cur_addr`, which holds no code (left by
-    /// an unmarked no-return callee). Reports `cur_addr` as `reason`; returns
-    /// whether the region held a call.
+    /// when the fall-through reached `cur_addr`, which holds no code or is
+    /// past the function end (left by an unmarked no-return callee). Reports
+    /// `cur_addr` as `reason`; returns whether the region held a call.
     fn seal_at_call_not_returning(
         &mut self,
         cur_addr: PcodeInsnAddr,
@@ -616,7 +616,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Seals onto a stub at `cur_addr` when the fall-through from `from` ran
     /// past a `Size` or fragment end, reporting
     /// [`crate::Reason::PastFunctionEnd`]; returns whether it sealed. Off a
-    /// seeded arm it errs with [`DecodeFailure::PastEnd`] instead.
+    /// seeded arm it ends the run's last call `NoReturn` (also one reached
+    /// through empty regions), and with no such call errs with
+    /// [`DecodeFailure::PastEnd`].
     fn seal_past_function_end(
         &mut self,
         from: PcodeInsnAddr,
@@ -625,10 +627,24 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         if !self.is_fall_through_past_end(from, cur_addr) {
             return Ok(false);
         }
-        if self.builder.descent.is_some() {
+        let reason = crate::Reason::PastFunctionEnd;
+        if self.builder.descent.is_none() {
+            self.seal_and_report(cur_addr, reason)?;
+            return Ok(true);
+        }
+        if self.seal_at_call_not_returning(cur_addr, reason)? {
+            return Ok(true);
+        }
+        if self.builder.calls_falling_into(self.parent_edge).is_empty() {
             return Err(DecodeFailure::PastEnd(cur_addr).into());
         }
-        self.seal_and_report(cur_addr, crate::Reason::PastFunctionEnd)?;
+        self.seal_and_report(cur_addr, reason)?;
+        let sealed = self
+            .builder
+            .index
+            .get(self.start_addr)
+            .expect("just sealed");
+        self.builder.sealed_into_no_code.push((sealed, None));
         Ok(true)
     }
 }

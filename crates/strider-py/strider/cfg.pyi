@@ -102,8 +102,9 @@ class Cfg:
           `fragment_ranges` end.
 
         A seeded arm whose own decode reaches unmapped or undecodable bytes,
-        or plainly falls through past the end, is dropped; one landing on a
-        stub a direct edge already reported keeps it. From `analyze`, target
+        or falls through past the end, is dropped unless a call precedes them,
+        which then ends the arm; one landing on a stub an earlier edge or
+        fall-through reported keeps it. From `analyze`, target
         reasons accumulate over the resolver's rounds; site reasons are the
         final round's.
         """

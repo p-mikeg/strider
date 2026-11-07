@@ -69,8 +69,8 @@ reasons! {
     /// [`FunctionBound::Size`](crate::FunctionBound::Size) or fragment end
     /// (under `Open`, only a fragment's), named at the first address past it.
     /// It leaves through a `TailCall` stub, or ends a call's region
-    /// `NoReturn`. A plain fall-through off a seeded arm drops the arm
-    /// instead.
+    /// `NoReturn`. A fall-through off a seeded arm drops the arm instead,
+    /// unless a call precedes it.
     PastFunctionEnd => "past_function_end",
 }
 
