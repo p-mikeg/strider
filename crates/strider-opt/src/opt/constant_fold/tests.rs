@@ -2360,9 +2360,9 @@ fn edge_coefficients(bits: usize) -> Vec<u128> {
 }
 
 /// The four non-shift factoring rules, brute-forced at every width up to 128
-/// bits: whatever chain of rules
-/// fires, the folded value must stay the same multiple of the base it started
-/// as, computed independently in the width's modulus.
+/// bits: whatever chain of rules fires, the folded value must stay the same
+/// multiple of the base it started as, computed independently in the width's
+/// modulus.
 #[test]
 fn factor_coefficients_are_exact_at_every_carrier_width() -> Result<()> {
     use FactorForm::{AddMul, AddSelf, SubMul, SubSelf};

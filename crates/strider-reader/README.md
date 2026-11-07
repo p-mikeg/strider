@@ -43,13 +43,13 @@ file into memory instead.
 ET_EXEC / ET_DYN load from PT_LOAD headers, everything else from sections.
 
 Relocating an ET_REL stands in for the link: an undefined, `SHN_COMMON` or
-defined IFUNC symbol gets an address in an unmapped range past the image, and a GOT
-reference loads from a synthetic slot. The synthetic link binds every symbol
-locally, so those slots are ROM whatever `got_is_rom` says. An undefined weak
-symbol's address is computed only where it cannot be observed (a branch
-displacement whose relocation names a branch, such as `PLT32` or `CALL26`; a
-GOT slot left unmapped), so `if (&w)` folds neither way. An i386 `R_386_PC32`
-call or jump to one is a hole.
+defined IFUNC symbol gets an address in an unmapped range past the image, and
+a GOT reference loads from a synthetic slot. The synthetic link binds every
+symbol locally, so those slots are ROM whatever `got_is_rom` says. An
+undefined weak symbol's address is computed only where it cannot be observed
+(a branch displacement whose relocation names a branch, such as `PLT32` or
+`CALL26`; a GOT slot left unmapped), so `if (&w)` folds neither way. An i386
+`R_386_PC32` call or jump to one is a hole.
 
 Encodings are applied for x86, ARM, AArch64, MIPS and PowerPC. A relocation
 that cannot be computed (TLS, MIPS GP-relative, a branch needing a veneer)
