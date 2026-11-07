@@ -58,11 +58,8 @@ impl PyFunction {
     ) -> PyResult<R> {
         let mut function = self.inner.try_borrow_mut().map_err(|_| {
             into_strider_err(anyhow::anyhow!(
-                "Function mutation rejected: the function is currently borrowed for read \
-                 (typically because this call is from inside a `.when()` predicate \
-                 invoked by `find_all`/`find_unique`).  Mutating the function \
-                 from within a pattern predicate is not supported: collect matches \
-                 first and mutate after `find_all` returns."
+                "Function is being read (a query or a `.when()` predicate is running); \
+                 mutate it after the query returns."
             ))
         })?;
         function.graph_mut().bump_generation();

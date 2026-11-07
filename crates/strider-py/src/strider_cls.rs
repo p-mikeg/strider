@@ -879,7 +879,8 @@ impl PyLifter {
             compact: opts.compact,
             entry_values: &entry_values,
         };
-        // A Python reader keeps the GIL so finalisation waits for the analysis.
+        // A Python reader needs the GIL per read; keeping it also stops finalisation
+        // racing the analysis.
         let result = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(slf.bind(py))?;
             let reader_calls_python = lifter.reader_calls_python;
