@@ -32,11 +32,12 @@ Also:
 - a sign extend of a widening zero extend is that zero extend.
 
 **LoadReadOnly.** A load from a fixed address in read-only memory becomes the
-constant stored there. `load_elf` derives the read-only image (the file minus
-writable mappings), so an RWX segment is never folded; an image whose only
-`PT_LOAD` is RWX folds nothing, silently. Check `prog.rom()`, whose repr counts
-its regions, and pass your own `rom=` (see the [Python guide](python-guide.md)),
-as for a raw blob.
+constant stored there. The address may be a short constant expression, so a
+table walk `x = T[x]` folds in one run. `load_elf` derives the read-only image
+(the file minus writable mappings), so an RWX segment is never folded; an image
+whose only `PT_LOAD` is RWX folds nothing, silently. Check `prog.rom()`, whose
+repr counts its regions, and pass your own `rom=` (see the [Python
+guide](python-guide.md)), as for a raw blob.
 
 **KnownBits.** Tracks known-0/known-1 bits; a fully known result becomes a
 constant. A mask keeping every bit its operand may set is dropped:
@@ -185,9 +186,11 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 - A chain of about 500 constant guards held only in registers reaches the
   1024-iteration cap, and the analysis returns it partly folded. So does a
   chain of about 1000 guards that each reload a stack slot the previous
-  guard's arms store (`-O0` code), which folds one guard per iteration. A
-  chain whose guards each test a different stack slot, with stores between
-  them, still costs quadratic settle work in the guard count.
+  guard's arms store (`-O0` code), which folds one guard per iteration, and a
+  chain of about 1000 stack-array reads each indexed by the last (`i = s[i]`
+  at `-O0`), which folds one read per iteration. A chain whose guards each
+  test a different stack slot, with stores between them, still costs
+  quadratic settle work in the guard count.
 - Reloads of `n` distinct stack slots cost quadratic climb work past `n`
   diamonds inside an irreducible loop, where the climb steps one dominator at
   a time, and past `n` calls under `escape_analysis`, where every call is a

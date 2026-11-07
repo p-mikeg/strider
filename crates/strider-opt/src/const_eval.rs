@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType, WidthTie, width_tie};
 use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
@@ -156,6 +158,29 @@ pub(crate) fn eval_node_const(
         }
         _ => None,
     }
+}
+
+/// `value` evaluated over constant leaves, `cone` collecting each value
+/// visited, at most `max` of them.
+pub(crate) fn cone_const(
+    function: &Function,
+    value: ValueId,
+    max: usize,
+    cone: &RefCell<Vec<ValueId>>,
+) -> Option<UBig> {
+    {
+        let mut cone = cone.borrow_mut();
+        if cone.len() >= max {
+            return None;
+        }
+        cone.push(value);
+    }
+    eval_node_const(
+        function,
+        value,
+        &|v| cone_const(function, v, max, cone),
+        None,
+    )
 }
 
 /// `(x, c)` for a two-operand node with exactly one `IntConst` operand, `c`

@@ -44,6 +44,44 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
     Ok(())
 }
 
+/// `x = T[x]` eight times over (`-O0` table walks, decoders): each address
+/// is `T + zext(previous load)`, so one sweep folds the whole chain, and the
+/// last fold absorbs its address arithmetic's fingerprint.
+/// Mutation: fold only an `IntConst` address.
+#[test]
+fn a_dependent_load_chain_folds_in_one_sweep() -> Result<()> {
+    use strider_ir::{ExtendOp, IntBinaryOp};
+    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_empty_fn};
+    const LAST_ADD: u64 = 0xC0DE_0007;
+    let table: Vec<u8> = (0..=255u8)
+        .map(|i| i.wrapping_mul(37).wrapping_add(11))
+        .collect();
+    let rom = MockRom::raw_bytes(0x1000, table.clone());
+    let (i64t, i8t) = (ValueType::int(64), ValueType::int(8));
+    let mut fg = make_empty_fn(|b| {
+        let base = b.build_int_const(0x1000u64, i64t)?;
+        let mut byte = b.build_int_const(3u64, i8t)?;
+        for link in 0..8 {
+            let x = b.extend_if_needed(byte, i64t, ExtendOp::ZeroExtend)?;
+            b.set_lift_addr(Some(if link == 7 {
+                LAST_ADD
+            } else {
+                SENTINEL_LIFT_ADDR
+            }));
+            let addr = b.build_int_binary_operation(base, x, IntBinaryOp::Add, i64t)?;
+            b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+            byte = b.build_load(addr, rsleigh::VnSpace::RAM, i8t)?;
+        }
+        Ok(byte)
+    })?;
+    assert!(run_pass_rom(&LoadReadOnly, &mut fg, &rom)?);
+    let want = (0..8).fold(3u8, |x, _| table[usize::from(x)]);
+    assert_returns_const(&fg, u64::from(want));
+    let folded = fg.producer(fg.returned());
+    assert!(fg.side_tables().asm_fingerprint(folded).contains(&LAST_ADD));
+    Ok(())
+}
+
 /// `Return(Load(space, addr):ty)` in `endian`, the address an `IntConst`.
 fn load_fn(
     endian: Endianness,
@@ -100,7 +138,7 @@ fn a_const_load_folds_to_the_decoded_bytes() -> Result<()> {
 }
 
 /// A load the rom cannot answer stays: an unmapped address, an address that
-/// is no constant (`0x1000 + 0`, which LoadReadOnly alone does not fold), a
+/// is no constant (`0x1000 + load(0xDEAD)`, the inner load unmapped), a
 /// read wider than the rom answers, and a `Load(REGISTER)` at an address
 /// this rom answers for any, which only the pass's RAM filter refuses.
 #[test]
@@ -125,8 +163,9 @@ fn an_unanswerable_load_stays() -> Result<()> {
         ),
     ];
     let non_const = make_fn(|b| {
-        let base = b.build_int_const(0x1000u64, i64)?;
-        let addr = b.build_const_binop(0u64, base, strider_ir::IntBinaryOp::Add, i64)?;
+        let unmapped = b.build_int_const(0xDEADu64, i64)?;
+        let offset = b.build_load(unmapped, ram, i64)?;
+        let addr = b.build_const_binop(0x1000u64, offset, strider_ir::IntBinaryOp::Add, i64)?;
         b.build_load(addr, ram, i64)
     })?;
     cases.push(("non-const address", non_const, test_rom()));

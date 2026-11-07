@@ -1,11 +1,11 @@
-use std::cell::Cell;
+use std::cell::RefCell;
 
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{Function, IRBuilderExt, IRViewer, UBig};
 
 use crate::Result;
-use crate::const_eval::LoadSlice;
+use crate::const_eval::{LoadSlice, cone_const};
 use crate::mem_analysis::{Loc, MemQuery, Policy, ReachingDef, narrow_load_to};
 
 /// Store-to-load forwarding. Moves each load's memory edge onto its nearest
@@ -211,8 +211,8 @@ fn never_taken(f: &Function, mut edge: ValueId) -> bool {
         let node = f.producer(edge);
         match f.node_kind(node) {
             NodeKind::If => {
-                let budget = Cell::new(32);
-                let Some(cond) = cone_const(f, f.if_cond(node), &budget) else {
+                let cone = RefCell::default();
+                let Some(cond) = cone_const(f, f.if_cond(node), 32, &cone) else {
                     return false;
                 };
                 let taken = f.node_outputs(node)[if cond == UBig::ZERO {
@@ -232,12 +232,6 @@ fn never_taken(f: &Function, mut edge: ValueId) -> bool {
         }
     }
     false
-}
-
-/// `value` evaluated over constant leaves, visiting at most `budget` nodes.
-fn cone_const(f: &Function, value: ValueId, budget: &Cell<u32>) -> Option<UBig> {
-    budget.set(budget.get().checked_sub(1)?);
-    crate::const_eval::eval_node_const(f, value, &|v| cone_const(f, v, budget), None)
 }
 
 /// A wider store's value shifted right `shift` bits and truncated to the

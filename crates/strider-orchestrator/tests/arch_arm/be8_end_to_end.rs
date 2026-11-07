@@ -16,7 +16,7 @@
 
 use object::{Object, ObjectSymbol};
 use std::path::PathBuf;
-use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId};
+use strider_ir::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, IRWalker};
 use strider_target::{CallingConvention, SleighArch};
 
@@ -244,7 +244,8 @@ fn a_sub_register_write_preserves_the_half_the_sla_names() {
 /// Raw `.text` bytes: `1eff2fe1` at 0x10140 (`bx lr`, little-endian) then
 /// `00010220` at 0x10144 (big-endian). `ld --be8` reversed the instruction and
 /// not the pool word, so reading the word with the instruction order yields
-/// 0x20020100, which maps nowhere and folds nothing.
+/// 0x20020100, which maps nowhere and folds nothing. Read big-endian it is
+/// `k_str`, so the `ldrb` through it folds to `'y'` as well.
 #[test]
 fn a_literal_pool_word_reads_big_endian_between_little_endian_instructions() {
     let function = analyze("globals", "branch_on_const_string", Opt::LoadReadOnlyOnly);
@@ -253,9 +254,15 @@ fn a_literal_pool_word_reads_big_endian_between_little_endian_instructions() {
         .filter_map(|n| function.first_value_output_of(n))
         .filter_map(|v| function.int_const_u128(v))
         .collect();
+    let byte = function.walk().find(|&n| {
+        function.first_value_output_of(n).is_some_and(|v| {
+            function.value_type_opt(v) == Some(ValueType::int(8))
+                && function.int_const_u128(v) == Some(u128::from(b'y'))
+        })
+    });
     assert!(
-        folded.contains(&0x0001_0220),
-        "the pool word must fold to its big-endian value; got {folded:x?}"
+        byte.is_some(),
+        "the pool word must fold to its big-endian value"
     );
     assert!(
         !folded.contains(&0x2002_0100),

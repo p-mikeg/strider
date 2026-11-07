@@ -1,10 +1,13 @@
+use std::cell::RefCell;
+
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer, ReadOnlyMemory};
 
 use crate::Result;
+use crate::const_eval::{cone_const, read_rom_const};
 use crate::pipeline::OptCtx;
 
-/// Folds a RAM `Load` at a constant address to the integer the
+/// Folds a RAM `Load` at a constant address (or a small cone of constants) to the integer the
 /// [`OptCtx`]'s [`ReadOnlyMemory`] holds there, decoded per
 /// `Function::endianness`.
 ///
@@ -35,6 +38,11 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
     }
 }
 
+/// The most address values const-evaluated per load, enough for
+/// `base + ext(previous load)` once that load folds, so a dependent chain
+/// folds in one sweep.
+const ADDR_CONE: usize = 8;
+
 /// `node_id` is a `Load(VnSpace::RAM)`.
 fn try_fold_const_load_at(
     edit: &mut crate::EditFunction<'_>,
@@ -43,18 +51,18 @@ fn try_fold_const_load_at(
 ) -> Result<()> {
     let (data_value, ty) = edit.single_value_output(node_id)?;
     let addr_value = edit.load_addr(node_id);
-    let Some(masked) = edit
-        .int_const(addr_value)
-        .and_then(|addr| u64::try_from(addr).ok())
-        .and_then(|addr| {
-            crate::const_eval::read_rom_const(rom, addr, ty, edit.function().endianness())
-        })
+    let cone = RefCell::default();
+    let Some(masked) = cone_const(edit.function(), addr_value, ADDR_CONE, &cone)
+        .and_then(|addr| u64::try_from(&addr).ok())
+        .and_then(|addr| read_rom_const(rom, addr, ty, edit.function().endianness()))
     else {
         return Ok(());
     };
     let new_value = edit.build_int_const(masked, ty)?;
-    // The address is the fold's proof.
-    edit.absorb_fingerprint(new_value, addr_value);
+    // The address cone is the fold's proof.
+    for v in cone.into_inner() {
+        edit.absorb_fingerprint(new_value, v);
+    }
     edit.replace_value(data_value, new_value);
     Ok(())
 }
