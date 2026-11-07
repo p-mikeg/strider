@@ -1538,10 +1538,9 @@ mod tests {
             .expect("graph validates after resurrect + cull_dead");
     }
 
-    /// A value produced by an explicitly-killed side-effecting node must NOT
-    /// resurrect it.
+    /// A value produced by a killed control node must not resurrect it.
     #[test]
-    fn attach_output_of_killed_side_effecting_node_does_not_resurrect_it() {
+    fn attach_output_of_killed_control_node_does_not_resurrect_it() {
         let mut b = single_region_builder();
         let t = b.create_region_all().unwrap();
         let f = b.create_region_all().unwrap();
@@ -1576,7 +1575,7 @@ mod tests {
 
         assert!(
             !ctx.is_live(if_node),
-            "a side-effecting corpse must not be resurrected by an attach"
+            "a control corpse must not be resurrected by an attach"
         );
         assert!(
             !ctx.is_root(if_node),
