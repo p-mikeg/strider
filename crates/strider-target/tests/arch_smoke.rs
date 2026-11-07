@@ -50,24 +50,6 @@ fn presets_endianness_matches_arch() {
     }
 }
 
-/// Every name `transient_decode_vars` returns must be a context var the
-/// preset's own sla declares: the lifter reads each through `get_context_at`
-/// and silently drops the ones that fail, so a misspelling leaves the var
-/// leaking across functions with no signal.
-#[test]
-fn transient_decode_vars_resolve_on_their_preset() {
-    for preset in ArchPreset::ALL {
-        let arch = preset.arch();
-        let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-        let sleigh = arch.sleigh(reader).unwrap_or_else(|e| panic!("{e:#}"));
-        for name in arch.transient_decode_vars() {
-            sleigh
-                .get_context_at(0, name)
-                .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e:?}"));
-        }
-    }
-}
-
 /// The two MIPS `noflow` context vars a `globalset(inst_next, ...)` paints
 /// forward: `PAIR_INSTRUCTION_FLAG` (`mips.sinc:412`), which selects the
 /// `lwl`/`swl`/`ldl`/`sdl` constructor performing the whole unaligned access,

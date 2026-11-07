@@ -27,8 +27,7 @@ pub struct DecodeTables {
     /// Each [`SleighArch::flow_commit_vars`] var with its flow class and pspec
     /// default. A default is committed globally, so any address reads it.
     pub flow_commit: Vec<(&'static str, FlowCommit, u32)>,
-    /// The pspec default of each [`SleighArch::transient_decode_vars`] var the
-    /// sla declares.
+    /// The pspec default of each [`SleighArch::transient_decode_vars`] var.
     pub transient_defaults: Vec<(&'static str, u32)>,
     /// The declared register file.
     pub declared_reg_vns: Vec<Vn>,
@@ -45,7 +44,7 @@ pub struct DecodeTables {
 impl DecodeTables {
     /// # Errors
     /// When `sleigh` and `arch` disagree: the ISA-mode var does not flow, a
-    /// re-derived var is undeclared, `ISAModeSwitch` pairs differently, the
+    /// re-derived or transient var is undeclared, `ISAModeSwitch` pairs differently, the
     /// `ram` space is missing, misnamed or not byte-addressed, or
     /// [`SleighArch::volatile_register_ranges`] fails.
     pub(super) fn from_sleigh<R: MemReader>(
@@ -68,7 +67,6 @@ impl DecodeTables {
             .iter()
             .map(|name| sleigh.get_context_at(0, name))
             .collect::<Result<_, _>>()?;
-        // An undeclared var is an error here, unlike in `transient_defaults`.
         let flow_commit = arch
             .flow_commit_vars()
             .iter()
@@ -84,8 +82,8 @@ impl DecodeTables {
         let transient_defaults = arch
             .transient_decode_vars()
             .iter()
-            .filter_map(|name| Some((*name, sleigh.get_context_at(0, name).ok()?)))
-            .collect();
+            .map(|&name| Ok((name, sleigh.get_context_at(0, name)?)))
+            .collect::<anyhow::Result<_>>()?;
         // Sleigh derives shortcut `r` from a space's name, bumping on
         // collision, so it need not be `ram`.
         let ram = sleigh.space_info(VnSpace::RAM).ok_or_else(|| {
