@@ -12,6 +12,9 @@ mod arm_cpsr_state;
 #[path = "arch_arm/arm_mode_switch_rebanks.rs"]
 mod arm_mode_switch_rebanks;
 
+#[path = "arch_arm/arm_neon_permute.rs"]
+mod arm_neon_permute;
+
 #[path = "arch_arm/arm_neon_lane_insert.rs"]
 mod arm_neon_lane_insert;
 

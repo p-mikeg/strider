@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x3dc
 cfg
   0x3dc 576 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r12, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x10500:4, u:0x12300:4, u:0x101f00:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r12, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x10500:4, u:0x12300:4, u:0x10c100:4]
 frame_address_in_call_register reach=-28
 arg 2 [%v36]
 float_arg 0 [%v37]
