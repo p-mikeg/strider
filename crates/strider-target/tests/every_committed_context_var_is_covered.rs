@@ -193,14 +193,14 @@ fn every_committed_context_var_is_covered_by_the_right_mechanism() {
                 continue;
             }
             if transient.contains(var.as_str()) {
-                // `hold_transients` clears to the pspec default with NO
-                // re-lift, including at a region start, which would destroy a
-                // flowing value the predecessor legitimately committed.
+                // `hold_transients` resets it to the pspec default before
+                // every decode, a region start included, which would destroy
+                // a flowing value the predecessor committed.
                 assert!(
                     is_noflow,
                     "{preset:?}: `{var}` is declared FLOWING in the sla but sits \
-                     in transient_decode_vars, which clears it without a \
-                     re-lift",
+                     in transient_decode_vars, which resets it before every \
+                     decode",
                 );
             } else {
                 assert!(
