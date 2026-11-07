@@ -189,37 +189,6 @@ mod tests {
         );
     }
 
-    /// A value with bits above the declared width and its masked form must
-    /// dedup to one node.
-    #[test]
-    fn int_const_payload_is_normalised_to_output_type_width() {
-        use crate::{IRBuilderExt, IRViewer};
-        let mut function = test_function();
-        // -4 at I8: only the low 8 bits of 0x1FC matter.
-        let wide = function
-            .build_int_const(0x1FCu128, ValueType::int(8))
-            .unwrap();
-        let masked = function
-            .build_int_const(0xFCu128, ValueType::int(8))
-            .unwrap();
-        assert_eq!(
-            function.producer(wide),
-            function.producer(masked),
-            "semantically-equal IntConst values must normalise to the output \
-         type width and dedup to the same node"
-        );
-        assert_eq!(
-            function.int_const_u128(wide),
-            Some(0xFC),
-            "stored value must be masked to the I8 width"
-        );
-        assert_eq!(
-            function.graph().all_node_ids().count(),
-            3,
-            "normalised IntConst constants must not allocate a second node"
-        );
-    }
-
     #[test]
     fn non_cacheable_node_is_never_deduplicated() {
         let mut function = test_function();

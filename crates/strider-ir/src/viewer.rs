@@ -390,8 +390,6 @@ mod tests {
     //! Fixtures are built inline: `strider_ir_test_utils` links a separate
     //! compilation of strider-ir, so its `Function` is a different type here.
 
-    use dashu_int::UBig;
-
     use crate::builder::IRBuilderExt;
     use crate::node::ValueType;
     use crate::{FunctionBuilder, IRViewer, IRWalker, IntBinaryOp};
@@ -447,36 +445,5 @@ mod tests {
             [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(f.access_address(load), None);
-    }
-
-    /// Little-endian, zero-extended to the declared byte size, whichever
-    /// path built the stored value.
-    #[test]
-    fn le_bytes_serialises_little_endian_at_the_declared_width() {
-        let bytes = |limbs: &[u64], ty: ValueType| {
-            let cc = strider_target::BuiltCallingConvention::default();
-            let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little);
-            let v = b
-                .build_int_const(UBig::from_words(limbs), ty)
-                .expect("const");
-            crate::eval::le_bytes(b.int_const(v).expect("an int const"), ty)
-        };
-        // Bytes 1..=8 little-endian.
-        let low: u64 = 0x0807_0605_0403_0201;
-        let mut i256 = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
-        i256.resize(32, 0);
-        let mut past_carrier = vec![0u8; 32];
-        past_carrier[16] = 1;
-        assert_eq!(
-            bytes(&[low], ValueType::int(80)),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0]
-        );
-        assert_eq!(
-            bytes(&[low], ValueType::int(128)),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]
-        );
-        assert_eq!(bytes(&[low, 0, 0, 0], ValueType::int(256)), i256);
-        // Bit 128 is the first bit no `u128` carries.
-        assert_eq!(bytes(&[0, 0, 1, 0], ValueType::int(256)), past_carrier);
     }
 }

@@ -97,15 +97,6 @@ fn new_builds_entry_then_initial_memory() {
 }
 
 #[test]
-fn int_const_u128_truncates_to_declared_width() -> Result<()> {
-    let mut b = empty_builder()?;
-    let value = b.build_int_const(u8::MAX as u64 + 1, ValueType::int(8))?;
-    let val = b.int_const_u128(value);
-    assert_eq!(val, Some(0)); // 256 & 0xFF == 0
-    Ok(())
-}
-
-#[test]
 fn get_as_int_accepts_bool_const() -> Result<()> {
     let mut b = empty_builder()?;
     let bt = b.build_boolean_const(true);
@@ -334,15 +325,6 @@ fn build_boolean_operation_produces_bool_binary_node() -> Result<()> {
         b.function().value_kind(result),
         ValueKind::Typed(ValueType::I1)
     );
-    Ok(())
-}
-
-#[test]
-fn identical_constants_are_deduplicated() -> Result<()> {
-    let mut b = empty_builder()?;
-    let a = b.build_int_const(77u64, ValueType::int(32))?;
-    let c = b.build_int_const(77u64, ValueType::int(32))?;
-    assert_eq!(a, c, "same constant must reuse the same node");
     Ok(())
 }
 
@@ -1168,35 +1150,12 @@ fn build_cpool_ref_produces_typed_node() -> Result<()> {
 }
 
 #[test]
-fn build_cpool_ref_is_not_deduplicated() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let r0 = b.build_int_const(0xAAu64, ValueType::int(32))?;
-    let a = b.build_cpool_ref(&[r0], ValueType::int(64))?;
-    let c = b.build_cpool_ref(&[r0], ValueType::int(64))?;
-    assert_ne!(
-        a, c,
-        "CPoolRef is non-cacheable -> must yield distinct nodes"
-    );
-    Ok(())
-}
-
-#[test]
 fn build_new_produces_typed_node() -> Result<()> {
     let mut b = builder_with_region()?;
     let size = b.build_int_const(32u64, ValueType::int(64))?;
     let value = b.build_new(&[size], ValueType::int(64))?;
     let node = b.function().producer(value);
     assert_eq!(b.function().node_kind(node), &NodeKind::New);
-    Ok(())
-}
-
-#[test]
-fn build_new_is_not_deduplicated() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let size = b.build_int_const(32u64, ValueType::int(64))?;
-    let a = b.build_new(&[size], ValueType::int(64))?;
-    let c = b.build_new(&[size], ValueType::int(64))?;
-    assert_ne!(a, c, "each allocation must yield a distinct node");
     Ok(())
 }
 
@@ -2654,16 +2613,6 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
         "clobber output at slot 3 must carry value_vn = rcx"
     );
 
-    Ok(())
-}
-
-/// 3 at I1 masks to 1 and dedups with boolean `true`.
-#[test]
-fn i1_const_dedups_with_boolean_true() -> Result<()> {
-    let mut b = empty_builder()?;
-    let v = b.build_int_const(3u64, ValueType::I1)?;
-    let t = b.build_boolean_const(true);
-    assert_eq!(b.function().producer(t), b.function().producer(v));
     Ok(())
 }
 

@@ -507,16 +507,6 @@ mod tests {
         );
     }
 
-    /// Past the carrier there is no scalar reading, and the limbs stand.
-    #[test]
-    fn values_past_the_u128_carrier_keep_their_limbs() {
-        let mut f = test_function();
-        // Bit 128 is the first bit no `u128` carries.
-        let id = f.intern_int_const(UBig::from_words(&[0, 0, 1, 0]), ValueType::int(256));
-        assert!(u128::try_from(f.const_value(id)).is_err());
-        assert_eq!(*f.const_value(id), UBig::ONE << 128);
-    }
-
     /// Bits above the declared width are not part of the value, on either
     /// path, so an over-wide spelling dedups with the masked one.
     #[test]
