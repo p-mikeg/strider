@@ -571,10 +571,9 @@ impl DepthGuard {
             let steps = COMPILE_STEPS.get() + 1;
             if steps > MAX_COMPILE_STEPS {
                 return Err(into_strider_err(anyhow::anyhow!(
-                    "pattern too large to compile: over {MAX_COMPILE_STEPS} lowered \
-                     nodes. A Pat used in two operands (q = int_add(q, q)) lowers \
-                     once per use, so each level of reuse doubles the pattern; a \
-                     query stays well under the matcher's node cap"
+                    "pattern or template too large to compile: over \
+                     {MAX_COMPILE_STEPS} lowered nodes; one reused in two operands \
+                     (q = int_add(q, q)) lowers once per use, doubling per level"
                 )));
             }
             COMPILE_STEPS.set(steps);
