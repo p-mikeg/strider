@@ -71,7 +71,7 @@ fn direct_call_to_no_return_target_terminates_region_mid_function() {
 }
 
 #[test]
-fn single_ret_produces_one_region_without_tail_call_flag() {
+fn single_ret_is_one_return_region() {
     let cfg = build_from_bytes(vec![0xc3], 0x1000);
     assert_eq!(cfg.region_graph().node_count(), 1);
     assert_eq!(
