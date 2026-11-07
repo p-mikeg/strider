@@ -160,10 +160,10 @@ class Match:
         ...
     def vn(self, key: CaptureKey) -> Vn:
         """The varnode the node bound by `key` names: an `InitialVar`'s
-        entry-read varnode, the register a `Call` returns in, or a
-        `CallOther`'s result varnode. Raises for any other kind, and for a
-        result carrying no varnode. For a multi-output call, the first value
-        output."""
+        entry-read varnode, a `Call`'s first return register, or a
+        `CallOther`'s result varnode. Raises for any other kind, for a `Call`
+        whose convention returns nothing, and for a result carrying no
+        varnode."""
         ...
     def vn_opt(self, key: CaptureKey) -> Optional[Vn]:
         """`vn`, or `None` instead of raising."""
@@ -475,7 +475,7 @@ class OutputPat(Protocol):
     """A builder whose node kind exposes raw output slots."""
     def output(self: _S, slot: int) -> OutputSlotPat[_S]:
         """Bind or constrain the value at raw output `slot` (a `Call` is
-        `[ctrl, mem, result, ...clobbers]`, a `Load` `[value]`)."""
+        `[ctrl, mem, rets..., clobbers...]`, a `Load` `[value]`)."""
         ...
     def any_output(self: _S) -> OutputSlotPat[_S]:
         """Like `output`, over some output rather than a fixed slot."""
@@ -509,7 +509,7 @@ class CallPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):
     """Builder for `Call` node patterns, returned by `call()`.
 
     Inputs are `[ctrl, mem, target, sp, arg0, ...]`, outputs `[ctrl, mem,
-    result, ...clobbers]`.
+    rets..., clobbers...]`.
     """
     def target(self, p: Union[ValueLike, list[ValueLike]]) -> "CallPat":
         """Constrain the call target. A raw int matches that literal address;
@@ -520,8 +520,8 @@ class CallPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):
         `idx + 4`)."""
         ...
     def res(self) -> "CallPat":
-        """When nested as a value or raw-slot operand, pin it to the declared
-        result output, excluding caller-saved clobbers."""
+        """As a value or raw-slot operand, match only output slot 2: the first
+        return register, or the first clobber under a convention with none."""
         ...
 
 class CallOtherPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):

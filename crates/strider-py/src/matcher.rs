@@ -292,7 +292,7 @@ match_getters! {
     #[doc = "The raw float bits, or `None`."]
     "float_bits_opt" float_bits_opt : u64 = float_bits;
 
-    #[doc = "The varnode the bound node names: an `InitialVar`'s entry-read varnode, the register a `Call` returns in, or a `CallOther`'s result varnode. Raises for any other kind and for a result with no varnode. For a multi-output call, the first value output."]
+    #[doc = "The varnode the bound node names: an `InitialVar`'s entry-read varnode, a `Call`'s first return register, or a `CallOther`'s result varnode. Raises for any other kind, for a `Call` whose convention returns nothing and for a result with no varnode."]
     "vn" vn,
     #[doc = "The varnode, or `None`."]
     "vn_opt" vn_opt : crate::sleigh::PyVn = vn;

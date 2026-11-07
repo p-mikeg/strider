@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import pytest
 
 import strider
@@ -203,3 +205,36 @@ def test_a_preset_of_another_arch_is_named_as_python_spells_it():
         lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_cdecl())
     msg = str(excinfo.value)
     assert "x86_64: " in msg and "stack pointer %[0x20]:4 is 4 bytes" in msg, msg
+
+
+def _call_vns(
+    cc: strider.sleigh.CallingConvention,
+) -> tuple[Optional[strider.sleigh.Vn], Optional[strider.sleigh.Vn]]:
+    # call 0x2000 (e8 fb 0f 00 00) ; ret (c3)
+    mem = strider.reader.BufferReader(0x1000, b"\xe8\xfb\x0f\x00\x00\xc3")
+    arch = strider.sleigh.SleighArch.x86_64()
+    _cfg, function, _unresolved = strider.lift.lifter(arch, mem).analyze(0x1000, cc)
+    c = strider.pattern.Capture()
+    (m,) = function.find_all(strider.pattern.call().capture(c))
+    return function.node(m.root).vn(), m.vn_opt(c)
+
+
+def test_call_vn_is_none_under_a_convention_that_returns_nothing():
+    arch = strider.sleigh.SleighArch.x86_64()
+    void_cc = strider.sleigh.CallingConvention.custom(
+        sleigh=arch,
+        arg_passing_regs=["RDI"],
+        callee_saved_regs=["RBX", "R12", "R13", "R14", "R15", "RBP"],
+        ret_val_regs=[],
+        ret_val_regs_float=[],
+        stack_pointer="RSP",
+        stack_arg_base=None,
+        stack_arg_increment=8,
+        ret_stack_pop=8,
+        link_register=None,
+        preserves_memory=False,
+    )
+    assert _call_vns(void_cc) == (None, None)
+    node_vn, match_vn = _call_vns(strider.sleigh.CallingConvention.x86_64_systemv())
+    assert node_vn is not None and arch.reg_name(node_vn) == "RAX"
+    assert match_vn == node_vn

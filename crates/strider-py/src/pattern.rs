@@ -1598,7 +1598,7 @@ macro_rules! builder_slot_methods {
         #[pymethods]
         impl $ty {
             /// Bind or constrain raw output `slot` (a `Call` is `[ctrl, mem,
-            /// result, ...clobbers]`, a `Load` `[value]`) through the returned
+            /// rets..., clobbers...]`, a `Load` `[value]`) through the returned
             /// `.capture(c)` / `.of_width(w)` / `.of_type(ty)`.
             fn output(slf: Bound<'_, Self>, slot: crate::bigint::Unsigned<usize>) -> PyOutputSlot {
                 PyOutputSlot {
@@ -2030,8 +2030,8 @@ node_builder! {
         { multi args(usize): arg(Value) = "Constrain positional argument `idx` (0-based)." },
         { pat mem(Memory): mem = "Constrain the call's memory predecessor." },
         { flag res: res
-            = "When nested as a value or raw-slot operand, pin it to the declared \
-               result output, excluding caller-saved clobbers." },
+            = "As a value or raw-slot operand, match only output slot 2: the first \
+               return register, or the first clobber under a convention with none." },
     ],
     ctor: call = "Start a `Call` pattern builder.",
 }
