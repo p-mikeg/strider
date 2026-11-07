@@ -158,9 +158,8 @@ pub(crate) fn eval_node_const(
     }
 }
 
-/// `(x, c)` for a two-operand node with exactly one operand an integer
-/// constant, `c` its value; `None` where that constant is past `u128`. Which
-/// operand is constant is asked of the stored constant, not the `u128` carrier.
+/// `(x, c)` for a two-operand node with exactly one `IntConst` operand, `c`
+/// its value; `None` when `c` exceeds `u128`.
 pub(crate) fn var_and_const(
     function: &(impl IRViewer + ?Sized),
     node: NodeId,

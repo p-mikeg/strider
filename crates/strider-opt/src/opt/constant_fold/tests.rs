@@ -2122,10 +2122,8 @@ fn linear_coeff(
     }
 }
 
-/// `(x * C1) * C2` combines its coefficients with `wrapping_mul`, i.e. modulo
-/// `2^128`. Brute-forced at every width the carrier holds: the width's modulus
-/// divides `2^128`, so the result must equal the product computed in that
-/// width directly.
+/// `(x * C1) * C2` folds to `x * (C1 * C2)` at the declared width,
+/// brute-forced at every width up to 128 bits.
 #[test]
 fn reassoc_mul_is_exact_at_every_carrier_width() -> Result<()> {
     let widths = [
@@ -2361,8 +2359,8 @@ fn edge_coefficients(bits: usize) -> Vec<u128> {
     cs
 }
 
-/// The four non-shift factoring rules compute their coefficient in `u128`.
-/// Brute-forced at every width that carrier holds: whatever chain of rules
+/// The four non-shift factoring rules, brute-forced at every width up to 128
+/// bits: whatever chain of rules
 /// fires, the folded value must stay the same multiple of the base it started
 /// as, computed independently in the width's modulus.
 #[test]

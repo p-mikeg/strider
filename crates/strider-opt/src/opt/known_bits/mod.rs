@@ -87,7 +87,8 @@ fn shift_known_bits(
 }
 
 /// The largest `Popcount` / `Lzcount` (`kind`) of an `input_ty` value with
-/// `input` facts, counting over its `8 * byte_size` bits as Sleigh does.
+/// `input` facts: an upper bound, counting `8 * byte_size` bits as Sleigh's
+/// LZCOUNT does.
 pub(crate) fn count_max(kind: NodeKind, input: KnownBitsFacts, input_ty: ValueType) -> u128 {
     let width = input_ty.byte_size() as u128 * 8;
     match kind {

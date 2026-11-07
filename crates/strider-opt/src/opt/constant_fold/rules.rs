@@ -49,9 +49,8 @@ pub(super) fn binds_no_int_const(b: &Bindings, f: &strider_ir::Function, cap: Ca
         .is_some_and(|n| matches!(f.node_kind(n), NodeKind::IntConst(_)))
 }
 
-/// Collects a value against itself: each side of an `Add` (or `Add(a, Neg(b))`)
-/// is `x*C`, `x<<C` or bare `x`, and the sum becomes one `Mul` by the summed
-/// coefficients, masked to the root's width when interned.
+/// `x*C1 + x*C2` and `x*C1 - x*C2`, each side `x*C`, `x<<C` or `x`, become
+/// `x * (C1 ± C2)`.
 fn build_factor_rules() -> Vec<Rule> {
     let (x, c1, c2, z1, z2) = (
         Capture::new(),
@@ -200,17 +199,15 @@ fn build_reassoc_and_mask_rules() -> Vec<Rule> {
             int_const(c3),
         )
         .when_match(move |edit, ty, binds| {
-            let (Some(v1), Some(v2), Some(v3)) = (
-                binds.get_uint(c1, edit.function()),
-                binds.get_uint(c2, edit.function()),
-                binds.get_uint(c3, edit.function()),
-            ) else {
-                return false;
-            };
-            if !at_root_width(edit.function(), binds, ty, &[x, y, c1, c2, c3]) {
-                return false;
-            }
-            (&v1 & &v3) == UBig::ZERO || (&v2 & &v3) == UBig::ZERO
+            let f = edit.function();
+            let c = |cap| binds.get_uint(cap, f);
+            at_root_width(f, binds, ty, &[x, y, c1, c2, c3])
+                && match (c(c1), c(c2), c(c3)) {
+                    (Some(v1), Some(v2), Some(v3)) => {
+                        (&v1 & &v3) == UBig::ZERO || (&v2 & &v3) == UBig::ZERO
+                    }
+                    _ => false,
+                }
         }),
         template::int_or(
             template::int_and(var(x), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
@@ -227,7 +224,6 @@ fn build_reassoc_and_mask_rules() -> Vec<Rule> {
             ) else {
                 return false;
             };
-            // `get_uint` masks each constant to its own width.
             at_root_width(edit.function(), binds, ty, &[x, c1, c2])
                 && (set_bits & mask) == UBig::ZERO
         }),

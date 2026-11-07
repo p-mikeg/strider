@@ -4,7 +4,7 @@ use crate::Result;
 use crate::peephole::PeepholePass;
 use crate::rewrite_rule::RuleTable;
 
-pub(crate) mod eval_float;
+mod eval_float;
 mod rules;
 #[cfg(test)]
 mod tests;
