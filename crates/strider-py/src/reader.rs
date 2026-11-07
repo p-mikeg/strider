@@ -834,8 +834,8 @@ impl PyLoadedElf {
             any_named.entry(sym.name.as_str()).or_default().push(i);
         }
         // `<f>.cold` is local to `f`'s object, but the linker moves cold code
-        // away from the bodies and makes a hidden `f` local in its own group.
-        // Owner: the local `f` of that object, else a global `f`, else any `f`.
+        // away and puts a hidden or LTO-private `f` in its own group. Owner:
+        // the local `f` of that object, else a global `f`, else every `f`.
         let mut cold_fragments: HashMap<usize, Vec<std::ops::Range<u64>>> = HashMap::new();
         for (i, sym) in functions() {
             let (Some(base), Some(size)) = (cold_fragment_base(&sym.name), sym.size) else {

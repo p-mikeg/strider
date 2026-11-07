@@ -97,7 +97,8 @@ value of a register the function's own convention preserves (a prologue save),
 or a call between store and call, also ends the arguments; other stores just
 above them can come along (an alignment push such as x86-64 clang's `push rax`
 or ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a
-non-loop join stores whole is collected as the phi of those values.
+non-loop join stores whole is collected as the phi of those values, and past
+those a slot stored whole before the branch as its value.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
 stack pointer read, after the register arguments: one ordinal per run of slots

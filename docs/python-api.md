@@ -476,8 +476,8 @@ p.entry(); p.region(); p.switch(); p.indirect_branch(); p.unreachable()
 
 Call slots: `.target(p)` (an int address or a list is fine), `.arg(i, p)`,
 `.mem(m)`, `.ctrl(p)`, `.res()` (pin to output slot 2, the first return
-register, when nested as a value or in a raw slot), `.output(slot)`. `indirect_branch().target` and
-`switch().selector` take a list too.
+register, when nested as a value or in a raw slot), `.output(slot)`.
+`indirect_branch().target` and `switch().selector` take a list too.
 
 A call's argument index counts the integer registers, then the float ones,
 then any vector window, then stack arguments: on x86-64 SysV `.arg(6)` is
