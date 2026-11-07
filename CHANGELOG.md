@@ -275,6 +275,13 @@ replaced the rest.
 
 Matching and rewriting:
 
+- A join keeps matches that differ only in their root when their captures
+  are not shared with an earlier pattern; a join (`find_all` over several
+  patterns or with any constraint) dropped such rows.
+- Two fixed operands wired to one slot of a commutative node are not split
+  across both slots.
+- Replacing a builder's `.when()` or slot value whose `__del__` touches the
+  builder no longer panics.
 - `find_joined_constrained` keeps rows that differ only in a later
   pattern's binding of a shared capture; the answer depended on pattern
   order.
@@ -306,6 +313,13 @@ Matching and rewriting:
 
 Analysis:
 
+- A seeded table arm that calls an unmarked no-return function and then runs
+  past the function end is kept; a switch with such an arm before a literal
+  pool (gcc MIPS16, Thumb) stayed unresolved.
+- An arm falling through into another arm's region is sealed onto it before
+  decoding, so a mode clash is `isa_mode_conflict`, not `undecodable_target`.
+- Seating a table at an instruction that ends at 2^64 no longer overflows.
+- `mwaitx` reads its EBX timer.
 - An ARM `addls pc` or Thumb `tbb` jump table indexed through a guarded
   ROM cell (`switch (map[c])`) seats only the arms the cell's guard admits;
   it seated arms past the table, silently.
@@ -385,6 +399,9 @@ Analysis:
 
 Lifting and decoding (most in the vendored Sleigh):
 
+- An x86 decode longer than 16 bytes is undecodable instead of a panic.
+- x86 `rdpid` requires a register operand; `f3 0f c7 /7` with a memory
+  operand decoded as a 4-byte `rdpid`.
 - ARM NEON `vtrn`, `vzip` and `vuzp` (D and Q) write both registers; they
   wrote only Vd, from an opaque op of Vm alone, leaving Vm stale. A `vtrn`
   of 64-bit elements (UNDEFINED) no longer decodes.
@@ -452,6 +469,8 @@ Lifting and decoding (most in the vendored Sleigh):
 
 Loading:
 
+- A Python reader's unmapped answer builds no error, so constant loads from
+  unmapped memory cost no more than mapped ones.
 - Under `got_is_rom`, a `-z now` non-PIE executable's `JUMP_SLOT` against an
   import with a canonical PLT is a hole; it was served as the PLT stub's own
   address, and the stub lifted as a self-loop.
@@ -488,6 +507,9 @@ Loading:
 
 Rendering:
 
+- `to_dot` / `to_html` raise `OSError` naming the path when the file cannot
+  be written.
+- `strider.explore.visualize(depth=True)` raises `TypeError`.
 - The HTML viewer classifies every IR node kind (phis, shifts, extends, raw
   constants and initial vars were left out).
 - A pretty DOT label of a NaN float constant shows its bits.
