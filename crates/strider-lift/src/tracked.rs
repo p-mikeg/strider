@@ -175,7 +175,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 }
 
 /// Every REGISTER / UNIQUE pcode operand in `cfg`: the spaces `read_vn` /
-/// `write_vn` alias. CONST becomes a literal and RAM a Load/Store.
+/// `write_vn` alias.
 pub(crate) fn aliasable_vns(cfg: &strider_cfg::Cfg) -> impl Iterator<Item = rsleigh::Vn> + '_ {
     cfg.regions()
         .flat_map(|region| region.insns.iter())
