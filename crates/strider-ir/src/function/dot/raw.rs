@@ -2,7 +2,7 @@ use ::dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
 use dashu_int::UBig;
 use rustc_hash::FxHashMap;
 
-use crate::function::Function;
+use crate::function::{Function, vn_str};
 use crate::node::{NodeId, NodeKind};
 use crate::{IRViewer, IRWalker};
 
@@ -10,17 +10,6 @@ use crate::{IRViewer, IRWalker};
 /// across builds, so this spelling must stay fixed.
 pub(super) fn const_label(value: &UBig) -> String {
     format!("{value}")
-}
-
-/// `{space}{offset:#x}:{size}`, the space as the text format spells it, e.g.
-/// `%0x38:8`.
-fn fmt_vn(vn: &rsleigh::Vn) -> String {
-    format!(
-        "{}{:#x}:{}",
-        crate::function::space_str(vn.addr_space),
-        vn.addr_off,
-        vn.size
-    )
 }
 
 pub(super) struct RawFunctionDumper<'a> {
@@ -47,7 +36,7 @@ impl<'a> RawFunctionDumper<'a> {
         // `InitialVar` carries an index; resolve it to the varnode.
         let kind_str = match kind {
             NodeKind::InitialVar(id) => match f.initial_vn_opt(*id) {
-                Some(vn) => format!("InitialVar(#{} {})", id.as_u32(), fmt_vn(&vn)),
+                Some(vn) => format!("InitialVar(#{} {})", id.as_u32(), vn_str(&vn)),
                 None => format!("InitialVar(#{} ?)", id.as_u32()),
             },
             // The value itself goes on the next line.
@@ -113,7 +102,7 @@ impl<'a> RawFunctionDumper<'a> {
             .copied()
             .and_then(|v| f.get_vn_for_value(v))
         {
-            s.push_str(&format!("\ntag={}", fmt_vn(&vn)));
+            s.push_str(&format!("\ntag={}", vn_str(&vn)));
         }
         if let Some(name) = f.call_other_name(node) {
             s.push_str(&format!("\nop={name}"));

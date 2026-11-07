@@ -29,9 +29,9 @@ digraph "G" {
   "n4" -> "n1" [label="0:3"];
   "n3" -> "n1" [label="0:4"];
   "n2" -> "n1" [label="0:5"];
-  "n2" [label="n2  InitialVar(#10 %0x1200:16)\nout: Typed(I128)", shape="box"];
-  "n3" [label="n3  InitialVar(#9 %0x1100:10)\nout: Typed(I80)", shape="box"];
-  "n4" [label="n4  InitialVar(#1 %0x8:4)\nout: Typed(I32)", shape="box"];
+  "n2" [label="n2  InitialVar(#10 %:0x1200:16)\nout: Typed(I128)", shape="box"];
+  "n3" [label="n3  InitialVar(#9 %:0x1100:10)\nout: Typed(I80)", shape="box"];
+  "n4" [label="n4  InitialVar(#1 %:0x8:4)\nout: Typed(I32)", shape="box"];
   "n5" [label="n5  IntBinaryOp(Add)\nout: Typed(I32)", shape="box"];
   "n11" -> "n5" [label="0:0"];
   "n6" -> "n5" [label="0:1"];
@@ -42,7 +42,7 @@ digraph "G" {
   "n9" -> "n7" [label="0:0"];
   "n8" -> "n7" [label="0:1"];
   "n8" [label="n8  IntConst(#0)\n= 4\nout: Typed(I32)", shape="box"];
-  "n9" [label="n9  InitialVar(#2 %0x10:4)\nout: Typed(I32)", shape="box"];
+  "n9" [label="n9  InitialVar(#2 %:0x10:4)\nout: Typed(I32)", shape="box"];
   "n10" [label="n10  InitialMemory\nout: Memory", shape="box"];
   "n11" [label="n11  Load(VnSpace { shortcut: 'r' })\nout: Typed(I32)\nsp[8]\n[arg 1]", shape="box"];
   "n10" -> "n11" [label="0:0"];
