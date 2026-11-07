@@ -1,6 +1,6 @@
 use super::{DecodeFacts, Family};
 use crate::ArchPreset;
-use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Prefix, Row};
+use crate::call_other_abi::{CallOtherAbi, CallOtherClass, MEM_CLOBBER, PURE, Prefix, Row, writes};
 use crate::calling_convention::{CallingConvention, CcPreset, StackArgs};
 
 pub(crate) static ARM32: Family = Family {
@@ -98,20 +98,11 @@ const CALL_OTHER: &[Row] = &[
 /// exception mode banks R13, R14 and the SPSR, FIQ also R8-R12, and the sla
 /// models no banking. The FIQ set applies to every switch, since leaving FIQ
 /// un-banks it and the incoming mode is unknown.
-const ARM_MODE_SWITCH: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"],
-    clobbers_memory: false,
-    no_return: false,
-});
+const ARM_MODE_SWITCH: CallOtherClass =
+    writes(&["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"]);
 
 /// Thumb `msr control, Rn` selecting MSP or PSP: `sp` alone re-banks.
-const ARM_STACK_SWITCH: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
-    implicit_reads: &[],
-    implicit_writes: &["sp"],
-    clobbers_memory: false,
-    no_return: false,
-});
+const ARM_STACK_SWITCH: CallOtherClass = writes(&["sp"]);
 
 /// NEON `Vector*` / `Float*`: register compute over listed operands
 /// (`ARMneon.sinc` names no RAM; NEON loads and stores are p-code).

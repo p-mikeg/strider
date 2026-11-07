@@ -249,6 +249,16 @@ pub fn rounding_mode_register(preset: crate::ArchPreset, name: &str) -> Option<&
 pub(crate) const PURE: CallOtherClass = CallOtherClass::PURE;
 pub(crate) const MEM_CLOBBER: CallOtherClass = CallOtherClass::MEM_CLOBBER;
 
+/// A register-only op writing `w`.
+pub(crate) const fn writes(w: &'static [&'static str]) -> CallOtherClass {
+    CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &[],
+        implicit_writes: w,
+        clobbers_memory: false,
+        no_return: false,
+    })
+}
+
 /// One exact-name row of a family's table.
 pub(crate) struct Row {
     pub(crate) names: &'static [&'static str],
@@ -258,7 +268,7 @@ pub(crate) struct Row {
 }
 
 impl Row {
-    /// A one-name row for every preset of the family.
+    /// A row for every preset of the family.
     pub(crate) const fn new(names: &'static [&'static str], class: CallOtherClass) -> Self {
         Self {
             names,
