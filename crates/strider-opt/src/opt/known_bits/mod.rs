@@ -86,9 +86,9 @@ fn shift_known_bits(
     })
 }
 
-/// The largest `Popcount` / `Lzcount` (`kind`) of an `input_ty` value with
-/// `input` facts: an upper bound, counting `8 * byte_size` bits as Sleigh's
-/// LZCOUNT does.
+/// An upper bound on the `Popcount` / `Lzcount` (`kind`) of an `input_ty`
+/// value with `input` facts, over `8 * byte_size` bits (Sleigh's LZCOUNT
+/// width).
 pub(crate) fn count_max(kind: NodeKind, input: KnownBitsFacts, input_ty: ValueType) -> u128 {
     let width = input_ty.byte_size() as u128 * 8;
     match kind {
@@ -140,19 +140,17 @@ pub(crate) fn node_known_bits(
             let l = operand(lhs);
             let r = operand(rhs);
             match op {
-                // Masked defensively: the graph is not re-validated
-                // mid-pipeline.
                 IntBinaryOp::And => KnownBitsFacts {
-                    ones: l.ones & r.ones & type_mask,
-                    zeros: (l.zeros | r.zeros) & type_mask,
+                    ones: l.ones & r.ones,
+                    zeros: l.zeros | r.zeros,
                 },
                 IntBinaryOp::Or => KnownBitsFacts {
-                    ones: (l.ones | r.ones) & type_mask,
-                    zeros: l.zeros & r.zeros & type_mask,
+                    ones: l.ones | r.ones,
+                    zeros: l.zeros & r.zeros,
                 },
                 IntBinaryOp::Xor => KnownBitsFacts {
-                    ones: ((l.ones & r.zeros) | (l.zeros & r.ones)) & type_mask,
-                    zeros: ((l.ones & r.ones) | (l.zeros & r.zeros)) & type_mask,
+                    ones: (l.ones & r.zeros) | (l.zeros & r.ones),
+                    zeros: (l.ones & r.ones) | (l.zeros & r.zeros),
                 },
                 IntBinaryOp::ShiftLeft => {
                     shift_known_bits(function, l, rhs, r, ty, ShiftDir::Left)?
