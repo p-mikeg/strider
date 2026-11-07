@@ -1010,8 +1010,8 @@ name some.
 a tail call, and a fall-through past one's end is `"past_function_end"`.
 `ElfLifter.analyze` and `build_cfg` fill it, unless the options name some,
 from the sized function symbols `<name>.cold` and `<name>.cold.N` of every
-function symbol at the entry. Fragments are matched by name alone, so local
-functions sharing a name share their fragments. A `<name>.part.N`,
+function symbol at the entry. A local fragment belongs to the function of
+that name in its own object file (`STT_FILE` group), else to the global one. A `<name>.part.N`,
 `.constprop.N` or `.isra.N` clone is a separate callee, and a branch into a
 cold partition named for another function stays a tail call.
 
