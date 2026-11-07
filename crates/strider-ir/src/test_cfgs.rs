@@ -33,11 +33,11 @@ pub(crate) fn arb_terms(max_regions: usize, max_arms: usize) -> impl Strategy<Va
 }
 
 pub(crate) fn empty_builder() -> crate::Result<FunctionBuilder> {
-    FunctionBuilder::new(
+    Ok(FunctionBuilder::new(
         vec![],
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
-    )
+    ))
 }
 
 /// The regions `terms` describe, before validation: an exit-free cycle

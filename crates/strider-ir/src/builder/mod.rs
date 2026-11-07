@@ -1,6 +1,5 @@
 use cranelift_entity::PrimaryMap;
 
-use crate::Result;
 use crate::function::Function;
 use crate::node::{IntBinaryOp, IntUnaryOp, NodeKind, ValueId, ValueKind};
 use crate::region::Region;
@@ -50,7 +49,7 @@ impl FunctionBuilder {
         mut all_used_variables: Vec<rsleigh::Vn>,
         cc: strider_target::BuiltCallingConvention,
         byte_order: impl Into<strider_target::ByteOrder>,
-    ) -> Result<Self> {
+    ) -> Self {
         // `Function::new` drops the duplicates.
         all_used_variables.extend(
             cc.ret_val_regs
@@ -65,7 +64,7 @@ impl FunctionBuilder {
                 .graph_mut()
                 .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let entry_memory = function.graph().node_outputs(memory_node)[0];
-        Ok(FunctionBuilder {
+        FunctionBuilder {
             function,
             entry_memory,
             regions: PrimaryMap::new(),
@@ -73,7 +72,7 @@ impl FunctionBuilder {
             lift_addr: None,
             call_register_values: Vec::new(),
             internal_registers: &[],
-        })
+        }
     }
 
     /// Sla-internal registers, through which no value reaches a callee.

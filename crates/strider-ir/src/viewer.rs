@@ -402,8 +402,7 @@ mod tests {
     #[test]
     fn walk_from_seed_visits_only_the_seed_cone() {
         let cc = strider_target::BuiltCallingConvention::default();
-        let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
-            .expect("FunctionBuilder::new");
+        let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little);
         let region = b.create_region_all().expect("create_region");
         b.set_entry_region_all(region).expect("set_entry_region");
         b.set_region(region);
@@ -456,8 +455,7 @@ mod tests {
     fn le_bytes_serialises_little_endian_at_the_declared_width() {
         let bytes = |limbs: &[u64], ty: ValueType| {
             let cc = strider_target::BuiltCallingConvention::default();
-            let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
-                .expect("FunctionBuilder::new");
+            let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little);
             let v = b
                 .build_int_const(UBig::from_words(limbs), ty)
                 .expect("const");
