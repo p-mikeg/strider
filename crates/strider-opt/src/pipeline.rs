@@ -31,7 +31,7 @@ pub trait Optimizer: Sync {
         std::any::type_name::<Self>()
             .rsplit("::")
             .next()
-            .unwrap_or("UnknownPass")
+            .expect("rsplit yields at least one piece")
     }
 }
 

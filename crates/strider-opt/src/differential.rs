@@ -12,7 +12,7 @@
 //!
 //! Environment: `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS`
 //! nodes per DAG, and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone in the DAG
-//! test.
+//! test; any other value runs the default pipeline.
 
 use crate::post_opt::indirect_branch_resolve::index_range;
 use rustc_hash::FxHashMap;
@@ -1213,18 +1213,7 @@ fn the_pipeline_preserves_cfg_semantics() {
             )?;
             outcomes.push(want);
         }
-        let passes: [&dyn crate::Optimizer; 9] = [
-            &crate::ConstantFold,
-            &crate::LoadReadOnly,
-            &crate::KnownBits,
-            &crate::FlagCmpCanonicalize,
-            &crate::IfCondInversion,
-            &crate::PhiCollapse,
-            &crate::RegionCollapse,
-            &crate::DeadBranchElimination,
-            &crate::LoadForward,
-        ];
-        for pass in passes {
+        for &pass in crate::default_pipeline().passes() {
             let mut f = f0.clone();
             crate::run_one_unvalidated(pass, &mut f, &crate::OptCtx::new(None))
                 .map_err(|e| format!("seed {seed} {}: error {e:#}\n{before_text}", pass.name()))?;
