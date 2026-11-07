@@ -8,7 +8,7 @@ pub(crate) mod walk;
 pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 pub use graph::Pattern;
 pub use strider_ir::node::CastMask;
-pub(crate) use vertex::{InputSlot, OutputKindSpec, PatNode, PatValue, Role, SlotMode};
+pub(crate) use vertex::{InputSlot, OUTPUTLESS, OutputKindSpec, PatNode, PatValue, Role, SlotMode};
 pub use vertex::{KindSpec, NodePredicate, PostMatchFn};
 
 use std::cell::OnceCell;
@@ -83,8 +83,8 @@ impl<'f> Matcher<'f> {
 
     /// Every match for `pat`, lazily per candidate node.
     ///
-    /// Each distinct capture-to-binding map is yielded once, natural operand order before
-    /// swapped. `n` commutative nodes can yield, and cost, up to 2^n even when nothing matches;
+    /// Per root, each distinct capture-to-binding map is yielded once, natural operand order
+    /// before swapped. `n` commutative nodes can yield, and cost, up to 2^n even when nothing matches;
     /// `.ordered()` pins them.
     ///
     /// # Errors
@@ -165,8 +165,7 @@ impl<'f> Matcher<'f> {
         // one match. Two `one_of` arms binding identically collapse too, the first one's
         // `matched_nodes` winning. Filled lazily, since most roots have one configuration.
         let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
-        // The callback's `true` stops the walk; `false` (match banked) moves it to the next
-        // configuration.
+        // `true` from the callback stops the walk.
         let generation = self.function.graph().generation();
         walk::anchor(self, pat, root, node, scratch, None, &mut |b| {
             if first_only {

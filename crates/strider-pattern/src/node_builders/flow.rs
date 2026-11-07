@@ -306,16 +306,6 @@ mod tests {
     use crate::typed::{anything, int_const, var};
     use strider_ir::node::ValueType;
 
-    #[test]
-    fn if_pattern_has_two_control_output_vertices() {
-        let pat = if_else().build();
-        assert_eq!(
-            pat.control_output_count(),
-            2,
-            "If pattern must declare two control-output vertices"
-        );
-    }
-
     /// Pins `IfPat`'s lowering: operand cones first, then the two control
     /// outputs, then the output constraints.
     #[test]

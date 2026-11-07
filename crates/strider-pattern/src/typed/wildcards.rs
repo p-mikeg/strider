@@ -126,7 +126,7 @@ fn inputs_of_width_check(matcher: &crate::Matcher, node: NodeId, want: usize) ->
     value_inputs > 0
 }
 
-/// Match `inner` whose value inputs are all 1-bit (`I1`).
+/// [`inputs_of_width`]`(1, inner)`.
 pub fn bool_inputs<I: MatchPat + 'static>(inner: I) -> MatchOnly {
     inputs_of_width(1, inner)
 }
@@ -143,7 +143,7 @@ pub fn initial_var() -> MatchOnly {
     MatchOnly(initial_var_leaf().into())
 }
 
-/// Match the `InitialVar` whose tracked varnode contains `vn`, so `eax` matches `rax`.
+/// Match the `InitialVar` whose tracked varnode contains `vn`, so `eax` selects `rax`.
 pub fn initial_var_for(vn: rsleigh::Vn) -> MatchOnly {
     let pred: NodePredicate = Box::new(move |m, node| {
         matches!(

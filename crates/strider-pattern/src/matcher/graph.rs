@@ -245,19 +245,6 @@ impl Pattern {
     pub fn ignores_casts(&self) -> bool {
         !self.cast_mask.is_empty()
     }
-
-    #[cfg(test)]
-    pub(crate) fn control_output_count(&self) -> usize {
-        self.graph
-            .all_value_ids()
-            .filter(|&v| {
-                matches!(
-                    self.graph.value_kind_ref(v).kind,
-                    super::vertex::OutputKindSpec::Control
-                )
-            })
-            .count()
-    }
 }
 
 #[cfg(test)]

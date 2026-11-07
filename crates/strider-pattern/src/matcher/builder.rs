@@ -2,7 +2,9 @@ use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
 use crate::build_graph::BuildGraph;
-use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern, Role, SlotMode};
+use crate::matcher::{
+    KindSpec, OUTPUTLESS, OutputKindSpec, PatNode, PatValue, Pattern, Role, SlotMode,
+};
 use strider_graph::{NodeId, ValueId};
 
 /// A pattern node's output. Meaningful only in the builder that produced it;
@@ -214,11 +216,7 @@ impl MatcherBuilder {
                 .into_iter()
                 .any(|arm| self.has_output_less_arm(arm));
         }
-        node.kind.is_variant_in(&[
-            NodeKind::Return,
-            NodeKind::IndirectBranch,
-            NodeKind::Unreachable,
-        ])
+        node.kind.is_variant_in(&OUTPUTLESS)
     }
 
     /// Binds the matched node (`Binding::Node`). Additive, like [`Self::capture_output`].
@@ -273,13 +271,11 @@ impl MatcherBuilder {
         node.kind.is_variant_in(&[
             NodeKind::If,
             NodeKind::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
-            NodeKind::Return,
-            NodeKind::IndirectBranch,
-            NodeKind::Unreachable,
-        ]) || matches!(
-            graph.value_kind_ref(out).kind,
-            OutputKindSpec::Control | OutputKindSpec::Memory
-        )
+        ]) || node.kind.is_variant_in(&OUTPUTLESS)
+            || matches!(
+                graph.value_kind_ref(out).kind,
+                OutputKindSpec::Control | OutputKindSpec::Memory
+            )
     }
 
     pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {

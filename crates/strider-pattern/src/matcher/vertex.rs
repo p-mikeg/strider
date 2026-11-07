@@ -4,6 +4,13 @@ use strider_ir::node::{NodeId, NodeKind, ValueType};
 
 use crate::matcher::Matcher;
 
+/// The kinds with no output a consumer could nest through.
+pub(crate) const OUTPUTLESS: [NodeKind; 3] = [
+    NodeKind::Return,
+    NodeKind::IndirectBranch,
+    NodeKind::Unreachable,
+];
+
 #[derive(PartialEq, Eq)]
 pub enum KindSpec {
     Any,

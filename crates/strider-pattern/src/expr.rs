@@ -10,8 +10,8 @@ use strider_ir::{FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntUnaryOp};
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{
-    InputSlot, KindSpec, MatcherBuilder, NodePredicate, OutputKindSpec, PatNodeRef, PatValueRef,
-    Pattern, PostMatchFn,
+    InputSlot, KindSpec, MatcherBuilder, NodePredicate, OUTPUTLESS, OutputKindSpec, PatNodeRef,
+    PatValueRef, Pattern, PostMatchFn,
 };
 use crate::node_builders::MemPat;
 use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
@@ -843,11 +843,7 @@ impl Node {
 
     /// Why the node can never match a `slot` consumer.
     fn misfit(&self, slot: Slot) -> Option<String> {
-        let outputless = self.kind.is_variant_in(&[
-            NodeKind::Return,
-            NodeKind::IndirectBranch,
-            NodeKind::Unreachable,
-        ]);
+        let outputless = self.kind.is_variant_in(&OUTPUTLESS);
         let (what, name) = match (slot, self.anchor_for(slot)) {
             (Slot::Value, AnchorKind::Memory(_)) => ("nesting through a memory token", "value"),
             (Slot::Control, AnchorKind::Memory(_)) => ("nesting through a memory token", "control"),

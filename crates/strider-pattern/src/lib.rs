@@ -36,8 +36,8 @@ pub use node_builders::{
 pub use template::template_pat::TemplatePat;
 pub use template::{Template, TemplateCtx, instantiate, instantiate_guarded};
 
-/// The type of the root's slot-0 input, `None` when that input carries no value: `in_ty` in the
-/// `*_const_with!` macros (an `IntCmp` root's own type is `I1`).
+/// The type of the LHS root's slot-0 input (`in_ty` in the `*_const_with!` macros); `None` when
+/// it carries no value.
 pub fn slot0_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node::ValueType> {
     let input = ctx.function.node_inputs(ctx.root).into_iter().next()?;
     ctx.function.value_kind(input).as_value()

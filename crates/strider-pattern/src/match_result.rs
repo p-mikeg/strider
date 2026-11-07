@@ -5,10 +5,10 @@ use strider_ir::node::{NodeId, ValueId};
 use crate::bindings::Bindings;
 use crate::capture::Capture;
 
-/// One match. Its ids are invalidated by [`strider_ir::Function::compact`]: the `Match`
-/// accessors taking a graph then return nothing, while the graph-free ones ([`Match::root`],
-/// [`Match::value`], [`Match::is_bound`], [`Match::matched_nodes`]) and [`Match::bindings`]
-/// are not generation-checked: check [`Match::is_stale`] first.
+/// One match. [`strider_ir::Function::compact`] invalidates its ids: the accessors taking a
+/// graph then return nothing; the others ([`Match::root`], [`Match::value`],
+/// [`Match::is_bound`], [`Match::matched_nodes`], [`Match::bindings`]) are unchecked, so test
+/// [`Match::is_stale`] first.
 #[derive(Clone)]
 pub struct Match {
     pub(crate) root: NodeId,
