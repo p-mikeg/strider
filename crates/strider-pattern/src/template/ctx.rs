@@ -1,7 +1,8 @@
 use strider_ir::Function;
 use strider_ir::node::{NodeId, ValueType};
 
-/// The input of a [`TemplateKind::Fn`](crate::template::TemplateKind::Fn) closure.
+/// The input of a [`TemplateKind::Fn`](crate::template::TemplateKind::Fn) /
+/// [`TemplateKind::FnIntConst`](crate::template::TemplateKind::FnIntConst) closure.
 pub struct TemplateCtx<'a> {
     /// The function under rewrite.
     pub function: &'a Function,

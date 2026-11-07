@@ -972,7 +972,7 @@ fn lower_outputs(
 ) {
     for (slot, aspect) in outputs {
         let out = match slot {
-            // Pinned, or on a single-vertex node (`switch`) the slot goes unchecked.
+            // Pinned: a sole vertex (`switch`) would otherwise anchor at any output.
             Some(slot) => {
                 let out = b.value_output(node, slot);
                 b.pin_value_out_slot(out);

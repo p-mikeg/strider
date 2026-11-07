@@ -228,8 +228,8 @@ impl Pattern {
     }
 
     /// Adds `m` to the cast mask: an operand produced by a selected cast also matches at the
-    /// cast's input. Per operand only the outermost matching level is kept, settled in written
-    /// order after every `first_of`.
+    /// cast's input. Per operand only the outermost matching level is kept, settled in
+    /// pattern-build order (operands before their consumer) after every `first_of`.
     pub fn ignore_casts_mask(mut self, m: CastMask) -> Self {
         self.cast_mask |= m;
         self
