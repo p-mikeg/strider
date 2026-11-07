@@ -87,9 +87,10 @@ impl ArgPrefix {
                         span,
                     });
                 }
-                // Known limit: an unwritten argument slot (an alignment hole)
-                // reads as the end; without the callee's arity it looks like a
-                // spill above the arguments.
+                // Known limit: an unwritten argument slot (an alignment hole,
+                // or a ppc64 slot whose FP argument travels in an FPR) reads as
+                // the end; without the callee's arity it looks like a spill
+                // above the arguments.
                 SlotReach::NotAnArgument => break,
                 SlotReach::Blinded => {
                     if prefix.blind_from.is_none() {
