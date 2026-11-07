@@ -145,8 +145,8 @@ pub(crate) enum Field {
 }
 
 impl Field {
-    /// Bytes at `r_offset` the field reads and patches. Exhaustive: a new
-    /// variant read at the wrong width would patch its neighbour's bytes.
+    /// Bytes at `r_offset` the field reads and patches. Exhaustive, so a new
+    /// variant states its width.
     pub(crate) fn width(self) -> usize {
         match self {
             Field::Data { bytes, .. } => usize::from(bytes),

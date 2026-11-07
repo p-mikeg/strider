@@ -13,8 +13,7 @@ pub struct RegionIndex {
 #[derive(Debug)]
 struct IndexEntry {
     start: u64,
-    /// Greatest `end_addr` of this entry and every lower-start one: nothing at
-    /// or below this start reaches past it.
+    /// Greatest `end_addr` of this entry and every earlier one.
     reach: u64,
     index: usize,
 }

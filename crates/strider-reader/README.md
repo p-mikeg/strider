@@ -19,9 +19,9 @@ the section walk).
   `RelocationMode::Applied { got_is_rom }` serves relocated fields, and with
   `got_is_rom` also `.got`, PPC32 `.got2` and `.data.rel.ro` as ROM.
 - Under `elf::`: `RegionSource`, `ElfSectionLayout` (an ET_REL's section
-  placement and each undefined symbol's `extern_address`), `OpdTable` (ppc64
-  ELFv1 descriptors), `local_entry_offset` (a ppc64 ELFv2 symbol's
-  local-entry distance) and `mapping_symbol_data_ranges` /
+  placement and each undefined, common or IFUNC symbol's `extern_address`),
+  `OpdTable` (ppc64 ELFv1 descriptors), `local_entry_offset` (a ppc64 ELFv2
+  symbol's local-entry distance) and `mapping_symbol_data_ranges` /
   `mapping_symbol_kind` (ARM / AArch64 `$a`, `$d`, `$t`, `$x`).
 
 ## Loading is lazy
