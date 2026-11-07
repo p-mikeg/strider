@@ -1,8 +1,8 @@
 use super::{CallOtherClass, MEM_CLOBBER, PURE};
 use CallOtherClass::NoOp;
 
-/// Rows matched by name on every family: each name is the same op on every
-/// sla that declares it.
+/// Rows matched by name on any family; each name is one op on every sla that
+/// declares it.
 ///
 /// Invariant: no entry names a register, which would resolve on one arch only.
 pub(super) static ROWS: &[(&str, CallOtherClass)] = &[
