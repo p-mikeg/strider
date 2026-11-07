@@ -140,7 +140,7 @@ fn walk_to_cycle(graph: &Graph, stranded: &NodeIdSet, start: NodeId) -> NodeIdSe
             .find(|&succ| stranded.contains(succ));
         match next {
             Some(succ) => node = succ,
-            // Unreachable; an empty cycle makes the caller fail.
+            // Never taken: a stranded node has a stranded successor. An empty cycle fails the caller.
             None => return NodeIdSet::new(),
         }
     }

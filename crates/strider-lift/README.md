@@ -72,16 +72,22 @@ as an `InitialVar`, so every read finds a definition.
     IntLessEqual(a, b)   -> Xor(Less(b, a), IntConst(1)):I1
     IntSlessEqual(a, b)  -> Xor(Sless(b, a), IntConst(1)):I1
     IntNeg(x)            -> Xor(x, all_ones)        (Sleigh IntNeg is ~x)
-    BoolNeg(x)           -> Xor(x, IntConst(1)):I1
+    BoolNeg(x)           -> Xor(Truncate(x), IntConst(1)):I1
     FloatSub(a, b)       -> FloatAdd(a, Neg(b))     (a NaN b's sign flips)
     FloatNotEqual(a, b)  -> Xor(FloatEqual(a, b), IntConst(1)):I1
     FloatNan(x)          -> Xor(FloatEqual(x, x), IntConst(1)):I1
     FloatLessEqual(a, b) -> Or(FloatLess(a, b), FloatEqual(a, b)):I1
+    Subpiece(x, k)       -> Truncate(ShiftRight(x, 8k))   (no shift at k = 0)
+    Piece(hi, lo)        -> Or(ShiftLeft(ZeroExtend(hi), 8|lo|), ZeroExtend(lo))
+    CondBranch(c)        -> If(Xor(Equal(c, 0), IntConst(1)):I1)
+    BoolAnd/Or/Xor(a, b) -> the I1 op over Truncate(a), Truncate(b)
 
 All are exact but `FloatSub` on a NaN subtrahend, whose sign IEEE 754 leaves
 unspecified. A shift count wider than the output saturates rather than
 truncating (p-code compares the full count). BOOL ops read their input's low
 bit (p-code: the whole byte); every vendored spec feeds them 0/1.
+`CondBranch`'s and the BOOL ops' wrappers fold away under the default
+pipeline when the input is a zero-extended `I1`.
 
 ## Terminators
 

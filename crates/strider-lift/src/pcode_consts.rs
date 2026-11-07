@@ -19,7 +19,7 @@ type TempKey = (u64, u32);
 
 #[derive(Default)]
 pub(crate) struct PcodeConsts {
-    /// Values are cleared when the machine instruction changes.
+    /// The machine instruction `vals` belong to.
     at: Option<MachineInsnAddr>,
     vals: FxHashMap<TempKey, u128>,
 }

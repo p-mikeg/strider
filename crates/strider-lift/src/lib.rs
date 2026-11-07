@@ -85,7 +85,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         })
     }
 
-    /// Indexed by `user_op_id`, which for `read_volatile` is past the table.
+    /// The Sleigh user-op names, indexed by `user_op_id`; `read_volatile`'s id is
+    /// past the table.
     #[must_use]
     pub fn user_op_names(&self) -> &[String] {
         self.engine.user_op_names()
