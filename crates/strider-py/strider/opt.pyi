@@ -91,7 +91,9 @@ class PhiCollapse:
     """Removes trivial phis: a `Phi` / `MemPhi`, or a strongly connected group
     of them, whose inputs other than themselves are one value is replaced by
     that value. An `and` of a phi with a constant mask becomes the value
-    every arm agrees on under that mask."""
+    every arm agrees on under that mask. Below the edge where an `If` finds
+    `phi + c` equal to a `y` computed from entry values and constants, the
+    phi reads as `y - c`."""
     def __init__(self) -> None:
         ...
 
