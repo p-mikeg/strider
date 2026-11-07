@@ -30,16 +30,14 @@ pub(super) fn apply_one_relocation(
         Some(Kind::Marker) => {}
         Some(Kind::Compute(value, field)) => apply_classified(ctx, site, r, pair, value, field),
         Some(Kind::Copy) => {
-            let size = r.sym.and_then(|idx| symbol_size(ctx.obj, idx));
+            let size = r
+                .sym
+                .and_then(|i| reloc_symbol(ctx.obj, i))
+                .map(|s| s.size());
             note_copy(ctx, site.addr, size, r.type_word());
         }
         None => apply_plain(ctx, site, r),
     }
-}
-
-/// `st_size` of symbol `idx`.
-pub(super) fn symbol_size(obj: &object::File<'_>, idx: object::SymbolIndex) -> Option<u64> {
-    Some(reloc_symbol(obj, idx)?.size())
 }
 
 /// The symbol a relocation's `r_sym` names: `.symtab`'s in an ET_REL,

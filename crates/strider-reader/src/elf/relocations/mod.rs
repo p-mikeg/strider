@@ -308,7 +308,7 @@ mod tests {
             path.display()
         );
         let filter = crate::elf::sections::LoadFilter::AllAllocatable;
-        let owned = crate::OwnedElf::open(&path).expect("open");
+        let owned = crate::load_elf(&path).expect("open");
         let obj = owned.checked_file().expect("the mapped file is unchanged");
         let layout = crate::elf::sections::ElfSectionLayout::new(&obj);
         let image = owned

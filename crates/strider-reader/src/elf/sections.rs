@@ -148,15 +148,11 @@ struct Walk {
 impl Walk {
     /// Address space, not file bytes: a mapping's BSS tail is writable too.
     fn note_writable(&mut self, start: u64, size: u64) {
-        if size != 0 {
-            self.writable.push((start, start.saturating_add(size)));
-        }
+        self.writable.push((start, start.saturating_add(size)));
     }
 
     fn note_executable(&mut self, start: u64, size: u64) {
-        if size != 0 {
-            self.executable.push((start, start.saturating_add(size)));
-        }
+        self.executable.push((start, start.saturating_add(size)));
     }
 
     fn into_image(self) -> LoadedImage {

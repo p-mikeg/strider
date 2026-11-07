@@ -12,7 +12,7 @@ use super::sections::{AddressSet, ElfSectionLayout, LoadFilter, RegionSource};
 ///
 /// When the file cannot be read from disk, or its bytes do not parse as ELF.
 pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
-    OwnedElf::open(path)
+    OwnedElf::validated(FileBytes::map_path(path)?)
 }
 
 /// An owned ELF's bytes.
@@ -68,16 +68,6 @@ impl OwnedElf {
         Self::validated(FileBytes::from_vec(bytes))
     }
 
-    /// Maps the file, sampling its `stat` identity for
-    /// [`check_unchanged`](Self::check_unchanged).
-    ///
-    /// # Errors
-    ///
-    /// When the file cannot be read from disk, or does not parse as ELF.
-    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        Self::validated(FileBytes::map_path(path)?)
-    }
-
     fn validated(backing: FileBytes) -> Result<Self> {
         anyhow::ensure!(
             !backing.as_slice().starts_with(LFS_POINTER_MAGIC),
@@ -105,7 +95,7 @@ impl OwnedElf {
             .map_err(|e| anyhow::anyhow!("the mapped image no longer parses as ELF: {e}"))
     }
 
-    /// Compares one `stat` of the mapped file with the one [`open`](Self::open)
+    /// Compares one `stat` of the mapped file with the one [`load_elf`]
     /// took; `Ok` for bytes not mapped.
     ///
     /// # Errors
