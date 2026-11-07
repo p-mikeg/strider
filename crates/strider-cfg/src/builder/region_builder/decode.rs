@@ -211,7 +211,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, '_, R> {
         let len = lift.machine_insn_len as u64;
         let next = (len > 0).then(|| addr.checked_add(len)).flatten();
         if let Some(next) = next {
-            // Now, so `next` holds exactly what this decode committed.
+            // Before the next decode, so `next` holds exactly what this one committed.
             self.rederive_flow(next, addr)?;
             self.builder.committed_next.insert(next);
         }

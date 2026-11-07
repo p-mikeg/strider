@@ -43,6 +43,7 @@ reasons! {
     /// Reached in two ISA modes, per p-code index; the losing edge's path
     /// decodes in the winner's. A direct edge beats a seeded arm (the
     /// `Switch` loses every arm there); otherwise work-queue order decides.
+    /// Two arms of one `Switch` at one address in both modes drop both.
     /// Other committed vars are not compared.
     IsaModeConflict => "isa_mode_conflict",
     /// Inside a region but off every boundary (a MIPS delay slot too), or a

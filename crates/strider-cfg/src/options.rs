@@ -7,7 +7,7 @@ use crate::types::PcodeInsnAddr;
 pub static NO_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
-/// No local entries.
+/// The empty table.
 pub static NO_LOCAL_ENTRIES: LocalEntries = LocalEntries(Vec::new());
 
 /// The extent of the function being built.
