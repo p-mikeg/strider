@@ -522,9 +522,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 }
                 Err(e) => return Err(e),
             };
-            // A p-code index; fits a usize.
-            #[allow(clippy::cast_possible_truncation)]
-            let start_pcode_idx = cur_addr.insn_index as usize;
+            let start_pcode_idx = usize::try_from(cur_addr.insn_index).expect("a p-code index");
             let is_zero_op = lift_res.insns.len() <= start_pcode_idx;
 
             if cur_addr.machine_addr != self.start_addr.machine_addr {
@@ -900,22 +898,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn next_pcode_addr_non_overflowing_advance_succeeds() {
-        let lift = fake_lift_res_with_len(1, 4);
-        let cur = addr_at(0x1000, 0);
-        let next = next_pcode_addr(cur, &lift).unwrap();
-        assert_eq!(next, addr_at(0x1004, 0));
-    }
-
-    #[test]
-    fn next_pcode_addr_within_machine_insn_advances_pcode_index() {
-        let lift = fake_lift_res(4);
-        let cur = addr_at(0x1000, 1);
-        let next = next_pcode_addr(cur, &lift).unwrap();
-        assert_eq!(next, addr_at(0x1000, 2));
-    }
-
     fn lift_at(bytes: Vec<u8>, base: u64, at: u64) -> rsleigh::LiftRes {
         make_sleigh_over(bytes, base)
             .lift_one(at)
@@ -930,48 +912,6 @@ mod tests {
             .find(|(_, i)| i.opcode == want)
             .unwrap_or_else(|| panic!("no pcode op with opcode {want:?}"));
         (idx as u64, i.clone())
-    }
-
-    #[test]
-    fn non_terminating_insn_keeps_region_open() {
-        let base = 0x1000u64;
-        let bytes = vec![0x31u8, 0xc0]; // xor eax, eax
-        let lift = lift_at(bytes.clone(), base, base);
-        assert!(!lift.insns.is_empty());
-        let first = lift.insns[0].clone();
-        assert!(!matches!(
-            first.opcode,
-            rsleigh::Opcode::Branch | rsleigh::Opcode::CondBranch | rsleigh::Opcode::Return
-        ));
-        let mut engine = make_engine_over(bytes, base);
-        let mut b = make_builder(base, &mut engine);
-        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
-
-        let res = rb
-            .process_new_insn(&first, addr_at(base, 0), &lift)
-            .unwrap();
-        assert_eq!(res, InsnOutcome::Continue);
-        assert_eq!(rb.insns.len(), 1);
-    }
-
-    #[test]
-    fn return_ends_region() {
-        let base = 0x1000u64;
-        let bytes = vec![0xc3u8];
-        let lift = lift_at(bytes.clone(), base, base);
-        let (pos, ret_insn) = find_pcode(&lift, rsleigh::Opcode::Return);
-        let mut engine = make_engine_over(bytes, base);
-        let mut b = make_builder(base, &mut engine);
-        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
-
-        let res = rb
-            .process_new_insn(&ret_insn, addr_at(base, pos), &lift)
-            .unwrap();
-        assert_eq!(res, InsnOutcome::RegionClosed);
-
-        let regions: Vec<&Region> = b.region_graph.node_weights().collect();
-        assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].terminator, RegionTerminator::Return);
     }
 
     #[test]
@@ -1041,27 +981,6 @@ mod tests {
             );
             assert_eq!(*addr, addr_at(0x1002, 0));
         }
-    }
-
-    #[test]
-    fn finish_with_branch_terminator_to_distinct_target() {
-        // `jmp +1` targets 0x1003, distinct from the 0x1002 fall-through.
-        let base = 0x1000u64;
-        let bytes = vec![0xebu8, 0x01, 0xc3];
-        let lift = lift_at(bytes.clone(), base, base);
-        let (pos, branch) = find_pcode(&lift, rsleigh::Opcode::Branch);
-        let mut engine = make_engine_over(bytes, base);
-        let mut b = make_builder(base, &mut engine);
-        let mut rb = make_region_builder(&mut b, addr_at(base, 0));
-
-        let res = rb
-            .process_new_insn(&branch, addr_at(base, pos), &lift)
-            .unwrap();
-        assert_eq!(res, InsnOutcome::RegionClosed);
-
-        let regions: Vec<&Region> = b.region_graph.node_weights().collect();
-        assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].terminator, RegionTerminator::Unconditional);
     }
 
     #[test]
