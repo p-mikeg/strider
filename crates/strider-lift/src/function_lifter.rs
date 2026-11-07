@@ -55,7 +55,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
         cfg_opts: &'a strider_cfg::CfgOptions<'a>,
         entry_values: &'a [(rsleigh::Vn, u64)],
-    ) -> Result<Self> {
+    ) -> Self {
         let mut builder = strider_ir::FunctionBuilder::new(
             tracked.iter().copied().collect(),
             cc,
@@ -88,7 +88,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let container_of = |v: &rsleigh::Vn| container_map.container_of(v);
         let default_ret_clobber_vns = cc.ret_and_clobber_vns(f.all_vns(), container_of);
         let default_float_arg_vns = cc.float_arg_prefix(f.all_vns(), container_of);
-        Ok(Self {
+        Self {
             lifter,
             builder,
             cfg,
@@ -106,7 +106,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             def_sites: rustc_hash::FxHashMap::default(),
             #[cfg(debug_assertions)]
             current_cfg_region: None,
-        })
+        }
     }
 
     /// Fingerprints every node `f` creates with `addr`; cleared on error too.

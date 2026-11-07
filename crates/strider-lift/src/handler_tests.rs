@@ -123,8 +123,7 @@ fn with_test_lifter_arch_cc(
         per_address_ccs,
         &cfg_opts,
         &[],
-    )
-    .expect("driver");
+    );
     driver.builder.set_lift_addr(None);
     let region = driver.builder.create_region_all().expect("create_region");
     driver

@@ -253,7 +253,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             per_address_ccs,
             cfg_opts,
             entry_values,
-        )?;
+        );
         driver.builder.function_mut().assume(claims);
 
         let graph = cfg.region_graph();
