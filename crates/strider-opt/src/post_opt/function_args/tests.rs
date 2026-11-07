@@ -1114,3 +1114,39 @@ fn arg_detection_narrows_past_a_heap_store_to_its_allocator() -> Result<()> {
     );
     Ok(())
 }
+
+/// A `Load` outside RAM (ppc `mfsrin` reads the register space) at an
+/// SP-relative address reads no stack slot: it neither is an argument nor
+/// hides the RAM load sharing its slot.
+///
+/// Mutation: take a candidate in any space.
+#[test]
+fn a_load_outside_ram_is_no_stack_arg() -> Result<()> {
+    let sp = sp32_vn();
+    let i32_ty = ValueType::int(32);
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 4))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let slot0 = b.build_const_binop(4u64, sp_val, IntBinaryOp::Add, i32_ty)?;
+    let slot1 = b.build_const_binop(8u64, sp_val, IntBinaryOp::Add, i32_ty)?;
+    let ram = b.build_load(slot0, rsleigh::VnSpace::RAM, i32_ty)?;
+    let reg0 = b.build_load(slot0, rsleigh::VnSpace::REGISTER, i32_ty)?;
+    let reg1 = b.build_load(slot1, rsleigh::VnSpace::REGISTER, i32_ty)?;
+    let sum = b.build_int_binary_operation(ram, reg0, IntBinaryOp::Add, i32_ty)?;
+    let sum = b.build_int_binary_operation(sum, reg1, IntBinaryOp::Add, i32_ty)?;
+    b.build_return(Some(sum), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    detect(&mut fg)?;
+
+    let arg0 = fg.side_tables().arg_index_to_values(0);
+    assert_eq!(arg0.len(), 1, "{arg0:?}");
+    assert!(matches!(
+        fg.node_kind(fg.producer(arg0[0])),
+        NodeKind::Load(rsleigh::VnSpace::RAM)
+    ));
+    assert!(fg.side_tables().arg_index_to_values(1).is_empty());
+    Ok(())
+}

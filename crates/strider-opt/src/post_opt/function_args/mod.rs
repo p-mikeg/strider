@@ -7,7 +7,7 @@ use crate::pipeline::Optimizer;
 
 /// Registers the function's stack-passed arguments as argument values.
 ///
-/// A candidate is a clean `Load[InitialVar(sp) + K]` with `K` in a stack
+/// A candidate is a clean RAM `Load[InitialVar(sp) + K]` with `K` in a stack
 /// slot. Ordinals start at `arg_passing_regs.len()` whatever the argument's
 /// class, so an integer-arg query can bind a stack-passed float. Only slots
 /// up to the first one no clean load reads are arguments.
@@ -54,13 +54,12 @@ fn detect_stack_args(
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
 ) {
-    // Per start slot: the furthest slot reached, and the clean loads with
-    // their kind.
-    let mut groups: rustc_hash::FxHashMap<usize, (usize, Vec<(NodeKind, ValueId)>)> =
+    // Per start slot: the furthest slot reached, and the clean loads.
+    let mut groups: rustc_hash::FxHashMap<usize, (usize, Vec<ValueId>)> =
         rustc_hash::FxHashMap::default();
     let mut dirty_reach: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
     let loads: Vec<NodeId> = edit
-        .live_of_kind(|k| matches!(k, NodeKind::Load(_)))
+        .live_of_kind(|k| matches!(k, NodeKind::Load(rsleigh::VnSpace::RAM)))
         .collect();
     for node_id in loads {
         let addr = edit.load_addr(node_id);
@@ -97,7 +96,7 @@ fn detect_stack_args(
         }
         let (reach, loads) = groups.entry(start_slot).or_insert((start_slot, Vec::new()));
         *reach = (*reach).max(end_slot);
-        loads.push((*edit.node_kind(node_id), load_value));
+        loads.push(load_value);
     }
     let mut cursor = 0usize;
     let mut ordinal = first_stack_arg as u32;
@@ -109,15 +108,11 @@ fn detect_stack_args(
             }
             slot += 1;
         }
-        let arg_loads: Vec<(NodeKind, ValueId)> = (cursor..=reach)
+        for &load_value in (cursor..=reach)
             .filter_map(|s| groups.get(&s))
-            .flat_map(|(_, loads)| loads.iter().copied())
-            .collect();
-        // A Load-space mismatch skips registration but consumes the ordinal.
-        if arg_loads.iter().all(|&(kind, _)| kind == arg_loads[0].0) {
-            for (_, load_value) in arg_loads {
-                edit.register_arg_value(ordinal, load_value);
-            }
+            .flat_map(|(_, loads)| loads)
+        {
+            edit.register_arg_value(ordinal, load_value);
         }
         if (cursor..=reach).any(|s| dirty_reach.get(&s).is_some_and(|&d| d > reach)) {
             break;
