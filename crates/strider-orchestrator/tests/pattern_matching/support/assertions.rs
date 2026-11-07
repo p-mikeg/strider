@@ -1,12 +1,6 @@
 use strider_ir::Function;
 use strider_pattern::{Match, Matcher, Pattern};
 
-// Callers finalise their pattern before handing it to these helpers:
-// typed value builders seal via `.into_pattern()`, control builders
-// (`if_node()`, `phi_for()`, ...) via `.build()`. Accepting a finished
-// `Pattern` keeps the helper signatures free of the match-vs-template
-// trait split.
-
 /// Panics with a descriptive message if `pat` doesn't match `expected` times.
 #[track_caller]
 pub(crate) fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
