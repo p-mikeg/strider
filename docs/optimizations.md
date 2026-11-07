@@ -92,16 +92,16 @@ argument window under either. [python-api
 In default pipeline order:
 
 **CallStackArgCollect.** Attaches the stores into each call's outgoing argument
-window to the call as ordinary arguments, up to the first slot no whole store
-reaches, so arguments past an unwritten slot (an alignment hole, or a ppc64 slot
-whose FP argument travels in an FPR) are missed, and a tail call whose leading
-arguments are the caller's own, left in place, collects none. A store of the
-entry value of a register the function's own convention preserves (a prologue
-save), or a call between store and call, also ends the arguments; other stores
-just above them can come along (an alignment push such as x86-64 clang's `push
-rax` or ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a
-non-loop join stores whole is collected as the phi of those values, and past
-those a slot stored whole before the branch as its value.
+window as ordinary arguments. Collection stops at the first slot no whole store
+reaches (an alignment hole, a ppc64 slot whose FP argument travels in an FPR),
+at a prologue save, or at a call between store and call; a tail call reusing
+the caller's arguments in place collects none. Of the stores of a preserved
+register's entry value on one stack base, only the highest is its save; a
+lower one (`__builtin_return_address(0)`) is an argument. A value stored once
+is taken for the save. Stores just above can come along (x86-64 clang's `push
+rax`, ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a
+non-loop join stores whole is collected as the phi of those values; past those,
+a slot stored whole before the branch as its value.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
 stack pointer read, after the register arguments: one ordinal per run of slots
