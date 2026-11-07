@@ -71,9 +71,10 @@ as `__fentry__`). Memory is taken to be RAM: a memory-mapped register polled
 after a write folds to the value written.
 
 Each examined load's memory edge is also moved past definitions that cannot
-overwrite it (`stack_global_disjoint`, `noalias_allocators`' heap identity),
-never through a call a claim makes transparent: the jump-table walk and
-return-target verification read that edge without those claims.
+overwrite it (disjoint slots or addresses, and under `stack_global_disjoint` /
+`noalias_allocators`), never through a call a claim makes transparent: the
+jump-table walk and return-target verification read that edge without those
+claims.
 
 With `escape_analysis`, when no stack address escapes the frame, a spill load
 forwards across a call if the slot is outside the callee's argument window, and
@@ -90,11 +91,12 @@ In default pipeline order:
 
 **CallStackArgCollect.** Attaches the stores into each call's outgoing argument
 window to the call as ordinary arguments, up to the first slot no whole store
-reaches. A store of the entry value of a register the function's own
-convention preserves (a prologue save), or a call between store and call, also
-ends the arguments; other stores just above them can come along (an
-alignment push such as x86-64 clang's `push rax` or ARM gcc's `push {r3, lr}`,
-MIPS o32's `gp` save). A slot every arm of a non-loop join stores whole is
+reaches, so arguments past an unwritten slot (an alignment hole, or a ppc64
+slot whose FP argument travels in an FPR) are missed. A store of the entry
+value of a register the function's own convention preserves (a prologue save),
+or a call between store and call, also ends the arguments; other stores just
+above them can come along (an alignment push such as x86-64 clang's `push rax`
+or ARM gcc's `push {r3, lr}`, MIPS o32's `gp` save). A slot every arm of a non-loop join stores whole is
 collected as the phi of those values.
 
 **FunctionArgDetect.** Numbers the incoming stack slots that loads off the entry
@@ -172,11 +174,11 @@ Reported as `"unresolved_branch"`; the rest of the function lifts:
 
 ## Known limits
 
-- Chained switches (a jump table whose arm holds another) are found one
-  re-lift round per level; past 256 levels the next site is reported
-  `"unresolved_branch"` and deeper levels are never decoded. Each level
-  re-lifts the whole function, so time grows with the square of the depth
-  (200 levels of 8-way switches: about 11 s).
+- Switches reached only through another switch's arms (nested, or one after
+  another) are found one re-lift round per level; past 256 levels the next
+  site is reported `"unresolved_branch"` and deeper levels are never decoded.
+  Each level re-lifts the whole function, so time grows with the square of the
+  depth (200 levels of 8-way switches: about 11 s).
 - PowerPC float code lifts to far more p-code than other ISAs because the
   FPSCR is modelled exactly: one `fadd` is about 90 p-code ops.
 - A chain of about 500 constant guards held only in registers reaches the

@@ -16,8 +16,8 @@ use strider_ir::IntBinaryOp;
 use strider_ir::eval;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 
-/// A constant address term below this is a field offset, never a table base:
-/// what an image maps in its first page is a PIE's headers or ARM's vectors.
+/// A constant address term below this is taken for a field offset, not a table
+/// base.
 const FIRST_PAGE_END: u64 = 0x1000;
 
 /// The value the enumeration pins: `index` takes `x - rebase` for each `x` in
