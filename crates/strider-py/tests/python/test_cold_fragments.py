@@ -58,6 +58,53 @@ def test_a_clone_or_another_functions_fragment_stays_a_tail_call(tmp_path, name)
     assert lift.build_cfg(_FOO).pcode_at(_COLD_JMP) is None
 
 
+def _per_file(tmp_path, cold_file: str, foo_bind: int):
+    """`foo` at `_FOO` in `a.c` (a static, or a global after the locals), a
+    static `foo` in `b.c`, and `foo.cold` at `_COLD` local to `cold_file`."""
+    local = eb.STB_LOCAL
+    files = {
+        name: [eb.Sym(name, 0, None, kind=eb.STT_FILE, bind=local)] for name in ("a.c", "b.c")
+    }
+    files["b.c"].append(eb.Sym("foo", _COLD + 5, 0, size=1, bind=local))
+    files[cold_file].append(eb.Sym("foo.cold", _COLD, 0, size=5, bind=local))
+    foo = eb.Sym("foo", _FOO, 0, size=6, bind=foo_bind)
+    symbols = files["a.c"] + ([foo] if foo_bind == local else []) + files["b.c"]
+    path = tmp_path / "per_file.elf"
+    eb.Elf(
+        loads=[(eb.PF_R | eb.PF_X, _COLD, 0)],
+        sections=[eb.Section(".text", _COLD, _CODE)],
+        symbols=symbols + ([] if foo_bind == local else [foo]),
+    ).write(path)
+    return strider.lift.load_elf(str(path))
+
+
+@pytest.mark.parametrize(
+    ("cold_file", "foo_bind", "followed"),
+    [
+        ("a.c", eb.STB_LOCAL, True),
+        ("b.c", eb.STB_LOCAL, False),
+        ("a.c", eb.STB_GLOBAL, True),
+        ("b.c", eb.STB_GLOBAL, False),
+    ],
+)
+def test_a_cold_fragment_belongs_to_the_function_of_its_own_file(
+    tmp_path, cold_file, foo_bind, followed
+):
+    """GCC emits `foo.cold` local to the object of its `foo`, and the linker
+    gathers every object's `.text.unlikely` apart from the bodies, so the
+    file a static belongs to, not the address, tells two `foo`s apart. A
+    global `foo` owns a fragment whose file defines no `foo` of its own."""
+    lift = _per_file(tmp_path, cold_file, foo_bind)
+    assert (lift.build_cfg(_FOO).pcode_at(_COLD_JMP) is not None) == followed
+
+
+def test_a_cold_symbol_added_after_an_analysis_is_followed(tmp_path):
+    lift = _split(tmp_path, "bar")
+    assert lift.build_cfg(_FOO).pcode_at(_COLD_JMP) is None
+    lift.add_symbols({"foo.cold": (_COLD, 5)})
+    assert lift.build_cfg(_FOO).pcode_at(_COLD_JMP) is not None
+
+
 def test_explicit_fragment_ranges_win_over_the_elfs(tmp_path):
     lift = _split(tmp_path, "foo.cold")
     elsewhere = CfgOptions(fragment_ranges=[(0x9000, 0x9010)])
