@@ -49,8 +49,9 @@ impl PeepholePass for DeadBranchElimination {
     }
 
     fn after_sweep(&self, edit: &mut crate::EditFunction<'_>, changed: bool) -> Result<()> {
-        // A fold detaches its dead arm from control, which the incremental
-        // bookkeeping does not track.
+        // Drain the queue first: the resync below drops it. The resync is for
+        // the detached dead arm, which the incremental bookkeeping does not
+        // track.
         if changed {
             edit.clean();
         }
@@ -66,10 +67,9 @@ impl PeepholePass for DeadBranchElimination {
 /// one. The caller resyncs the live set.
 fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
     let entry = edit.entry();
-    // Every live join, not only reachable ones: a join kept live by its phi's
-    // use still has dead slots.
     let reachable = cfg_reachable(edit.function().graph(), entry);
 
+    // Every live join: one kept live by a phi's use can still have dead slots.
     let regions: Vec<NodeId> = edit
         .live_reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
         .collect();
