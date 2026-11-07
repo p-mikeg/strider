@@ -8,12 +8,12 @@ use crate::Result;
 use crate::const_eval::LoadSlice;
 use crate::mem_analysis::{Loc, MemQuery, Policy, ReachingDef, narrow_load_to};
 
-/// Store-to-load forwarding: a load whose nearest may-aliasing memory def is
-/// a store at its address covering its bytes takes the stored value (a wider
-/// store is sliced). Anything else blocks; no value `Phi` is synthesized. A
-/// `MemPhi` whose arms agree once a constant `If`'s untaken arms are dropped
-/// reads as that one arm. Calls and opaque stores pass per the function's
-/// claims (`Policy::forward`).
+/// Store-to-load forwarding. Moves each load's memory edge onto its nearest
+/// clobber under `Policy::strict`. A load whose nearest clobber under
+/// `Policy::forward` is a store at its address covering its bytes takes the
+/// stored value, a wider store sliced. A `MemPhi` whose arms agree once a
+/// constant `If`'s untaken arms are dropped reads as that arm. No value
+/// `Phi` is synthesized.
 pub struct LoadForward;
 
 /// One sweep's memory query and [`settle`] memo.
@@ -54,7 +54,7 @@ thread_local! {
     pub(crate) static SETTLE_ROUNDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Narrows `load`'s memory edge, then forwards an exact-match store's value.
+/// Narrows `load`'s memory edge, then forwards the store at its address.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,

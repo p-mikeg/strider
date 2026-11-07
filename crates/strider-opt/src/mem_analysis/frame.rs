@@ -5,10 +5,10 @@ use super::decompose::{alignment_masked_operand, decompose};
 use super::ring::wrap_to_addr_width;
 use super::{MemExpr, MemKind};
 
-/// Whether `[base + offset, base + offset + size)` lies wholly in this
-/// function's own frame, below the entry SP plus the ABI's stack-argument base
-/// (0 without one). The base's [`entry_sp_span`] must top out at or below
-/// zero: `(sp + K) & !0xF` can sit above the entry SP.
+/// Whether `[base + offset, base + offset + size)` ends at or below the entry
+/// SP plus the ABI's stack-argument base (0 without one). The base's
+/// [`entry_sp_span`] must top out at or below zero: `(sp + K) & !0xF` can sit
+/// above the entry SP.
 pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, size: i128) -> bool {
     entry_sp_span(function, base).is_some_and(|(_, hi)| hi <= 0)
         && offset.saturating_add(size)
