@@ -11,8 +11,8 @@ use super::{Ctx, RelocSite};
 
 /// One relocation, decoded once. `object` reads a mips64el `Elf64_Rel`
 /// `r_info` as one little-endian `u64`, which swaps `r_sym` with the type
-/// word (`r_ssym | r_type3 | r_type2 | r_type`); that is undone here and
-/// nowhere else.
+/// word (`r_ssym | r_type3 | r_type2 | r_type`); `decode` undoes that,
+/// [`raw_entries`] does not for a REL entry.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RelocInfo {
     pub(crate) r_type: u32,

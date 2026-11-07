@@ -27,7 +27,7 @@ impl std::fmt::Display for MemReadError {
 
 impl std::error::Error for MemReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        // `anyhow::Error` isn't a `std::error::Error`, but its inner cause is.
+        // Display prints the outermost error; the chain continues at its source.
         self.0.source()
     }
 }

@@ -247,8 +247,8 @@ impl MemRegion {
         (available != 0).then_some((offset, available))
     }
 
-    /// Both regions serve the same bytes and holes across `[lo, hi)`; a part
-    /// either fails to serve otherwise counts as differing.
+    /// Whether both regions serve the same bytes across `[lo, hi)`, and holes
+    /// of the same type; any other unserved byte is a difference.
     pub fn same_bytes_in(&self, other: &MemRegion, lo: u64, hi: u64) -> bool {
         let mut addr = lo;
         let (mut a, mut b) = ([0u8; 4096], [0u8; 4096]);
