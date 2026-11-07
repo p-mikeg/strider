@@ -373,7 +373,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let interior_to_open = |a: PcodeInsnAddr| {
             self.insns.last().is_some_and(|last| {
                 a.machine() > self.start_addr.machine()
-                    && a.machine() < last.addr.machine() + u64::from(last.len)
+                    && last
+                        .addr
+                        .machine()
+                        .checked_add(u64::from(last.len))
+                        .is_none_or(|end| a.machine() < end)
                     && self.insns.binary_search_by(|i| i.addr.cmp(&a)).is_err()
             })
         };

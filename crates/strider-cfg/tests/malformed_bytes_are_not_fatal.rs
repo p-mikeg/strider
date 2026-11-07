@@ -152,3 +152,18 @@ fn a_region_based_at_the_top_of_the_address_space_does_not_panic() {
         );
     }
 }
+
+#[test]
+fn a_table_seated_at_the_top_of_the_address_space_does_not_panic() {
+    // `jmp rax` ending at 2^64, its arms itself and the last byte.
+    let site = u64::MAX - 1;
+    let known = rustc_hash::FxHashMap::from_iter([(
+        strider_cfg::PcodeInsnAddr::at_machine_start(site),
+        strider_cfg::ResolvedTargets::table(vec![site.into(), u64::MAX.into()]),
+    )]);
+    let opts = CfgOptions {
+        known_targets: &known,
+        ..CfgOptions::default()
+    };
+    let _ = build_succeeds(&SleighArch::x86_64(), vec![0xff, 0xe0], site, &opts);
+}
