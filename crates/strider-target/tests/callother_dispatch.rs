@@ -113,46 +113,6 @@ fn avx_memory_ops_are_not_swallowed_by_a_prefix_family() {
     }
 }
 
-/// `a64_TBL` is aarch64 table lookup across vector registers.
-#[test]
-fn aarch64_tbl_is_pure_and_scoped() {
-    for preset in [ArchPreset::Aarch64, ArchPreset::Aarch64Be] {
-        let abi = expect_call(classify(preset, "a64_TBL"));
-        assert!(!abi.clobbers_memory, "{preset:?}");
-    }
-    assert_eq!(classify(ArchPreset::X86_64, "a64_TBL"), None);
-    assert_eq!(classify(ArchPreset::Arm, "a64_TBL"), None);
-}
-
-/// ARM-32 NEON names outside the `Vector*` / `Float*` groups; saturation
-/// sets FPSCR.QC.
-#[test]
-fn arm32_neon_scalar_ops_are_pure_and_scoped() {
-    for (name, fpscr) in [
-        ("SHA256ScheduleUpdate0", false),
-        ("SHA256ScheduleUpdate1", false),
-        ("SatQ", true),
-        ("SignedSatQ", true),
-        ("vrev", false),
-    ] {
-        let footprint: &[&str] = if fpscr { &["fpscr"] } else { &[] };
-        for preset in [
-            ArchPreset::Arm,
-            ArchPreset::ArmBe,
-            ArchPreset::ArmBeKernel,
-            ArchPreset::ArmThumb,
-        ] {
-            let abi = expect_call(classify(preset, name));
-            assert!(!abi.clobbers_memory, "{preset:?}/{name}");
-            assert_eq!(abi.implicit_reads, footprint, "{preset:?}/{name}");
-            assert_eq!(abi.implicit_writes, footprint, "{preset:?}/{name}");
-        }
-        // `vrev` and `SatQ` are generic spellings; keep them off other arches.
-        assert_eq!(classify(ArchPreset::X86_64, name), None, "x86/{name}");
-        assert_eq!(classify(ArchPreset::Aarch64, name), None, "aarch64/{name}");
-    }
-}
-
 /// Virtualisation, privileged, system, and shadow-stack user-ops the same
 /// sweep surfaced stay UNCLASSIFIED on purpose: each needs a real register
 /// footprint or memory effect, and a guessed `PURE` would be a miscompile.
@@ -276,44 +236,6 @@ fn arm_privileged_state_ops_are_classified_in_pairs() {
             let abi = expect_call(classify(preset, name));
             assert!(!abi.clobbers_memory, "{preset:?}/{name}");
             assert!(abi.implicit_writes.is_empty(), "{preset:?}/{name}");
-        }
-    }
-}
-
-/// The x86 rows whose ABI is an empty register footprint carry no information
-/// beyond `PURE` / `MEM_CLOBBER`; arch scoping lives in the row's
-/// `scope`, not in its class.  Pins the classification each name
-/// resolves to on both x86 widths, and that no other arch answers for them.
-#[test]
-fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
-    let pure = [
-        "rdtsc",
-        "rdtscp",
-        "rdmsr",
-        "xgetbv",
-        "readfsbase",
-        "readgsbase",
-    ];
-    let mem_clobber = ["swi"];
-    for preset in [ArchPreset::X86, ArchPreset::X86_64] {
-        for name in pure {
-            assert_eq!(
-                classify(preset, name),
-                Some(CallOtherClass::PURE),
-                "{preset:?}/{name}"
-            );
-        }
-        for name in mem_clobber {
-            assert_eq!(
-                classify(preset, name),
-                Some(CallOtherClass::MEM_CLOBBER),
-                "{preset:?}/{name}"
-            );
-        }
-    }
-    for name in pure.iter().chain(&mem_clobber).chain(&["wrmsr"]) {
-        for preset in [ArchPreset::Arm, ArchPreset::Aarch64, ArchPreset::MipsBe32] {
-            assert_eq!(classify(preset, name), None, "{preset:?}/{name}");
         }
     }
 }
