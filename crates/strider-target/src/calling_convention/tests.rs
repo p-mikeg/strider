@@ -252,7 +252,7 @@ fn cases() -> Vec<Case> {
             ret_float: PPC_RET_F,
             callee_saved_cond_count: 3,
             callee_saved_vec_count: 12,
-            ret_count: 2,
+            ret_count: 4, // r3..r6
             reg_size_bytes: 4,
             stack_args: Some(StackArgs {
                 base_offset: 8,
@@ -270,7 +270,7 @@ fn cases() -> Vec<Case> {
             ret_float: PPC_RET_F,
             callee_saved_cond_count: 3,
             callee_saved_vec_count: 12,
-            ret_count: 2,
+            ret_count: 4,
             reg_size_bytes: 4,
             stack_args: Some(StackArgs {
                 base_offset: 8,

@@ -97,9 +97,9 @@ fn only_the_userland_presets_name_a_vector_argument_or_return() {
     }
 }
 
-/// The two flavours differ in the vector windows and the 64-bit kernel's r13
-/// alone: dropping them must move no float or integer position, which would
-/// renumber `arg(n)`.
+/// The two flavours differ in the vector windows, the 64-bit kernel's r13 and
+/// the 32-bit kernel's `_Complex` return registers alone: dropping them must
+/// move no float or integer position, which would renumber `arg(n)`.
 #[test]
 fn the_kernel_presets_keep_every_non_vector_position() {
     for ((name, arch, user), (_, _, kernel)) in ppc_presets().into_iter().zip(ppc_kernel_presets())
@@ -120,7 +120,10 @@ fn the_kernel_presets_keep_every_non_vector_position() {
             scalars(&user.arg_passing_regs_float),
             "{name}: float argument positions",
         );
-        assert_eq!(kernel.ret_val_regs, user.ret_val_regs, "{name}");
+        assert!(
+            user.ret_val_regs.starts_with(&kernel.ret_val_regs),
+            "{name}: integer return positions",
+        );
         assert_eq!(
             kernel.ret_val_regs_float,
             scalars(&user.ret_val_regs_float),
