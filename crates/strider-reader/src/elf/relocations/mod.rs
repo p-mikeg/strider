@@ -23,8 +23,9 @@ use crate::{MemRegion, Patch, RegionIndex, Result};
 /// replacing any it carries. Walks the tables the loader reads (a
 /// `PT_DYNAMIC`'s, else the section headers'), with image base 0. Holed: an
 /// unlisted kind, a symbol with no address, a weak undefined outside a branch
-/// or GOT reference, a value its field cannot hold (a veneer branch too), an IFUNC's value, `R_*_COPY` bytes, the
-/// MIPS implicit GOT and the ARM / PPC32 lazy-binding words.
+/// or GOT reference, a value its field cannot hold (a veneer branch too), an
+/// IFUNC's value, `R_*_COPY` bytes, the MIPS implicit GOT and the ARM /
+/// PPC32 lazy-binding words.
 ///
 /// `layout` must be `obj`'s, `owners` the sections the regions came from.
 /// Returns the referenced GOT slots (ET_REL only) as regions.

@@ -37,8 +37,8 @@ deferred as `UnresolvedIndirectBranch` for a resolver above this crate. A
 table with an arm off a boundary or out of the bound defers whole. An arm
 found off-boundary after the seal is dropped alone; an address lost to a
 direct edge's ISA mode loses every arm there. A `Switch` left with no arm
-defers. Direct edges are explored
-before any arm, so a direct decode wins an ISA-mode clash.
+defers. Direct edges are explored before any arm, so a direct decode wins an
+ISA-mode clash.
 
 ## Incompleteness
 
