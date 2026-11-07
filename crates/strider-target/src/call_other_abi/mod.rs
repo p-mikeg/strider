@@ -178,8 +178,8 @@ pub fn classify_with<'a>(
         .or_else(|| classify(preset, name).map(CallOtherLookup::Class))
 }
 
-/// Classifies a user-op name: the family's exact rows, the arch-independent
-/// rows, then the family's prefixes and fallback. `None` is a name no table
+/// Classifies a user-op name: the family's exact rows, the shared rows
+/// (`common.rs`), then the family's prefixes and fallback. `None` is a name no table
 /// answers.
 pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     let family = preset.family();
