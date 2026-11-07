@@ -455,9 +455,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
             // Not a `debug_assert`: a repeat would silently corrupt use-lists.
             assert!(
                 remap.nodes[old_node_id].is_none(),
-                "`reachable` repeated {old_node_id:?}: the second input batch \
-                 orphans the first, which the relink still splices into the \
-                 use-lists"
+                "`reachable` repeats {old_node_id:?}"
             );
             let new_kind = self.store.nodes[old_node_id].kind.clone();
             let new_node_id = new.nodes.push(Node::new(new_kind));
