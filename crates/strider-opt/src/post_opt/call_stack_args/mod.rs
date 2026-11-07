@@ -114,7 +114,9 @@ fn register_arity(
 /// are collected too: a local, an alignment push (x86-64 clang's `push rax`,
 /// Thumb gcc's `push {r3, lr}`), or o32's `gp` save just above the outgoing
 /// arguments (`sp+16` when there are none), which the IR cannot tell from an
-/// argument without the call-time `gp`.
+/// argument without the call-time `gp`. An argument holding a preserved
+/// register's entry value, such as `__builtin_return_address(0)`, ends the
+/// collection: height and order cannot tell it from a save or a spill.
 pub struct CallStackArgCollect;
 
 impl Optimizer for CallStackArgCollect {

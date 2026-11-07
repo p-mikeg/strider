@@ -21,6 +21,9 @@ mod call_stack_args_merged_store;
 #[path = "calls_and_abi/call_stack_args_patched_slot.rs"]
 mod call_stack_args_patched_slot;
 
+#[path = "calls_and_abi/call_stack_args_return_address.rs"]
+mod call_stack_args_return_address;
+
 #[path = "calls_and_abi/call_stack_effects.rs"]
 mod call_stack_effects;
 
