@@ -248,7 +248,7 @@ impl NodeKind {
     #[must_use]
     pub fn operand_width(&self, slot: usize) -> OperandWidth {
         match self {
-            // p-code leaves a shift COUNT any width.
+            // p-code leaves a shift count any width.
             Self::IntBinaryOp(op) => {
                 if op.is_shift() && slot > 0 {
                     OperandWidth::Free

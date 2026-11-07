@@ -14,15 +14,14 @@ use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 pub fn mask(v: &UBig, ty: ValueType) -> UBig {
     match ty {
         // Up to 128 bits, a u128-sized value masks without allocating.
-        ValueType::Int(w) if w <= 128 => match u128::try_from(v) {
-            Ok(n) => UBig::from(n & mask_below(w.into())),
-            Err(_) => v & UBig::from(mask_below(w.into())),
+        ValueType::Int(w) => match u128::try_from(v) {
+            Ok(n) if w <= 128 => UBig::from(n & mask_below(w.into())),
+            _ => {
+                let mut m = v.clone();
+                m.clear_high_bits(w.into());
+                m
+            }
         },
-        ValueType::Int(w) => {
-            let mut m = v.clone();
-            m.clear_high_bits(w.into());
-            m
-        }
         ValueType::Float(_) => UBig::ZERO,
     }
 }
@@ -115,8 +114,8 @@ fn signed_max(ty: ValueType) -> IBig {
     (IBig::ONE << ty.bit_width().saturating_sub(1)) - IBig::ONE
 }
 
-/// `amount` (unmasked) is at or past `ty`'s width, where Sleigh shifts to 0
-/// (sign fill for `IntSright`). Sleigh's bound at `I1` is 8, not 1.
+/// `amount` (unmasked) is at or past `ty`'s width, where a shift yields 0
+/// (sign fill for `SShiftRight`). At `I1` the bound is 1; Sleigh's is 8.
 #[inline]
 #[must_use]
 pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {

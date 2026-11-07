@@ -568,7 +568,7 @@ mod tests {
     }
 
     /// Guards against an integer-only kind creeping into a tail that must
-    /// admit Bool flag-register values.
+    /// admit floats.
     #[test]
     fn variadic_tail_kinds_match_intent() {
         use ExpectedValueKind as K;

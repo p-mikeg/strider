@@ -201,8 +201,8 @@ pub enum ValidationError {
     },
 
     #[error(
-        "node {node:?} (`IntConst(...)`) has an interned value that exceeds its \
-         declared output width (bits set above the type's bit width)"
+        "node {node:?} is `IntConst({id:?})`, which has bits set above its \
+         declared output width"
     )]
     ConstWidthMismatch {
         node: NodeId,

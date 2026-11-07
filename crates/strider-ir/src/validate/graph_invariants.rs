@@ -208,8 +208,8 @@ pub(super) fn check_extend_truncate(
     }
 }
 
-/// Every reachable [`NodeKind::Switch`] needs a table of this function's, at
-/// least one control output, and one case address per control output.
+/// Every reachable [`NodeKind::Switch`] names one of this function's tables,
+/// with one case address per output.
 pub(super) fn check_switch(
     function: &Function,
     node: NodeId,
