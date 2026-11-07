@@ -410,7 +410,7 @@ fn cases() -> Vec<Case> {
             ret_float: NONE,
             callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
-            ret_count: 2,
+            ret_count: 4, // r0..r3
             reg_size_bytes: 4,
             stack_args: Some(StackArgs {
                 base_offset: 0,
