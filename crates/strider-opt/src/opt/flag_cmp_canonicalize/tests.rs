@@ -83,8 +83,7 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
 /// `cmp` (`Xor(Less(a, b), 1)`), is the CR-bit arm's one-term pack: it
 /// collapses to the flag and keeps the test's addresses.
 ///
-/// Mutation: let `single_bit_term` name only a comparison under a
-/// `ZeroExtend`.
+/// Mutation: let `BitTracer::bit` stop at a non-comparison `I1`.
 #[test]
 fn a_thumb_true_flag_test_collapses_to_a_non_comparison_flag() -> Result<()> {
     let mut fg = nonzero_flag_test(bool_not)?;
@@ -174,8 +173,7 @@ fn a_nonzero_flag_test_keeps_the_widened_flags_fingerprint() -> Result<()> {
 /// comparison, widened through `I8` first, folds to that flag: bit 2 of
 /// `ZeroExtend(ZeroExtend(f:I1):I8) << 2 | ZeroExtend(eq) << 1` is `f`.
 ///
-/// Mutation: let `single_bit_term` name only a comparison under a
-/// `ZeroExtend`.
+/// Mutation: let `BitTracer::bit` stop at a non-comparison `I1`.
 #[test]
 fn a_truncate_cr_test_folds_to_a_chained_zero_extended_flag() -> Result<()> {
     use strider_ir::node::ExtendOp;
@@ -660,7 +658,7 @@ fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
     Ok(())
 }
 
-/// `cmp x, N; ja` (LS) or Thumb `bhi` (HI) with the ZF term's `Neg(N)`
+/// `cmp x, N; jbe` (LS) or Thumb `bhi` (HI) with the ZF term's `Neg(N)`
 /// already folded, which neither the EQ rule nor the plain decomposed rules
 /// match: LS is `Or(Less(x, N), Equal(Add(b, C1 - N + skew), 0))` and HI its
 /// De Morgan dual `And(!Less(x, N), !Equal(..))`. `x` is `b`, or for a switch

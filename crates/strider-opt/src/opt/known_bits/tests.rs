@@ -430,9 +430,8 @@ fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
     Ok(())
 }
 
-/// Two folds sharing an upstream cone must EACH absorb it.  The shared
-/// `linked` set walks every edge once; correctness rests on the union LINKING
-/// rather than copying.
+/// Two folds sharing an upstream cone must each absorb it: each fold walks the
+/// whole shared cone.
 ///
 /// A shared `(0 | 7)` with a distinct addr feeds `& 4` and `& 1`.  Both
 /// results differ from each other and from 7, so neither folded constant can

@@ -59,8 +59,8 @@ fn build_factor_rules() -> Vec<Rule> {
         Capture::new(),
         Capture::new(),
     );
-    // Product and shift arms first, so the bare arm does not swallow the
-    // product into `x`. `one_of` is a union, not a cut.
+    // Product and shift arms first: the first full match wins, and the bare
+    // arm would bind the product as `x`.
     let term = move |c, z| {
         one_of![
             int_mul(var(x), int_const(c)),

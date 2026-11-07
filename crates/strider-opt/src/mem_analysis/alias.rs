@@ -156,8 +156,8 @@ pub(super) fn alias_verdict(load: Loc, store: Loc, policy: Policy) -> AliasVerdi
                 AliasVerdict::MayAlias
             }
         }
-        // An unknown allocation may be the base it is paired with; anything
-        // against an `Anchor`.
+        // A `HeapOpaque` against any heap class, and an `Anchor` against
+        // anything else.
         _ => AliasVerdict::MayAlias,
     }
 }

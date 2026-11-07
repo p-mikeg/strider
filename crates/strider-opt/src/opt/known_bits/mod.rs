@@ -50,8 +50,8 @@ enum ShiftDir {
     Right,
 }
 
-/// Transfer for ShiftLeft / ShiftRight: vacated bits become known-zero. `None` when the
-/// shift amount is unknown. A shift `>= bit_width` gives 0, as in Sleigh.
+/// ShiftLeft / ShiftRight transfer: vacated bits are known zero; a count at or
+/// past the width gives 0. `None` for an unknown count.
 fn shift_known_bits(
     function: &strider_ir::Function,
     l: KnownBitsFacts,

@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Function, IRViewer};
 
@@ -17,7 +19,7 @@ pub(super) struct MemWalker<'a> {
     pub(super) loc: Loc,
     pub(super) stores: &'a StoreIndex,
     /// Memo of [`Self::frame_is_private`], fixed for the walk.
-    pub(super) private_frame: std::cell::OnceCell<bool>,
+    pub(super) private_frame: OnceCell<bool>,
 }
 
 #[cfg(test)]
