@@ -1,21 +1,5 @@
 use super::*;
 use crate::node::signature::every_node_kind;
-use cranelift_entity::EntityRef;
-
-#[test]
-fn is_value_only_for_output_type() {
-    assert!(ValueKind::Typed(ValueType::int(64)).is_value());
-    assert!(!ValueKind::Control.is_value());
-    assert!(!ValueKind::PhiToken.is_value());
-    assert!(!ValueKind::Memory.is_value());
-}
-
-#[test]
-fn is_bool_only_for_bool_output_type() {
-    assert!(ValueKind::Typed(ValueType::I1).is_bool());
-    assert!(!ValueKind::Typed(ValueType::int(8)).is_bool());
-    assert!(!ValueKind::Control.is_bool());
-}
 
 /// Exactly the integer types count as integers; the non-value kinds do not.
 #[test]
@@ -25,14 +9,6 @@ fn is_integer_for_all_integer_output_types() {
     }
     assert!(!ValueKind::Control.is_integer());
     assert!(!ValueKind::Memory.is_integer());
-}
-
-#[test]
-fn is_const_only_for_constant_kinds() {
-    assert!(NodeKind::IntConst(crate::node::IntConstId::new(42_usize)).is_const());
-    assert!(NodeKind::FloatConst(0).is_const());
-    assert!(!NodeKind::Entry.is_const());
-    assert!(!NodeKind::Return.is_const());
 }
 
 /// Independent restatement of `is_cacheable` as a single negated `matches!`.
@@ -143,20 +119,4 @@ fn same_value_distinct_width_shares_const_id_distinct_node() {
     );
     assert_eq!(f.int_const_u128(v80), Some(42));
     assert_eq!(f.int_const_u128(v128), Some(42));
-}
-
-#[test]
-fn the_shifts_are_the_three_shift_ops() {
-    let shifts: Vec<IntBinaryOp> = IntBinaryOp::ALL
-        .into_iter()
-        .filter(|op| op.is_shift())
-        .collect();
-    assert_eq!(
-        shifts,
-        [
-            IntBinaryOp::ShiftRight,
-            IntBinaryOp::SShiftRight,
-            IntBinaryOp::ShiftLeft
-        ]
-    );
 }

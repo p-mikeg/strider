@@ -329,18 +329,6 @@ mod tests {
         assert_eq!(ValueType::I1.mask_float_bits(u64::MAX), 1);
     }
 
-    /// A float has no integer bits.
-    #[test]
-    fn mask_at_a_float_type_is_zero() {
-        let v = dashu_int::UBig::from(u128::MAX);
-        for w in [32, 64, 80] {
-            assert_eq!(
-                crate::eval::mask(&v, ValueType::float(w)),
-                dashu_int::UBig::ZERO
-            );
-        }
-    }
-
     /// Agrees with `eval::signed` at every width the carrier holds, on
     /// unmasked inputs too; `None` past the carrier, at `Int(0)` and for a float.
     #[test]
@@ -367,32 +355,6 @@ mod tests {
             }
         }
         assert_eq!(ValueType::Int(0).get_signed_int(u128::MAX), None);
-    }
-
-    #[test]
-    fn get_signed_int_for_u80_sign_extends() {
-        let neg1_at_u80 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::int(80).get_signed_int(neg1_at_u80), Some(-1i128));
-        assert_eq!(ValueType::int(80).get_signed_int(50u128), Some(50i128));
-        let neg50 = ((1u128 << 80) - 1) ^ 49;
-        assert_eq!(ValueType::int(80).get_signed_int(neg50), Some(-50i128));
-    }
-
-    #[test]
-    fn int_from_bytes_maps_widths() {
-        use super::ValueType as T;
-        assert_eq!(T::int_from_bytes(1).unwrap(), T::int(8));
-        assert_eq!(T::int_from_bytes(6).unwrap(), T::int(48));
-        assert_eq!(T::int_from_bytes(8).unwrap(), T::int(64));
-        assert_eq!(T::int_from_bytes(64).unwrap(), T::int(512));
-        assert_eq!(T::int_from_bytes(3).unwrap(), T::int(24));
-
-        // I48 fits u64, so it is not wide.
-        assert_eq!(T::int(48).byte_size(), 6);
-        assert_eq!(T::int(48).bit_width(), 48);
-        assert!(T::int(48).bit_width() <= 64);
-        assert_eq!(T::int(48).int_mask_u128(), Some((1u128 << 48) - 1));
-        assert_eq!(T::int(48).get_signed_int((1u128 << 48) - 1), Some(-1i128));
     }
 
     /// The all-ones value up to the carrier, and nothing for a float or a

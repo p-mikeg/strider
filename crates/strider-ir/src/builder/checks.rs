@@ -44,19 +44,17 @@ pub(crate) fn require_value_type(
 }
 
 pub(crate) fn require_integer_value(f: &Function, value_id: ValueId) -> crate::Result<()> {
-    ensure_value_type(
-        value_id,
-        f.value_type(value_id)?.is_integer(),
-        "an integer value",
-    )
+    if !f.value_type(value_id)?.is_integer() {
+        return Err(anyhow!("output {value_id:?} is not an integer value"));
+    }
+    Ok(())
 }
 
 pub(crate) fn require_float_value(f: &Function, value_id: ValueId) -> crate::Result<()> {
-    ensure_value_type(
-        value_id,
-        f.value_type(value_id)?.is_float(),
-        "a float value",
-    )
+    if !f.value_type(value_id)?.is_float() {
+        return Err(anyhow!("output {value_id:?} is not a float value"));
+    }
+    Ok(())
 }
 
 pub(crate) fn require_integer_type(ty: ValueType) -> crate::Result<()> {
@@ -111,12 +109,4 @@ pub(crate) fn require_output_type(kind: &NodeKind, ty: ValueType) -> crate::Resu
         ));
     }
     Ok(())
-}
-
-fn ensure_value_type(value_id: ValueId, ok: bool, noun: &str) -> crate::Result<()> {
-    if ok {
-        Ok(())
-    } else {
-        Err(anyhow!("output {value_id:?} is not {noun}"))
-    }
 }
