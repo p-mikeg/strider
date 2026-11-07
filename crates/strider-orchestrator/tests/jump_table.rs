@@ -18,6 +18,9 @@ mod direct_edge_outranks_a_seeded_arm;
 #[path = "jump_table/field_offset_in_a_mapped_first_page.rs"]
 mod field_offset_in_a_mapped_first_page;
 
+#[path = "jump_table/guarded_cell_bounds_a_deeper_index.rs"]
+mod guarded_cell_bounds_a_deeper_index;
+
 #[path = "jump_table/interworking_table_widens_in_arm_mode.rs"]
 mod interworking_table_widens_in_arm_mode;
 

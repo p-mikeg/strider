@@ -514,7 +514,7 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     let target_value = g.indirect_branch_target(branch);
     let chain = dominator_chain(&g, target_value).expect("a dispatch cone");
     match SiteClassifier::new(&g, None).decompose_index(&chain, branch, false) {
-        Some(hit) => assert_eq!(
+        Some((hit, _)) => assert_eq!(
             (hit.range.lo(), hit.range.hi(), hit.rebase),
             (0, 7, 0),
             "must pick the shallow narrowed [0,7] index, not the deeper [0,63]"

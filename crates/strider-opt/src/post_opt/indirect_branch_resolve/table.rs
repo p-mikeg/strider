@@ -117,17 +117,20 @@ impl SiteClassifier<'_> {
             constants.retain(|&k| site_range.contains(k) && !self.ranges.excludes(source, k, site));
             constants
         });
-        let Some(hit) = self.decompose_index(&chain, site, shallow) else {
+        let Some((hit, cell)) = self.decompose_index(&chain, site, shallow) else {
             return constants.map(|values| (source, values));
         };
-        if let Some(values) = constants.and_then(|k| self.constants_in_range(k, hit, source)) {
+        if let Some(mut values) = constants.and_then(|k| self.constants_in_range(k, hit, source)) {
+            if let Some(cell) = cell {
+                self.retain_in_cell_range(cell, source, &mut values);
+            }
             return Some((source, values));
         }
         // `stride` divides the value spacing; one wider than `usize` defers.
         let step = usize::try_from(hit.range.stride()).ok()?;
         // Known bits and equality guards exclude values inside the interval.
         let scales = self.ranges.index_scales(hit.index);
-        let values = (hit.range.lo()..=hit.range.hi())
+        let mut values = (hit.range.lo()..=hit.range.hi())
             .step_by(step)
             .map(|x| x.wrapping_sub(hit.rebase) & hit.mask)
             .filter(|&x| {
@@ -137,7 +140,24 @@ impl SiteClassifier<'_> {
                     })
             })
             .collect();
+        if let Some(cell) = cell {
+            self.retain_in_cell_range(cell, hit.index, &mut values);
+        }
         Some((hit.index, values))
+    }
+
+    /// Drops the `values` of `pinned` under which the guarded `cell` folds
+    /// outside its range: the guard sends those to another edge. A value the
+    /// cell does not fold under stays, for the seat to defer on.
+    fn retain_in_cell_range(&mut self, cell: PinnedIndex, pinned: ValueId, values: &mut Vec<u128>) {
+        let order = super::eval::cone_order_pruned(self.function, cell.index, pinned);
+        values.retain(|&x| {
+            self.eval.begin_index(pinned, x);
+            self.eval.eval_root(&order, cell.index).is_none_or(|c| {
+                cell.range
+                    .contains(u128::from(c).wrapping_add(cell.rebase) & cell.mask)
+            })
+        });
     }
 
     /// The `constants` `source` takes whose index `hit`'s range keeps, `None`
@@ -166,12 +186,13 @@ impl SiteClassifier<'_> {
     /// The bounded index nearest the target in `chain`, the target's dominators
     /// in its variability cone. Dominance excludes a bypassed sub-branch: in a
     /// rotate `(x<<2) | (x>>30)`, `x>>30` is tightest but does not dominate.
+    /// With it, the guard-narrowed cell the index was taken below.
     fn decompose_index(
         &mut self,
         chain: &[ValueId],
         site: NodeId,
         shallow: bool,
-    ) -> Option<PinnedIndex> {
+    ) -> Option<(PinnedIndex, Option<PinnedIndex>)> {
         let function = self.function;
         let first_hit = |this: &mut Self, from: usize| {
             chain
@@ -184,15 +205,16 @@ impl SiteClassifier<'_> {
         // A candidate stripping to a masked cell of a foldable table bounds the
         // table DATA; the index is a bounded value below that load, in its
         // address.
-        let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
+        let deep = foldable_cell_load(function, shallowest.1.index)
             .filter(|_| !shallow)
             .and_then(|cell| chain.iter().position(|&v| v == cell))
-            .and_then(|at| first_hit(self, at + 1))
-            .unwrap_or(shallowest);
+            .and_then(|at| first_hit(self, at + 1));
+        let cell = deep.and(Some(shallowest.1)).filter(|cell| cell.narrowed);
+        let (depth, hit) = deep.unwrap_or(shallowest);
         if shallow && !hit.narrowed {
             return None;
         }
-        offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
+        offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some((hit, cell))
     }
 
     /// Can a table index be enumerated over `iv`, the range of `value` at
