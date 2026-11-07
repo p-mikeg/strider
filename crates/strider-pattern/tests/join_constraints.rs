@@ -977,3 +977,90 @@ fn a_deeply_nested_constraint_frees_on_a_small_stack() {
         .join()
         .unwrap();
 }
+
+/// Two adds of one `x` bind `c` identically but match at different roots. A pattern sharing no
+/// capture with an earlier one keeps both rows, so an always-true constraint drops none.
+#[test]
+fn a_lone_capture_bearing_pattern_keeps_matches_that_differ_only_in_root() {
+    use strider_ir::node::IntBinaryOp;
+    use strider_pattern::int_add;
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
+    let r = b.create_region_all().unwrap();
+    b.set_entry_region_all(r).unwrap();
+    b.set_region(r);
+    b.set_lift_addr(Some(0x1000));
+    let t = ValueType::int(64);
+    let x = b.build_int_const(5u64, t).unwrap();
+    let one = b.build_int_const(1u64, t).unwrap();
+    let two = b.build_int_const(2u64, t).unwrap();
+    let a = b
+        .build_int_binary_operation(x, one, IntBinaryOp::Add, t)
+        .unwrap();
+    let c = b
+        .build_int_binary_operation(x, two, IntBinaryOp::Add, t)
+        .unwrap();
+    let sum = b
+        .build_int_binary_operation(a, c, IntBinaryOp::Add, t)
+        .unwrap();
+    b.build_return(Some(sum), &[]).unwrap();
+    let function = b.build().unwrap();
+    let m = Matcher::new(&function);
+
+    let cap = Capture::new();
+    let pat = int_add(int_const(5u128).capture(cap), anything())
+        .ordered()
+        .into_pattern();
+    assert_eq!(m.find_all(&pat).unwrap().len(), 2);
+    assert_eq!(m.find_joined_constrained(&[&pat], &[]).unwrap().len(), 2);
+    let always = JoinConstraint::And(Vec::new());
+    assert_eq!(
+        m.find_joined_constrained(&[&pat], &[always]).unwrap().len(),
+        2
+    );
+
+    // Sharing `cap` with an earlier pattern collapses the second pattern's roots.
+    let first = int_const(5u128).capture(cap).into_pattern();
+    assert_eq!(
+        m.find_joined_constrained(&[&first, &pat], &[])
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// At one root, `k` bound by the first pattern alone and by the second alone are two rows.
+#[test]
+fn a_capture_bound_by_either_pattern_alone_stays_two_rows() {
+    use strider_pattern::int_add;
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn().unwrap();
+    let r = b.create_region_all().unwrap();
+    b.set_entry_region_all(r).unwrap();
+    b.set_region(r);
+    let t = ValueType::int(64);
+    let x = b.build_int_const(5u64, t).unwrap();
+    let y = b.build_int_const(6u64, t).unwrap();
+    let s = b
+        .build_int_binary_operation(x, y, strider_ir::node::IntBinaryOp::Add, t)
+        .unwrap();
+    b.build_return(Some(s), &[]).unwrap();
+    let function = b.build().unwrap();
+    let m = Matcher::new(&function);
+
+    let (k, j) = (Capture::new(), Capture::new());
+    let a = int_add(one_of![anything().capture(k), anything()], anything())
+        .ordered()
+        .into_pattern();
+    let b = int_add(
+        one_of![anything(), anything().capture(k)],
+        anything().capture(j),
+    )
+    .ordered()
+    .into_pattern();
+    let rows = m.find_joined_constrained(&[&a, &b], &[]).unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().any(|r| r[0].value(k).is_some()));
+    assert!(
+        rows.iter()
+            .any(|r| r[0].value(k).is_none() && r[1].value(k).is_some())
+    );
+}

@@ -709,10 +709,9 @@ fn find_joined_disjoint_captures_is_rejected() {
     );
 }
 
-/// Tuples that agree on every shared capture but differ only in WHICH
-/// correlated site they pair must dedup, or a consumer acting per shared
-/// binding double-acts. Here two stores share a base, so the raw cross-product
-/// is 2*2 = 4 tuples that must collapse to one.
+/// Tuples that differ only in the root of a pattern whose captures all appear
+/// earlier dedup. Two stores share a base, so the 2*2 = 4 tuples collapse to
+/// one per store of the first pattern.
 #[test]
 fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
     let mut t = Tb::empty();
@@ -742,8 +741,8 @@ fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
     let req = mr.find_joined_constrained(&[&p0, &p1], &[]).unwrap();
     assert_eq!(
         req.len(),
-        1,
-        "tuples equivalent on the shared capture must dedup to one"
+        2,
+        "the second pattern's roots collapse, the first one's stay distinct"
     );
 }
 

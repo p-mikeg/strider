@@ -260,7 +260,8 @@ impl<'f> Matcher<'f> {
 
     /// The tuples (one [`Match`] per pattern) whose shared captures agree and where every
     /// [`JoinConstraint`] holds; an unanswerable constraint drops the tuple, negated or not.
-    /// Deduplicated by capture bindings. Worst case O(N1 * ... * NM).
+    /// Rows are deduplicated on their capture bindings plus the root of each match that binds
+    /// nothing or binds a pair no earlier match bound. Worst case O(N1 * ... * NM).
     ///
     /// # Errors
     /// If a pattern has no root (see [`Pattern::root`]), a capture-bearing pattern shares
@@ -850,27 +851,31 @@ impl<'f> ConstraintEval<'f> {
     }
 }
 
-/// Keep the first tuple of each signature: every (capture, binding) pair in the tuple, plus the
-/// root of each capture-free match. A pattern whose bindings all appear earlier in the tuple adds
-/// nothing, so tuples differing only in its root collapse.
+/// Keep the first tuple of each signature: every (capture, binding) pair in the tuple, plus, for
+/// each match that binds nothing or binds a pair no earlier match did, its root and whether it
+/// binds. A match whose bindings all appear earlier adds nothing, so tuples differing only in its
+/// root collapse.
 fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>) {
     let mut seen: FxHashSet<BTreeSet<(u32, bool, u32)>> = FxHashSet::default();
     acc.retain(|tuple| {
         let mut sig: BTreeSet<(u32, bool, u32)> = BTreeSet::new();
         for (slot, m) in tuple.iter().enumerate() {
-            if m.bindings.iter().next().is_none() {
-                // Capture ids stay below 2^31, so ids counted down from the top cannot collide.
-                let slot_id =
-                    u32::MAX - u32::try_from(slot).expect("a join has fewer than 2^32 patterns");
-                sig.insert((slot_id, false, m.root().as_u32()));
-                continue;
-            }
+            let before = sig.len();
             sig.extend(m.bindings.iter().map(|(cap, binding)| match binding {
                 Binding::Node(n) => (cap.id(), false, n.as_u32()),
                 Binding::Value(v) => (cap.id(), true, v.as_u32()),
             }));
+            let binds = m.bindings.iter().next().is_some();
+            if binds && sig.len() == before {
+                continue;
+            }
+            // Capture ids stay below 2^31, so ids counted down from the top cannot collide. The
+            // flag keeps a capture-free match apart from one that binds.
+            let slot_id =
+                u32::MAX - u32::try_from(slot).expect("a join has fewer than 2^32 patterns");
+            sig.insert((slot_id, binds, m.root().as_u32()));
         }
-        sig.is_empty() || seen.insert(sig)
+        seen.insert(sig)
     });
 }
 
