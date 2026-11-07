@@ -84,8 +84,8 @@ impl<'f> Matcher<'f> {
     /// Every match for `pat`, lazily per candidate node.
     ///
     /// Per root, each distinct capture-to-binding map is yielded once, natural operand order
-    /// before swapped. `n` commutative nodes can yield, and cost, up to 2^n even when nothing matches;
-    /// `.ordered()` pins them.
+    /// before swapped. `n` commutative nodes can yield, and cost, up to 2^n even when nothing
+    /// matches; `.ordered()` pins them.
     ///
     /// # Errors
     /// As [`Pattern::root`].

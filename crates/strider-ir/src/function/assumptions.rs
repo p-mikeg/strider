@@ -98,7 +98,8 @@ claims! {
         /// A `Call` leaves the incoming stack-argument slots as it found them. Decides only
         /// which loads are incoming arguments, never a memory edge; any call blocks once an
         /// address into the area escapes, but one rebuilt from a reloaded frame address below
-        /// it is missed. Needs [`reg_args_adjoin_stack_args`](strider_target::BuiltCallingConvention::reg_args_adjoin_stack_args)
+        /// it is missed.
+        /// Needs [`reg_args_adjoin_stack_args`](strider_target::BuiltCallingConvention::reg_args_adjoin_stack_args)
         /// where register arguments adjoin the stack ones. Default on.
         pub assume_incoming_args_survive_calls: bool = true,
         /// A `Store` rooted at an SP base other than the entry SP (e.g. `sp & -16`) is
