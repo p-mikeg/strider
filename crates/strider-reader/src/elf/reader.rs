@@ -66,11 +66,6 @@ mod tests {
     use crate::ReadOnlyMemory;
     use crate::elf::ElfSectionLayout;
 
-    /// A single RWX mapping, the firmware / `ld -N` shape.
-    fn rwx_elf() -> Vec<u8> {
-        text_elf(true)
-    }
-
     /// 16 bytes of `.text`, with `writable` also SHF_WRITE.
     fn text_elf(writable: bool) -> Vec<u8> {
         use object::write::{Object, StandardSegment};
@@ -95,7 +90,8 @@ mod tests {
 
     #[test]
     fn an_rwx_mapping_is_fetchable_but_is_not_read_only_memory() {
-        let elf = OwnedElf::parse(rwx_elf()).expect("parse");
+        // A single RWX mapping, the firmware / `ld -N` shape.
+        let elf = OwnedElf::parse(text_elf(true)).expect("parse");
         let obj = elf.checked_file().expect("parse");
         let sec_addr = {
             use object::{Object as _, ObjectSection as _};
