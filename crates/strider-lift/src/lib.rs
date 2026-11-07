@@ -73,6 +73,9 @@ pub struct Lifter<R: rsleigh::MemReader> {
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
+    /// A lifter over `reader`, whose bytes must not change while it lives
+    /// (see [`strider_cfg::DecodeEngine::new`]).
+    ///
     /// # Errors
     ///
     /// When [`strider_cfg::DecodeEngine::new`] fails.
