@@ -82,19 +82,6 @@ impl FunctionMemos {
 /// Memo accessors; the setters take `&self`, so an analysis holding
 /// `&Function` fills them in.
 impl Function {
-    #[inline]
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn memory_class(&self, value: ValueId) -> MemDecomp {
-        self.memos.borrow().memory_offsets[value]
-    }
-
-    /// `(base, byte offset from base)`; `None` when unknown or not memory-rooted.
-    #[inline]
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn memory_slot_resolved(&self, value: ValueId) -> Option<(ValueId, i128)> {
-        self.memory_decomp(value).1
-    }
-
     /// The region tag and the `(base, byte offset)` it resolves to.
     #[inline]
     pub fn memory_decomp(&self, value: ValueId) -> (MemDecomp, Option<(ValueId, i128)>) {
@@ -191,12 +178,6 @@ mod tests {
         assert!(matches!(f.memory_decomp(heap), (MemDecomp::Heap(_), Some((b, 16))) if b == base));
         assert_eq!(f.memory_decomp(not_mem), (MemDecomp::NotMemory, None));
         assert_eq!(f.memory_decomp(cold), (MemDecomp::Unknown, None));
-
-        for v in [stack, heap, not_mem, cold] {
-            let (class, slot) = f.memory_decomp(v);
-            assert_eq!(class, f.memory_class(v));
-            assert_eq!(slot, f.memory_slot_resolved(v));
-        }
     }
 
     #[test]

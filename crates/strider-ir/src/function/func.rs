@@ -614,7 +614,7 @@ mod compact_tests {
             "the zombie ahead of it must shift the value ids"
         );
         assert_eq!(
-            f.memory_slot_resolved(new_key_value),
+            f.memory_decomp(new_key_value).1,
             Some((new_base_value, -16)),
             "surviving memory_offsets entry must be remapped on key AND base"
         );
@@ -776,7 +776,7 @@ mod compact_tests {
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
         f.set_stack_slot(zombie_value, zombie_value, -8);
         assert_eq!(
-            f.memory_slot_resolved(zombie_value),
+            f.memory_decomp(zombie_value).1,
             Some((zombie_value, -8)),
             "offset must be set before compact"
         );
@@ -803,7 +803,7 @@ mod compact_tests {
             f.node_outputs(n)
                 .first()
                 .copied()
-                .and_then(|v| f.memory_slot_resolved(v))
+                .and_then(|v| f.memory_decomp(v).1)
                 .map(|(_, o)| o)
                 == Some(-8)
         });

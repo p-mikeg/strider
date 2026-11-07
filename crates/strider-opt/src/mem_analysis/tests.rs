@@ -181,7 +181,7 @@ mod decompose_tests {
             fg.set_stack_slot(addr, base, offset);
         }
         assert_eq!(
-            fg.memory_slot_resolved(addr).map(|(_, o)| o),
+            fg.memory_decomp(addr).1.map(|(_, o)| o),
             Some(-4),
             "committed slot must round-trip"
         );
@@ -751,7 +751,7 @@ mod heap_tests {
         );
         assert!(decompose(&fg, addr).is_none());
         assert!(
-            matches!(fg.memory_class(addr), strider_ir::MemDecomp::NotMemory),
+            matches!(fg.memory_decomp(addr).0, strider_ir::MemDecomp::NotMemory),
             "the negative verdict must reach the memo"
         );
         let hits = strider_pattern::Matcher::new(&fg)
@@ -3791,7 +3791,7 @@ mod refresh_tests {
     /// Every live `Load` / `Store` address, with its memory class.
     fn classes(fg: &Function) -> Vec<MemDecomp> {
         fg.walk_kind(|k| matches!(k, NodeKind::Load(_) | NodeKind::Store(_)))
-            .map(|n| fg.memory_class(fg.node_inputs(n)[1]))
+            .map(|n| fg.memory_decomp(fg.node_inputs(n)[1]).0)
             .collect()
     }
 
@@ -3801,7 +3801,7 @@ mod refresh_tests {
             .walk_kind(|k| matches!(k, NodeKind::Store(_)))
             .find(|&n| fg.int_const_u128(fg.store_data(n)) == Some(1))
             .expect("the heap store");
-        fg.memory_class(fg.store_addr(store))
+        fg.memory_decomp(fg.store_addr(store)).0
     }
 
     /// No live access is left unclassified after a run or after a rewrite.
