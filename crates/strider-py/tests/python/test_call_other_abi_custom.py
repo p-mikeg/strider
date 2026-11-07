@@ -220,3 +220,13 @@ def test_custom_names_what_it_takes_for_a_wrong_type(custom):
         match="argument 'sleigh': 'str' object cannot be converted to 'SleighArch'",
     ):
         custom("x86")
+
+
+def test_a_custom_abi_repr_reads_back_and_a_builtin_one_does_not_pose_as_custom():
+    arch = SleighArch.x86_64()
+    abi = CallOtherAbi.custom(arch, implicit_reads=["ECX"], clobbers_memory=True)
+    assert eval(repr(abi), {"CallOtherAbi": CallOtherAbi, "SleighArch": SleighArch}) == abi
+    lifter = strider.lift.lifter(arch, strider.reader.BufferReader(0x1000, b"\xc3"))
+    builtin = lifter.call_other_abi("cpuid")
+    assert builtin is not None
+    assert repr(builtin).startswith("<CallOtherAbi ") and "ECX" in repr(builtin)

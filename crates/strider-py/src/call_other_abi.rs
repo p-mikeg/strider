@@ -170,14 +170,21 @@ impl PyCallOtherAbi {
             }
             return "CallOtherAbi.pure()".to_owned();
         }
-        format!(
-            "CallOtherAbi.custom(implicit_reads={:?}, implicit_writes={:?}, \
-             clobbers_memory={}, no_return={})",
+        let fields = format!(
+            "implicit_reads={:?}, implicit_writes={:?}, clobbers_memory={}, no_return={}",
             self.reads,
             self.writes,
             crate::options::py_bool(self.clobbers_memory()),
             crate::options::py_bool(self.is_no_return()),
-        )
+        );
+        match self.source_arch {
+            Some(arch) => format!(
+                "CallOtherAbi.custom(sleigh=SleighArch.{}(), {fields})",
+                arch.preset().name()
+            ),
+            // A built-in class with implicit registers has no constructor.
+            None => format!("<CallOtherAbi {fields}>"),
+        }
     }
 
     /// Equal footprint, memory effect, no-return flag and `custom` arch
