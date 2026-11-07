@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
+use std::collections::HashSet;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use super::FunctionDotDumper;
 use crate::function::Function;
@@ -37,32 +37,17 @@ pub(super) fn neighborhood_nodes(
     hub_cap: usize,
     max_nodes: usize,
     count_producers: bool,
-) -> FxHashSet<NodeId> {
+) -> HashSet<NodeId> {
     let consumers = build_consumers(f);
-    let mut seen = FxHashSet::default();
-    seen.insert(center);
-    let mut queue = VecDeque::from([(center, 0usize)]);
-    'bfs: while let Some((node, dist)) = queue.pop_front() {
-        if dist >= depth {
-            continue;
+    ::dot::nearest(center, depth, max_nodes, |node| {
+        let mut nbs = producers(f, node);
+        let cons = consumers.get(&node).map_or(&[][..], Vec::as_slice);
+        let degree = cons.len() + if count_producers { nbs.len() } else { 0 };
+        if node == center || degree <= hub_cap {
+            nbs.extend_from_slice(cons);
         }
-        let prod = producers(f, node);
-        let cons = consumers.get(&node).cloned().unwrap_or_default();
-        let degree = cons.len() + if count_producers { prod.len() } else { 0 };
-        let is_hub = node != center && degree > hub_cap;
-        for nb in prod
-            .into_iter()
-            .chain(if is_hub { Vec::new() } else { cons })
-        {
-            if seen.len() >= max_nodes {
-                break 'bfs; // budget spent; the nearest nodes are already in
-            }
-            if seen.insert(nb) {
-                queue.push_back((nb, dist + 1));
-            }
-        }
-    }
-    seen
+        nbs
+    })
 }
 
 impl FunctionDotDumper<'_> {

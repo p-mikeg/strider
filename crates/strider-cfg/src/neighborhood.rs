@@ -1,39 +1,22 @@
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
-use rustc_hash::FxHashSet;
-use std::collections::VecDeque;
+use std::collections::HashSet;
 
 use crate::Cfg;
 
-/// BFS over both edge directions, keeping the nearest `max(1, max_nodes)`
-/// regions, `center` always among them.
+/// The regions within `depth` edges of `center` either way, the nearest
+/// `max(1, max_nodes)`, `center` always among them.
 pub(crate) fn neighborhood_regions(
     cfg: &Cfg,
     center: NodeIndex,
     depth: usize,
     max_nodes: usize,
-) -> FxHashSet<NodeIndex> {
+) -> HashSet<NodeIndex> {
     let g = cfg.region_graph();
-    let mut seen = FxHashSet::default();
-    seen.insert(center);
-    let mut queue = VecDeque::from([(center, 0usize)]);
-    'bfs: while let Some((node, dist)) = queue.pop_front() {
-        if dist >= depth {
-            continue;
-        }
-        let neighbors = g
-            .neighbors_directed(node, Direction::Incoming)
-            .chain(g.neighbors_directed(node, Direction::Outgoing));
-        for nb in neighbors {
-            if seen.len() >= max_nodes {
-                break 'bfs;
-            }
-            if seen.insert(nb) {
-                queue.push_back((nb, dist + 1));
-            }
-        }
-    }
-    seen
+    ::dot::nearest(center, depth, max_nodes, |node| {
+        g.neighbors_directed(node, Direction::Incoming)
+            .chain(g.neighbors_directed(node, Direction::Outgoing))
+    })
 }
 
 impl Cfg {

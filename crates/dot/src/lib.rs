@@ -1,4 +1,6 @@
+use std::collections::{HashSet, VecDeque};
 use std::fmt::Write;
+use std::hash::Hash;
 use std::path::Path;
 
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
@@ -23,6 +25,36 @@ impl<N: Copy + Ord> View<N> {
         nodes.sort_unstable();
         Self { nodes, center }
     }
+}
+
+/// BFS from `center` over `neighbors`, keeping the nodes within `depth` edges,
+/// the nearest `max(1, max_nodes)` of them, `center` always among them.
+pub fn nearest<N, I>(
+    center: N,
+    depth: usize,
+    max_nodes: usize,
+    mut neighbors: impl FnMut(N) -> I,
+) -> HashSet<N>
+where
+    N: Copy + Eq + Hash,
+    I: IntoIterator<Item = N>,
+{
+    let mut seen = HashSet::from([center]);
+    let mut queue = VecDeque::from([(center, 0usize)]);
+    'bfs: while let Some((node, dist)) = queue.pop_front() {
+        if dist >= depth {
+            continue;
+        }
+        for nb in neighbors(node) {
+            if seen.len() >= max_nodes {
+                break 'bfs;
+            }
+            if seen.insert(nb) {
+                queue.push_back((nb, dist + 1));
+            }
+        }
+    }
+    seen
 }
 
 /// A graph type that can be serialised to Graphviz DOT format node by node.
