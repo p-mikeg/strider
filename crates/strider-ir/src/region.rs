@@ -20,7 +20,7 @@ pub(crate) struct Region {
     memory_node: NodeId,
     /// Advances through Call and CallOther.
     cur_ctrl: ValueId,
-    /// Advances through Store, Call, and CallOther.
+    /// Advances through Store, Call, and a memory-clobbering CallOther.
     cur_memory: ValueId,
     /// Current SSA value per variable. Unset means no definition reaches here.
     variables: SecondaryMap<InitialVnId, PackedOption<ValueId>>,

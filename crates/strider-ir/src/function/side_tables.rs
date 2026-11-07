@@ -421,7 +421,8 @@ impl crate::Function {
             .insert(user_op_id, name.into());
     }
 
-    /// The output of `vn`'s `InitialVar` node; `None` when `vn` is untracked.
+    /// The output of `vn`'s `InitialVar` node; `None` when `vn` is untracked or
+    /// its `InitialVar` did not survive [`Self::compact`].
     pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
         let id = self.vn_id_of(vn)?;
         let node = self.side_tables().initial_var_index[id]?;
