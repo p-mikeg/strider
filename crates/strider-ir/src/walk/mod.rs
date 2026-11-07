@@ -6,7 +6,7 @@ pub use graph_algorithms::walk::{FnSuccs, PostOrder, PreOrder, WalkPhase};
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, ValueId};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 #[cfg(test)]
 mod tests;
@@ -65,12 +65,7 @@ pub fn close_over_control_preds(
     }
 }
 
-/// Successors: every input's producer, then the control consumers (so
-/// `PreOrder` visits consumers first). A dead control predecessor is reached
-/// through the live node using it.
-#[derive(Clone, Copy)]
-pub struct GraphWalkSuccs<'a>(&'a Graph);
-
+/// `node`'s `Control` outputs, consumed or not.
 pub fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = ValueId> + '_ {
     graph
         .node_outputs(node)
@@ -84,6 +79,12 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .flat_map(|output| graph.value_uses(output))
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
+
+/// Successors: every input's producer, then the control consumers (so
+/// `PreOrder` visits consumers first). A dead control predecessor is reached
+/// through the live node using it.
+#[derive(Clone, Copy)]
+pub struct GraphWalkSuccs<'a>(&'a Graph);
 
 /// Forward def-use successors, dead consumers included.
 pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
@@ -172,9 +173,10 @@ fn is_memory_chain_kind(kind: &NodeKind) -> bool {
 /// Consumers of `node`'s `Memory` output that are themselves chain kinds.
 fn mem_succs(function: &Function, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     function
-        .memory_output_of(node)
-        .ok()
-        .into_iter()
+        .node_outputs(node)
+        .iter()
+        .copied()
+        .filter(|&v| function.value_kind(v) == ValueKind::Memory)
         .flat_map(move |mem_value| function.value_uses(mem_value))
         .map(|(consumer, _slot)| consumer)
         .filter(|&consumer| is_memory_chain_kind(function.node_kind(consumer)))
