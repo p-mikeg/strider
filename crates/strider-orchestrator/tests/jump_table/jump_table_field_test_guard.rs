@@ -170,7 +170,7 @@ fn arm_dispatch(mut words: Vec<u32>, table: u64, data: std::ops::Range<u64>) -> 
     let arms: Vec<u64> = (0..4).map(|i| first_arm + 4 * i).collect();
     words.extend(arms.iter().map(|&a| u32::try_from(a).expect("fits")));
     words.extend([0xe12f_ff1e; 5]);
-    let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let code = common::words_image(&words, strider_target::Endianness::Little);
     let len = code.len() as u64;
     let rom = Box::new(MockRom::strided(table, 4, arms, 4))
         as Box<dyn strider_orchestrator::opt::ReadOnlyMemory>;
