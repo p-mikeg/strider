@@ -47,56 +47,58 @@ strider.explore.shutdown(port)
 
 ## What's new since 0.1.0
 
-[CHANGELOG.md](CHANGELOG.md) has the details, breaking changes first.
+[CHANGELOG.md](CHANGELOG.md) has every change, breaking ones first.
 
 **0.3.0**
 
-- `cfg.incomplete`: every address the analysis cannot vouch for, with its
-  reason. `analyze` and `build_cfg` report it rather than raise; the few
+- `cfg.incomplete` lists every address the analysis cannot vouch for, with
+  its reason; `analyze` and `build_cfg` report it rather than raise (the few
   cases that raise are in the
-  [API reference](docs/python-api.md#2-analyzing-a-function).
-- `Function.optimize`, `Function.assumptions` (claims accumulate on the
-  function) and `Function.optimizer_converged`.
-- Two lift-time claims, `fp_rounding_mode_is_nearest` and
-  `msr_register_keeps_mode`; float-to-integer conversions round and saturate
-  as each ISA does.
-- Target presets: `SleighArch.preset`, `CallingConvention.preset`,
-  `CC_PRESETS`.
-- `int_const` and the signed readers handle values up to 512 bits.
-- Handles usable from any thread.
-- GCC `.cold` fragments (`CfgOptions.fragment_ranges`); a ppc64 ELFv1
-  function enters with `r2` holding its TOC.
-- Decoder fixes in the vendored Sleigh on every arch (x87 / SSE / VEX
-  conversions, PowerPC FPSCR, AArch64 narrow-register writes, ARM NEON
-  loads, MIPS64 sign extension).
-- Rewrites take only a `strider.template` right-hand side, and the explorer
-  is `strider.explore.visualize`.
+  [API reference](docs/python-api.md#2-analyzing-a-function)).
+- Claims live on the function: `Function.optimize(assumptions=...)` adds to
+  `Function.assumptions`, and `Function.optimizer_converged` flags a run
+  stopped at its cap. Two lift-time claims are new,
+  `fp_rounding_mode_is_nearest` and `msr_register_keeps_mode`.
+- `CfgOptions(no_return_targets=..., fragment_ranges=...)`: `ElfLifter`
+  fills the fragments from GCC `.cold` symbols. A ppc64 ELFv1 function
+  enters with `r2` holding its TOC.
+- Jump tables are bounded by their guards, known bits and phis of constants;
+  a table that cannot be bounded is deferred and reported, not over-seated.
+- Presets by name (`SleighArch.preset`, `CallingConvention.preset`,
+  `CC_PRESETS`), constants up to 512 bits, and handles usable from any
+  thread.
+- Sleigh fixes on every arch: float conversions round and saturate as the
+  ISA does; x87 / SSE / VEX, PowerPC FPSCR, AArch64 narrow-register writes,
+  ARM NEON, MIPS64 sign extension.
 
 **0.2.0**
 
-- Inputs: ppc64 ELFv1 `.opd` descriptors, symbols for a stripped image
-  (`add_symbol_file`, `add_symbols`), ARM / AArch64 `$d` literal pools left
-  undecoded, `.o` files at a synthetic base, and
-  `load_elf(relocated_got_is_rom=True)` to fold loads through the GOT and
-  `.data.rel.ro` (PIC jump tables need it).
+- Inputs: unlinked `.o` files, ppc64 ELFv1 `.opd` descriptors, stripped
+  images (`add_symbol_file`, `add_symbols`), ARM / AArch64 `$d` literal
+  pools, and `load_elf(relocated_got_is_rom=True)` to fold loads through the
+  GOT and `.data.rel.ro`.
 - ARM/Thumb and MIPS16 code decodes in the mode its edge carries.
-- Your own answers: `CfgOptions` branch targets, no-return callees, data
-  ranges and user-op ABIs; `cc.preserves_all()` / `preserves_regs()` for a
-  `per_address_ccs` callee (a callee-cleanup `ret $imm16`, a PC thunk).
-- PowerPC `*_linux_kernel` conventions, which `load_elf` picks from the entry
+- Your own answers: `CfgOptions` branch targets, data ranges and user-op
+  ABIs; `cc.preserves_all()` / `preserves_regs()` for a `per_address_ccs`
+  callee.
+- `AssumptionOptions`, the claims the analysis cannot check; `none()` is the
+  sound floor. PowerPC `*_linux_kernel` conventions, picked from the entry
   address.
-- `AssumptionOptions`: the claims the analysis cannot check; `none()` is the
-  sound floor.
-- Queries: `first_of`, alternation in any slot, `field`, `code_ptr`, joins
-  and `JoinPredicate`, heap / non-stack filters, float and stack arguments.
+- Queries: `first_of`, `field`, `code_ptr`, joins with constraints and
+  `JoinPredicate`, heap / non-stack filters, float and stack arguments.
 - `Function.to_text` and a background explorer.
 
 ## Upgrading
 
-Most renames and removals raise, and [CHANGELOG.md](CHANGELOG.md) says how to
-port each. Its [0.3.0 section](CHANGELOG.md#breaking-python) opens with the
-changes that alter an answer without an error. From 0.1.0, these 0.2.0
-changes do too:
+Most renames and removals raise; [CHANGELOG.md](CHANGELOG.md) says how to
+port each, and its [0.3.0 section](CHANGELOG.md#breaking-python) opens with
+the changes that alter an answer without an error. The largest 0.3.0 moves:
+`Lifter.optimize` is `Function.optimize`, `Lifter.visualize` is
+`strider.explore.visualize`, a rewrite's `replace` is a `strider.template`,
+`CallingConvention.no_return()` is `CfgOptions(no_return_targets=...)`, and
+`cfg.incomplete` replaces `is_complete()`.
+
+From 0.1.0, these 0.2.0 changes also alter an answer silently:
 
 - `ConstantFold` turns `x + x*2` into `x*3`, and a `Call`'s outputs are
   numbered per clobbered register.
