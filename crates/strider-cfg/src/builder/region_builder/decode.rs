@@ -43,8 +43,10 @@ const MAX_BRANCH_SPAN: usize = 8;
 pub(in crate::builder) enum DecodeFailure {
     /// The reader raised, or served no complete instruction here.
     Unmapped(u64),
-    /// No instruction lifts here: Sleigh rejected the bytes or has no p-code
-    /// for them, or [`crate::CfgOptions::data_ranges`] marks them as data.
+    /// No instruction lifts here: Sleigh rejected the bytes (possibly an
+    /// encoding cut off by unmapped memory that 0xff padding does not
+    /// decode) or has no p-code for them, or
+    /// [`crate::CfgOptions::data_ranges`] marks them as data.
     NotCode { addr: u64, marked_data: bool },
     /// A seeded arm's code fell through past the function's end.
     PastEnd(PcodeInsnAddr),

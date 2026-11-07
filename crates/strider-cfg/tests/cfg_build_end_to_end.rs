@@ -1167,6 +1167,24 @@ fn fallthrough_off_the_end_of_the_mapped_image_seats_a_stub() {
     }
 }
 
+/// A Thumb fall-through into a 32-bit encoding whose second halfword is
+/// unmapped is reported as unmapped, though its zero-padded parse fails.
+#[test]
+fn fallthrough_into_a_cut_off_thumb32_insn_is_unmapped() {
+    // 0x1000: movs r0,#0 (00 20); 0x1002: the first halfword 0xe854.
+    let reader = BufMemReader::new(vec![0x00, 0x20, 0x54, 0xe8], 0x1000);
+    let cfg = DecodeEngine::new(SleighArch::arm(), reader)
+        .expect("decode engine")
+        .build_cfg(0x1001u64.into(), &CfgOptions::default())
+        .expect("a fall-through into unmapped bytes builds");
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UnmappedTarget)
+            .collect::<Vec<_>>(),
+        &[PcodeInsnAddr::at_machine_start(0x1002)],
+    );
+}
+
 /// A direct branch and a fall-through reaching one unmapped address report it
 /// once: the direct branch seats the stub from `Builder::build`'s error path,
 /// and the fall-through fails `lift_code` before it checks the region map.
