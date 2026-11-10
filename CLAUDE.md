@@ -60,8 +60,8 @@ uv run pyright     # strider/, its tests and examples; gate is 0 errors
 and `CfgOptions._call_other_override_builds`. CI enables it for
 `maturin develop`, never for `maturin build`.
 
-CI also runs every `crates/strider-py/examples/python/*.py` on Python 3.9 and
-3.13 (the tree must stay clean afterwards), `pytest` against
+CI also runs every `crates/strider-py/examples/python/*.py` on Python 3.9,
+3.13 and 3.14 (the tree must stay clean afterwards), `pytest` against
 `maturin develop --release`, and checks that a
 `maturin build --release` wheel carries every `.pyi` stub, `py.typed` and
 `explore.html`.

@@ -100,11 +100,12 @@ jobs:
     strategy:
       # `requires-python = ">=3.9"` and the `cp39-abi3` wheel tag are claims,
       # and `.python-version` pins 3.10, so without a matrix neither end of the
-      # supported range is ever run. Not fail-fast: which end broke is the
-      # answer wanted.
+      # supported range is ever run. 3.14 evaluates annotations lazily and
+      # refuses thread stacks under 52 KiB. Not fail-fast: which version broke
+      # is the answer wanted.
       fail-fast: false
       matrix:
-        python-version: ['3.9', '3.13']
+        python-version: ['3.9', '3.13', '3.14']
     env:
       # Outranks the `.python-version` file for `uv sync` and `uv run`.
       UV_PYTHON: ${{ matrix.python-version }}
