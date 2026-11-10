@@ -32,6 +32,7 @@ dev = [
     "maturin>=1.10,<2.0",
     "patchelf>=0.17 ; sys_platform == 'linux'",
     "pytest>=7",
+    "pytest-xdist>=3.6",
     "pyelftools>=0.30",
     "pyright>=1.1.400",
 ]
@@ -50,6 +51,8 @@ reportMissingModuleSource = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["crates/strider-py/tests/python"]
+# Eight pytest-xdist workers; `-n 0` runs serially.
+addopts = "-n 8"
 norecursedirs = [".git", ".venv", ".worktrees", "target", "__pycache__"]
 
 # The uv project lives at the workspace root; maturin builds crates/strider-py.

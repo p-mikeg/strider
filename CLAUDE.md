@@ -52,7 +52,7 @@ Python, from the workspace root (never from `crates/strider-py`):
 ```bash
 uv sync --group dev
 uv run maturin develop --features test-hooks   # without it, 2 more tests skip
-uv run pytest
+uv run pytest      # 8 pytest-xdist workers (addopts); `-n 0` is serial
 uv run pyright     # strider/, its tests and examples; gate is 0 errors
 ```
 
