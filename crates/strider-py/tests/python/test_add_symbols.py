@@ -21,8 +21,7 @@ def _strip_and_split(tmp_path):
     shutil.copy(src, full)
     for args in (["--only-keep-debug", str(full), str(dbg)],
                  ["--strip-all", str(full), str(stripped)]):
-        if subprocess.run(["objcopy", *args], capture_output=True).returncode != 0:
-            pytest.skip("objcopy could not split this fixture")
+        subprocess.run(["objcopy", *args], check=True)
     return full, dbg, stripped
 
 
