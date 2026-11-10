@@ -18,7 +18,8 @@ workspace lints in `Cargo.toml`.
 
 ```bash
 cargo build --workspace
-cargo test --workspace
+cargo test --workspace   # [profile.test]: opt-level 1, debug-assertions and
+                         # overflow-checks on; its own artifacts, not cargo build's
 cargo test --package <crate-name> <test_name>   # single test
 
 # What CI (.github/workflows/ci.yml) also gates on:
@@ -51,7 +52,7 @@ Python, from the workspace root (never from `crates/strider-py`):
 
 ```bash
 uv sync --group dev
-uv run maturin develop --features test-hooks   # without it, 2 more tests skip
+uv run maturin develop --features test-hooks   # without it, 2 more tests skip, 1 is not collected
 uv run pytest      # 8 pytest-xdist workers (addopts); `-n 0` is serial
 uv run pyright     # strider/, its tests and examples; gate is 0 errors
 ```
