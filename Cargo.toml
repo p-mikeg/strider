@@ -99,6 +99,13 @@ missing_errors_doc = "allow"
 overflow-checks  = true
 debug-assertions = false
 
+# `cargo test` without `--release`: the fuzzers and sweeps that dominate the
+# run are ten times faster at opt-level 1. Debug assertions and overflow
+# checks stay on; line tables keep backtraces and halve the target dir.
+[profile.test]
+opt-level = 1
+debug     = "line-tables-only"
+
 # Release with line tables, for a sampling profiler to resolve inlined frames.
 [profile.profiling]
 inherits = "release"
