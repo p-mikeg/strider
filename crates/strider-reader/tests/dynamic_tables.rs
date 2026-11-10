@@ -57,7 +57,9 @@ fn textrel() -> (u64, u64, u64) {
         .unwrap()
         .data()
         .unwrap()
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .map(|e| u64::from(le32(e, 0)))
         .collect::<Vec<_>>();
     sites.sort_unstable();

@@ -1264,8 +1264,10 @@ fn a_wide_constant_folds_across_every_limb() {
         let ty = f.value_kind(v).as_value().expect("a typed value");
         assert!(ty.bit_width() > 64, "{v:?} is not a wide constant");
         strider_ir::eval::le_bytes(f.int_const(v).expect("an int const"), ty)
-            .chunks_exact(8)
-            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| u64::from_le_bytes(*c))
             .collect()
     }
     let w1 = [1u64, 2, 3, 4];

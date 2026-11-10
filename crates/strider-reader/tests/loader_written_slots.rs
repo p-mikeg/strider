@@ -447,7 +447,9 @@ fn a_mips_got_without_its_dynamic_tags_is_all_holes() {
             .unwrap();
         let entries = &mut bytes[off as usize..(off + size) as usize];
         let gotsym = entries
-            .chunks_exact_mut(8)
+            .as_chunks_mut::<8>()
+            .0
+            .iter_mut()
             .find(|d| d[..4] == object::elf::DT_MIPS_GOTSYM.to_be_bytes())
             .expect("DT_MIPS_GOTSYM");
         gotsym[..4].copy_from_slice(&object::elf::DT_MIPS_RLD_VERSION.to_be_bytes());
@@ -478,7 +480,9 @@ fn a_mips_got_hole_stops_at_its_mapping_whatever_sh_size_claims() {
             .unwrap();
         let entries = &mut bytes[off as usize..(off + size) as usize];
         let gotsym = entries
-            .chunks_exact_mut(8)
+            .as_chunks_mut::<8>()
+            .0
+            .iter_mut()
             .find(|d| d[..4] == object::elf::DT_MIPS_GOTSYM.to_be_bytes())
             .expect("DT_MIPS_GOTSYM");
         gotsym[..4].copy_from_slice(&object::elf::DT_MIPS_RLD_VERSION.to_be_bytes());
@@ -1278,7 +1282,9 @@ fn a_rela_dyn_header_the_loader_does_not_read_changes_nothing() {
 fn mips64el_rel_sites(elf: &OwnedElf, r_type: u32) -> Vec<u64> {
     let obj = elf.checked_file().unwrap();
     let data = obj.section_by_name(".rel.dyn").unwrap().data().unwrap();
-    data.chunks_exact(16)
+    data.as_chunks::<16>()
+        .0
+        .iter()
         .filter(|e| u32::from(e[15]) == r_type)
         .map(|e| u64::from_le_bytes(e[..8].try_into().unwrap()))
         .collect()
@@ -1375,7 +1381,9 @@ fn dynamic_tag32(obj: &object::File<'_>, tag: u32) -> u64 {
             u32::from_be_bytes(b)
         }
     };
-    data.chunks_exact(8)
+    data.as_chunks::<8>()
+        .0
+        .iter()
         .find(|d| read(&d[..4]) == tag)
         .map_or_else(
             || panic!("dynamic tag {tag:#x}"),
