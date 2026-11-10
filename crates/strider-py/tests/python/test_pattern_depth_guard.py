@@ -38,8 +38,8 @@ _TOO_LITTLE = "too little of this thread's stack left"
 #: The stack budget's refusal, past that reserve.
 _OVER_BUDGET = "pattern nesting too deep for this thread's stack"
 
-#: What a stack bound raises on a thread of 32 or 40 KiB: which one is a few
-#: KiB of interpreter frames either way.
+#: What a stack bound raises on a thread of `_MIN_KIB` or 8 KiB more: which
+#: one is a few KiB of interpreter frames either way.
 _STACK_REFUSALS = (_TOO_LITTLE, _OVER_BUDGET)
 
 #: A constant in a memory slot, refused by the operand walk.
@@ -51,6 +51,31 @@ def _chain(n: int):
     for _ in range(n):
         pat = p.int_add(pat, p.anything())
     return pat
+
+
+def _stack_size_accepted(kib: int) -> bool:
+    try:
+        old = threading.stack_size(kib * 1024)
+    except ValueError:
+        return False
+    threading.stack_size(old)
+    return True
+
+
+def _min_stack_kib() -> int:
+    kib = 32
+    while not _stack_size_accepted(kib):
+        kib += 4
+    return kib
+
+
+#: The smallest thread stack, in 4 KiB steps from 32 KiB, this Python
+#: accepts: 32 KiB, or 52 KiB on Python 3.14.
+_MIN_KIB = _min_stack_kib()
+
+#: Loads under which a `_MIN_KIB + 8` KiB thread still runs out of stack
+#: before the memory slot: 3.14's larger minimum needs two.
+_MIN_NEST = 0 if _MIN_KIB == 32 else 2
 
 
 def _function():
@@ -279,10 +304,10 @@ def _on_small_thread_child(kib: int, setup: str, loop: str):
 @pytest.mark.parametrize(
     ("kib", "nest", "refusals"),
     [
-        (32, 0, _STACK_REFUSALS),
-        (40, 0, _STACK_REFUSALS),
-        (32, 2, _STACK_REFUSALS),
-        (40, 2, _STACK_REFUSALS),
+        (_MIN_KIB, _MIN_NEST, _STACK_REFUSALS),
+        (_MIN_KIB + 8, _MIN_NEST, _STACK_REFUSALS),
+        (_MIN_KIB, _MIN_NEST + 2, _STACK_REFUSALS),
+        (_MIN_KIB + 8, _MIN_NEST + 2, _STACK_REFUSALS),
         (64, 0, (_MEMORY_SLOT, _OVER_BUDGET)),
         (256, 0, (_MEMORY_SLOT,)),
         (512, 2, (_MEMORY_SLOT,)),
@@ -290,11 +315,12 @@ def _on_small_thread_child(kib: int, setup: str, loop: str):
 )
 def test_any_refusal_fits_a_minimal_thread(kib, nest, refusals):
     """A refusal reaches the caller of a small thread, and `.backtrace`, read
-    later on the main thread, still has frames. At 32 and 40 KiB a stack bound
-    refuses before the walk reaches the memory slot; at 64 KiB either the
-    budget or the slot answers, by build; at 256 KiB, 512 under two loads, the
-    walk reaches the slot with room to spare in an unoptimised build too, and
-    the refusal is the slot's own (a constant there never matches)."""
+    later on the main thread, still has frames. At `_MIN_KIB` and 8 KiB more,
+    under `_MIN_NEST` loads or two more, a stack bound refuses before the walk
+    reaches the memory slot; at 64 KiB either the budget or the slot answers,
+    by build; at 256 KiB, 512 under two loads, the walk reaches the slot with
+    room to spare in an unoptimised build too, and the refusal is the slot's
+    own (a constant there never matches)."""
     out = _on_small_thread_child(
         kib,
         f"""\
@@ -326,8 +352,8 @@ def test_any_refusal_fits_a_minimal_thread(kib, nest, refusals):
 @pytest.mark.parametrize(
     ("kib", "refusals"),
     [
-        (32, _STACK_REFUSALS),
-        (40, _STACK_REFUSALS),
+        (_MIN_KIB, _STACK_REFUSALS),
+        (_MIN_KIB + 8, _STACK_REFUSALS),
         (64, (_OVER_BUDGET,)),
         (128, (_OVER_BUDGET,)),
     ],
@@ -408,9 +434,9 @@ def test_the_stack_refusal_fits_every_small_thread(shape):
             except strider.StriderError as e:
                 out.append(e)
         """
-    loop = """\
+    loop = f"""\
         refused = []
-        for kib in range(32, 129, 4):
+        for kib in range({_MIN_KIB}, 129, 4):
             threading.stack_size(kib * 1024)
             for n in range(1, 200):
                 out = []
@@ -422,6 +448,6 @@ def test_the_stack_refusal_fits_every_small_thread(shape):
                     break
         print(len(refused), flush=True)
         """
-    out = _on_small_thread_child(32, setup, loop)
+    out = _on_small_thread_child(_MIN_KIB, setup, loop)
     assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
-    assert out.stdout.split() == [str(len(range(32, 129, 4)))], out.stdout
+    assert out.stdout.split() == [str(len(range(_MIN_KIB, 129, 4)))], out.stdout
