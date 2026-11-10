@@ -6,16 +6,17 @@
 //!
 //! `build_cfg` only: nothing here lifts, optimises, or resolves.
 //!
-//! ```text
-//! cargo test -p strider-orchestrator --test phantom_span_sweep -- --ignored --nocapture
-//! ```
+//! A release build compiles the asserts out, so the test runs in debug only.
 
 mod common;
 
 use common::fixtures::{FIXTURE_ARCHES, Fixture};
 
 #[test]
-#[ignore = "broad fixture sweep; run explicitly to exercise the phantom-span/split asserts across every function"]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "debug only: the asserts it exercises are `debug_assert!`s"
+)]
 fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
     let cfg_opts = strider_cfg::CfgOptions {
         bound: strider_cfg::FunctionBound::Open {
