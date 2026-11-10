@@ -1,17 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
-### Breaking, Rust
-
-- The MSRV is 1.95.
-
-### Added, Python
-
-- `import strider` prints a wordmark to stderr when stderr is a terminal,
-  unless `STRIDER_NO_BANNER` is set to a non-empty value.
-
-### Changed answers
+### Breaking, Python
 
 These change an answer without an error:
 
@@ -23,24 +14,6 @@ These change an answer without an error:
 - A fall-through into a Thumb-32 instruction cut off by unmapped memory is
   `unmapped_target` when 0xff padding decodes it; it raised.
 - Raw DOT spells a varnode as the text format does (`%:0x38:8`).
-
-### Fixed
-
-- A ROM load whose address is a short constant expression folds in one
-  optimizer iteration, so a chain of table lookups converges.
-- `Lifter.pcode_at` on an address inside a decode names that decode, and a
-  MIPS delay slot as such.
-- A template over the compile-step cap is refused with a message naming the
-  template.
-- On Python 3.14, `typing.get_type_hints` and `inspect.signature` resolve
-  the builder protocols' (`NodePat`, ...) and `reader.MemLike`'s annotations;
-  they raised `NameError`.
-
-## 0.3.0
-
-### Breaking, Python
-
-These change an answer without an error:
 
 - `Node.vn()` / `Match.vn()` of a call whose convention returns nothing is
   `None`; it named one of the call's clobbered registers.
@@ -196,6 +169,8 @@ Output that reads differently:
 
 ### Breaking, Rust
 
+- The MSRV is 1.95.
+
 The crates are unpublished and their API changed throughout; the larger moves
 are `Strider::analyze(entry, cc, &AnalyzeOptions, pipeline)`,
 `DecodeEngine`, `ValueType` as `Int(u16)` / `Float(u16)`, integer constants
@@ -230,6 +205,8 @@ replaced the rest.
 
 ### Added, Python
 
+- `import strider` prints a wordmark to stderr when stderr is a terminal,
+  unless `STRIDER_NO_BANNER` is set to a non-empty value.
 - Integer arguments take any `__index__` object (`BoundCapture`, numpy
   ints); `to_dot` / `to_html` take an `os.PathLike` path.
 - `Capture("any_")` is an ordinary name; only `"_"` stays reserved.
@@ -308,6 +285,16 @@ replaced the rest.
   it showed an error.
 
 ### Fixed
+
+- A ROM load whose address is a short constant expression folds in one
+  optimizer iteration, so a chain of table lookups converges.
+- `Lifter.pcode_at` on an address inside a decode names that decode, and a
+  MIPS delay slot as such.
+- A template over the compile-step cap is refused with a message naming the
+  template.
+- On Python 3.14, `typing.get_type_hints` and `inspect.signature` resolve
+  the builder protocols' (`NodePat`, ...) and `reader.MemLike`'s annotations;
+  they raised `NameError`.
 
 Matching and rewriting:
 
