@@ -15,6 +15,9 @@ strider.StriderError      # the analysis error; see Errors below
 strider.__version__
 ```
 
+`import strider` prints a wordmark to stderr when stderr is a terminal; a
+non-empty `STRIDER_NO_BANNER` silences it.
+
 ## 1. Loading a binary
 
 ### `lift.load_elf`, the common path

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added, Python
+
+- `import strider` prints a wordmark to stderr when stderr is a terminal,
+  unless `STRIDER_NO_BANNER` is set to a non-empty value.
+
 ### Changed answers
 
 These change an answer without an error:

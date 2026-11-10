@@ -286,12 +286,43 @@ opt.OptimizerPass = _t.Union[  # type: ignore[attr-defined]
 ]
 _export(opt, "OptimizerPass", "MainOptimizerPass", "PostOptimizerPass")
 
+
+def _banner() -> None:
+    """Print the wordmark once, on import, to stderr when stderr is a
+    terminal and `STRIDER_NO_BANNER` is unset or empty. Not stdout: a pipe
+    parsing it would see the art."""
+    import os
+
+    if os.environ.get("STRIDER_NO_BANNER"):
+        return
+    # figlet -f slant, down a green ramp.
+    art = [
+        r"         __       _     __",
+        r"   _____/ /______(_)___/ /__  _____",
+        r"  / ___/ __/ ___/ / __  / _ \/ ___/",
+        r" (__  ) /_/ /  / / /_/ /  __/ /",
+        r"/____/\__/_/  /_/\__,_/\___/_/",
+    ]
+    ramp = (118, 82, 46, 42, 36)
+    rows = [f"  \033[38;5;{c}m{line}\033[0m\n" for c, line in zip(ramp, art)]
+    out = _sys.stderr  # None under pythonw
+    # A closed or replaced stream must not fail the import.
+    try:
+        if out and out.isatty():
+            out.write("\n" + "".join(rows))
+            out.flush()
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+_banner()
+
 __all__ = ["StriderError", "ir", "lift", "cfg", "sleigh", "reader",
            "opt", "pattern", "template"]
 
 # Drop import machinery from the public namespace.
 del _importlib, _sys, _ext, _name, _sub, _names, _mod_api, _t, _p, _export
-del _SUBMODULE_DOCS
+del _banner, _SUBMODULE_DOCS
 del _S, _NodePat, _InputPat, _CtrlPat, _MemPat, _MemAccessPat, _OrderedPat
 del _OutputPat, _proto, _proto_name
 # Bound by the import system, and already gone on `importlib.reload`.
