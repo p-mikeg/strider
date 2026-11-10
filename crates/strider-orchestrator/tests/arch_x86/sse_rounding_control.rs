@@ -73,13 +73,25 @@ impl Op {
     /// may not depend on the initial registers), once read from the initial
     /// MXCSR.
     fn under(&self, rc: u32, data: &[u8]) -> [u64; 2] {
-        let claims = AssumptionOptions::none();
-        let set = common::cone::returned_rax_under(self.image(Some(rc), data), BASE, &claims);
-        let init = u128::from(rc << 13);
-        let entered =
-            common::cone::returned_rax_from_under(self.image(None, data), BASE, init, &claims);
-        [set, entered]
+        under_each(&[(self, rc, data)])[0]
     }
+}
+
+/// [`Op::under`] of each `(op, rc, data)`, every image lifted through one
+/// engine per mode.
+fn under_each(cases: &[(&Op, u32, &[u8])]) -> Vec<[u64; 2]> {
+    let claims = AssumptionOptions::none();
+    let set: Vec<Vec<u8>> = cases
+        .iter()
+        .map(|&(op, rc, data)| op.image(Some(rc), data))
+        .collect();
+    let entered: Vec<(Vec<u8>, u128)> = cases
+        .iter()
+        .map(|&(op, rc, data)| (op.image(None, data), u128::from(rc << 13)))
+        .collect();
+    let set = common::cone::returned_rax_each_under(&set, BASE, &claims);
+    let entered = common::cone::returned_rax_each_from_under(&entered, BASE, &claims);
+    set.into_iter().zip(entered).map(|(s, e)| [s, e]).collect()
 }
 
 fn rounded(rc: u32, x: f64) -> f64 {
@@ -186,13 +198,9 @@ const SS2SI: [(&str, &[u8], bool); 4] = [
 
 #[test]
 fn scalar_float_to_int_conversions_round_by_mxcsr() {
+    let mut cases = Vec::new();
     for (double, table) in [(true, &SD2SI), (false, &SS2SI)] {
         for &(name, head, wide) in table {
-            let op = Op {
-                name,
-                head,
-                extract: &[],
-            };
             let width = if wide { 64 } else { 32 };
             for x in DOUBLES {
                 let (data, seen) = if double {
@@ -202,12 +210,29 @@ fn scalar_float_to_int_conversions_round_by_mxcsr() {
                     (s.to_le_bytes().to_vec(), f64::from(s))
                 };
                 for rc in 0..4 {
-                    for (how, got) in ["ldmxcsr", "initial"].into_iter().zip(op.under(rc, &data)) {
-                        let got = got & (u64::MAX >> (64 - width));
-                        assert_eq!(got, to_int(rc, seen, width), "{name} {how} rc {rc} {x}");
-                    }
+                    let op = Op {
+                        name,
+                        head,
+                        extract: &[],
+                    };
+                    cases.push((op, rc, data.clone(), seen, width, x));
                 }
             }
+        }
+    }
+    let inputs: Vec<(&Op, u32, &[u8])> = cases
+        .iter()
+        .map(|(op, rc, data, ..)| (op, *rc, data.as_slice()))
+        .collect();
+    for ((op, rc, _, seen, width, x), gots) in cases.iter().zip(under_each(&inputs)) {
+        for (how, got) in ["ldmxcsr", "initial"].into_iter().zip(gots) {
+            let got = got & (u64::MAX >> (64 - width));
+            assert_eq!(
+                got,
+                to_int(*rc, *seen, *width),
+                "{} {how} rc {rc} {x}",
+                op.name
+            );
         }
     }
 }
@@ -310,66 +335,52 @@ fn scalar_int_to_float_conversions_round_by_mxcsr() {
         head,
         extract: MOVQ_RAX_XMM1,
     };
-    for op in [to_sd("cvtsi2sd xmm1, r64", &[0xf2, 0x48, 0x0f, 0x2a, 0x0d])] {
-        for x in I64S {
-            for rc in 0..4 {
-                for (how, got) in ["ldmxcsr", "initial"]
-                    .into_iter()
-                    .zip(op.under(rc, &x.to_le_bytes()))
-                {
-                    let want = i_to_f64(rc, x);
-                    assert_eq!(
-                        got,
-                        want.to_bits(),
-                        "{} {how} rc {rc} {x}: want {want}",
-                        op.name
-                    );
-                }
-            }
+    let to_ss = |name, head| Op {
+        name,
+        head,
+        extract: MOVD_EAX_XMM1,
+    };
+    let sd = to_sd("cvtsi2sd xmm1, r64", &[0xf2, 0x48, 0x0f, 0x2a, 0x0d]);
+    let ss64 = to_ss("cvtsi2ss xmm1, r64", &[0xf3, 0x48, 0x0f, 0x2a, 0x0d]);
+    let ss32 = to_ss("cvtsi2ss xmm1, r32", &[0xf3, 0x0f, 0x2a, 0x0d]);
+    // (op, rc, operand bytes, x, the result's bits, its width)
+    let mut cases = Vec::new();
+    for x in I64S {
+        for rc in 0..4 {
+            cases.push((
+                &sd,
+                rc,
+                x.to_le_bytes().to_vec(),
+                x,
+                i_to_f64(rc, x).to_bits(),
+                64,
+            ));
         }
     }
-    for (name, head) in [("cvtsi2ss xmm1, r64", &[0xf3, 0x48, 0x0f, 0x2a, 0x0d][..])] {
-        let op = Op {
-            name,
-            head,
-            extract: MOVD_EAX_XMM1,
-        };
-        for x in I64S {
-            for rc in 0..4 {
-                for (how, got) in ["ldmxcsr", "initial"]
-                    .into_iter()
-                    .zip(op.under(rc, &x.to_le_bytes()))
-                {
-                    let want = i_to_f32(rc, x);
-                    assert_eq!(
-                        got & 0xffff_ffff,
-                        u64::from(want.to_bits()),
-                        "{name} {how} rc {rc} {x}"
-                    );
-                }
-            }
+    for x in I64S {
+        for rc in 0..4 {
+            let want = u64::from(i_to_f32(rc, x).to_bits());
+            cases.push((&ss64, rc, x.to_le_bytes().to_vec(), x, want, 32));
         }
     }
-    for (name, head) in [("cvtsi2ss xmm1, r32", &[0xf3, 0x0f, 0x2a, 0x0d][..])] {
-        let op = Op {
-            name,
-            head,
-            extract: MOVD_EAX_XMM1,
-        };
-        for x in I32S {
-            for rc in 0..4 {
-                for (how, got) in ["ldmxcsr", "initial"]
-                    .into_iter()
-                    .zip(op.under(rc, &x.to_le_bytes()))
-                {
-                    let want = i_to_f32(rc, i64::from(x));
-                    assert_eq!(
-                        got & 0xffff_ffff,
-                        u64::from(want.to_bits()),
-                        "{name} {how} rc {rc} {x}"
-                    );
-                }
-            }
+    for x in I32S {
+        for rc in 0..4 {
+            let want = u64::from(i_to_f32(rc, i64::from(x)).to_bits());
+            cases.push((&ss32, rc, x.to_le_bytes().to_vec(), i64::from(x), want, 32));
+        }
+    }
+    let inputs: Vec<(&Op, u32, &[u8])> = cases
+        .iter()
+        .map(|&(op, rc, ref data, ..)| (op, rc, data.as_slice()))
+        .collect();
+    for (&(op, rc, _, x, want, width), gots) in cases.iter().zip(under_each(&inputs)) {
+        for (how, got) in ["ldmxcsr", "initial"].into_iter().zip(gots) {
+            assert_eq!(
+                got & (u64::MAX >> (64 - width)),
+                want,
+                "{} {how} rc {rc} {x}: want {want:#x}",
+                op.name
+            );
         }
     }
 }
@@ -450,19 +461,27 @@ fn double_to_single_conversions_round_by_mxcsr() {
             head,
             extract,
         };
+        let mut cases = Vec::new();
         for x in NARROWED {
             // The packed form's second lane holds the negation.
             let mut data = x.to_le_bytes().to_vec();
             data.extend_from_slice(&(-x).to_le_bytes());
             for rc in 0..4 {
-                let mut want = u64::from(narrowed(rc, x).to_bits());
-                if two {
-                    want |= u64::from(narrowed(rc, -x).to_bits()) << 32;
-                }
-                for (how, got) in ["ldmxcsr", "initial"].into_iter().zip(op.under(rc, &data)) {
-                    let got = if two { got } else { got & 0xffff_ffff };
-                    assert_eq!(got, want, "{name} {how} rc {rc} {x}");
-                }
+                cases.push((rc, x, data.clone()));
+            }
+        }
+        let inputs: Vec<(&Op, u32, &[u8])> = cases
+            .iter()
+            .map(|(rc, _, data)| (&op, *rc, data.as_slice()))
+            .collect();
+        for (&(rc, x, _), gots) in cases.iter().zip(under_each(&inputs)) {
+            let mut want = u64::from(narrowed(rc, x).to_bits());
+            if two {
+                want |= u64::from(narrowed(rc, -x).to_bits()) << 32;
+            }
+            for (how, got) in ["ldmxcsr", "initial"].into_iter().zip(gots) {
+                let got = if two { got } else { got & 0xffff_ffff };
+                assert_eq!(got, want, "{name} {how} rc {rc} {x}");
             }
         }
     }

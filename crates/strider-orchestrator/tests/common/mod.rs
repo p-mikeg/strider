@@ -439,13 +439,52 @@ pub(crate) fn returned(f: &strider_ir::Function) -> Vec<strider_ir::node::ValueI
 /// The constant return slot 0 folds to once `bytes` at `base` is analysed,
 /// its bytes also the ROM.
 pub(crate) fn folded_return(arch: Arch, bytes: Vec<u8>, base: u64) -> u128 {
+    folded_returns(arch, &[bytes], base)[0]
+}
+
+/// `images` end to end from `base` at one 64-byte-aligned stride, and where
+/// each starts. An image must not address bytes outside itself.
+///
+/// A `Sleigh` takes tens of milliseconds to build, so a test lifting
+/// hundreds of small functions lays them out here and lifts them through one.
+pub(crate) fn concat_images(images: &[Vec<u8>], base: u64) -> (Vec<u8>, Vec<u64>) {
+    let stride = images
+        .iter()
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0)
+        .next_multiple_of(64);
+    let mut bytes = vec![0; stride * images.len()];
+    let entries = images
+        .iter()
+        .enumerate()
+        .map(|(i, image)| {
+            bytes[i * stride..][..image.len()].copy_from_slice(image);
+            base + (i * stride) as u64
+        })
+        .collect();
+    (bytes, entries)
+}
+
+/// [`folded_return`] of each of `images`, laid out by [`concat_images`].
+pub(crate) fn folded_returns(arch: Arch, images: &[Vec<u8>], base: u64) -> Vec<u128> {
+    let (bytes, entries) = concat_images(images, base);
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
         strider_ir_test_utils::MockRom::raw_bytes(base, bytes.clone()),
     );
-    let f = analyze_bytes(arch, bytes, base, Some(rom), base).function;
-    let v = returned(&f)[0];
-    f.int_const_u128(v)
-        .unwrap_or_else(|| panic!("return slot 0 did not fold: {:?}", producer_kind(&f, v)))
+    let (mut strider, cc) = strider_over_bytes(arch, bytes, base, Some(rom));
+    entries
+        .iter()
+        .map(|&entry| {
+            let f = strider
+                .analyze(entry, &cc, &Default::default(), None)
+                .expect("analyze")
+                .function;
+            let v = returned(&f)[0];
+            f.int_const_u128(v)
+                .unwrap_or_else(|| panic!("return slot 0 did not fold: {:?}", producer_kind(&f, v)))
+        })
+        .collect()
 }
 
 /// The kind of `v`'s producer.

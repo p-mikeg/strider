@@ -483,10 +483,25 @@ pub(crate) fn returned_rax_under(
     base: u64,
     claims: &strider_orchestrator::opt::AssumptionOptions,
 ) -> u64 {
-    let (f, v) = analyze_ret(super::Arch::X64, bytes, base, claims);
-    let [zeros, ones] = [0, u128::MAX].map(|init| as_rax(eval(&f, v, init)));
-    assert_eq!(zeros, ones, "rax depends on an initial register");
-    zeros
+    returned_rax_each_under(&[bytes], base, claims)[0]
+}
+
+/// [`returned_rax_under`] of each of `images`, laid out by
+/// [`super::concat_images`] and lifted through one engine.
+pub(crate) fn returned_rax_each_under(
+    images: &[Vec<u8>],
+    base: u64,
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> Vec<u64> {
+    let (bytes, entries) = super::concat_images(images, base);
+    analyze_rets(super::Arch::X64, bytes, base, &entries, claims)
+        .iter()
+        .map(|(f, v)| {
+            let [zeros, ones] = [0, u128::MAX].map(|init| as_rax(eval(f, *v, init)));
+            assert_eq!(zeros, ones, "rax depends on an initial register");
+            zeros
+        })
+        .collect()
 }
 
 /// The returned `rax` with every initial register reading `init`.
@@ -502,6 +517,22 @@ pub(crate) fn returned_rax_from_under(
     claims: &strider_orchestrator::opt::AssumptionOptions,
 ) -> u64 {
     returned_from_under(super::Arch::X64, bytes, base, init, claims)
+}
+
+/// [`returned_rax_from_under`] of each `(image, init)`, the images laid out
+/// by [`super::concat_images`] and lifted through one engine.
+pub(crate) fn returned_rax_each_from_under(
+    images: &[(Vec<u8>, u128)],
+    base: u64,
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> Vec<u64> {
+    let bytes: Vec<Vec<u8>> = images.iter().map(|(b, _)| b.clone()).collect();
+    let (bytes, entries) = super::concat_images(&bytes, base);
+    analyze_rets(super::Arch::X64, bytes, base, &entries, claims)
+        .iter()
+        .zip(images)
+        .map(|((f, v), &(_, init))| as_rax(eval(f, *v, init)))
+        .collect()
 }
 
 /// The first integer register an `arch` function returns, every initial
@@ -544,9 +575,27 @@ pub(crate) fn returned_at_under(
     init: u128,
     claims: &strider_orchestrator::opt::AssumptionOptions,
 ) -> Vec<u64> {
-    analyze_rets(arch, bytes, base, entries, claims)
+    returned_at_each_init_under(arch, bytes, base, entries, &[init], claims).remove(0)
+}
+
+/// [`returned_at_under`] under each of `inits`, each function lifted once.
+pub(crate) fn returned_at_each_init_under(
+    arch: super::Arch,
+    bytes: Vec<u8>,
+    base: u64,
+    entries: &[u64],
+    inits: &[u128],
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> Vec<Vec<u64>> {
+    let lifted = analyze_rets(arch, bytes, base, entries, claims);
+    inits
         .iter()
-        .map(|(f, v)| as_rax(eval(f, *v, init)))
+        .map(|&init| {
+            lifted
+                .iter()
+                .map(|(f, v)| as_rax(eval(f, *v, init)))
+                .collect()
+        })
         .collect()
 }
 

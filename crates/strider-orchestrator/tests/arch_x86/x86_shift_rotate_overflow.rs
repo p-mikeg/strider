@@ -111,31 +111,33 @@ fn reference(
     }
 }
 
-/// The constant left in `rax`.
-fn returned_rax(bytes: Vec<u8>) -> u128 {
-    common::folded_return(common::Arch::X64, bytes, BASE)
-}
-
 fn check(op: Op, counts: &[Count]) {
+    let mut cases = Vec::new();
     for width in [8, 16, 32, 64] {
         let msb = 1u64 << (width - 1);
         for &count in counts {
             for value in [msb, msb | msb >> 1, msb >> 1, 1] {
                 for cf in [false, true] {
                     for stale_of in [false, true] {
-                        let Some(want) = reference(op, width, count, value, cf, stale_of) else {
-                            continue;
-                        };
-                        let got = returned_rax(image(op, width, count, value, cf, stale_of));
-                        assert_eq!(
-                            got,
-                            u128::from(want),
-                            "{op:?} r{width} {count:?} value {value:#x} cf {cf} stale OF {stale_of}"
-                        );
+                        if let Some(want) = reference(op, width, count, value, cf, stale_of) {
+                            cases.push((width, count, value, cf, stale_of, want));
+                        }
                     }
                 }
             }
         }
+    }
+    let images: Vec<Vec<u8>> = cases
+        .iter()
+        .map(|&(width, count, value, cf, stale_of, _)| image(op, width, count, value, cf, stale_of))
+        .collect();
+    let got = common::folded_returns(common::Arch::X64, &images, BASE);
+    for (&(width, count, value, cf, stale_of, want), got) in cases.iter().zip(got) {
+        assert_eq!(
+            got,
+            u128::from(want),
+            "{op:?} r{width} {count:?} value {value:#x} cf {cf} stale OF {stale_of}"
+        );
     }
 }
 

@@ -410,10 +410,16 @@ fn lit(lo: u64, hi: u64) -> [u8; 16] {
 /// no conversion reads FPCR, so both agree.
 fn run(bytes: Vec<u8>, entries: &[u64]) -> Vec<u64> {
     let claims = AssumptionOptions::none();
-    let zeros =
-        common::cone::returned_at_under(Arch::Aarch64, bytes.clone(), BASE, entries, 0, &claims);
-    let ones =
-        common::cone::returned_at_under(Arch::Aarch64, bytes, BASE, entries, u128::MAX, &claims);
+    let [zeros, ones]: [Vec<u64>; 2] = common::cone::returned_at_each_init_under(
+        Arch::Aarch64,
+        bytes,
+        BASE,
+        entries,
+        &[0, u128::MAX],
+        &claims,
+    )
+    .try_into()
+    .unwrap();
     assert_eq!(zeros, ones, "a conversion read an initial register");
     zeros
 }

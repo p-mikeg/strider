@@ -174,8 +174,14 @@ fn frndint(rc: u32, x: f64) -> u64 {
     rounded(rc, x).to_bits()
 }
 
-fn returned(bytes: Vec<u8>) -> u64 {
-    common::cone::returned_rax(bytes, BASE)
+/// The returned `rax` of each of `images`, lifted through one engine.
+fn returned_each(images: &[Vec<u8>]) -> Vec<u64> {
+    common::cone::returned_rax_each_under(images, BASE, &Default::default())
+}
+
+/// The returned `rax` of each `(image, init)`, lifted through one engine.
+fn returned_each_from(images: &[(Vec<u8>, u128)]) -> Vec<u64> {
+    common::cone::returned_rax_each_from_under(images, BASE, &Default::default())
 }
 
 fn slot(r: u64, width: u32) -> u64 {
@@ -184,29 +190,48 @@ fn slot(r: u64, width: u32) -> u64 {
 
 #[test]
 fn integer_stores_round_by_the_control_word() {
+    let mut cases = Vec::new();
     for op in &STORES {
-        let width = op.width.unwrap();
         for rc in 0..4 {
             for x in VALUES {
-                let got = slot(returned(image(op, Some(rc), x)), width);
-                assert_eq!(got, stored(rc, x, width), "{} rc {rc} {x}", op.name);
+                cases.push((op, rc, x));
             }
         }
+    }
+    let images: Vec<Vec<u8>> = cases
+        .iter()
+        .map(|&(op, rc, x)| image(op, Some(rc), x))
+        .collect();
+    for (&(op, rc, x), got) in cases.iter().zip(returned_each(&images)) {
+        let width = op.width.unwrap();
+        assert_eq!(
+            slot(got, width),
+            stored(rc, x, width),
+            "{} rc {rc} {x}",
+            op.name
+        );
     }
 }
 
 #[test]
 fn frndint_rounds_by_the_control_word() {
+    let mut cases = Vec::new();
     for rc in 0..4 {
         for x in VALUES.into_iter().filter(|x| !x.is_nan()) {
-            let got = returned(image(&FRNDINT, Some(rc), x));
-            assert_eq!(
-                f64::from_bits(got).to_bits(),
-                frndint(rc, x),
-                "frndint rc {rc} {x}: got {}",
-                f64::from_bits(got)
-            );
+            cases.push((rc, x));
         }
+    }
+    let images: Vec<Vec<u8>> = cases
+        .iter()
+        .map(|&(rc, x)| image(&FRNDINT, Some(rc), x))
+        .collect();
+    for (&(rc, x), got) in cases.iter().zip(returned_each(&images)) {
+        assert_eq!(
+            f64::from_bits(got).to_bits(),
+            frndint(rc, x),
+            "frndint rc {rc} {x}: got {}",
+            f64::from_bits(got)
+        );
     }
 }
 
@@ -215,32 +240,44 @@ fn frndint_rounds_by_the_control_word() {
 /// own mode.
 #[test]
 fn an_unset_control_word_selects_on_the_initial_register() {
+    let mut cases = Vec::new();
     for op in &STORES {
-        let width = op.width.unwrap();
         for x in VALUES {
             for rc in 0..4u32 {
-                let init = u128::from(rc << 10);
-                let got = common::cone::returned_rax_from(image(op, None, x), BASE, init);
-                assert_eq!(
-                    slot(got, width),
-                    stored(rc, x, width),
-                    "{} initial rc {rc} {x}",
-                    op.name
-                );
+                cases.push((op, rc, x));
             }
         }
     }
+    let images: Vec<(Vec<u8>, u128)> = cases
+        .iter()
+        .map(|&(op, rc, x)| (image(op, None, x), u128::from(rc << 10)))
+        .collect();
+    for (&(op, rc, x), got) in cases.iter().zip(returned_each_from(&images)) {
+        let width = op.width.unwrap();
+        assert_eq!(
+            slot(got, width),
+            stored(rc, x, width),
+            "{} initial rc {rc} {x}",
+            op.name
+        );
+    }
+    let mut cases = Vec::new();
     for x in VALUES.into_iter().filter(|x| !x.is_nan()) {
         for rc in 0..4u32 {
-            let init = u128::from(rc << 10);
-            let got = common::cone::returned_rax_from(image(&FRNDINT, None, x), BASE, init);
-            assert_eq!(
-                got,
-                frndint(rc, x),
-                "frndint initial rc {rc} {x}: got {}",
-                f64::from_bits(got)
-            );
+            cases.push((rc, x));
         }
+    }
+    let images: Vec<(Vec<u8>, u128)> = cases
+        .iter()
+        .map(|&(rc, x)| (image(&FRNDINT, None, x), u128::from(rc << 10)))
+        .collect();
+    for (&(rc, x), got) in cases.iter().zip(returned_each_from(&images)) {
+        assert_eq!(
+            got,
+            frndint(rc, x),
+            "frndint initial rc {rc} {x}: got {}",
+            f64::from_bits(got)
+        );
     }
 }
 

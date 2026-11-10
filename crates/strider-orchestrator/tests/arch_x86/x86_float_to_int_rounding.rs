@@ -148,6 +148,7 @@ fn f32_data(lanes: &[f32]) -> Vec<u8> {
 
 /// Scalar conversions into a 32- or 64-bit register.
 fn check_scalar(ops: &[(Conversion, bool, bool)]) {
+    let mut cases = Vec::new();
     for (op, double, wide) in ops {
         let width = if *wide { 64 } else { 32 };
         for x in SCALARS {
@@ -158,10 +159,15 @@ fn check_scalar(ops: &[(Conversion, bool, bool)]) {
                 (f32_data(&[x as f32]), f64::from(x as f32))
             };
             for form in [Form::Reg, Form::Mem] {
-                let r = returned(op.image(form, &data)) & (u64::MAX >> (64 - width));
-                assert_eq!(r, converted(seen, width), "{} {form:?} {x}", op.name);
+                cases.push((op, width, x, seen, form, op.image(form, &data)));
             }
         }
+    }
+    let images: Vec<Vec<u8>> = cases.iter().map(|c| c.5.clone()).collect();
+    let got = common::cone::returned_rax_each_under(&images, BASE, &Default::default());
+    for (&(op, width, x, seen, form, _), r) in cases.iter().zip(got) {
+        let r = r & (u64::MAX >> (64 - width));
+        assert_eq!(r, converted(seen, width), "{} {form:?} {x}", op.name);
     }
 }
 

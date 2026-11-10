@@ -69,10 +69,16 @@ fn arpl(dst: u16, src: u16) -> u32 {
     }
 }
 
-/// The constant left in EAX.
-fn returned_eax(mut bytes: Vec<u8>) -> u128 {
-    bytes.push(0xc3);
-    common::folded_return(common::Arch::X86, bytes, BASE)
+/// The constant left in EAX by each of `images`, a `ret` appended.
+fn returned_eax(images: impl IntoIterator<Item = Vec<u8>>) -> Vec<u128> {
+    let images: Vec<Vec<u8>> = images
+        .into_iter()
+        .map(|mut bytes| {
+            bytes.push(0xc3);
+            bytes
+        })
+        .collect();
+    common::folded_returns(common::Arch::X86, &images, BASE)
 }
 
 /// `mov ah, flags` / `sahf` / `mov al, value` / the adjust / `lahf` /
@@ -86,16 +92,27 @@ fn adjust_image(op: u8, al: u8, cf: bool, af: bool) -> Vec<u8> {
 /// 6, 9, and the non-decimal 0xA and 0xF.
 fn check_adjust(name: &str, op: u8, reference: fn(u8, bool, bool) -> u32) {
     let values = (0..16u8).flat_map(|hi| [0, 5, 6, 9, 0xa, 0xf].map(|lo| hi << 4 | lo));
-    for al in values {
-        for cf in [false, true] {
-            for af in [false, true] {
-                assert_eq!(
-                    returned_eax(adjust_image(op, al, cf, af)),
-                    u128::from(reference(al, cf, af)),
-                    "{name} al {al:#x} cf {cf} af {af}"
-                );
-            }
-        }
+    let cases: Vec<(u8, bool, bool)> = values
+        .flat_map(|al| {
+            [
+                (al, false, false),
+                (al, false, true),
+                (al, true, false),
+                (al, true, true),
+            ]
+        })
+        .collect();
+    let got = returned_eax(
+        cases
+            .iter()
+            .map(|&(al, cf, af)| adjust_image(op, al, cf, af)),
+    );
+    for (&(al, cf, af), got) in cases.iter().zip(got) {
+        assert_eq!(
+            got,
+            u128::from(reference(al, cf, af)),
+            "{name} al {al:#x} cf {cf} af {af}"
+        );
     }
 }
 
@@ -128,15 +145,17 @@ fn arpl_image(dst: u16, src: u16, cf: bool) -> Vec<u8> {
 /// then; CF plays no part.
 #[test]
 fn arpl_adjusts_the_rpl_when_zf_says_so() {
-    for dst in [0x1230, 0x1231, 0x1232, 0x1233] {
-        for src in [0x10, 0x11, 0x12, 0x13] {
-            for cf in [false, true] {
-                assert_eq!(
-                    returned_eax(arpl_image(dst, src, cf)),
-                    u128::from(arpl(dst, src)),
-                    "arpl {dst:#x}, {src:#x} cf {cf}"
-                );
-            }
-        }
+    let cases: Vec<(u16, u16, bool)> = [0x1230, 0x1231, 0x1232, 0x1233]
+        .into_iter()
+        .flat_map(|dst| [0x10, 0x11, 0x12, 0x13].map(|src| (dst, src)))
+        .flat_map(|(dst, src)| [(dst, src, false), (dst, src, true)])
+        .collect();
+    let got = returned_eax(cases.iter().map(|&(dst, src, cf)| arpl_image(dst, src, cf)));
+    for (&(dst, src, cf), got) in cases.iter().zip(got) {
+        assert_eq!(
+            got,
+            u128::from(arpl(dst, src)),
+            "arpl {dst:#x}, {src:#x} cf {cf}"
+        );
     }
 }
