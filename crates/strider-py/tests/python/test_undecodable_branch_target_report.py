@@ -7,13 +7,11 @@ mapping symbols mark, so `analyze` must not decode it as code.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-from pathlib import Path
-
 import pytest
 
 import strider
+
+from .conftest import WORKSPACE_ROOT
 
 BASE = 0x1000
 #: beq 0x1008 ; blr ; .long 0 (glibc's PowerPC abort word)
@@ -37,45 +35,12 @@ def test_data_ranges_round_trip_sorted_and_merged() -> None:
     assert opts.data_ranges == [(0x10, 0x1C), (0x20, 0x28)]
 
 
-MID_POOL = """
-    .syntax unified
-    .text
-    .arm
-    .global _start
-_start: b _start
-    .global abort
-    .type abort, %function
-abort:
-    b abort
-    .size abort, .-abort
-    .global mid_pool
-    .type mid_pool, %function
-mid_pool:
-    push {r4, lr}
-    cmp r0, #0
-    bne 2f
-    bl abort
-.Lpool:
-    .word 0x00012345
-    .word 0x00010064
-2:  ldr r1, .Lpool
-    add r0, r0, r1
-    pop {r4, pc}
-    .size mid_pool, .-mid_pool
-"""
-
-
-@pytest.mark.skipif(
-    shutil.which("arm-linux-gnueabihf-gcc") is None, reason="needs an ARM cross gcc"
-)
-def test_elf_mapping_symbols_keep_a_literal_pool_from_being_decoded(tmp_path: Path) -> None:
-    src = tmp_path / "midpool.S"
-    src.write_text(MID_POOL)
-    elf = tmp_path / "midpool.elf"
-    subprocess.run(
-        ["arm-linux-gnueabihf-gcc", "-nostdlib", "-static", "-o", str(elf), str(src)],
-        check=True,
-    )
+def test_elf_mapping_symbols_keep_a_literal_pool_from_being_decoded() -> None:
+    """`fixtures/loader/out/arm_mid_pool.elf`, from `src/arm_mid_pool.S`."""
+    elf = WORKSPACE_ROOT / "fixtures" / "loader" / "out" / "arm_mid_pool.elf"
+    with elf.open("rb") as f:
+        if f.read(42) == b"version https://git-lfs.github.com/spec/v1":
+            pytest.fail(f"{elf} is a Git LFS pointer; run `git lfs pull`")
     lifter = strider.lift.load_elf(elf)
     sym = lifter.symbol("mid_pool")
     pool = sym.address + 0x10

@@ -8,7 +8,8 @@
 # R_X86_64_32 values must zero-extend, a MIPS library and an x86-64 PIE with
 # a relro pointer, a ppc64 ELFv1 image and a ppc32 library whose table bases
 # sit in `.got2`, executables with an R_*_COPY object, and a non-PIC
-# executable taking an imported function's address:
+# executable taking an imported function's address, and an ARM function
+# with a literal pool its mapping symbols mark mid-function:
 # out/<name>.{elf,o}, from src/.
 #
 # Not per-arch like ../Makefile: each image needs a link of its own (a shared
@@ -60,7 +61,7 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           x64_tls.elf x64_tlsdesc.elf aarch64_tls.elf aarch64_tls_trad.elf \
           ppc64le_tls.elf mips64le_tls.elf x86_tlsdesc.elf arm_tlsdesc.elf \
           arm_lazy.elf ppc32be_lazy.elf x64_cold.elf aarch64_cold.elf \
-          x64_canonical_plt_lib.elf x64_canonical_plt.elf
+          x64_canonical_plt_lib.elf x64_canonical_plt.elf arm_mid_pool.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -201,6 +202,10 @@ $(OUTDIR)/arm_lazy.elf: src/plt_call.c | $(OUTDIR)
 	$(ARM) $(CFLAGS) -shared $< -o $@
 $(OUTDIR)/ppc32be_lazy.elf: src/plt_call.c | $(OUTDIR)
 	$(PPC32) $(CFLAGS) -shared $< -o $@
+
+# Bare assembly: no crt, no libc.
+$(OUTDIR)/arm_mid_pool.elf: src/arm_mid_pool.S | $(OUTDIR)
+	$(ARM) -nostdlib -static -Wl,--build-id=none $< -o $@
 
 # A hot/cold split; AArch64 GCC only partitions when asked.
 $(OUTDIR)/x64_cold.elf: src/cold.c | $(OUTDIR)
