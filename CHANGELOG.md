@@ -32,6 +32,9 @@ These change an answer without an error:
   MIPS delay slot as such.
 - A template over the compile-step cap is refused with a message naming the
   template.
+- On Python 3.14, `typing.get_type_hints` and `inspect.signature` resolve
+  the builder protocols' (`NodePat`, ...) and `reader.MemLike`'s annotations;
+  they raised `NameError`.
 
 ## 0.3.0
 

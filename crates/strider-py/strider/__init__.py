@@ -109,6 +109,13 @@ _export(cfg, "IncompleteReason")
 _S = _t.TypeVar("_S")
 
 
+def _eval_annotations(*fs: object) -> None:
+    """Evaluate the annotations of `fs` now. Python 3.14 evaluates them on
+    first read, after `_S` and `_t` are deleted."""
+    for f in fs:
+        getattr(f, "__annotations__", None)
+
+
 @_t.runtime_checkable
 class _NodePat(_t.Protocol):
     """A node-pattern builder: captures, guards, and seals into a `Pat`."""
@@ -249,6 +256,7 @@ for _proto, _proto_name in (
 ):
     _proto.__name__ = _proto.__qualname__ = _proto_name
     _proto.__module__ = "strider.pattern"
+    _eval_annotations(*vars(_proto).values())
     setattr(_p, _proto_name, _proto)
     _export(_p, _proto_name)
 
@@ -261,6 +269,7 @@ class _Readable(_t.Protocol):
     def read(self, addr: int, size: int, /) -> _t.Optional[bytes]: ...
 
 
+_eval_annotations(_Readable.read)
 _Readable.__module__ = "strider.reader"
 reader._Readable = _Readable  # type: ignore[attr-defined]
 reader.MemLike = _t.Union[reader.MemReader, reader.BufferReader, _Readable]  # type: ignore[attr-defined]
@@ -324,7 +333,7 @@ __all__ = ["StriderError", "ir", "lift", "cfg", "sleigh", "reader",
 del _importlib, _sys, _ext, _name, _sub, _names, _mod_api, _t, _p, _export
 del _banner, _SUBMODULE_DOCS
 del _S, _NodePat, _InputPat, _CtrlPat, _MemPat, _MemAccessPat, _OrderedPat
-del _OutputPat, _proto, _proto_name
+del _OutputPat, _proto, _proto_name, _eval_annotations
 # Bound by the import system, and already gone on `importlib.reload`.
 globals().pop("_strider", None)
 globals().pop("_api", None)
