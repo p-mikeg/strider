@@ -139,7 +139,7 @@ the examples and tests without a cross-compiler:
 git lfs install && git lfs pull
 ```
 
-Strider needs Rust 1.91 or newer and Python 3.9 or newer, and uses
+Strider needs Rust 1.95 or newer and Python 3.9 or newer, and uses
 [uv](https://docs.astral.sh/uv/). From the repository root:
 
 ```bash

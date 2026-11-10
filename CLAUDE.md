@@ -31,9 +31,9 @@ export RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links'
 cargo doc --workspace --no-deps --document-private-items
 cargo doc -p strider-opt --no-deps --features test-util --document-private-items
 cargo doc -p strider-reader --no-deps --features test-util --document-private-items
-cargo +1.91.0 check --workspace --all-targets   # MSRV
-cargo +1.91.0 check -p <crate> --all-targets    # every package on its own
-cargo +1.91.0 check -p strider-py --all-targets --features test-hooks
+cargo +1.95.0 check --workspace --all-targets   # MSRV
+cargo +1.95.0 check -p <crate> --all-targets    # every package on its own
+cargo +1.95.0 check -p strider-py --all-targets --features test-hooks
 
 # Demos; the tree must stay clean afterwards.
 # orchestrator_demo writes cfg / graph / graph-opt .html and .dot of

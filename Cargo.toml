@@ -11,9 +11,10 @@ edition = "2024"
 version = "0.3.0"
 license = "MIT"
 repository = "https://github.com/p-mikeg/strider"
-# 1.91 is the tested floor (`u32::is_multiple_of` alone needs 1.87). Naming it
-# turns a syntax explosion on an older toolchain into a clear error.
-rust-version = "1.91"
+# 1.95 is the tested floor (cranelift-entity 0.135 and `AtomicU32::try_update`
+# need it). Naming it turns a syntax explosion on an older toolchain into a
+# clear error.
+rust-version = "1.95"
 # Publishing needs every workspace dependency to carry a version, and rsleigh is
 # a path dependency on a fork that is not on crates.io. Lift this per crate if
 # that ever changes.
@@ -37,7 +38,7 @@ strider-pattern = { path = "crates/strider-pattern" }
 vn-container = { path = "crates/vn-container" }
 rsleigh = { path = "externals/rsleigh" }
 
-cranelift-entity = "0.128"
+cranelift-entity = "0.135"
 smallvec = { version = "1.13.2", default-features = false, features = [
     "const_new",
 ] }
@@ -47,7 +48,7 @@ memmap2 = "0.9.11"
 petgraph = "0.8.3"
 rustc-hash = "2"
 # The IR's integer-constant storage: a small-value-optimised arbitrary-
-# precision unsigned integer. MSRV 1.68, below the workspace's 1.91.
+# precision unsigned integer. MSRV 1.68, below the workspace's 1.95.
 dashu-int = "0.4.3"
 thiserror = "2.0.18"
 anyhow = "1.0"

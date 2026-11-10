@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Breaking, Rust
+
+- The MSRV is 1.95.
+
 ### Added, Python
 
 - `import strider` prints a wordmark to stderr when stderr is a terminal,

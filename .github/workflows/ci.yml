@@ -81,7 +81,7 @@ jobs:
           # The fixture binaries are LFS-backed; without this they check out as
           # pointer text and every test that loads one fails.
           lfs: true
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
       # A test feature one package enables is unified into every other

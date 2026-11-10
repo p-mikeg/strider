@@ -11,7 +11,7 @@ fn successor(n: u32) -> Option<u32> {
 
 /// Panics once [`ID_LIMIT`] captures are minted, rather than reusing an id.
 fn next_id() -> u32 {
-    NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, successor)
+    NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, successor)
         .expect("Capture ids exhausted: 2^31 captures minted in this process")
 }
 
