@@ -1,5 +1,6 @@
 [workspace]
-resolver = "2"
+# `cargo update` keeps every crate within `rust-version`.
+resolver = "3"
 members = ["crates/*"]
 default-members = ["crates/*"]
 # A path dependency under the workspace root is a member by default, which puts
