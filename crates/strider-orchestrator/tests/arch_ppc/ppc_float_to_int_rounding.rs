@@ -172,32 +172,75 @@ fn run(conv: Conv, rn: Option<u32>, x: f64, init: u128, claims: &AssumptionOptio
     got & (u64::MAX >> (64 - conv.bits))
 }
 
-#[test]
-fn conversions_round_by_fpscr_rn_and_saturate() {
+/// `conv` of every value under each RN `mtfsfi` sets, and under the RN the
+/// initial FPSCR holds. One test per conversion, so they run in parallel.
+fn check_rounds_by_fpscr_rn_and_saturates(conv: Conv) {
     let none = AssumptionOptions::none();
-    for conv in CONVS {
-        for x in VALUES {
-            for rn in 0..4 {
-                let got = run(conv, Some(rn), x, 0, &none);
-                assert_eq!(
-                    got,
-                    expected(conv, rn, x),
-                    "{} mtfsfi rn {rn} {x}",
-                    conv.name
-                );
-            }
-            // Every initial register reads `init`: 0 gives RN 0, 1 RN 3.
-            for (init, rn) in [(0, 0), (1, 3)] {
-                let got = run(conv, None, x, init, &none);
-                assert_eq!(
-                    got,
-                    expected(conv, rn, x),
-                    "{} initial rn {rn} {x}",
-                    conv.name
-                );
-            }
+    for x in VALUES {
+        for rn in 0..4 {
+            let got = run(conv, Some(rn), x, 0, &none);
+            assert_eq!(
+                got,
+                expected(conv, rn, x),
+                "{} mtfsfi rn {rn} {x}",
+                conv.name
+            );
+        }
+        // Every initial register reads `init`: 0 gives RN 0, 1 RN 3.
+        for (init, rn) in [(0, 0), (1, 3)] {
+            let got = run(conv, None, x, init, &none);
+            assert_eq!(
+                got,
+                expected(conv, rn, x),
+                "{} initial rn {rn} {x}",
+                conv.name
+            );
         }
     }
+}
+
+/// The conversion named `name`.
+fn conv_named(name: &str) -> Conv {
+    CONVS
+        .into_iter()
+        .find(|c| c.name == name)
+        .unwrap_or_else(|| panic!("no conversion {name}"))
+}
+
+macro_rules! conversions_round_by_fpscr_rn_and_saturate {
+    ($($test:ident => $name:literal,)*) => {
+        $(
+            #[test]
+            fn $test() {
+                check_rounds_by_fpscr_rn_and_saturates(conv_named($name));
+            }
+        )*
+        /// Each conversion is run by exactly one test, named after it.
+        #[test]
+        fn conversions_round_by_fpscr_rn_and_saturate_covers_every_conversion() {
+            let run = [$((stringify!($test), $name)),*];
+            for conv in CONVS {
+                let tests: Vec<&str> =
+                    run.iter().filter(|r| r.1 == conv.name).map(|r| r.0).collect();
+                assert_eq!(tests.len(), 1, "{} is run by {tests:?}", conv.name);
+            }
+            assert_eq!(run.len(), CONVS.len());
+            for (test, name) in run {
+                assert!(test.ends_with(&format!("_{name}")), "{test} runs {name}");
+            }
+        }
+    };
+}
+
+conversions_round_by_fpscr_rn_and_saturate! {
+    conversions_round_by_fpscr_rn_and_saturate_fctid => "fctid",
+    conversions_round_by_fpscr_rn_and_saturate_fctiw => "fctiw",
+    conversions_round_by_fpscr_rn_and_saturate_fctidu => "fctidu",
+    conversions_round_by_fpscr_rn_and_saturate_fctiwu => "fctiwu",
+    conversions_round_by_fpscr_rn_and_saturate_fctidz => "fctidz",
+    conversions_round_by_fpscr_rn_and_saturate_fctiwz => "fctiwz",
+    conversions_round_by_fpscr_rn_and_saturate_fctiduz => "fctiduz",
+    conversions_round_by_fpscr_rn_and_saturate_fctiwuz => "fctiwuz",
 }
 
 /// Under the claim the lift reads RN as 0 whatever FPSCR holds.
